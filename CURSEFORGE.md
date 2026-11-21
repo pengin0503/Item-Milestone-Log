@@ -60,6 +60,12 @@ Minecraft **1.21.1**, NeoForge **21.1.x**, Java 21. Works in any 1.21.1 NeoForge
 #### 日本語
 累計プレイ時間（バニラ統計の「プレイ時間」）で、目標アイテムを初めて手に入れた瞬間を記録するModです。プレイヤーごとに目標を自由に設定でき、ATM Star用プリセットも内蔵しています。機械生産・自動クラフトで作ったアイテムも、インベントリに入った時点で記録されます。
 
+## Project license setting
+- Choose **Custom License** and paste the repository's `LICENSE` file text
+  (All Rights Reserved custom terms: personal use and free modpack inclusion
+  with credit are allowed; redistribution, re-uploading, selling and modified
+  versions need the author's permission).
+
 ## First file upload settings
 - File: itemmilestonelog-1.0.0.jar (from GitHub Actions artifact / GitHub Release)
 - Release type: Release
