@@ -56,4 +56,7 @@ Built for long modpack playthroughs such as All the Mods 10, but works in any 1.
 
 ## License
 
-MIT
+Custom License (All Rights Reserved) — see the [LICENSE](LICENSE) file.
+Personal use and inclusion in free modpacks (with credit and a link back) are
+allowed; redistribution, re-uploading, selling and distributing modified
+versions require the author's permission.
