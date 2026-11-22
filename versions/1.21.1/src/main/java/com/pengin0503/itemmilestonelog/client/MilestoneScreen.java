@@ -126,10 +126,14 @@ public final class MilestoneScreen extends Screen {
         combinedSpecs.addAll(addSpecs);
         combinedSpecs.addAll(presetSpecs);
 
-        int combinedWidthPerBtn = combinedSpecs.isEmpty()
-                ? maxRowWidth
-                : (maxRowWidth - gap * (combinedSpecs.size() - 1)) / combinedSpecs.size();
-        boolean splitActionRows = !presetSpecs.isEmpty() && combinedWidthPerBtn < 120;
+        // One row only when every label fits its button; otherwise long labels such as
+        // the Japanese "add held item" would scroll inside the button.
+        int widestLabel = 0;
+        for (ButtonSpec spec : combinedSpecs) {
+            widestLabel = Math.max(widestLabel, this.font.width(spec.label));
+        }
+        boolean splitActionRows = !presetSpecs.isEmpty()
+                && ActionRowLayout.needsSplit(maxRowWidth, combinedSpecs.size(), gap, widestLabel);
 
         int footerHeight = splitActionRows ? 88 : 66;
         this.feedbackY = this.height - footerHeight + 6;
@@ -195,7 +199,7 @@ public final class MilestoneScreen extends Screen {
             return;
         }
         int count = specs.size();
-        int btnWidth = Math.max(60, (maxRowWidth - gap * (count - 1)) / count);
+        int btnWidth = Math.max(60, ActionRowLayout.buttonWidth(maxRowWidth, count, gap));
         int actualRowWidth = btnWidth * count + gap * (count - 1);
         int startX = (this.width - actualRowWidth) / 2;
 
