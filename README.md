@@ -62,13 +62,27 @@ All commands work for your own data, no OP required. `/iml` is a short alias for
 - `notifyPlayer` — chat notification on record (default true)
 - `broadcastMilestones` — announce records to all players (default false)
 
-## Requirements
+## Supported Versions & Requirements
 
-- Minecraft 1.21.1
-- NeoForge 21.1.x
-- Java 21
+| Minecraft | NeoForge | Java | JAR Artifact |
+|---|---|---|---|
+| **1.21.1** | `21.1.267`+ | Java 21 | `itemmilestonelog-neoforge-1.21.1-1.0.0.jar` |
+| **26.1.2** | `26.1.2.129`+ | Java 25 | `itemmilestonelog-neoforge-26.1.2-1.0.0.jar` |
+| **26.2** | `26.2.0.95`+ | Java 25 | `itemmilestonelog-neoforge-26.2-1.0.0.jar` |
+| **26.3** | `26.3.0.115`+ | Java 25 | `itemmilestonelog-neoforge-26.3-1.0.0.jar` |
 
-Built for long modpack playthroughs such as All the Mods 10, but works in any 1.21.1 NeoForge pack or vanilla-plus world.
+Built for long modpack playthroughs such as All the Mods 10 (1.21.1), as well as modern 26.x NeoForge worlds and servers.
+
+### Building from Source
+
+Each Minecraft version lives under `versions/<mc_version>` and shares translation assets from `common/resources`:
+
+```bash
+./gradlew -p versions/1.21.1 build   # Java 21
+./gradlew -p versions/26.1.2 build   # Java 25
+./gradlew -p versions/26.2 build     # Java 25
+./gradlew -p versions/26.3 build     # Java 25
+```
 
 ## License
 

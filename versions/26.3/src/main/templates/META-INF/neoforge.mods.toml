@@ -1,0 +1,30 @@
+license="${mod_license}"
+issueTrackerURL="https://github.com/pengin0503/Item-Milestone-Log/issues"
+
+[[mods]]
+modId="${mod_id}"
+version="${mod_version}"
+displayName="${mod_name}"
+displayURL="https://github.com/pengin0503/Item-Milestone-Log"
+authors="pengin0503"
+description='''
+Records the cumulative playtime (the vanilla Time Played statistic) at which
+you first obtain each of your own target items. Set targets per player with
+/milestonelog commands or the in-game GUI, get a chat notification the moment a
+goal item first enters your inventory, and look back at exactly how many hours
+each milestone took. Optional client installation: vanilla clients can join.
+'''
+
+[[dependencies.${mod_id}]]
+    modId="neoforge"
+    type="required"
+    versionRange="[${neo_version},)"
+    ordering="NONE"
+    side="BOTH"
+
+[[dependencies.${mod_id}]]
+    modId="minecraft"
+    type="required"
+    versionRange="${minecraft_version_range}"
+    ordering="NONE"
+    side="BOTH"

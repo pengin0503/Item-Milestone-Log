@@ -56,7 +56,8 @@ Detection is possession-based. Items produced by machines, automation, AE2 autoc
 - `notifyPlayer`, `broadcastMilestones` — notification behaviour
 
 #### Requirements
-Minecraft **1.21.1**, NeoForge **21.1.x**, Java 21. Works in any 1.21.1 NeoForge pack, including All the Mods 10.
+- **Minecraft 1.21.1** — NeoForge `21.1.x`, Java 21 (works in All the Mods 10 and any 1.21.1 NeoForge pack)
+- **Minecraft 26.1.2 / 26.2 / 26.3** — NeoForge `26.1.2.x` / `26.2.x` / `26.3.x`, Java 25
 
 #### 日本語
 累計プレイ時間（バニラ統計の「プレイ時間」）で、目標アイテムを初めて手に入れた瞬間を記録するModです。プレイヤーごとに目標を自由に設定でき、ATM Star用プリセットも内蔵しています。機械生産・自動クラフトで作ったアイテムも、インベントリに入った時点で記録されます。コマンドだけでなく、キー入力（初期設定 `M`）で開く専用GUIからも目標の検索・追加・削除や記録確認などの全機能を利用できます（専用サーバーではバニラクライアントも従来どおりコマンドで利用可能）。
