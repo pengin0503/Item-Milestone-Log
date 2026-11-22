@@ -154,7 +154,7 @@ public final class MilestoneExport {
                 throw new IllegalArgumentException("invalid_format");
             }
             root = parsed.getAsJsonObject();
-        } catch (IllegalArgumentException e) {
+        } catch (IOException | IllegalArgumentException e) {
             throw e;
         } catch (Exception e) {
             throw new IllegalArgumentException("invalid_format", e);
