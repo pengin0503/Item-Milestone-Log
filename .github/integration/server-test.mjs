@@ -166,7 +166,20 @@ async function joinBot() {
     });
   });
   await sleep(1500);
-  return { bot, messages };
+  return { bot, messages, lastChat: 0 };
+}
+
+// The server kicks a non-op player for spam (disconnect.spam) when chat messages and
+// commands come faster than about one per second for a while: each one adds 20 to a
+// counter that drops by 1 per tick, with a limit of 200. The bot stays a normal player
+// (no op), so commands are tested with the permissions players have, and is paced.
+const CHAT_SPACING_MS = 1000;
+
+async function say(session, text) {
+  const wait = session.lastChat + CHAT_SPACING_MS - Date.now();
+  if (wait > 0) await sleep(wait);
+  session.lastChat = Date.now();
+  session.bot.chat(text);
 }
 
 /** Waits until a message received after index `from` matches `pattern`. */
@@ -184,7 +197,7 @@ async function waitFor(session, from, pattern, timeoutMs = 8000) {
 /** Runs a chat command as the bot and waits for a matching answer. */
 async function command(session, cmd, pattern, timeoutMs) {
   const from = session.messages.length;
-  session.bot.chat(`/${cmd}`);
+  await say(session, `/${cmd}`);
   return waitFor(session, from, pattern, timeoutMs);
 }
 
@@ -294,7 +307,7 @@ async function freshBotFlow(rcon) {
   await check('/milestonelog targets lists recorded and pending targets', async () => {
     await command(session, 'milestonelog add minecraft:diamond', /^Now tracking: Diamond$/);
     const from = session.messages.length;
-    session.bot.chat('/milestonelog targets');
+    await say(session, '/milestonelog targets');
     await waitFor(session, from, /^Target items \(3\):$/);
     await waitFor(session, from, /^✔ Cobblestone — \d+h \d{2}m \d{2}s$/);
     await waitFor(session, from, /^… Diamond — not yet obtained$/);
@@ -382,7 +395,7 @@ async function restartBotFlow() {
   // (recorded) = 12 targets, 4 records.
   await check('targets and records survive a server restart', async () => {
     const from = session.messages.length;
-    session.bot.chat('/milestonelog targets');
+    await say(session, '/milestonelog targets');
     await waitFor(session, from, /^Target items \(12\):$/);
     await waitFor(session, from, /^✔ Cobblestone — \d+h \d{2}m \d{2}s$/);
     await waitFor(session, from, /^✔ Gold Ingot — \d+h \d{2}m \d{2}s$/);
@@ -413,7 +426,7 @@ async function migrateAfterFlow() {
   const session = await joinBot();
   await check('26.1.2: the targets and the record made by 1.21.1 are there', async () => {
     const from = session.messages.length;
-    session.bot.chat('/milestonelog targets');
+    await say(session, '/milestonelog targets');
     await waitFor(session, from, /^Target items \(2\):$/);
     await waitFor(session, from, /^✔ Cobblestone — \d+h \d{2}m \d{2}s$/);
     await waitFor(session, from, /^… Dirt — not yet obtained$/);
