@@ -27,6 +27,7 @@ LOG_DIR="$ROOT/build/server-logs/$MC-$NEO"
 TEST_JS="$ROOT/.github/integration/server-test.mjs"
 SCAN_INTERVAL_TICKS=600
 SERVER_PGID=""
+SERVER_LOG=""
 
 mkdir -p "$LOG_DIR" "$SERVER_DIR"
 
@@ -123,6 +124,7 @@ fi
 
 start_server() {
   local log="$1"
+  SERVER_LOG="$log"
   echo "::group::Start server (MC $MC, NeoForge $NEO) -> ${log#$ROOT/}"
   # setsid: own process group, so everything the server starts can be stopped together.
   setsid bash -c "cd '$SERVER_DIR' && exec java -Xmx2G @'$ARGS_FILE' nogui" \
@@ -158,9 +160,22 @@ stop_server() {
     waited=$((waited + 2))
   done
   if kill -0 "$SERVER_PGID" 2>/dev/null; then
-    echo "Server did not stop within 120s; killing it"
+    echo "::warning::Server (MC $MC, NeoForge $NEO) did not stop within 120s after /stop"
+    echo "Last lines of ${SERVER_LOG#$ROOT/}:"
+    tail -n 30 "$SERVER_LOG" | sed 's/^/    /'
+    # The server PID is the JVM (exec java), so its threads show what blocks the shutdown.
+    if command -v jstack > /dev/null; then
+      jstack "$SERVER_PGID" > "$LOG_DIR/stop-timeout-threads.txt" 2>&1 || true
+      echo "Non-daemon threads (full dump in ${LOG_DIR#$ROOT/}/stop-timeout-threads.txt):"
+      awk 'BEGIN { RS = "" } /^"/ { split($0, l, "\n"); if (l[1] !~ / daemon /) print $0 "\n" }' \
+        "$LOG_DIR/stop-timeout-threads.txt" | head -n 120 | sed 's/^/    /'
+    fi
     kill -TERM -- "-$SERVER_PGID" 2>/dev/null || true
-    sleep 5
+    waited=0
+    while kill -0 "$SERVER_PGID" 2>/dev/null && [ "$waited" -lt 30 ]; do
+      sleep 1
+      waited=$((waited + 1))
+    done
     kill -KILL -- "-$SERVER_PGID" 2>/dev/null || true
   fi
   SERVER_PGID=""

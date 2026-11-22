@@ -55,21 +55,44 @@ All commands work for your own data, no OP required. `/iml` is a short alias for
 
 ## Configuration
 
-`config/itemmilestonelog-common.toml`:
+`config/itemmilestonelog-common.toml` (Minecraft 1.21.1, 26.1.2, 26.2) or
+`config/itemmilestonelog-local.toml` (Minecraft 26.3, where NeoForge renamed the
+config type). On a dedicated server, edit the file on the server.
 
 - `defaultTargets` — item IDs every player tracks by default
-- `scanIntervalTicks` — inventory scan interval in ticks (default 20 ticks = 1 s)
+- `scanIntervalTicks` — inventory scan interval in ticks (default 20 ticks = 1 s, 1–1200)
 - `notifyPlayer` — chat notification on record (default true)
 - `broadcastMilestones` — announce records to all players (default false)
 
+Items picked up from the ground, crafted by hand or taken out of a furnace are recorded
+right away; items that arrive in other ways (machines, AE2, chests, `/give`) are found
+by the inventory scan, so their timestamp can be up to `scanIntervalTicks` late.
+
+## Saved data
+
+Targets and records are stored per world, for all players in one file:
+
+| Minecraft | File |
+|---|---|
+| 1.21.1 | `<world>/data/itemmilestonelog_data.dat` |
+| 26.1.2 / 26.2 / 26.3 | `<world>/data/itemmilestonelog/milestones.dat` |
+
+Records are not carried over when a 1.21.1 world is opened with a 26.x version of
+the mod (the 1.21.1 file stays in place and is not modified).
+
 ## Supported Versions & Requirements
 
-| Minecraft | NeoForge | Java | JAR Artifact |
+| Minecraft | NeoForge (minimum) | Java | JAR Artifact |
 |---|---|---|---|
-| **1.21.1** | `21.1.267`+ | Java 21 | `itemmilestonelog-neoforge-1.21.1-1.0.0.jar` |
-| **26.1.2** | `26.1.2.129`+ | Java 25 | `itemmilestonelog-neoforge-26.1.2-1.0.0.jar` |
-| **26.2** | `26.2.0.95`+ | Java 25 | `itemmilestonelog-neoforge-26.2-1.0.0.jar` |
-| **26.3** | `26.3.0.115`+ | Java 25 | `itemmilestonelog-neoforge-26.3-1.0.0.jar` |
+| **1.21.1** | `21.1.1`+ | Java 21 | `itemmilestonelog-neoforge-1.21.1-1.0.0.jar` |
+| **26.1.2** | `26.1.2.71`+ | Java 25 | `itemmilestonelog-neoforge-26.1.2-1.0.0.jar` |
+| **26.2** | `26.2.0.57`+ | Java 25 | `itemmilestonelog-neoforge-26.2-1.0.0.jar` |
+| **26.3** | `26.3.0.76`+ | Java 25 | `itemmilestonelog-neoforge-26.3-1.0.0.jar` |
+
+Each jar is compiled against the minimum NeoForge version above and is tested on both
+that version and the newest NeoForge build at release time (1.21.1: `21.1.267`,
+26.1.2: `26.1.2.129`, 26.2: `26.2.0.95`, 26.3: `26.3.0.115`). Use the jar that
+matches your Minecraft version; each one only loads on its own Minecraft version.
 
 Built for long modpack playthroughs such as All the Mods 10 (1.21.1), as well as modern 26.x NeoForge worlds and servers.
 
@@ -83,6 +106,26 @@ Each Minecraft version lives under `versions/<mc_version>` and shares translatio
 ./gradlew -p versions/26.2 build     # Java 25
 ./gradlew -p versions/26.3 build     # Java 25
 ```
+
+The jar is written to `versions/<mc_version>/build/libs/`. `build` also runs the unit
+tests. To check a newer NeoForge build, pass `-Pneo_version=<version>`.
+
+### Tests and CI
+
+GitHub Actions (`.github/workflows/main.yml`) runs, for every Minecraft version and
+for both the minimum and the latest NeoForge in `gradle.properties`:
+
+1. `build` with the unit tests,
+2. a check of the jar contents (`.github/scripts/verify-jar.sh`),
+3. the release jar on a real NeoForge dedicated server
+   (`.github/scripts/run-server-tests.sh`): command registration over RCON and, on
+   1.21.1 and 26.1.2, a vanilla-protocol client ([mineflayer](https://github.com/PrismarineJS/mineflayer))
+   that joins without the mod and runs the commands, gets items recorded by pickup
+   and by the inventory scan, and checks that the records survive a server restart.
+   mineflayer does not support 26.2 and 26.3 yet, so those get the RCON checks only.
+
+The jars from the minimum-NeoForge jobs are uploaded as the workflow artifacts
+`itemmilestonelog-<mc_version>`. The GUI is not covered by the automated tests.
 
 ## License
 

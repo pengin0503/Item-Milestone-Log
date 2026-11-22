@@ -91,7 +91,7 @@ jobs:
 
       - name: Upload release jar
         if: matrix.neo == 'min'
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: itemmilestonelog-${{ matrix.mc }}
           path: versions/${{ matrix.mc }}/build/libs/*.jar
@@ -105,7 +105,7 @@ jobs:
 
       - name: Upload test reports and server logs
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: test-logs-${{ matrix.mc }}-${{ matrix.neo }}
           path: |
