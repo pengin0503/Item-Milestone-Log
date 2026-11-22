@@ -8,12 +8,17 @@
 #   min      neo_version, which the release jar is compiled against
 set -euo pipefail
 
+if [ "$#" -ne 2 ]; then
+  echo "usage: $0 <mc_version> <min|latest>" >&2
+  exit 2
+fi
 MC="$1"
 WHICH="$2"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PROPS="$ROOT/versions/$MC/gradle.properties"
 
-prop() { grep -E "^$1=" "$PROPS" | cut -d= -f2-; }
+# Empty when the file or the property is missing; the check below reports it.
+prop() { grep -E "^$1=" "$PROPS" 2>/dev/null | cut -d= -f2- || true; }
 
 min="$(prop neo_version)"
 case "$WHICH" in
