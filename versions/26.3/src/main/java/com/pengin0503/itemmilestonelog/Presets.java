@@ -6,6 +6,8 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.google.gson.JsonPrimitive;
+import com.pengin0503.itemmilestonelog.api.TargetKey;
 import net.minecraft.resources.Identifier;
 import net.neoforged.fml.loading.FMLPaths;
 
@@ -30,7 +32,7 @@ import java.util.stream.Stream;
  * Target item presets (built-in plus custom JSON presets in {@code config/itemmilestonelog/presets/}).
  */
 public final class Presets {
-    public record PresetDefinition(String id, String displayName, List<String> items, boolean builtin) {
+    public record PresetDefinition(String id, String displayName, List<TargetKey> items, boolean builtin) {
     }
 
     public static final Map<String, List<String>> PRESETS = Map.of(
@@ -66,10 +68,18 @@ public final class Presets {
     private Presets() {
     }
 
+    private static List<TargetKey> toBuiltinTargets(List<String> itemIds) {
+        List<TargetKey> list = new ArrayList<>(itemIds.size());
+        for (String id : itemIds) {
+            list.add(TargetKey.of(id));
+        }
+        return List.copyOf(list);
+    }
+
     private static Map<String, PresetDefinition> builtinMap() {
         Map<String, PresetDefinition> map = new TreeMap<>();
         for (Map.Entry<String, List<String>> entry : PRESETS.entrySet()) {
-            map.put(entry.getKey(), new PresetDefinition(entry.getKey(), entry.getKey(), entry.getValue(), true));
+            map.put(entry.getKey(), new PresetDefinition(entry.getKey(), entry.getKey(), toBuiltinTargets(entry.getValue()), true));
         }
         return Collections.unmodifiableMap(new LinkedHashMap<>(map));
     }
@@ -86,10 +96,12 @@ public final class Presets {
         return id != null && PRESETS.containsKey(id);
     }
 
+    /** Reloads custom presets from the default config directory. */
     public static int reload() {
         return reloadFrom(presetsDir());
     }
 
+    /** Reloads custom presets from {@code dir} (creates the directory if absent). */
     public static synchronized int reloadFrom(Path dir) {
         try {
             Files.createDirectories(dir);
@@ -101,7 +113,7 @@ public final class Presets {
 
         Map<String, PresetDefinition> next = new TreeMap<>();
         for (Map.Entry<String, List<String>> entry : PRESETS.entrySet()) {
-            next.put(entry.getKey(), new PresetDefinition(entry.getKey(), entry.getKey(), entry.getValue(), true));
+            next.put(entry.getKey(), new PresetDefinition(entry.getKey(), entry.getKey(), toBuiltinTargets(entry.getValue()), true));
         }
 
         int customCount = 0;
@@ -139,6 +151,18 @@ public final class Presets {
         return customCount;
     }
 
+    private static int parseStrictJsonCount(JsonElement countEl) {
+        if (countEl == null || !countEl.isJsonPrimitive()) {
+            return -1;
+        }
+        JsonPrimitive prim = countEl.getAsJsonPrimitive();
+        if (!prim.isNumber()) {
+            return -1;
+        }
+        String raw = prim.getAsString();
+        return TargetKey.tryParseCount(raw);
+    }
+
     private static PresetDefinition parsePresetFile(Path file, String fileName, String id) {
         JsonObject root;
         try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
@@ -166,19 +190,38 @@ public final class Presets {
             }
         }
 
-        Set<String> deduped = new LinkedHashSet<>();
+        Set<TargetKey> deduped = new LinkedHashSet<>();
         JsonArray arr = root.getAsJsonArray("items");
         for (JsonElement elem : arr) {
-            if (!elem.isJsonPrimitive() || !elem.getAsJsonPrimitive().isString()) {
-                continue;
-            }
-            String rawItem = elem.getAsString().trim();
-            if (rawItem.isEmpty()) {
-                continue;
-            }
-            Identifier rl = Identifier.tryParse(rawItem);
-            if (rl != null && !"minecraft:air".equals(rl.toString())) {
-                deduped.add(rl.toString());
+            if (elem.isJsonPrimitive() && elem.getAsJsonPrimitive().isString()) {
+                String rawItem = elem.getAsString().trim();
+                if (rawItem.isEmpty()) {
+                    continue;
+                }
+                Identifier rl = Identifier.tryParse(rawItem);
+                if (rl != null && !"minecraft:air".equals(rl.toString())) {
+                    deduped.add(TargetKey.of(rl.toString()));
+                }
+            } else if (elem.isJsonObject()) {
+                JsonObject obj = elem.getAsJsonObject();
+                if (!obj.has("item") || !obj.get("item").isJsonPrimitive() || !obj.get("item").getAsJsonPrimitive().isString()) {
+                    ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid item object in preset {}", fileName);
+                    continue;
+                }
+                String rawItem = obj.get("item").getAsString().trim();
+                Identifier rl = Identifier.tryParse(rawItem);
+                if (rl == null || "minecraft:air".equals(rl.toString())) {
+                    continue;
+                }
+                int count = TargetKey.MIN_COUNT;
+                if (obj.has("count")) {
+                    count = parseStrictJsonCount(obj.get("count"));
+                    if (count < TargetKey.MIN_COUNT) {
+                        ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping item '{}' with invalid count in preset {}", rawItem, fileName);
+                        continue;
+                    }
+                }
+                deduped.add(new TargetKey(rl.toString(), count));
             }
         }
 
@@ -190,11 +233,13 @@ public final class Presets {
         return new PresetDefinition(id, displayName, List.copyOf(deduped), false);
     }
 
-    public static boolean saveCustom(String id, List<String> items) throws IOException {
+    /** Saves a custom preset file to the default config directory and updates the in-memory table. */
+    public static boolean saveCustom(String id, List<TargetKey> items) throws IOException {
         return saveCustomTo(presetsDir(), id, items);
     }
 
-    public static synchronized boolean saveCustomTo(Path dir, String id, List<String> items) throws IOException {
+    /** Saves a custom preset file to {@code dir} and updates the in-memory table. Returns true if overwritten. */
+    public static synchronized boolean saveCustomTo(Path dir, String id, List<TargetKey> items) throws IOException {
         if (!isValidId(id)) {
             throw new IllegalArgumentException("Invalid preset ID: " + id);
         }
@@ -205,11 +250,14 @@ public final class Presets {
         Path target = dir.resolve(id + ".json");
         boolean existed = Files.exists(target);
 
-        Set<String> deduped = new LinkedHashSet<>();
-        for (String item : items) {
-            Identifier rl = Identifier.tryParse(item);
+        Set<TargetKey> deduped = new LinkedHashSet<>();
+        for (TargetKey key : items) {
+            if (key == null) {
+                continue;
+            }
+            Identifier rl = Identifier.tryParse(key.itemId());
             if (rl != null && !"minecraft:air".equals(rl.toString())) {
-                deduped.add(rl.toString());
+                deduped.add(new TargetKey(rl.toString(), key.count()));
             }
         }
         if (deduped.isEmpty()) {
@@ -219,8 +267,15 @@ public final class Presets {
         JsonObject json = new JsonObject();
         json.addProperty("name", id);
         JsonArray arr = new JsonArray();
-        for (String item : deduped) {
-            arr.add(item);
+        for (TargetKey key : deduped) {
+            if (key.count() > TargetKey.MIN_COUNT) {
+                JsonObject obj = new JsonObject();
+                obj.addProperty("item", key.itemId());
+                obj.addProperty("count", key.count());
+                arr.add(obj);
+            } else {
+                arr.add(key.itemId());
+            }
         }
         json.add("items", arr);
 
@@ -234,10 +289,12 @@ public final class Presets {
         return existed;
     }
 
+    /** Deletes a custom preset file from the default config directory and updates the in-memory table. */
     public static boolean deleteCustom(String id) throws IOException {
         return deleteCustomFrom(presetsDir(), id);
     }
 
+    /** Deletes a custom preset file from {@code dir} and updates the in-memory table. */
     public static synchronized boolean deleteCustomFrom(Path dir, String id) throws IOException {
         if (!isValidId(id) || isBuiltin(id)) {
             return false;
@@ -260,6 +317,7 @@ public final class Presets {
         return List.copyOf(loadedPresets.values());
     }
 
+    /** Preset IDs in a stable (alphabetical) order for suggestions, messages and the GUI. */
     public static List<String> names() {
         return List.copyOf(loadedPresets.keySet());
     }

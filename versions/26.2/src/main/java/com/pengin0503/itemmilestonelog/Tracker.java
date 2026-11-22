@@ -2,6 +2,7 @@ package com.pengin0503.itemmilestonelog;
 
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecordedEvent;
+import com.pengin0503.itemmilestonelog.api.TargetKey;
 import com.pengin0503.itemmilestonelog.network.SyncMilestonesPayload;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
@@ -20,10 +21,15 @@ import net.neoforged.neoforge.event.entity.player.ItemEntityPickupEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.tick.PlayerTickEvent;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
@@ -32,15 +38,26 @@ import java.util.concurrent.ThreadLocalRandom;
  */
 public final class Tracker {
     private static volatile String lastWarnedSoundId = null;
+    private static final Set<String> WARNED_DEFAULT_TARGETS = ConcurrentHashMap.newKeySet();
 
     private Tracker() {
     }
 
-    public static Set<String> effectiveTargets(MilestoneData.PlayerData pd) {
-        Set<String> all = new HashSet<>();
-        for (String s : Config.DEFAULT_TARGETS.get()) {
-            all.add(s);
+    public static Set<TargetKey> defaultTargets() {
+        Set<TargetKey> result = new LinkedHashSet<>();
+        for (String raw : Config.DEFAULT_TARGETS.get()) {
+            TargetKey parsed = TargetKey.tryParseEncoded(raw);
+            if (parsed != null && parsed.itemId().contains(":") && Identifier.tryParse(parsed.itemId()) != null) {
+                result.add(parsed);
+            } else if (raw != null && WARNED_DEFAULT_TARGETS.add(raw)) {
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Ignoring invalid defaultTargets entry '{}'", raw);
+            }
         }
+        return result;
+    }
+
+    public static Set<TargetKey> effectiveTargets(MilestoneData.PlayerData pd) {
+        Set<TargetKey> all = new LinkedHashSet<>(defaultTargets());
         if (pd != null) {
             all.addAll(pd.targets);
         }
@@ -87,7 +104,7 @@ public final class Tracker {
         }
         MilestoneData data = MilestoneData.get(player.level().getServer());
         MilestoneData.PlayerData pd = data.playerOrNull(player.getUUID());
-        Set<String> pending = new HashSet<>(effectiveTargets(pd));
+        Set<TargetKey> pending = new HashSet<>(effectiveTargets(pd));
         if (pd != null) {
             pending.removeAll(pd.records.keySet());
         }
@@ -95,22 +112,54 @@ public final class Tracker {
         if (pending.isEmpty() && carried.isEmpty()) {
             return;
         }
+
+        Set<String> neededItemIds = new HashSet<>();
+        for (TargetKey key : pending) {
+            if (!carried.contains(key.itemId())) {
+                neededItemIds.add(key.itemId());
+            }
+        }
+
+        Map<String, Integer> counts = new HashMap<>();
         Set<String> stillCarried = new HashSet<>();
         var inventory = player.getInventory();
         for (int i = 0; i < inventory.getContainerSize(); i++) {
-            ItemStack stack = inventory.getItem(i);
-            if (stack.isEmpty()) {
-                continue;
+            accumulateStack(inventory.getItem(i), carried, stillCarried, neededItemIds, counts);
+        }
+        if (player.containerMenu != null) {
+            accumulateStack(player.containerMenu.getCarried(), carried, stillCarried, neededItemIds, counts);
+        }
+
+        if (!counts.isEmpty()) {
+            List<TargetKey> achieved = new ArrayList<>();
+            for (TargetKey key : pending) {
+                if (!carried.contains(key.itemId()) && counts.getOrDefault(key.itemId(), 0) >= key.count()) {
+                    achieved.add(key);
+                }
             }
-            String id = itemId(stack);
-            if (carried.contains(id)) {
-                stillCarried.add(id);
-            } else if (pending.remove(id)) {
-                record(player, data, id);
+            if (!achieved.isEmpty()) {
+                achieved.sort(TargetKey::compareTo);
+                for (TargetKey key : achieved) {
+                    record(player, data, key);
+                }
             }
         }
+
         if (!carried.isEmpty() && carried.retainAll(stillCarried)) {
             data.setDirty();
+        }
+    }
+
+    private static void accumulateStack(ItemStack stack, Set<String> carried, Set<String> stillCarried,
+                                        Set<String> neededItemIds, Map<String, Integer> counts) {
+        if (stack.isEmpty()) {
+            return;
+        }
+        String id = itemId(stack);
+        if (carried.contains(id)) {
+            stillCarried.add(id);
+        } else if (neededItemIds.contains(id)) {
+            counts.merge(id, stack.getCount(), Integer::sum);
         }
     }
 
@@ -130,10 +179,24 @@ public final class Tracker {
                 carried.add(itemId(stack));
             }
         }
+        if (player.containerMenu != null && !player.containerMenu.getCarried().isEmpty()) {
+            carried.add(itemId(player.containerMenu.getCarried()));
+        }
         MilestoneData data = MilestoneData.get(player.level().getServer());
         MilestoneData.PlayerData existing = data.playerOrNull(player.getUUID());
         if (existing != null) {
-            carried.removeAll(existing.records.keySet());
+            Set<TargetKey> effective = effectiveTargets(existing);
+            Set<String> itemsWithPendingTargets = new HashSet<>();
+            for (TargetKey key : effective) {
+                if (!existing.records.containsKey(key)) {
+                    itemsWithPendingTargets.add(key.itemId());
+                }
+            }
+            Set<String> recordedItems = new HashSet<>();
+            for (TargetKey key : existing.records.keySet()) {
+                recordedItems.add(key.itemId());
+            }
+            carried.removeIf(id -> recordedItems.contains(id) && !itemsWithPendingTargets.contains(id));
         }
         if (carried.isEmpty()) {
             return;
@@ -146,14 +209,20 @@ public final class Tracker {
     @SubscribeEvent
     public static void onItemCrafted(PlayerEvent.ItemCraftedEvent event) {
         if (event.getEntity() instanceof ServerPlayer player) {
-            tryRecord(player, itemId(event.getCrafting()));
+            ItemStack stack = event.getCrafting();
+            if (!stack.isEmpty()) {
+                tryRecordForItem(player, itemId(stack), stack.getCount());
+            }
         }
     }
 
     @SubscribeEvent
     public static void onItemSmelted(PlayerEvent.ItemSmeltedEvent event) {
         if (event.getEntity() instanceof ServerPlayer player) {
-            tryRecord(player, itemId(event.getSmelting()));
+            ItemStack stack = event.getSmelting();
+            if (!stack.isEmpty()) {
+                tryRecordForItem(player, itemId(stack), stack.getCount());
+            }
         }
     }
 
@@ -163,10 +232,11 @@ public final class Tracker {
             return;
         }
         ItemStack before = event.getOriginalStack();
-        if (before.isEmpty() || event.getItemEntity().getItem().getCount() >= before.getCount()) {
+        int pickedUp = before.getCount() - event.getItemEntity().getItem().getCount();
+        if (before.isEmpty() || pickedUp <= 0) {
             return;
         }
-        tryRecord(player, itemId(before));
+        tryRecordForItem(player, itemId(before), pickedUp);
     }
 
     static boolean recordingPaused(ServerPlayer player) {
@@ -188,24 +258,54 @@ public final class Tracker {
         return BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
     }
 
-    private static void tryRecord(ServerPlayer player, String itemId) {
+    private static int countItemInPossession(ServerPlayer player, String targetItemId) {
+        int total = 0;
+        var inventory = player.getInventory();
+        for (int i = 0; i < inventory.getContainerSize(); i++) {
+            ItemStack stack = inventory.getItem(i);
+            if (!stack.isEmpty() && targetItemId.equals(itemId(stack))) {
+                total += stack.getCount();
+            }
+        }
+        if (player.containerMenu != null) {
+            ItemStack cursor = player.containerMenu.getCarried();
+            if (!cursor.isEmpty() && targetItemId.equals(itemId(cursor))) {
+                total += cursor.getCount();
+            }
+        }
+        return total;
+    }
+
+    private static void tryRecordForItem(ServerPlayer player, String itemId, int minCountFromEvent) {
         if (recordingPaused(player)) {
             return;
         }
         MilestoneData data = MilestoneData.get(player.level().getServer());
         MilestoneData.PlayerData pd = data.playerOrNull(player.getUUID());
-        if (!effectiveTargets(pd).contains(itemId)) {
+        if (carriedFromCreative(pd).contains(itemId)) {
             return;
         }
-        if (pd != null && (pd.records.containsKey(itemId) || carriedFromCreative(pd).contains(itemId))) {
+        List<TargetKey> pendingForItem = new ArrayList<>();
+        for (TargetKey key : effectiveTargets(pd)) {
+            if (key.itemId().equals(itemId) && (pd == null || !pd.records.containsKey(key))) {
+                pendingForItem.add(key);
+            }
+        }
+        if (pendingForItem.isEmpty()) {
             return;
         }
-        record(player, data, itemId);
+        int total = Math.max(countItemInPossession(player, itemId), minCountFromEvent);
+        pendingForItem.sort(TargetKey::compareTo);
+        for (TargetKey key : pendingForItem) {
+            if (total >= key.count()) {
+                record(player, data, key);
+            }
+        }
     }
 
-    private static void record(ServerPlayer player, MilestoneData data, String itemId) {
+    private static void record(ServerPlayer player, MilestoneData data, TargetKey key) {
         MilestoneData.PlayerData pd = data.player(player.getUUID());
-        if (pd.records.containsKey(itemId)) {
+        if (pd.records.containsKey(key)) {
             return;
         }
         MinecraftServer server = player.level().getServer();
@@ -218,18 +318,18 @@ public final class Tracker {
         if (playerName != null && !playerName.equals(pd.lastKnownName)) {
             pd.lastKnownName = playerName;
         }
-        pd.records.put(itemId, rec);
-        boolean worldFirst = data.recordWorldFirstIfAbsent(itemId, player.getUUID(), playerName, rec);
+        pd.records.put(key, rec);
+        boolean worldFirst = data.recordWorldFirstIfAbsent(key, player.getUUID(), playerName, rec);
         data.setDirty();
 
         ItemMilestoneLog.LOGGER.info("[ItemMilestoneLog] {} first obtained {} at playtime {} ({} ticks)",
-                playerName, itemId, Playtime.formatRecord(rec), ticks);
+                playerName, key.formatDisplayId(), Playtime.formatRecord(rec), ticks);
 
-        Component itemName = MilestoneService.itemName(itemId);
+        Component displayName = MilestoneService.targetDisplayName(key);
 
         if (Config.NOTIFY_PLAYER.get()) {
             Component msg = ServerLang.tr(player, "message.itemmilestonelog.recorded",
-                    itemName, Playtime.format(ticks));
+                    displayName, Playtime.format(ticks));
             player.sendSystemMessage(msg);
         }
         if (Config.BROADCAST.get()) {
@@ -243,7 +343,7 @@ public final class Tracker {
                     continue;
                 }
                 other.sendSystemMessage(ServerLang.tr(other, "message.itemmilestonelog.recorded_broadcast",
-                        player.getDisplayName(), itemName, formattedTicks));
+                        player.getDisplayName(), displayName, formattedTicks));
             }
         }
         if (worldFirst && Config.ANNOUNCE_WORLD_FIRST.get()) {
@@ -254,15 +354,15 @@ public final class Tracker {
                     continue;
                 }
                 recipient.sendSystemMessage(ServerLang.tr(recipient, "message.itemmilestonelog.world_first_recorded",
-                        player.getDisplayName(), itemName, formattedRecord));
+                        player.getDisplayName(), displayName, formattedRecord));
             }
         }
         if (Config.MILESTONE_SOUND_ENABLED.get()) {
             playMilestoneSound(player);
         }
 
-        NeoForge.EVENT_BUS.post(new MilestoneRecordedEvent(player, itemId, ticks, day, epochMillis));
-        DiscordNotifier.notifyMilestone(playerName != null ? playerName : "", itemId, rec, worldFirst);
+        NeoForge.EVENT_BUS.post(new MilestoneRecordedEvent(player, key.itemId(), key.count(), ticks, day, epochMillis));
+        DiscordNotifier.notifyMilestone(playerName != null ? playerName : "", key, rec, worldFirst);
         MilestoneService.syncPlayerIfOpen(player);
     }
 

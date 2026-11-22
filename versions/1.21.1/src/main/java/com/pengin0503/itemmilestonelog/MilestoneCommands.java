@@ -1,11 +1,13 @@
 package com.pengin0503.itemmilestonelog;
 
+import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
+import com.pengin0503.itemmilestonelog.api.TargetKey;
 import com.pengin0503.itemmilestonelog.api.WorldFirstRecord;
 import net.minecraft.commands.CommandBuildContext;
 import net.minecraft.commands.CommandSourceStack;
@@ -52,6 +54,24 @@ public final class MilestoneCommands {
                 .redirect(event.getDispatcher().getRoot().getChild("milestonelog")));
     }
 
+    private static Set<String> itemIdsOf(Set<TargetKey> keys) {
+        Set<String> ids = new LinkedHashSet<>();
+        for (TargetKey key : keys) {
+            ids.add(key.itemId());
+        }
+        return ids;
+    }
+
+    private static Set<String> countsForItem(Set<TargetKey> keys, String itemId) {
+        Set<String> counts = new LinkedHashSet<>();
+        for (TargetKey key : keys) {
+            if (key.itemId().equals(itemId)) {
+                counts.add(String.valueOf(key.count()));
+            }
+        }
+        return counts;
+    }
+
     private static LiteralArgumentBuilder<CommandSourceStack> root(CommandBuildContext buildContext) {
         SuggestionProvider<CommandSourceStack> presetSuggestions = (ctx, builder) ->
                 SharedSuggestionProvider.suggest(Presets.names(), builder);
@@ -68,7 +88,19 @@ public final class MilestoneCommands {
                 return builder.buildFuture();
             }
             MilestoneData.PlayerData pd = MilestoneData.get(sp.server).playerOrNull(sp.getUUID());
-            return SharedSuggestionProvider.suggest(pd != null ? pd.targets : Set.of(), builder);
+            return SharedSuggestionProvider.suggest(pd != null ? itemIdsOf(pd.targets) : Set.of(), builder);
+        };
+        SuggestionProvider<CommandSourceStack> personalTargetCountSuggestions = (ctx, builder) -> {
+            ServerPlayer sp = ctx.getSource().getPlayer();
+            if (sp == null) {
+                return builder.buildFuture();
+            }
+            MilestoneData.PlayerData pd = MilestoneData.get(sp.server).playerOrNull(sp.getUUID());
+            if (pd == null) {
+                return builder.buildFuture();
+            }
+            String itemId = ResourceLocationArgument.getId(ctx, "item").toString();
+            return SharedSuggestionProvider.suggest(countsForItem(pd.targets, itemId), builder);
         };
         SuggestionProvider<CommandSourceStack> recordedSuggestions = (ctx, builder) -> {
             ServerPlayer sp = ctx.getSource().getPlayer();
@@ -76,14 +108,34 @@ public final class MilestoneCommands {
                 return builder.buildFuture();
             }
             MilestoneData.PlayerData pd = MilestoneData.get(sp.server).playerOrNull(sp.getUUID());
-            return SharedSuggestionProvider.suggest(pd != null ? pd.records.keySet() : Set.of(), builder);
+            return SharedSuggestionProvider.suggest(pd != null ? itemIdsOf(pd.records.keySet()) : Set.of(), builder);
+        };
+        SuggestionProvider<CommandSourceStack> recordedCountSuggestions = (ctx, builder) -> {
+            ServerPlayer sp = ctx.getSource().getPlayer();
+            if (sp == null) {
+                return builder.buildFuture();
+            }
+            MilestoneData.PlayerData pd = MilestoneData.get(sp.server).playerOrNull(sp.getUUID());
+            if (pd == null) {
+                return builder.buildFuture();
+            }
+            String itemId = ResourceLocationArgument.getId(ctx, "item").toString();
+            return SharedSuggestionProvider.suggest(countsForItem(pd.records.keySet(), itemId), builder);
         };
         SuggestionProvider<CommandSourceStack> worldFirstSuggestions = (ctx, builder) -> {
             MinecraftServer server = ctx.getSource().getServer();
             if (server == null) {
                 return builder.buildFuture();
             }
-            return SharedSuggestionProvider.suggest(MilestoneData.get(server).worldFirsts().keySet(), builder);
+            return SharedSuggestionProvider.suggest(itemIdsOf(MilestoneData.get(server).worldFirsts().keySet()), builder);
+        };
+        SuggestionProvider<CommandSourceStack> worldFirstCountSuggestions = (ctx, builder) -> {
+            MinecraftServer server = ctx.getSource().getServer();
+            if (server == null) {
+                return builder.buildFuture();
+            }
+            String itemId = ResourceLocationArgument.getId(ctx, "item").toString();
+            return SharedSuggestionProvider.suggest(countsForItem(MilestoneData.get(server).worldFirsts().keySet(), itemId), builder);
         };
         SuggestionProvider<CommandSourceStack> exportFileSuggestions = (ctx, builder) -> {
             MinecraftServer server = ctx.getSource().getServer();
@@ -118,7 +170,20 @@ public final class MilestoneCommands {
             if (resolved.entry == null) {
                 return builder.buildFuture();
             }
-            return SharedSuggestionProvider.suggest(resolved.entry.getValue().records.keySet(), builder);
+            return SharedSuggestionProvider.suggest(itemIdsOf(resolved.entry.getValue().records.keySet()), builder);
+        };
+        SuggestionProvider<CommandSourceStack> adminRecordedCountSuggestions = (ctx, builder) -> {
+            MinecraftServer server = ctx.getSource().getServer();
+            if (server == null) {
+                return builder.buildFuture();
+            }
+            String query = StringArgumentType.getString(ctx, "player");
+            ResolvedPlayer resolved = resolvePlayerData(server, query);
+            if (resolved.entry == null) {
+                return builder.buildFuture();
+            }
+            String itemId = ResourceLocationArgument.getId(ctx, "item").toString();
+            return SharedSuggestionProvider.suggest(countsForItem(resolved.entry.getValue().records.keySet(), itemId), builder);
         };
 
         return Commands.literal("milestonelog")
@@ -126,12 +191,21 @@ public final class MilestoneCommands {
                 .then(Commands.literal("playtime").executes(MilestoneCommands::playtime))
                 .then(Commands.literal("add")
                         .then(Commands.argument("item", ItemArgument.item(buildContext))
-                                .executes(ctx -> add(ctx, itemId(ctx)))))
-                .then(Commands.literal("addhand").executes(MilestoneCommands::addHand))
+                                .executes(ctx -> add(ctx, itemId(ctx), TargetKey.MIN_COUNT))
+                                .then(Commands.argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                        .executes(ctx -> add(ctx, itemId(ctx), IntegerArgumentType.getInteger(ctx, "count"))))))
+                .then(Commands.literal("addhand")
+                        .executes(ctx -> addHand(ctx, TargetKey.MIN_COUNT))
+                        .then(Commands.argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                .executes(ctx -> addHand(ctx, IntegerArgumentType.getInteger(ctx, "count")))))
                 .then(Commands.literal("remove")
                         .then(Commands.argument("item", ResourceLocationArgument.id())
                                 .suggests(personalTargetSuggestions)
-                                .executes(ctx -> remove(ctx, ResourceLocationArgument.getId(ctx, "item").toString()))))
+                                .executes(ctx -> remove(ctx, ResourceLocationArgument.getId(ctx, "item").toString(), TargetKey.MIN_COUNT))
+                                .then(Commands.argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                        .suggests(personalTargetCountSuggestions)
+                                        .executes(ctx -> remove(ctx, ResourceLocationArgument.getId(ctx, "item").toString(),
+                                                IntegerArgumentType.getInteger(ctx, "count"))))))
                 .then(Commands.literal("targets").executes(MilestoneCommands::targets))
                 .then(Commands.literal("list").executes(MilestoneCommands::list))
                 .then(Commands.literal("preset")
@@ -154,7 +228,11 @@ public final class MilestoneCommands {
                 .then(Commands.literal("reset")
                         .then(Commands.argument("item", ResourceLocationArgument.id())
                                 .suggests(recordedSuggestions)
-                                .executes(ctx -> reset(ctx, ResourceLocationArgument.getId(ctx, "item").toString()))))
+                                .executes(ctx -> reset(ctx, ResourceLocationArgument.getId(ctx, "item").toString(), TargetKey.MIN_COUNT))
+                                .then(Commands.argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                        .suggests(recordedCountSuggestions)
+                                        .executes(ctx -> reset(ctx, ResourceLocationArgument.getId(ctx, "item").toString(),
+                                                IntegerArgumentType.getInteger(ctx, "count"))))))
                 .then(Commands.literal("resetall").executes(MilestoneCommands::resetAll))
                 .then(Commands.literal("firsts")
                         .executes(MilestoneCommands::firstsList)
@@ -162,7 +240,11 @@ public final class MilestoneCommands {
                                 .requires(src -> src.hasPermission(2))
                                 .then(Commands.argument("item", ResourceLocationArgument.id())
                                         .suggests(worldFirstSuggestions)
-                                        .executes(ctx -> firstsReset(ctx, ResourceLocationArgument.getId(ctx, "item").toString()))))
+                                        .executes(ctx -> firstsReset(ctx, ResourceLocationArgument.getId(ctx, "item").toString(), TargetKey.MIN_COUNT))
+                                        .then(Commands.argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                                .suggests(worldFirstCountSuggestions)
+                                                .executes(ctx -> firstsReset(ctx, ResourceLocationArgument.getId(ctx, "item").toString(),
+                                                        IntegerArgumentType.getInteger(ctx, "count"))))))
                         .then(Commands.literal("resetall")
                                 .requires(src -> src.hasPermission(2))
                                 .executes(MilestoneCommands::firstsResetAll)))
@@ -186,7 +268,12 @@ public final class MilestoneCommands {
                                         .then(Commands.argument("item", ResourceLocationArgument.id())
                                                 .suggests(adminRecordedSuggestions)
                                                 .executes(ctx -> adminReset(ctx, StringArgumentType.getString(ctx, "player"),
-                                                        ResourceLocationArgument.getId(ctx, "item").toString()))))
+                                                        ResourceLocationArgument.getId(ctx, "item").toString(), TargetKey.MIN_COUNT))
+                                                .then(Commands.argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                                        .suggests(adminRecordedCountSuggestions)
+                                                        .executes(ctx -> adminReset(ctx, StringArgumentType.getString(ctx, "player"),
+                                                                ResourceLocationArgument.getId(ctx, "item").toString(),
+                                                                IntegerArgumentType.getInteger(ctx, "count"))))))
                                 .then(Commands.literal("resetall").executes(ctx -> adminResetAll(ctx, StringArgumentType.getString(ctx, "player"))))
                                 .then(Commands.literal("purge").executes(ctx -> adminPurge(ctx, StringArgumentType.getString(ctx, "player"))))));
     }
@@ -222,8 +309,8 @@ public final class MilestoneCommands {
     private static int summary(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
         ServerPlayer player = player(ctx);
         MilestoneData.PlayerData pd = dataOrNull(player);
-        Set<String> targets = Tracker.effectiveTargets(pd);
-        Map<String, MilestoneRecord> records = pd != null ? pd.records : Map.of();
+        Set<TargetKey> targets = Tracker.effectiveTargets(pd);
+        Map<TargetKey, MilestoneRecord> records = pd != null ? pd.records : Map.of();
         int done = (int) targets.stream().filter(records::containsKey).count();
         return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.summary",
                 Playtime.format(Playtime.currentTicks(player)), done, targets.size()));
@@ -235,34 +322,34 @@ public final class MilestoneCommands {
                 Playtime.format(Playtime.currentTicks(player))));
     }
 
-    private static int add(CommandContext<CommandSourceStack> ctx, String itemId) throws CommandSyntaxException {
-        return send(ctx, MilestoneService.addTarget(player(ctx), itemId).message());
+    private static int add(CommandContext<CommandSourceStack> ctx, String itemId, int count) throws CommandSyntaxException {
+        return send(ctx, MilestoneService.addTarget(player(ctx), itemId, count).message());
     }
 
-    private static int addHand(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
-        return send(ctx, MilestoneService.addHandTarget(player(ctx)).message());
+    private static int addHand(CommandContext<CommandSourceStack> ctx, int count) throws CommandSyntaxException {
+        return send(ctx, MilestoneService.addHandTarget(player(ctx), count).message());
     }
 
-    private static int remove(CommandContext<CommandSourceStack> ctx, String itemId) throws CommandSyntaxException {
-        return send(ctx, MilestoneService.removeTarget(player(ctx), itemId).message());
+    private static int remove(CommandContext<CommandSourceStack> ctx, String itemId, int count) throws CommandSyntaxException {
+        return send(ctx, MilestoneService.removeTarget(player(ctx), itemId, count).message());
     }
 
     private static int targets(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
         ServerPlayer player = player(ctx);
         MilestoneData.PlayerData pd = dataOrNull(player);
-        Set<String> targets = Tracker.effectiveTargets(pd);
+        Set<TargetKey> targets = Tracker.effectiveTargets(pd);
         if (targets.isEmpty()) {
             return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.no_targets"));
         }
-        Map<String, MilestoneRecord> records = pd != null ? pd.records : Map.of();
-        List<String> sorted = new ArrayList<>(targets);
-        sorted.sort(String::compareTo);
+        Map<TargetKey, MilestoneRecord> records = pd != null ? pd.records : Map.of();
+        List<TargetKey> sorted = new ArrayList<>(targets);
+        sorted.sort(TargetKey::compareTo);
         ctx.getSource().sendSuccess(() -> ServerLang.tr(player, "message.itemmilestonelog.targets_header", sorted.size()), false);
-        for (String id : sorted) {
-            MilestoneRecord rec = records.get(id);
+        for (TargetKey key : sorted) {
+            MilestoneRecord rec = records.get(key);
             Component line = rec != null
-                    ? ServerLang.tr(player, "message.itemmilestonelog.target_done", MilestoneService.itemName(id), Playtime.format(rec.playTicks()))
-                    : ServerLang.tr(player, "message.itemmilestonelog.target_pending", MilestoneService.itemName(id));
+                    ? ServerLang.tr(player, "message.itemmilestonelog.target_done", MilestoneService.targetDisplayName(key), Playtime.format(rec.playTicks()))
+                    : ServerLang.tr(player, "message.itemmilestonelog.target_pending", MilestoneService.targetDisplayName(key));
             ctx.getSource().sendSuccess(() -> line, false);
         }
         return sorted.size();
@@ -274,13 +361,13 @@ public final class MilestoneCommands {
         if (pd == null || pd.records.isEmpty()) {
             return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.no_records"));
         }
-        List<Map.Entry<String, MilestoneRecord>> entries = new ArrayList<>(pd.records.entrySet());
-        entries.sort(Comparator.comparingInt((Map.Entry<String, MilestoneRecord> e) -> e.getValue().playTicks())
+        List<Map.Entry<TargetKey, MilestoneRecord>> entries = new ArrayList<>(pd.records.entrySet());
+        entries.sort(Comparator.comparingInt((Map.Entry<TargetKey, MilestoneRecord> e) -> e.getValue().playTicks())
                 .thenComparing(Map.Entry::getKey));
         ctx.getSource().sendSuccess(() -> ServerLang.tr(player, "message.itemmilestonelog.records_header", entries.size()), false);
         for (var e : entries) {
             Component line = ServerLang.tr(player, "message.itemmilestonelog.target_done",
-                    MilestoneService.itemName(e.getKey()), Playtime.formatRecord(e.getValue()));
+                    MilestoneService.targetDisplayName(e.getKey()), Playtime.formatRecord(e.getValue()));
             ctx.getSource().sendSuccess(() -> line, false);
         }
         return entries.size();
@@ -339,8 +426,8 @@ public final class MilestoneCommands {
         return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_reloaded", Presets.names().size(), custom));
     }
 
-    private static int reset(CommandContext<CommandSourceStack> ctx, String itemId) throws CommandSyntaxException {
-        return send(ctx, MilestoneService.resetRecord(player(ctx), itemId).message());
+    private static int reset(CommandContext<CommandSourceStack> ctx, String itemId, int count) throws CommandSyntaxException {
+        return send(ctx, MilestoneService.resetRecord(player(ctx), itemId, count).message());
     }
 
     private static int resetAll(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
@@ -352,37 +439,38 @@ public final class MilestoneCommands {
     private static int firstsList(CommandContext<CommandSourceStack> ctx) {
         CommandSourceStack source = ctx.getSource();
         MilestoneData data = MilestoneData.get(source.getServer());
-        Map<String, WorldFirstRecord> map = data.worldFirsts();
+        Map<TargetKey, WorldFirstRecord> map = data.worldFirsts();
         if (map.isEmpty()) {
             return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.firsts_empty"));
         }
         List<WorldFirstRecord> sorted = new ArrayList<>(map.values());
         sorted.sort(Comparator.comparingLong(WorldFirstRecord::epochMillis)
                 .thenComparingInt(WorldFirstRecord::playTicks)
-                .thenComparing(WorldFirstRecord::itemId));
+                .thenComparing(WorldFirstRecord::targetKey));
         source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.firsts_header", sorted.size()), false);
         for (WorldFirstRecord wf : sorted) {
             String playerName = (wf.playerName() == null || wf.playerName().isEmpty())
                     ? wf.playerUuid().toString()
                     : wf.playerName();
             source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.firsts_entry",
-                    MilestoneService.itemName(wf.itemId()),
+                    MilestoneService.targetDisplayName(wf.targetKey()),
                     playerName,
                     Playtime.formatRecord(wf.toMilestoneRecord())), false);
         }
         return sorted.size();
     }
 
-    private static int firstsReset(CommandContext<CommandSourceStack> ctx, String itemId) {
+    private static int firstsReset(CommandContext<CommandSourceStack> ctx, String itemId, int count) {
         CommandSourceStack source = ctx.getSource();
         MilestoneData data = MilestoneData.get(source.getServer());
-        if (data.removeWorldFirst(itemId)) {
-            return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.firsts_reset_done", MilestoneService.itemName(itemId)));
+        TargetKey key = new TargetKey(itemId, count);
+        if (data.removeWorldFirst(key)) {
+            return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.firsts_reset_done", MilestoneService.targetDisplayName(key)));
         }
         if (!MilestoneService.isValidItemId(itemId)) {
             return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.invalid_item", itemId));
         }
-        return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.firsts_not_recorded", MilestoneService.itemName(itemId)));
+        return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.firsts_not_recorded", MilestoneService.targetDisplayName(key)));
     }
 
     private static int firstsResetAll(CommandContext<CommandSourceStack> ctx) {
@@ -559,13 +647,13 @@ public final class MilestoneCommands {
         if (pd.records.isEmpty()) {
             return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.admin_no_records", name));
         }
-        List<Map.Entry<String, MilestoneRecord>> entries = new ArrayList<>(pd.records.entrySet());
-        entries.sort(Comparator.comparingInt((Map.Entry<String, MilestoneRecord> e) -> e.getValue().playTicks())
+        List<Map.Entry<TargetKey, MilestoneRecord>> entries = new ArrayList<>(pd.records.entrySet());
+        entries.sort(Comparator.comparingInt((Map.Entry<TargetKey, MilestoneRecord> e) -> e.getValue().playTicks())
                 .thenComparing(Map.Entry::getKey));
         source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.admin_records_header", name, entries.size()), false);
         for (var e : entries) {
             source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.target_done",
-                    MilestoneService.itemName(e.getKey()), Playtime.formatRecord(e.getValue())), false);
+                    MilestoneService.targetDisplayName(e.getKey()), Playtime.formatRecord(e.getValue())), false);
         }
         return entries.size();
     }
@@ -578,24 +666,24 @@ public final class MilestoneCommands {
         }
         String name = displayNameFor(target.getKey(), target.getValue());
         MilestoneData.PlayerData pd = target.getValue();
-        Set<String> targets = Tracker.effectiveTargets(pd);
+        Set<TargetKey> targets = Tracker.effectiveTargets(pd);
         if (targets.isEmpty()) {
             return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.admin_no_targets", name));
         }
-        List<String> sorted = new ArrayList<>(targets);
-        sorted.sort(String::compareTo);
+        List<TargetKey> sorted = new ArrayList<>(targets);
+        sorted.sort(TargetKey::compareTo);
         source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.admin_targets_header", name, sorted.size()), false);
-        for (String id : sorted) {
-            MilestoneRecord rec = pd.records.get(id);
+        for (TargetKey key : sorted) {
+            MilestoneRecord rec = pd.records.get(key);
             Component line = rec != null
-                    ? ServerLang.tr(source, "message.itemmilestonelog.target_done", MilestoneService.itemName(id), Playtime.format(rec.playTicks()))
-                    : ServerLang.tr(source, "message.itemmilestonelog.target_pending", MilestoneService.itemName(id));
+                    ? ServerLang.tr(source, "message.itemmilestonelog.target_done", MilestoneService.targetDisplayName(key), Playtime.format(rec.playTicks()))
+                    : ServerLang.tr(source, "message.itemmilestonelog.target_pending", MilestoneService.targetDisplayName(key));
             source.sendSuccess(() -> line, false);
         }
         return sorted.size();
     }
 
-    private static int adminReset(CommandContext<CommandSourceStack> ctx, String query, String itemId) {
+    private static int adminReset(CommandContext<CommandSourceStack> ctx, String query, String itemId, int count) {
         CommandSourceStack source = ctx.getSource();
         Map.Entry<UUID, MilestoneData.PlayerData> target = resolveOrReport(source, query);
         if (target == null) {
@@ -603,18 +691,19 @@ public final class MilestoneCommands {
         }
         String name = displayNameFor(target.getKey(), target.getValue());
         MilestoneData data = MilestoneData.get(source.getServer());
-        if (target.getValue().records.remove(itemId) != null) {
+        TargetKey key = new TargetKey(itemId, count);
+        if (target.getValue().records.remove(key) != null) {
             data.setDirty();
             ServerPlayer online = source.getServer().getPlayerList().getPlayer(target.getKey());
             if (online != null) {
                 MilestoneService.syncPlayerIfOpen(online);
             }
-            return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.admin_reset_done", name, MilestoneService.itemName(itemId)));
+            return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.admin_reset_done", name, MilestoneService.targetDisplayName(key)));
         }
         if (!MilestoneService.isValidItemId(itemId)) {
             return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.invalid_item", itemId));
         }
-        return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.admin_not_recorded", name, MilestoneService.itemName(itemId)));
+        return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.admin_not_recorded", name, MilestoneService.targetDisplayName(key)));
     }
 
     private static int adminResetAll(CommandContext<CommandSourceStack> ctx, String query) {

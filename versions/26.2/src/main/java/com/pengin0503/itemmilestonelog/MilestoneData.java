@@ -4,6 +4,7 @@ import com.mojang.datafixers.util.Either;
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
+import com.pengin0503.itemmilestonelog.api.TargetKey;
 import com.pengin0503.itemmilestonelog.api.WorldFirstRecord;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.NbtAccounter;
@@ -29,8 +30,8 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Per-world storage: for each player, their personal target items and milestone records,
- * plus server-wide world-first records.
+ * Per-world storage: for each player, their personal target items (with quantities)
+ * and milestone records, plus server-wide world-first records.
  */
 public class MilestoneData extends SavedData {
     private static final Identifier DATA_ID = Identifier.fromNamespaceAndPath(ItemMilestoneLog.MOD_ID, "milestones");
@@ -40,8 +41,8 @@ public class MilestoneData extends SavedData {
 
     /** Per-player state. */
     public static final class PlayerData {
-        public final Set<String> targets = new LinkedHashSet<>();
-        public final Map<String, MilestoneRecord> records = new LinkedHashMap<>();
+        public final Set<TargetKey> targets = new LinkedHashSet<>();
+        public final Map<TargetKey, MilestoneRecord> records = new LinkedHashMap<>();
         public final Set<String> carriedFromCreative = new LinkedHashSet<>();
         public String lastKnownName = "";
         public boolean firstJoinHintShown = false;
@@ -57,12 +58,24 @@ public class MilestoneData extends SavedData {
             Codec.LONG.optionalFieldOf("epoch", MilestoneRecord.UNKNOWN_EPOCH).forGetter(MilestoneRecord::epochMillis)
     ).apply(instance, MilestoneRecord::new));
 
-    /** Decodes both legacy 1.0.0 plain integers and 1.0.1 compound objects. */
-    public static final Codec<MilestoneRecord> RECORD_CODEC = Codec.either(Codec.INT, RECORD_OBJECT_CODEC)
-            .xmap(
-                    either -> either.map(MilestoneRecord::legacy, r -> r),
-                    Either::right
-            );
+    /**
+     * Decodes all three record formats under {@code records[itemId]}:
+     * 1.0.0 plain int (count = 1), early 1.0.1 compound {ticks, day, epoch} (count = 1),
+     * and quantity map { "<count>": {ticks, day, epoch}, ... }.
+     */
+    private static final Codec<Map<String, MilestoneRecord>> ITEM_RECORDS_CODEC = Codec.either(
+            Codec.INT,
+            Codec.either(RECORD_OBJECT_CODEC, Codec.unboundedMap(Codec.STRING, RECORD_OBJECT_CODEC))
+    ).xmap(
+            either -> either.map(
+                    ticks -> Map.of("1", MilestoneRecord.legacy(ticks)),
+                    inner -> inner.map(
+                            single -> Map.of("1", single),
+                            countMap -> countMap
+                    )
+            ),
+            countMap -> Either.right(Either.right(countMap))
+    );
 
     private static final Codec<WorldFirstEntry> WORLD_FIRST_CODEC = RecordCodecBuilder.create(instance -> instance.group(
             Codec.STRING.fieldOf("uuid").forGetter(WorldFirstEntry::uuid),
@@ -72,13 +85,52 @@ public class MilestoneData extends SavedData {
             Codec.LONG.optionalFieldOf("epoch", MilestoneRecord.UNKNOWN_EPOCH).forGetter(WorldFirstEntry::epoch)
     ).apply(instance, WorldFirstEntry::new));
 
+    /**
+     * Decodes both early 1.0.1 worldFirsts (itemId -> entry, count = 1)
+     * and quantity worldFirsts (itemId -> { "<count>": entry, ... }).
+     */
+    private static final Codec<Map<String, WorldFirstEntry>> ITEM_WORLD_FIRSTS_CODEC = Codec.either(
+            WORLD_FIRST_CODEC,
+            Codec.unboundedMap(Codec.STRING, WORLD_FIRST_CODEC)
+    ).xmap(
+            either -> either.map(
+                    single -> Map.of("1", single),
+                    countMap -> countMap
+            ),
+            Either::right
+    );
+
+    private static List<String> encodeTargets(PlayerData pd) {
+        if (pd.targets.isEmpty()) {
+            return List.of();
+        }
+        List<String> list = new ArrayList<>(pd.targets.size());
+        for (TargetKey key : pd.targets) {
+            list.add(key.toEncodedString());
+        }
+        return list;
+    }
+
+    private static Map<String, Map<String, MilestoneRecord>> encodeRecords(PlayerData pd) {
+        if (pd.records.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Map<String, MilestoneRecord>> nested = new LinkedHashMap<>();
+        for (Map.Entry<TargetKey, MilestoneRecord> e : pd.records.entrySet()) {
+            TargetKey key = e.getKey();
+            nested.computeIfAbsent(key.itemId(), k -> new LinkedHashMap<>())
+                    .put(String.valueOf(key.count()), e.getValue());
+        }
+        return nested;
+    }
+
     private static final Codec<PlayerData> PLAYER_DATA_CODEC = RecordCodecBuilder.create(instance -> instance.group(
             Codec.STRING.listOf().optionalFieldOf("targets", List.of())
-                    .forGetter(pd -> new ArrayList<>(pd.targets)),
-            Codec.unboundedMap(Codec.STRING, RECORD_CODEC).optionalFieldOf("records", Map.of())
-                    .forGetter(pd -> pd.records),
+                    .forGetter(MilestoneData::encodeTargets),
+            Codec.unboundedMap(Codec.STRING, ITEM_RECORDS_CODEC).optionalFieldOf("records", Map.of())
+                    .forGetter(MilestoneData::encodeRecords),
             Codec.STRING.listOf().optionalFieldOf("carriedFromCreative", List.of())
-                    .forGetter(pd -> new ArrayList<>(pd.carriedFromCreative)),
+                    .forGetter(pd -> pd.carriedFromCreative.isEmpty() ? List.of() : new ArrayList<>(pd.carriedFromCreative)),
             Codec.STRING.optionalFieldOf("lastKnownName", "")
                     .forGetter(pd -> pd.lastKnownName != null ? pd.lastKnownName : ""),
             Codec.BOOL.optionalFieldOf("firstJoinHintShown", false)
@@ -87,8 +139,30 @@ public class MilestoneData extends SavedData {
                     .forGetter(pd -> pd.muteBroadcasts)
     ).apply(instance, (targets, records, carriedFromCreative, lastKnownName, firstJoinHintShown, muteBroadcasts) -> {
         PlayerData pd = new PlayerData();
-        pd.targets.addAll(targets);
-        pd.records.putAll(records);
+        for (String raw : targets) {
+            TargetKey parsed = TargetKey.tryParseEncoded(raw);
+            if (parsed != null) {
+                pd.targets.add(parsed);
+            } else {
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid target entry '{}' in SavedData", raw);
+            }
+        }
+        for (Map.Entry<String, Map<String, MilestoneRecord>> itemEntry : records.entrySet()) {
+            String itemId = itemEntry.getKey();
+            if (itemId == null || itemId.isEmpty() || itemId.indexOf('#') >= 0) {
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid record item key '{}' in SavedData", itemId);
+                continue;
+            }
+            for (Map.Entry<String, MilestoneRecord> countEntry : itemEntry.getValue().entrySet()) {
+                int count = TargetKey.tryParseCount(countEntry.getKey());
+                if (count < TargetKey.MIN_COUNT) {
+                    ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid record count '{}' for '{}' in SavedData",
+                            countEntry.getKey(), itemId);
+                    continue;
+                }
+                pd.records.put(new TargetKey(itemId, count), countEntry.getValue());
+            }
+        }
         pd.carriedFromCreative.addAll(carriedFromCreative);
         pd.lastKnownName = lastKnownName;
         pd.firstJoinHintShown = firstJoinHintShown;
@@ -99,8 +173,8 @@ public class MilestoneData extends SavedData {
     public static final Codec<MilestoneData> CODEC = RecordCodecBuilder.create(instance -> instance.group(
             Codec.unboundedMap(Codec.STRING, PLAYER_DATA_CODEC).optionalFieldOf("players", Map.of())
                     .forGetter(MilestoneData::playersByStringKey),
-            Codec.unboundedMap(Codec.STRING, WORLD_FIRST_CODEC).optionalFieldOf("worldFirsts", Map.of())
-                    .forGetter(MilestoneData::worldFirstsAsEntries)
+            Codec.unboundedMap(Codec.STRING, ITEM_WORLD_FIRSTS_CODEC).optionalFieldOf("worldFirsts", Map.of())
+                    .forGetter(MilestoneData::worldFirstsAsNestedMap)
     ).apply(instance, MilestoneData::fromCodec));
 
     private static final SavedDataType<MilestoneData> TYPE = new SavedDataType<>(
@@ -110,7 +184,7 @@ public class MilestoneData extends SavedData {
     );
 
     private final Map<UUID, PlayerData> players = new LinkedHashMap<>();
-    private final Map<String, WorldFirstRecord> worldFirsts = new LinkedHashMap<>();
+    private final Map<TargetKey, WorldFirstRecord> worldFirsts = new LinkedHashMap<>();
 
     public static MilestoneData get(MinecraftServer server) {
         var storage = server.getDataStorage();
@@ -169,20 +243,21 @@ public class MilestoneData extends SavedData {
     }
 
     @Nullable
-    public WorldFirstRecord worldFirstOrNull(String itemId) {
-        return worldFirsts.get(itemId);
+    public WorldFirstRecord worldFirstOrNull(TargetKey key) {
+        return worldFirsts.get(key);
     }
 
-    public Map<String, WorldFirstRecord> worldFirsts() {
+    public Map<TargetKey, WorldFirstRecord> worldFirsts() {
         return Collections.unmodifiableMap(worldFirsts);
     }
 
-    public boolean recordWorldFirstIfAbsent(String itemId, UUID playerUuid, String playerName, MilestoneRecord record) {
-        if (worldFirsts.containsKey(itemId)) {
+    public boolean recordWorldFirstIfAbsent(TargetKey key, UUID playerUuid, String playerName, MilestoneRecord record) {
+        if (worldFirsts.containsKey(key)) {
             return false;
         }
-        worldFirsts.put(itemId, new WorldFirstRecord(
-                itemId,
+        worldFirsts.put(key, new WorldFirstRecord(
+                key.itemId(),
+                key.count(),
                 playerUuid,
                 playerName != null ? playerName : "",
                 record.playTicks(),
@@ -193,8 +268,8 @@ public class MilestoneData extends SavedData {
         return true;
     }
 
-    public boolean removeWorldFirst(String itemId) {
-        if (worldFirsts.remove(itemId) != null) {
+    public boolean removeWorldFirst(TargetKey key) {
+        if (worldFirsts.remove(key) != null) {
             setDirty();
             return true;
         }
@@ -211,6 +286,9 @@ public class MilestoneData extends SavedData {
     }
 
     private Map<String, PlayerData> playersByStringKey() {
+        if (players.isEmpty()) {
+            return Map.of();
+        }
         Map<String, PlayerData> map = new LinkedHashMap<>(players.size());
         for (Map.Entry<UUID, PlayerData> e : players.entrySet()) {
             map.put(e.getKey().toString(), e.getValue());
@@ -218,22 +296,28 @@ public class MilestoneData extends SavedData {
         return map;
     }
 
-    private Map<String, WorldFirstEntry> worldFirstsAsEntries() {
-        Map<String, WorldFirstEntry> map = new LinkedHashMap<>(worldFirsts.size());
-        for (Map.Entry<String, WorldFirstRecord> e : worldFirsts.entrySet()) {
-            WorldFirstRecord wf = e.getValue();
-            map.put(e.getKey(), new WorldFirstEntry(
-                    wf.playerUuid().toString(),
-                    wf.playerName(),
-                    wf.playTicks(),
-                    wf.day(),
-                    wf.epochMillis()
-            ));
+    private Map<String, Map<String, WorldFirstEntry>> worldFirstsAsNestedMap() {
+        if (worldFirsts.isEmpty()) {
+            return Map.of();
         }
-        return map;
+        Map<String, Map<String, WorldFirstEntry>> nested = new LinkedHashMap<>();
+        for (Map.Entry<TargetKey, WorldFirstRecord> e : worldFirsts.entrySet()) {
+            TargetKey key = e.getKey();
+            WorldFirstRecord wf = e.getValue();
+            nested.computeIfAbsent(key.itemId(), k -> new LinkedHashMap<>())
+                    .put(String.valueOf(key.count()), new WorldFirstEntry(
+                            wf.playerUuid().toString(),
+                            wf.playerName(),
+                            wf.playTicks(),
+                            wf.day(),
+                            wf.epochMillis()
+                    ));
+        }
+        return nested;
     }
 
-    private static MilestoneData fromCodec(Map<String, PlayerData> rawPlayers, Map<String, WorldFirstEntry> rawFirsts) {
+    private static MilestoneData fromCodec(Map<String, PlayerData> rawPlayers,
+                                           Map<String, Map<String, WorldFirstEntry>> rawFirsts) {
         MilestoneData data = new MilestoneData();
         for (Map.Entry<String, PlayerData> e : rawPlayers.entrySet()) {
             UUID uuid;
@@ -244,16 +328,29 @@ public class MilestoneData extends SavedData {
             }
             data.players.put(uuid, e.getValue());
         }
-        for (Map.Entry<String, WorldFirstEntry> e : rawFirsts.entrySet()) {
-            WorldFirstEntry wf = e.getValue();
-            UUID uuid;
-            try {
-                uuid = UUID.fromString(wf.uuid());
-            } catch (IllegalArgumentException ignored) {
+        for (Map.Entry<String, Map<String, WorldFirstEntry>> itemEntry : rawFirsts.entrySet()) {
+            String itemId = itemEntry.getKey();
+            if (itemId == null || itemId.isEmpty() || itemId.indexOf('#') >= 0) {
                 continue;
             }
-            data.worldFirsts.put(e.getKey(), new WorldFirstRecord(
-                    e.getKey(), uuid, wf.name(), wf.ticks(), wf.day(), wf.epoch()));
+            for (Map.Entry<String, WorldFirstEntry> countEntry : itemEntry.getValue().entrySet()) {
+                int count = TargetKey.tryParseCount(countEntry.getKey());
+                if (count < TargetKey.MIN_COUNT) {
+                    ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid worldFirst count '{}' for '{}' in SavedData",
+                            countEntry.getKey(), itemId);
+                    continue;
+                }
+                WorldFirstEntry wf = countEntry.getValue();
+                UUID uuid;
+                try {
+                    uuid = UUID.fromString(wf.uuid());
+                } catch (IllegalArgumentException ignored) {
+                    continue;
+                }
+                TargetKey key = new TargetKey(itemId, count);
+                data.worldFirsts.put(key, new WorldFirstRecord(
+                        itemId, count, uuid, wf.name(), wf.ticks(), wf.day(), wf.epoch()));
+            }
         }
         return data;
     }

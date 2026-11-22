@@ -341,11 +341,61 @@ async function freshBotFlow(rcon) {
     await command(session, 'milestonelog reset minecraft:dirt', /^No record for: Dirt$/);
   });
 
+  await quantityTargetsFlow(session, rcon);
   await creativeModeFlow(session, rcon);
   await multiPlayerAndPresetManagementFlow(session, rcon);
 
   session.bot.quit();
   await sleep(1000);
+}
+
+async function quantityTargetsFlow(session, rcon) {
+  const scanMs = (SCAN_SECONDS + 5) * 1000;
+  const oneScanMs = (SCAN_SECONDS + 2) * 1000;
+
+  await check('Quantity: x5 target is not recorded at 4 items and is recorded at 5 items', async () => {
+    await command(session, 'milestonelog add minecraft:diamond 5', /^Now tracking: Diamond ×5$/);
+    await command(session, 'milestonelog add minecraft:diamond 5', /^Already tracking: Diamond ×5$/);
+
+    const from4 = session.messages.length;
+    await rcon.command(`give ${BOT_NAME} minecraft:diamond 4`);
+    await sleep(oneScanMs);
+    assertNotRecorded(session, from4, 'Diamond ×5');
+
+    const from5 = session.messages.length;
+    await rcon.command(`give ${BOT_NAME} minecraft:diamond 1`);
+    const hit = await waitFor(session, from5, /^★ Milestone recorded: Diamond ×5 at playtime \d+h \d{2}m \d{2}s$/, scanMs);
+    assertFallback(hit, 'message.itemmilestonelog.recorded');
+
+    await rcon.command(`clear ${BOT_NAME} minecraft:diamond`);
+    await command(session, 'milestonelog reset minecraft:diamond 5', /^Record cleared: Diamond ×5/);
+    await command(session, 'milestonelog remove minecraft:diamond 5', /^Stopped tracking: Diamond ×5$/);
+  });
+
+  await check('Quantity: coexisting x1 and x100 targets are both recorded when 100 are obtained at once', async () => {
+    await command(session, 'milestonelog add minecraft:emerald', /^Now tracking: Emerald$/);
+    await command(session, 'milestonelog add minecraft:emerald 100', /^Now tracking: Emerald ×100$/);
+
+    const from = session.messages.length;
+    await rcon.command(`give ${BOT_NAME} minecraft:emerald 100`);
+    await waitFor(session, from, /^★ Milestone recorded: Emerald at playtime /, scanMs);
+    await waitFor(session, from, /^★ Milestone recorded: Emerald ×100 at playtime /, scanMs);
+
+    const lFrom = session.messages.length;
+    await say(session, '/milestonelog list');
+    await waitFor(session, lFrom, /^✔ Emerald — \d+h \d{2}m \d{2}s \(Day \d+, \d{4}-\d{2}-\d{2}\)$/);
+    await waitFor(session, lFrom, /^✔ Emerald ×100 — \d+h \d{2}m \d{2}s \(Day \d+, \d{4}-\d{2}-\d{2}\)$/);
+
+    const fFrom = session.messages.length;
+    await say(session, '/milestonelog firsts');
+    await waitFor(session, fFrom, /^★ Emerald ×100 — ImlBot — \d+h \d{2}m \d{2}s \(Day \d+, \d{4}-\d{2}-\d{2}\)$/);
+
+    await rcon.command(`clear ${BOT_NAME} minecraft:emerald`);
+    await command(session, 'milestonelog reset minecraft:emerald', /^Record cleared: Emerald/);
+    await command(session, 'milestonelog reset minecraft:emerald 100', /^Record cleared: Emerald ×100/);
+    await command(session, 'milestonelog remove minecraft:emerald', /^Stopped tracking: Emerald$/);
+    await command(session, 'milestonelog remove minecraft:emerald 100', /^Stopped tracking: Emerald ×100$/);
+  });
 }
 
 async function creativeModeFlow(session, rcon) {
@@ -518,13 +568,18 @@ async function restartBotFlow(rcon) {
 }
 
 async function migrateBeforeFlow(rcon) {
+  const scanMs = (SCAN_SECONDS + 5) * 1000;
   const session = await joinBot(BOT_NAME);
   await check('1.21.1: a record to carry over', async () => {
     await command(session, 'milestonelog add minecraft:cobblestone', /^Now tracking: Cobblestone$/);
     await command(session, 'milestonelog add minecraft:dirt', /^Now tracking: Dirt$/);
+    await command(session, 'milestonelog add minecraft:iron_nugget 5', /^Now tracking: Iron Nugget ×5$/);
     const from = session.messages.length;
     await summonAndPickUp(rcon, 'minecraft:cobblestone');
     await waitFor(session, from, /^★ Milestone recorded: Cobblestone at playtime /, 4000);
+    const qFrom = session.messages.length;
+    await rcon.command(`give ${BOT_NAME} minecraft:iron_nugget 5`);
+    await waitFor(session, qFrom, /^★ Milestone recorded: Iron Nugget ×5 at playtime /, scanMs);
   });
   session.bot.quit();
   await sleep(1000);
@@ -535,17 +590,20 @@ async function migrateAfterFlow() {
   await check('26.1.2: the targets, record, and worldFirst made by 1.21.1 are there', async () => {
     const from = session.messages.length;
     await say(session, '/milestonelog targets');
-    await waitFor(session, from, /^Target items \(2\):$/);
+    await waitFor(session, from, /^Target items \(3\):$/);
     await waitFor(session, from, /^✔ Cobblestone — \d+h \d{2}m \d{2}s$/);
+    await waitFor(session, from, /^✔ Iron Nugget ×5 — \d+h \d{2}m \d{2}s$/);
     await waitFor(session, from, /^… Dirt — not yet obtained$/);
 
     const lFrom = session.messages.length;
     await say(session, '/milestonelog list');
     await waitFor(session, lFrom, /^✔ Cobblestone — \d+h \d{2}m \d{2}s \(Day \d+, \d{4}-\d{2}-\d{2}\)$/);
+    await waitFor(session, lFrom, /^✔ Iron Nugget ×5 — \d+h \d{2}m \d{2}s \(Day \d+, \d{4}-\d{2}-\d{2}\)$/);
 
     const fFrom = session.messages.length;
     await say(session, '/milestonelog firsts');
     await waitFor(session, fFrom, /^★ Cobblestone — ImlBot — \d+h \d{2}m \d{2}s \(Day \d+, \d{4}-\d{2}-\d{2}\)$/);
+    await waitFor(session, fFrom, /^★ Iron Nugget ×5 — ImlBot — \d+h \d{2}m \d{2}s \(Day \d+, \d{4}-\d{2}-\d{2}\)$/);
   });
   session.bot.quit();
   await sleep(1000);

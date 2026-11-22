@@ -2,19 +2,19 @@
   "homepage": "https://www.curseforge.com/minecraft/mc-mods/item-milestone-log",
   "1.21.1": {
     "1.0.0": "Initial release.",
-    "1.0.1": "Added in-game Day and real date to records, world-first tracking, obtainment sound, Discord webhook, JSON export/import, custom presets, OP admin commands, join tip, broadcast mute, per-player vanilla language fallback, and public API."
+    "1.0.1": "Added quantity-based milestone targets (1-1,000,000), in-game Day and real date to records, world-first tracking, obtainment sound, Discord webhook, JSON export/import, custom presets, OP admin commands, join tip, broadcast mute, per-player vanilla language fallback, and public API."
   },
   "26.1.2": {
     "1.0.0": "Initial release.",
-    "1.0.1": "Added in-game Day and real date to records, world-first tracking, obtainment sound, Discord webhook, JSON export/import, custom presets, OP admin commands, join tip, broadcast mute, per-player vanilla language fallback, and public API."
+    "1.0.1": "Added quantity-based milestone targets (1-1,000,000), in-game Day and real date to records, world-first tracking, obtainment sound, Discord webhook, JSON export/import, custom presets, OP admin commands, join tip, broadcast mute, per-player vanilla language fallback, and public API."
   },
   "26.2": {
     "1.0.0": "Initial release.",
-    "1.0.1": "Added in-game Day and real date to records, world-first tracking, obtainment sound, Discord webhook, JSON export/import, custom presets, OP admin commands, join tip, broadcast mute, per-player vanilla language fallback, and public API."
+    "1.0.1": "Added quantity-based milestone targets (1-1,000,000), in-game Day and real date to records, world-first tracking, obtainment sound, Discord webhook, JSON export/import, custom presets, OP admin commands, join tip, broadcast mute, per-player vanilla language fallback, and public API."
   },
   "26.3": {
     "1.0.0": "Initial release.",
-    "1.0.1": "Added in-game Day and real date to records, world-first tracking, obtainment sound, Discord webhook, JSON export/import, custom presets, OP admin commands, join tip, broadcast mute, per-player vanilla language fallback, and public API."
+    "1.0.1": "Added quantity-based milestone targets (1-1,000,000), in-game Day and real date to records, world-first tracking, obtainment sound, Discord webhook, JSON export/import, custom presets, OP admin commands, join tip, broadcast mute, per-player vanilla language fallback, and public API."
   },
   "promos": {
     "1.21.1-latest": "1.0.1",

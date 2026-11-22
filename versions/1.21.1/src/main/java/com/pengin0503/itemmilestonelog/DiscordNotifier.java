@@ -2,6 +2,7 @@ package com.pengin0503.itemmilestonelog;
 
 import com.google.gson.JsonObject;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
+import com.pengin0503.itemmilestonelog.api.TargetKey;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -29,7 +30,7 @@ public final class DiscordNotifier {
     private DiscordNotifier() {
     }
 
-    public static void notifyMilestone(String playerName, String itemId, MilestoneRecord record, boolean worldFirst) {
+    public static void notifyMilestone(String playerName, TargetKey target, MilestoneRecord record, boolean worldFirst) {
         String url = Config.DISCORD_WEBHOOK_URL.get();
         if (url == null || url.isBlank()) {
             return;
@@ -53,9 +54,10 @@ public final class DiscordNotifier {
         }
 
         String formattedTime = Playtime.formatRecord(record);
+        String itemLabel = target.formatDisplayId();
         String content = worldFirst
-                ? String.format("★ [World First] %s obtained %s at %s", playerName, itemId, formattedTime)
-                : String.format("★ Milestone recorded: %s obtained %s at %s", playerName, itemId, formattedTime);
+                ? String.format("★ [World First] %s obtained %s at %s", playerName, itemLabel, formattedTime)
+                : String.format("★ Milestone recorded: %s obtained %s at %s", playerName, itemLabel, formattedTime);
 
         JsonObject body = new JsonObject();
         body.addProperty("content", content);

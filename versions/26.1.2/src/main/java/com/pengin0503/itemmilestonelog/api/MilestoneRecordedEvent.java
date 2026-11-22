@@ -12,13 +12,19 @@ import net.neoforged.bus.api.Event;
 public class MilestoneRecordedEvent extends Event {
     private final ServerPlayer player;
     private final String itemId;
+    private final int count;
     private final int playTicks;
     private final long day;
     private final long epochMillis;
 
     public MilestoneRecordedEvent(ServerPlayer player, String itemId, int playTicks, long day, long epochMillis) {
+        this(player, itemId, TargetKey.MIN_COUNT, playTicks, day, epochMillis);
+    }
+
+    public MilestoneRecordedEvent(ServerPlayer player, String itemId, int count, int playTicks, long day, long epochMillis) {
         this.player = player;
         this.itemId = itemId;
+        this.count = count;
         this.playTicks = playTicks;
         this.day = day;
         this.epochMillis = epochMillis;
@@ -30,6 +36,14 @@ public class MilestoneRecordedEvent extends Event {
 
     public String getItemId() {
         return itemId;
+    }
+
+    public int getCount() {
+        return count;
+    }
+
+    public TargetKey getTargetKey() {
+        return new TargetKey(itemId, count);
     }
 
     public int getPlayTicks() {

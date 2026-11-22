@@ -2,6 +2,7 @@ package com.pengin0503.itemmilestonelog.network;
 
 import com.pengin0503.itemmilestonelog.ItemMilestoneLog;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
+import com.pengin0503.itemmilestonelog.api.TargetKey;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.ComponentSerialization;
@@ -20,7 +21,7 @@ import java.util.Map;
  */
 public record SyncMilestonesPayload(
         List<TargetEntry> targets,
-        Map<String, MilestoneRecord> records,
+        Map<TargetKey, MilestoneRecord> records,
         int currentPlaytimeTicks,
         List<PresetEntry> presets,
         boolean canManagePresets,
@@ -38,14 +39,17 @@ public record SyncMilestonesPayload(
         buf.writeVarInt(payload.targets.size());
         for (TargetEntry entry : payload.targets) {
             buf.writeUtf(entry.itemId());
+            buf.writeVarInt(entry.count());
             buf.writeBoolean(entry.personal());
             buf.writeBoolean(entry.defaultTarget());
         }
 
         buf.writeVarInt(payload.records.size());
-        for (Map.Entry<String, MilestoneRecord> e : payload.records.entrySet()) {
+        for (Map.Entry<TargetKey, MilestoneRecord> e : payload.records.entrySet()) {
+            TargetKey key = e.getKey();
             MilestoneRecord rec = e.getValue();
-            buf.writeUtf(e.getKey());
+            buf.writeUtf(key.itemId());
+            buf.writeVarInt(key.count());
             buf.writeVarInt(rec.playTicks());
             buf.writeLong(rec.day());
             buf.writeLong(rec.epochMillis());
@@ -76,19 +80,25 @@ public record SyncMilestonesPayload(
         List<TargetEntry> targets = new ArrayList<>(targetCount);
         for (int i = 0; i < targetCount; i++) {
             String itemId = buf.readUtf();
+            int count = buf.readVarInt();
             boolean personal = buf.readBoolean();
             boolean defaultTarget = buf.readBoolean();
-            targets.add(new TargetEntry(itemId, personal, defaultTarget));
+            if (TargetKey.isValidCount(count)) {
+                targets.add(new TargetEntry(itemId, count, personal, defaultTarget));
+            }
         }
 
         int recordCount = buf.readVarInt();
-        Map<String, MilestoneRecord> records = new LinkedHashMap<>(recordCount);
+        Map<TargetKey, MilestoneRecord> records = new LinkedHashMap<>(recordCount);
         for (int i = 0; i < recordCount; i++) {
             String itemId = buf.readUtf();
+            int count = buf.readVarInt();
             int ticks = buf.readVarInt();
             long day = buf.readLong();
             long epoch = buf.readLong();
-            records.put(itemId, new MilestoneRecord(ticks, day, epoch));
+            if (TargetKey.isValidCount(count)) {
+                records.put(new TargetKey(itemId, count), new MilestoneRecord(ticks, day, epoch));
+            }
         }
 
         int playtime = buf.readVarInt();

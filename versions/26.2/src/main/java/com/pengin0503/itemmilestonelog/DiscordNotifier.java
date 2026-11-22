@@ -2,6 +2,7 @@ package com.pengin0503.itemmilestonelog;
 
 import com.google.gson.JsonObject;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
+import com.pengin0503.itemmilestonelog.api.TargetKey;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -15,6 +16,10 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Asynchronous Discord webhook sender for F5.
+ *
+ * <p>Uses a dedicated single-thread executor and {@link HttpClient} so server ticks
+ * are never blocked. The configured webhook URL is treated as a secret and is never
+ * printed to logs, chat, or exception messages.
  */
 public final class DiscordNotifier {
     private static final Duration TIMEOUT = Duration.ofSeconds(10);
@@ -25,7 +30,7 @@ public final class DiscordNotifier {
     private DiscordNotifier() {
     }
 
-    public static void notifyMilestone(String playerName, String itemId, MilestoneRecord record, boolean worldFirst) {
+    public static void notifyMilestone(String playerName, TargetKey target, MilestoneRecord record, boolean worldFirst) {
         String url = Config.DISCORD_WEBHOOK_URL.get();
         if (url == null || url.isBlank()) {
             return;
@@ -49,9 +54,10 @@ public final class DiscordNotifier {
         }
 
         String formattedTime = Playtime.formatRecord(record);
+        String itemLabel = target.formatDisplayId();
         String content = worldFirst
-                ? String.format("★ [World First] %s obtained %s at %s", playerName, itemId, formattedTime)
-                : String.format("★ Milestone recorded: %s obtained %s at %s", playerName, itemId, formattedTime);
+                ? String.format("★ [World First] %s obtained %s at %s", playerName, itemLabel, formattedTime)
+                : String.format("★ Milestone recorded: %s obtained %s at %s", playerName, itemLabel, formattedTime);
 
         JsonObject body = new JsonObject();
         body.addProperty("content", content);
@@ -81,6 +87,7 @@ public final class DiscordNotifier {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         } catch (Exception e) {
+            // Never log e.getMessage() or the exception itself in case it embeds the webhook URL.
             ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Discord webhook request failed ({})",
                     e.getClass().getSimpleName());
         }
