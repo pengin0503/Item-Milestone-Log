@@ -12,7 +12,7 @@ public final class Config {
     public static final ModConfigSpec.ConfigValue<List<? extends String>> DEFAULT_TARGETS = BUILDER
             .comment("Item IDs that every player tracks by default, e.g. [\"minecraft:netherite_ingot\"].",
                     "Players can add their own targets on top of these with /milestonelog add.")
-            .defineListAllowEmpty("defaultTargets", List.of(), () -> "", Config::validateItemId);
+            .defineListAllowEmpty("defaultTargets", List.of(), () -> "minecraft:diamond", Config::validateItemId);
 
     /** How often (in ticks) each player's inventory is scanned for tracked items. */
     public static final ModConfigSpec.IntValue SCAN_INTERVAL_TICKS = BUILDER
@@ -28,6 +28,13 @@ public final class Config {
     public static final ModConfigSpec.BooleanValue BROADCAST = BUILDER
             .comment("Broadcast milestone records to all online players (in addition to the player themself).")
             .define("broadcastMilestones", false);
+
+    /** Record nothing in creative or spectator mode (see Tracker for items carried out of it). */
+    public static final ModConfigSpec.BooleanValue IGNORE_CREATIVE_AND_SPECTATOR = BUILDER
+            .comment("Do not record anything while a player is in creative or spectator mode.",
+                    "Items a player still carries when switching back to survival or adventure are not",
+                    "recorded either, until that item is no longer in the player's inventory.")
+            .define("ignoreCreativeAndSpectator", true);
 
     static final ModConfigSpec SPEC = BUILDER.build();
 

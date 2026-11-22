@@ -35,6 +35,11 @@ public class MilestoneData extends SavedData {
         public final Set<String> targets = new LinkedHashSet<>();
         /** Item ID -> cumulative playtime ticks when first obtained. */
         public final Map<String, Integer> records = new LinkedHashMap<>();
+        /**
+         * Item IDs the player still carried when leaving creative or spectator mode.
+         * They are not recorded until they have left the inventory (see Tracker).
+         */
+        public final Set<String> carriedFromCreative = new LinkedHashSet<>();
     }
 
     private final Map<UUID, PlayerData> players = new LinkedHashMap<>();
@@ -76,6 +81,9 @@ public class MilestoneData extends SavedData {
             for (String itemId : records.getAllKeys()) {
                 pd.records.put(itemId, records.getInt(itemId));
             }
+            for (Tag t : entry.getList("carriedFromCreative", Tag.TAG_STRING)) {
+                pd.carriedFromCreative.add(t.getAsString());
+            }
             data.players.put(uuid, pd);
         }
         return data;
@@ -96,6 +104,13 @@ public class MilestoneData extends SavedData {
                 records.putInt(r.getKey(), r.getValue());
             }
             entry.put("records", records);
+            if (!e.getValue().carriedFromCreative.isEmpty()) {
+                ListTag carried = new ListTag();
+                for (String id : e.getValue().carriedFromCreative) {
+                    carried.add(StringTag.valueOf(id));
+                }
+                entry.put("carriedFromCreative", carried);
+            }
             all.put(e.getKey().toString(), entry);
         }
         tag.put("players", all);

@@ -36,7 +36,10 @@ displayName="${mod_name}" #mandatory
 displayURL="https://github.com/pengin0503/Item-Milestone-Log" #optional
 
 # A file name (in the root of the mod JAR) containing a logo for display
-#logoFile="logo.png" #optional (logo.png is added in release builds; see repository root logo-512.png)
+logoFile="logo.png" #optional
+
+# Pixel-art logo: scale it without blurring in the mod list
+logoBlur=false #optional
 
 # The authors of the mod, displayed in the mod UI (optional)
 authors="pengin0503"
@@ -45,10 +48,9 @@ authors="pengin0503"
 description='''
 Records the cumulative playtime (the vanilla Time Played statistic) at which
 you first obtain each of your own target items. Set targets per player with
-/milestonelog commands, get a chat notification the moment a goal item first
-enters your inventory, and look back at exactly how many hours each
-milestone took - perfect for long modpack goals such as the ATM Star in
-All the Mods 10. Server-side behaviour: vanilla clients can join.
+/milestonelog commands or the in-game GUI, get a chat notification the moment a
+goal item first enters your inventory, and look back at exactly how many hours
+each milestone took. Optional client installation: vanilla clients can join.
 '''
 
 # The [[mixins]] block allows you to declare your mixin config to FML so that it gets loaded.
@@ -71,7 +73,7 @@ All the Mods 10. Server-side behaviour: vanilla clients can join.
     # Optional field describing why the dependency is required or why it is incompatible
     # reason="..."
     # The version range of the dependency
-    versionRange="[${neo_version},)" #mandatory
+    versionRange="${neo_version_range}" #mandatory
     # An ordering relationship for the dependency.
     # BEFORE - This mod is loaded BEFORE the dependency
     # AFTER - This mod is loaded AFTER the dependency

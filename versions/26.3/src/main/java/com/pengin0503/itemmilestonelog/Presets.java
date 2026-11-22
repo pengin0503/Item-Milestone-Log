@@ -30,6 +30,13 @@ public final class Presets {
             )
     );
 
+    private static final List<String> SORTED_NAMES = PRESETS.keySet().stream().sorted().toList();
+
     private Presets() {
+    }
+
+    /** Preset names in a stable (alphabetical) order for suggestions, messages and the GUI. */
+    public static List<String> names() {
+        return SORTED_NAMES;
     }
 }

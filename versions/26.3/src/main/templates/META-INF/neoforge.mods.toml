@@ -6,6 +6,8 @@ modId="${mod_id}"
 version="${mod_version}"
 displayName="${mod_name}"
 displayURL="https://github.com/pengin0503/Item-Milestone-Log"
+logoFile="logo.png"
+logoBlur=false
 authors="pengin0503"
 description='''
 Records the cumulative playtime (the vanilla Time Played statistic) at which
@@ -18,7 +20,7 @@ each milestone took. Optional client installation: vanilla clients can join.
 [[dependencies.${mod_id}]]
     modId="neoforge"
     type="required"
-    versionRange="[${neo_version},)"
+    versionRange="${neo_version_range}"
     ordering="NONE"
     side="BOTH"
 
