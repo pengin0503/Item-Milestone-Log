@@ -10,14 +10,14 @@ You choose your own target items, per player. The first time a target item enter
 
 Detection is possession-based, not crafting-based, so items produced by machines, automation, AE2 autocrafting, smelting or mob drops are recorded too — not just hand-crafted ones.
 
-> **Detection scope:** Recording happens when an item enters the **player's inventory**. Items placed directly into an **Ender Chest**, inside a **Shulker Box**, or into **another mod's storage system** without passing through your inventory are not recorded until you take them out into your inventory.
+> **Detection scope:** Recording uses **simultaneous possession**: it triggers the first time the total count of a target item in your **player inventory (main inventory, offhand, and cursor stack)** reaches the target quantity (1–1,000,000; default 1). Items placed directly into an **Ender Chest**, inside a **Shulker Box**, or into **another mod's storage system** are not counted or recorded until you take them out into your inventory.
 
 ## Features
 
-- Per-player target items: every player tracks their own goals
+- Per-player target items with optional **quantities (1–1,000,000)**: track e.g. `minecraft:diamond` ×1 and ×100 as separate milestones (simultaneous inventory possession)
 - Records cumulative playtime (`minecraft:play_time`), in-game overworld Day, and real-world date (`yyyy-MM-dd`) at first obtainment, stored per world
-- **World-first records**: tracks who first obtained each item across the whole world (`/milestonelog firsts`, with optional server-wide announcement)
-- **In-game GUI** (assign a key under Controls; there is no default key): view playtime and progress, browse targets and recorded milestones, search and add items, add your held item, browse/apply/save/delete presets, and reset records with confirmation
+- **World-first records**: tracks who first obtained each item (and quantity) across the whole world (`/milestonelog firsts`, with optional server-wide announcement)
+- **In-game GUI** (assign a key under Controls; there is no default key): view playtime and progress, browse targets and recorded milestones, search and add items (with quantity input), add your held item, browse/apply/save/delete presets, and reset records with confirmation
 - Chat notification and configurable sound effect (`milestoneSound`) the moment a milestone is recorded
 - Optional server-wide broadcast with per-player opt-out (`/milestonelog mutebroadcast`)
 - Optional asynchronous **Discord Webhook** notifications (`all` or `world_first` scope)
@@ -40,7 +40,7 @@ Assign a key to **Open Milestone Log** under *Options → Controls → Key Binds
 
 - View your current cumulative playtime and overall progress in the header
 - Switch between **Targets** (distinguishing personal targets and server-configured default targets) and **Recorded** milestones (earliest first, showing `(Day N, yyyy-MM-dd)`)
-- Search all registered items and add targets, or add the item currently in your main hand
+- Search all registered items and add targets (with an optional quantity box, 1–1,000,000), or add the item currently in your main hand
 - Remove personal targets (server default targets are marked and cannot be removed)
 - Open **Presets...** to browse built-in and custom presets, apply them with one click, and (when permitted) save your current personal targets as a custom preset or delete custom presets
 - Reset individual records or all records (with confirmation dialogs; targets are kept)
@@ -57,14 +57,14 @@ Assign a key to **Open Milestone Log** under *Options → Controls → Key Binds
 |---|---|
 | `/milestonelog` | Summary: your playtime and recorded / total targets |
 | `/milestonelog playtime` | Show your current cumulative playtime |
-| `/milestonelog add <item>` | Add a target item |
-| `/milestonelog addhand` | Add the item in your main hand as a target |
-| `/milestonelog remove <item>` | Remove a personal target |
+| `/milestonelog add <item> [<count>]` | Add a target item (optional quantity 1–1,000,000, default 1) |
+| `/milestonelog addhand [<count>]` | Add the item in your main hand as a target (optional quantity, default 1) |
+| `/milestonelog remove <item> [<count>]` | Remove a personal target (default quantity 1) |
 | `/milestonelog targets` | List targets with recorded playtime or "not yet obtained" |
 | `/milestonelog list` | List recorded milestones, earliest first, with Day and date |
 | `/milestonelog preset list` | List all available presets (built-in and custom) |
 | `/milestonelog preset <name>` | Apply a preset (`atm_star`, `vanilla_endgame`, or custom preset ID) |
-| `/milestonelog reset <item>` | Clear one record (it will be recorded again on next obtainment) |
+| `/milestonelog reset <item> [<count>]` | Clear one record (it will be recorded again on next obtainment) |
 | `/milestonelog resetall` | Clear all your records (targets are kept; world-firsts are kept) |
 | `/milestonelog firsts` | List server-wide world-first milestones |
 | `/milestonelog export` | Export your targets and records to `itemmilestonelog/exports/<player>.json` |
@@ -80,13 +80,13 @@ Preset management (`preset save`, `preset delete`, `preset reload`) requires **p
 | `/milestonelog preset save <name>` | Save your current personal targets as `config/itemmilestonelog/presets/<name>.json` |
 | `/milestonelog preset delete <name>` | Delete a custom file preset (built-in presets cannot be deleted) |
 | `/milestonelog preset reload` | Reload `config/itemmilestonelog/presets/` and refresh open GUIs |
-| `/milestonelog firsts reset <item>` | Clear the world-first record for `<item>` |
+| `/milestonelog firsts reset <item> [<count>]` | Clear the world-first record for `<item>` (optional quantity, default 1) |
 | `/milestonelog firsts resetall` | Clear all world-first records |
 | `/milestonelog exportall` | Export all players' data to `itemmilestonelog/exports/all-players.json` |
 | `/milestonelog admin players` | List all players with saved data (name, UUID, target/record counts) |
 | `/milestonelog admin <player> list` | View a player's recorded milestones (works offline) |
 | `/milestonelog admin <player> targets` | View a player's targets (works offline) |
-| `/milestonelog admin <player> reset <item>` | Clear a specific record for a player (works offline) |
+| `/milestonelog admin <player> reset <item> [<count>]` | Clear a specific record for a player (works offline) |
 | `/milestonelog admin <player> resetall` | Clear all records for a player (works offline) |
 | `/milestonelog admin <player> purge` | Delete all milestone data for a player (logged to server log) |
 
@@ -101,13 +101,14 @@ Example (`config/itemmilestonelog/presets/my_pack.json`):
   "name": "My Pack Goals",
   "items": [
     "minecraft:diamond",
+    { "item": "minecraft:diamond", "count": 100 },
     "allthetweaks:atm_star"
   ]
 }
 ```
 
 - `name` (optional): display name shown in the GUI and `/milestonelog preset list` (defaults to the file ID).
-- `items` (required): array of item IDs (`namespace:path`). IDs from mods that are not currently installed are preserved in the preset and simply skipped when applied, so modpack presets work across packs.
+- `items` (required): array of item IDs (`"namespace:path"` for quantity 1) or objects (`{"item": "namespace:path", "count": 100}`, count 1–1,000,000). IDs from mods that are not currently installed are preserved in the preset and simply skipped when applied, so modpack presets work across packs.
 - Preset IDs (`<id>`) must be 1–32 characters using `a-z`, `0-9`, `_`, or `-`. Files matching built-in preset IDs (`atm_star`, `vanilla_endgame`) are ignored.
 - Because `list`, `save`, `delete`, and `reload` are subcommands under `/milestonelog preset`, a custom preset literally named `list`, `save`, `delete`, or `reload` cannot be applied via `/milestonelog preset <name>` (use the GUI or a different ID).
 - **Trade-off**: Presets live in the `config/` folder rather than world SavedData, so they are shared across all worlds on that client/server and do not travel automatically if you copy only a world folder to another server.
@@ -120,14 +121,18 @@ Exports are written to `<world>/itemmilestonelog/exports/<player>.json` (or `all
 {
   "format": 1,
   "player": { "uuid": "…", "name": "…" },
-  "targets": ["minecraft:diamond"],
+  "targets": [
+    "minecraft:diamond",
+    { "item": "minecraft:diamond", "count": 100 }
+  ],
   "records": {
-    "minecraft:diamond": { "ticks": 123456, "day": 11, "epoch": 1795600000000 }
+    "minecraft:diamond": { "ticks": 123456, "day": 11, "epoch": 1795600000000 },
+    "minecraft:diamond#100": { "ticks": 456789, "day": 25, "epoch": 1795700000000, "count": 100 }
   }
 }
 ```
 
-When importing with `/milestonelog import <fileName>`, targets are merged by union, and for each item ID in `records`, the entry with the smaller `ticks` wins (keeping that side's `day` and `epoch`). Imports do not trigger `MilestoneRecordedEvent`, world-first registration, or Discord notifications.
+When importing with `/milestonelog import <fileName>`, targets are merged by union, and for each `(item, count)` entry in `records`, the entry with the smaller `ticks` wins (keeping that side's `day` and `epoch`). Export files without `count` fields are imported as quantity 1. Imports do not trigger `MilestoneRecordedEvent`, world-first registration, or Discord notifications.
 
 ## Configuration
 
@@ -135,7 +140,7 @@ When importing with `/milestonelog import <fileName>`, targets are merged by uni
 `config/itemmilestonelog-local.toml` (Minecraft 26.3, where NeoForge renamed the
 config type). On a dedicated server, edit the file on the server.
 
-- `defaultTargets` — item IDs every player tracks by default
+- `defaultTargets` — item IDs every player tracks by default (append `#<count>`, e.g. `"minecraft:diamond#100"`, for quantities > 1)
 - `scanIntervalTicks` — inventory scan interval in ticks (default `20` ticks = 1 s, `1–1200`)
 - `notifyPlayer` — chat notification on record (default `true`)
 - `broadcastMilestones` — announce records to all players (default `false`)
@@ -172,16 +177,17 @@ public class MyModEvents {
     @SubscribeEvent
     public static void onMilestoneRecorded(MilestoneRecordedEvent event) {
         String itemId = event.getItemId();
+        int count = event.getCount();
         int ticks = event.getPlayTicks();
         long day = event.getDay();
         // Query read-only API (on MC 26.x, use event.getPlayer().level().getServer()):
         var worldFirst = ItemMilestoneLogApi.getWorldFirst(
-                event.getPlayer().getServer(), itemId);
+                event.getPlayer().getServer(), itemId, count);
     }
 }
 ```
 
-> Note: `ItemMilestoneLogApi.getTargets(server, playerUuid)` returns only the player's saved personal targets; resolving server-configured `defaultTargets` is the caller's responsibility.
+> Note: `ItemMilestoneLogApi.getTargets(server, playerUuid)` returns saved personal targets with quantity 1, and `getTargetKeys(server, playerUuid)` returns all saved personal `(itemId, count)` targets; resolving server-configured `defaultTargets` is the caller's responsibility.
 
 ### KubeJS (Server Script)
 
@@ -190,8 +196,9 @@ public class MyModEvents {
 NeoForgeEvents.onEvent('com.pengin0503.itemmilestonelog.api.MilestoneRecordedEvent', event => {
   const player = event.getPlayer()
   const itemId = event.getItemId()
+  const count = event.getCount()
   const ticks = event.getPlayTicks()
-  player.tell(`Recorded ${itemId} at ${ticks} ticks!`)
+  player.tell(`Recorded ${itemId} x${count} at ${ticks} ticks!`)
 })
 ```
 

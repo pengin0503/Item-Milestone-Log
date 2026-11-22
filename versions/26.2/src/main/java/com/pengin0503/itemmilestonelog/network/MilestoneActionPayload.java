@@ -9,7 +9,11 @@ import net.minecraft.resources.Identifier;
 /**
  * C2S payload sent when the player performs an action in the Milestone GUI.
  */
-public record MilestoneActionPayload(Action action, String argument) implements CustomPacketPayload {
+public record MilestoneActionPayload(Action action, String argument, int count) implements CustomPacketPayload {
+    public MilestoneActionPayload(Action action, String argument) {
+        this(action, argument, 1);
+    }
+
     public enum Action {
         ADD_TARGET,
         ADD_HAND,
@@ -32,12 +36,14 @@ public record MilestoneActionPayload(Action action, String argument) implements 
     private static void encode(FriendlyByteBuf buf, MilestoneActionPayload payload) {
         buf.writeEnum(payload.action);
         buf.writeUtf(payload.argument == null ? "" : payload.argument, MAX_ARGUMENT_LENGTH);
+        buf.writeVarInt(payload.count);
     }
 
     private static MilestoneActionPayload decode(FriendlyByteBuf buf) {
         Action action = buf.readEnum(Action.class);
         String arg = buf.readUtf(MAX_ARGUMENT_LENGTH);
-        return new MilestoneActionPayload(action, arg);
+        int count = buf.readVarInt();
+        return new MilestoneActionPayload(action, arg, count);
     }
 
     @Override

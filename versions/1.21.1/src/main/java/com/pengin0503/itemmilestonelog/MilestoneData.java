@@ -1,6 +1,7 @@
 package com.pengin0503.itemmilestonelog;
 
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
+import com.pengin0503.itemmilestonelog.api.TargetKey;
 import com.pengin0503.itemmilestonelog.api.WorldFirstRecord;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
@@ -19,8 +20,8 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Per-world storage: for each player, their personal target items and the
- * milestone records at which each target was first obtained, plus server-wide
+ * Per-world storage: for each player, their personal target items (with quantities)
+ * and the milestone records at which each target was first obtained, plus server-wide
  * world-first records.
  *
  * Stored in the overworld's data storage as "itemmilestonelog_data",
@@ -36,10 +37,10 @@ public class MilestoneData extends SavedData {
 
     /** Per-player state. */
     public static final class PlayerData {
-        /** Personal target item IDs, in the order they were added. */
-        public final Set<String> targets = new LinkedHashSet<>();
-        /** Item ID -> milestone record when first obtained. */
-        public final Map<String, MilestoneRecord> records = new LinkedHashMap<>();
+        /** Personal targets (item + quantity), in the order they were added. */
+        public final Set<TargetKey> targets = new LinkedHashSet<>();
+        /** Target (item + quantity) -> milestone record when first obtained. */
+        public final Map<TargetKey, MilestoneRecord> records = new LinkedHashMap<>();
         /**
          * Item IDs the player still carried when leaving creative or spectator mode.
          * They are not recorded until they have left the inventory (see Tracker).
@@ -54,7 +55,7 @@ public class MilestoneData extends SavedData {
     }
 
     private final Map<UUID, PlayerData> players = new LinkedHashMap<>();
-    private final Map<String, WorldFirstRecord> worldFirsts = new LinkedHashMap<>();
+    private final Map<TargetKey, WorldFirstRecord> worldFirsts = new LinkedHashMap<>();
 
     public static MilestoneData get(MinecraftServer server) {
         return server.overworld().getDataStorage().computeIfAbsent(FACTORY, DATA_NAME);
@@ -85,20 +86,21 @@ public class MilestoneData extends SavedData {
     }
 
     @Nullable
-    public WorldFirstRecord worldFirstOrNull(String itemId) {
-        return worldFirsts.get(itemId);
+    public WorldFirstRecord worldFirstOrNull(TargetKey key) {
+        return worldFirsts.get(key);
     }
 
-    public Map<String, WorldFirstRecord> worldFirsts() {
+    public Map<TargetKey, WorldFirstRecord> worldFirsts() {
         return Collections.unmodifiableMap(worldFirsts);
     }
 
-    public boolean recordWorldFirstIfAbsent(String itemId, UUID playerUuid, String playerName, MilestoneRecord record) {
-        if (worldFirsts.containsKey(itemId)) {
+    public boolean recordWorldFirstIfAbsent(TargetKey key, UUID playerUuid, String playerName, MilestoneRecord record) {
+        if (worldFirsts.containsKey(key)) {
             return false;
         }
-        worldFirsts.put(itemId, new WorldFirstRecord(
-                itemId,
+        worldFirsts.put(key, new WorldFirstRecord(
+                key.itemId(),
+                key.count(),
                 playerUuid,
                 playerName != null ? playerName : "",
                 record.playTicks(),
@@ -109,8 +111,8 @@ public class MilestoneData extends SavedData {
         return true;
     }
 
-    public boolean removeWorldFirst(String itemId) {
-        if (worldFirsts.remove(itemId) != null) {
+    public boolean removeWorldFirst(TargetKey key) {
+        if (worldFirsts.remove(key) != null) {
             setDirty();
             return true;
         }
@@ -128,6 +130,36 @@ public class MilestoneData extends SavedData {
 
     // ------------------------------------------------------------------ NBT
 
+    private static MilestoneRecord readRecordTag(CompoundTag recTag) {
+        int ticks = recTag.getInt("ticks");
+        long day = recTag.contains("day", Tag.TAG_ANY_NUMERIC)
+                ? recTag.getLong("day")
+                : MilestoneRecord.UNKNOWN_DAY;
+        long epoch = recTag.contains("epoch", Tag.TAG_ANY_NUMERIC)
+                ? recTag.getLong("epoch")
+                : MilestoneRecord.UNKNOWN_EPOCH;
+        return new MilestoneRecord(ticks, day, epoch);
+    }
+
+    private static void readWorldFirstTag(Map<TargetKey, WorldFirstRecord> out, String itemId, int count, CompoundTag wfTag) {
+        UUID uuid;
+        try {
+            uuid = UUID.fromString(wfTag.getString("uuid"));
+        } catch (IllegalArgumentException ignored) {
+            return;
+        }
+        String name = wfTag.getString("name");
+        int ticks = wfTag.getInt("ticks");
+        long day = wfTag.contains("day", Tag.TAG_ANY_NUMERIC)
+                ? wfTag.getLong("day")
+                : MilestoneRecord.UNKNOWN_DAY;
+        long epoch = wfTag.contains("epoch", Tag.TAG_ANY_NUMERIC)
+                ? wfTag.getLong("epoch")
+                : MilestoneRecord.UNKNOWN_EPOCH;
+        TargetKey key = new TargetKey(itemId, count);
+        out.put(key, new WorldFirstRecord(itemId, count, uuid, name, ticks, day, epoch));
+    }
+
     public static MilestoneData load(CompoundTag tag, HolderLookup.Provider provider) {
         MilestoneData data = new MilestoneData();
         CompoundTag all = tag.getCompound("players");
@@ -142,23 +174,40 @@ public class MilestoneData extends SavedData {
             PlayerData pd = new PlayerData();
             ListTag targets = entry.getList("targets", Tag.TAG_STRING);
             for (Tag t : targets) {
-                pd.targets.add(t.getAsString());
+                String raw = t.getAsString();
+                TargetKey parsed = TargetKey.tryParseEncoded(raw);
+                if (parsed != null) {
+                    pd.targets.add(parsed);
+                } else {
+                    ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid target entry '{}' in SavedData", raw);
+                }
             }
             CompoundTag records = entry.getCompound("records");
             for (String itemId : records.getAllKeys()) {
+                if (itemId.isEmpty() || itemId.indexOf('#') >= 0) {
+                    ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid record item key '{}' in SavedData", itemId);
+                    continue;
+                }
                 if (records.contains(itemId, Tag.TAG_COMPOUND)) {
-                    CompoundTag recTag = records.getCompound(itemId);
-                    int ticks = recTag.getInt("ticks");
-                    long day = recTag.contains("day", Tag.TAG_ANY_NUMERIC)
-                            ? recTag.getLong("day")
-                            : MilestoneRecord.UNKNOWN_DAY;
-                    long epoch = recTag.contains("epoch", Tag.TAG_ANY_NUMERIC)
-                            ? recTag.getLong("epoch")
-                            : MilestoneRecord.UNKNOWN_EPOCH;
-                    pd.records.put(itemId, new MilestoneRecord(ticks, day, epoch));
+                    CompoundTag itemTag = records.getCompound(itemId);
+                    if (itemTag.contains("ticks", Tag.TAG_ANY_NUMERIC)) {
+                        // Backward compatibility: early 1.0.1 stored itemId -> {ticks, day, epoch} (count = 1).
+                        pd.records.put(TargetKey.of(itemId), readRecordTag(itemTag));
+                    } else {
+                        // Quantity format: itemId -> { "<count>": {ticks, day, epoch}, ... }.
+                        for (String countKey : itemTag.getAllKeys()) {
+                            int count = TargetKey.tryParseCount(countKey);
+                            if (count < TargetKey.MIN_COUNT || !itemTag.contains(countKey, Tag.TAG_COMPOUND)) {
+                                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid record count '{}' for '{}' in SavedData",
+                                        countKey, itemId);
+                                continue;
+                            }
+                            pd.records.put(new TargetKey(itemId, count), readRecordTag(itemTag.getCompound(countKey)));
+                        }
+                    }
                 } else if (records.contains(itemId, Tag.TAG_ANY_NUMERIC)) {
-                    // Backward compatibility: 1.0.0 stored records as plain integers.
-                    pd.records.put(itemId, MilestoneRecord.legacy(records.getInt(itemId)));
+                    // Backward compatibility: 1.0.0 stored records as plain integers (count = 1).
+                    pd.records.put(TargetKey.of(itemId), MilestoneRecord.legacy(records.getInt(itemId)));
                 }
             }
             for (Tag t : entry.getList("carriedFromCreative", Tag.TAG_STRING)) {
@@ -178,25 +227,24 @@ public class MilestoneData extends SavedData {
 
         CompoundTag firsts = tag.getCompound("worldFirsts");
         for (String itemId : firsts.getAllKeys()) {
-            if (!firsts.contains(itemId, Tag.TAG_COMPOUND)) {
+            if (itemId.isEmpty() || itemId.indexOf('#') >= 0 || !firsts.contains(itemId, Tag.TAG_COMPOUND)) {
                 continue;
             }
-            CompoundTag wfTag = firsts.getCompound(itemId);
-            UUID uuid;
-            try {
-                uuid = UUID.fromString(wfTag.getString("uuid"));
-            } catch (IllegalArgumentException ignored) {
-                continue;
+            CompoundTag itemTag = firsts.getCompound(itemId);
+            if (itemTag.contains("ticks", Tag.TAG_ANY_NUMERIC) || itemTag.contains("uuid", Tag.TAG_STRING)) {
+                // Backward compatibility: early 1.0.1 stored itemId -> {uuid, name, ticks, day, epoch} (count = 1).
+                readWorldFirstTag(data.worldFirsts, itemId, TargetKey.MIN_COUNT, itemTag);
+            } else {
+                for (String countKey : itemTag.getAllKeys()) {
+                    int count = TargetKey.tryParseCount(countKey);
+                    if (count < TargetKey.MIN_COUNT || !itemTag.contains(countKey, Tag.TAG_COMPOUND)) {
+                        ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid worldFirst count '{}' for '{}' in SavedData",
+                                countKey, itemId);
+                        continue;
+                    }
+                    readWorldFirstTag(data.worldFirsts, itemId, count, itemTag.getCompound(countKey));
+                }
             }
-            String name = wfTag.getString("name");
-            int ticks = wfTag.getInt("ticks");
-            long day = wfTag.contains("day", Tag.TAG_ANY_NUMERIC)
-                    ? wfTag.getLong("day")
-                    : MilestoneRecord.UNKNOWN_DAY;
-            long epoch = wfTag.contains("epoch", Tag.TAG_ANY_NUMERIC)
-                    ? wfTag.getLong("epoch")
-                    : MilestoneRecord.UNKNOWN_EPOCH;
-            data.worldFirsts.put(itemId, new WorldFirstRecord(itemId, uuid, name, ticks, day, epoch));
         }
 
         return data;
@@ -209,18 +257,23 @@ public class MilestoneData extends SavedData {
             PlayerData pd = e.getValue();
             CompoundTag entry = new CompoundTag();
             ListTag targets = new ListTag();
-            for (String t : pd.targets) {
-                targets.add(StringTag.valueOf(t));
+            for (TargetKey t : pd.targets) {
+                targets.add(StringTag.valueOf(t.toEncodedString()));
             }
             entry.put("targets", targets);
             CompoundTag records = new CompoundTag();
-            for (Map.Entry<String, MilestoneRecord> r : pd.records.entrySet()) {
+            for (Map.Entry<TargetKey, MilestoneRecord> r : pd.records.entrySet()) {
+                TargetKey key = r.getKey();
                 MilestoneRecord rec = r.getValue();
+                CompoundTag itemTag = records.contains(key.itemId(), Tag.TAG_COMPOUND)
+                        ? records.getCompound(key.itemId())
+                        : new CompoundTag();
                 CompoundTag recTag = new CompoundTag();
                 recTag.putInt("ticks", rec.playTicks());
                 recTag.putLong("day", rec.day());
                 recTag.putLong("epoch", rec.epochMillis());
-                records.put(r.getKey(), recTag);
+                itemTag.put(String.valueOf(key.count()), recTag);
+                records.put(key.itemId(), itemTag);
             }
             entry.put("records", records);
             if (!pd.carriedFromCreative.isEmpty()) {
@@ -245,15 +298,20 @@ public class MilestoneData extends SavedData {
 
         if (!worldFirsts.isEmpty()) {
             CompoundTag firsts = new CompoundTag();
-            for (Map.Entry<String, WorldFirstRecord> e : worldFirsts.entrySet()) {
+            for (Map.Entry<TargetKey, WorldFirstRecord> e : worldFirsts.entrySet()) {
+                TargetKey key = e.getKey();
                 WorldFirstRecord wf = e.getValue();
+                CompoundTag itemTag = firsts.contains(key.itemId(), Tag.TAG_COMPOUND)
+                        ? firsts.getCompound(key.itemId())
+                        : new CompoundTag();
                 CompoundTag wfTag = new CompoundTag();
                 wfTag.putString("uuid", wf.playerUuid().toString());
                 wfTag.putString("name", wf.playerName());
                 wfTag.putInt("ticks", wf.playTicks());
                 wfTag.putLong("day", wf.day());
                 wfTag.putLong("epoch", wf.epochMillis());
-                firsts.put(e.getKey(), wfTag);
+                itemTag.put(String.valueOf(key.count()), wfTag);
+                firsts.put(key.itemId(), itemTag);
             }
             tag.put("worldFirsts", firsts);
         }

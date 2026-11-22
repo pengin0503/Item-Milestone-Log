@@ -1,6 +1,7 @@
 package com.pengin0503.itemmilestonelog;
 
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
+import com.pengin0503.itemmilestonelog.api.TargetKey;
 import com.pengin0503.itemmilestonelog.api.WorldFirstRecord;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
@@ -33,11 +34,19 @@ class MilestoneDataTest {
         UUID playerA = PLAYER_A;
         UUID playerB = UUID.fromString("22222222-2222-2222-2222-222222222222");
 
+        TargetKey diamond1 = TargetKey.of("minecraft:diamond");
+        TargetKey diamond100 = TargetKey.of("minecraft:diamond", 100);
+        TargetKey netherite = TargetKey.of("minecraft:netherite_ingot");
+        TargetKey atmStar = TargetKey.of("allthetweaks:atm_star");
+
         MilestoneData.PlayerData pdA = original.player(playerA);
-        pdA.targets.add("minecraft:diamond");
-        pdA.targets.add("minecraft:netherite_ingot");
-        MilestoneRecord recA = new MilestoneRecord(12340, 11L, 1795600000000L);
-        pdA.records.put("minecraft:diamond", recA);
+        pdA.targets.add(diamond1);
+        pdA.targets.add(diamond100);
+        pdA.targets.add(netherite);
+        MilestoneRecord recA1 = new MilestoneRecord(12340, 11L, 1795600000000L);
+        MilestoneRecord recA100 = new MilestoneRecord(99999, 25L, 1795650000000L);
+        pdA.records.put(diamond1, recA1);
+        pdA.records.put(diamond100, recA100);
         pdA.carriedFromCreative.add("minecraft:netherite_ingot");
         pdA.carriedFromCreative.add("minecraft:stone");
         pdA.lastKnownName = "Alice";
@@ -45,21 +54,23 @@ class MilestoneDataTest {
         pdA.muteBroadcasts = true;
 
         MilestoneData.PlayerData pdB = original.player(playerB);
-        pdB.targets.add("allthetweaks:atm_star");
+        pdB.targets.add(atmStar);
         MilestoneRecord recB = new MilestoneRecord(500000, 42L, 1795700000000L);
-        pdB.records.put("allthetweaks:atm_star", recB);
+        pdB.records.put(atmStar, recB);
 
-        assertTrue(original.recordWorldFirstIfAbsent("minecraft:diamond", playerA, "Alice", recA));
-        assertFalse(original.recordWorldFirstIfAbsent("minecraft:diamond", playerB, "Bob", recB));
+        assertTrue(original.recordWorldFirstIfAbsent(diamond1, playerA, "Alice", recA1));
+        assertFalse(original.recordWorldFirstIfAbsent(diamond1, playerB, "Bob", recB));
+        assertTrue(original.recordWorldFirstIfAbsent(diamond100, playerB, "Bob", recA100));
 
         Tag saved = MilestoneData.CODEC.encodeStart(NbtOps.INSTANCE, original).getOrThrow();
         MilestoneData loaded = MilestoneData.CODEC.parse(NbtOps.INSTANCE, saved).getOrThrow();
 
         MilestoneData.PlayerData loadedA = loaded.playerOrNull(playerA);
         assertNotNull(loadedA);
-        assertEquals(List.of("minecraft:diamond", "minecraft:netherite_ingot"), List.copyOf(loadedA.targets));
-        assertEquals(recA, loadedA.records.get("minecraft:diamond"));
-        assertNull(loadedA.records.get("minecraft:netherite_ingot"));
+        assertEquals(List.of(diamond1, diamond100, netherite), List.copyOf(loadedA.targets));
+        assertEquals(recA1, loadedA.records.get(diamond1));
+        assertEquals(recA100, loadedA.records.get(diamond100));
+        assertNull(loadedA.records.get(netherite));
         assertEquals(List.of("minecraft:netherite_ingot", "minecraft:stone"), List.copyOf(loadedA.carriedFromCreative));
         assertEquals("Alice", loadedA.lastKnownName);
         assertTrue(loadedA.firstJoinHintShown);
@@ -67,20 +78,27 @@ class MilestoneDataTest {
 
         MilestoneData.PlayerData loadedB = loaded.playerOrNull(playerB);
         assertNotNull(loadedB);
-        assertEquals(List.of("allthetweaks:atm_star"), List.copyOf(loadedB.targets));
-        assertEquals(recB, loadedB.records.get("allthetweaks:atm_star"));
+        assertEquals(List.of(atmStar), List.copyOf(loadedB.targets));
+        assertEquals(recB, loadedB.records.get(atmStar));
         assertTrue(loadedB.carriedFromCreative.isEmpty());
         assertEquals("", loadedB.lastKnownName);
         assertFalse(loadedB.firstJoinHintShown);
         assertFalse(loadedB.muteBroadcasts);
 
-        WorldFirstRecord wf = loaded.worldFirstOrNull("minecraft:diamond");
-        assertNotNull(wf);
-        assertEquals(playerA, wf.playerUuid());
-        assertEquals("Alice", wf.playerName());
-        assertEquals(12340, wf.playTicks());
-        assertEquals(11L, wf.day());
-        assertEquals(1795600000000L, wf.epochMillis());
+        WorldFirstRecord wf1 = loaded.worldFirstOrNull(diamond1);
+        assertNotNull(wf1);
+        assertEquals(1, wf1.count());
+        assertEquals(playerA, wf1.playerUuid());
+        assertEquals("Alice", wf1.playerName());
+        assertEquals(12340, wf1.playTicks());
+        assertEquals(11L, wf1.day());
+        assertEquals(1795600000000L, wf1.epochMillis());
+
+        WorldFirstRecord wf100 = loaded.worldFirstOrNull(diamond100);
+        assertNotNull(wf100);
+        assertEquals(100, wf100.count());
+        assertEquals(playerB, wf100.playerUuid());
+        assertEquals("Bob", wf100.playerName());
     }
 
     /** The 1.21.1 1.0.0 file: plain int records and no new fields. */
@@ -153,8 +171,8 @@ class MilestoneDataTest {
         assertNotNull(loaded);
         MilestoneData.PlayerData pd = loaded.playerOrNull(PLAYER_A);
         assertNotNull(pd);
-        assertEquals(List.of("minecraft:diamond", "allthetweaks:atm_star"), List.copyOf(pd.targets));
-        assertEquals(Map.of("minecraft:diamond", MilestoneRecord.legacy(12340)), pd.records);
+        assertEquals(List.of(TargetKey.of("minecraft:diamond"), TargetKey.of("allthetweaks:atm_star")), List.copyOf(pd.targets));
+        assertEquals(Map.of(TargetKey.of("minecraft:diamond"), MilestoneRecord.legacy(12340)), pd.records);
         assertTrue(pd.carriedFromCreative.isEmpty());
         assertTrue(loaded.worldFirsts().isEmpty());
     }
@@ -171,9 +189,10 @@ class MilestoneDataTest {
         MilestoneData.PlayerData pd = loaded.playerOrNull(PLAYER_A);
         assertNotNull(pd);
         assertEquals("Alice", pd.lastKnownName);
-        assertEquals(new MilestoneRecord(12340, 11L, 1795600000000L), pd.records.get("minecraft:diamond"));
-        WorldFirstRecord wf = loaded.worldFirstOrNull("minecraft:diamond");
+        assertEquals(new MilestoneRecord(12340, 11L, 1795600000000L), pd.records.get(TargetKey.of("minecraft:diamond")));
+        WorldFirstRecord wf = loaded.worldFirstOrNull(TargetKey.of("minecraft:diamond"));
         assertNotNull(wf);
+        assertEquals(1, wf.count());
         assertEquals(PLAYER_A, wf.playerUuid());
         assertEquals("Alice", wf.playerName());
         assertEquals(11L, wf.day());
@@ -205,7 +224,7 @@ class MilestoneDataTest {
     @Test
     void emptyOptionalFieldsAreNotWritten() {
         MilestoneData data = new MilestoneData();
-        data.player(PLAYER_A).targets.add("minecraft:diamond");
+        data.player(PLAYER_A).targets.add(TargetKey.of("minecraft:diamond"));
 
         CompoundTag saved = (CompoundTag) MilestoneData.CODEC.encodeStart(NbtOps.INSTANCE, data).getOrThrow();
         CompoundTag player = saved.getCompoundOrEmpty("players").getCompoundOrEmpty(PLAYER_A.toString());

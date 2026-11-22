@@ -34,12 +34,16 @@ public final class ClientMilestoneHandler {
     }
 
     public static void sendAction(MilestoneActionPayload.Action action, String argument) {
+        sendAction(action, argument, 1);
+    }
+
+    public static void sendAction(MilestoneActionPayload.Action action, String argument, int count) {
         Minecraft mc = Minecraft.getInstance();
         ClientPacketListener connection = mc.getConnection();
         if (connection == null || !connection.hasChannel(MilestoneActionPayload.TYPE)) {
             return;
         }
-        PacketDistributor.sendToServer(new MilestoneActionPayload(action, argument == null ? "" : argument));
+        PacketDistributor.sendToServer(new MilestoneActionPayload(action, argument == null ? "" : argument, count));
     }
 
     public static void onSyncReceived(SyncMilestonesPayload payload) {

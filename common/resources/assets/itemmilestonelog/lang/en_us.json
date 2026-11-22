@@ -19,6 +19,7 @@
   "gui.itemmilestonelog.picker.count": "%s / %s items",
   "gui.itemmilestonelog.picker.count_capped": "Showing %s of %s matches",
   "gui.itemmilestonelog.picker.no_results": "No matching items found.",
+  "gui.itemmilestonelog.picker.quantity": "Qty:",
   "gui.itemmilestonelog.picker.search": "Search items",
   "gui.itemmilestonelog.picker.search_hint": "Search by name, ID, or @mod...",
   "gui.itemmilestonelog.picker.title": "Add Target Item",
@@ -80,6 +81,7 @@
   "message.itemmilestonelog.import_invalid_format": "Invalid or unsupported export format in %s",
   "message.itemmilestonelog.import_invalid_name": "Invalid export file name: %s",
   "message.itemmilestonelog.import_not_found": "Export file not found: %s",
+  "message.itemmilestonelog.invalid_count": "Quantity must be between %s and %s.",
   "message.itemmilestonelog.invalid_item": "Invalid or unknown item ID: %s",
   "message.itemmilestonelog.join_hint_mod": "Tip: Bind a key to \"Open Milestone Log\" under Controls to open the Milestone Log GUI, or use /milestonelog commands.",
   "message.itemmilestonelog.join_hint_vanilla": "Tip: Use /milestonelog (or /iml) to track your goal items and view your milestone playtime.",
@@ -91,6 +93,7 @@
   "message.itemmilestonelog.not_target": "Not a personal target (or it is a global default): %s",
   "message.itemmilestonelog.playtime": "Your cumulative playtime: %s",
   "message.itemmilestonelog.preset_applied": "Preset '%s' applied: %s targets added, %s skipped (item not present in this pack).",
+  "message.itemmilestonelog.preset_applied_with_counts": "Preset '%s' applied: %s targets added (%s with quantity), %s skipped (item not present in this pack).",
   "message.itemmilestonelog.preset_builtin_protected": "Built-in preset '%s' cannot be overwritten or deleted.",
   "message.itemmilestonelog.preset_delete_failed": "Failed to delete preset '%s': %s",
   "message.itemmilestonelog.preset_deleted": "Deleted preset '%s'.",
@@ -116,6 +119,7 @@
   "message.itemmilestonelog.summary": "Playtime: %s | Milestones: %s / %s targets recorded. Use /milestonelog targets to see details.",
   "message.itemmilestonelog.target_done": "✔ %s — %s",
   "message.itemmilestonelog.target_pending": "… %s — not yet obtained",
+  "message.itemmilestonelog.target_progress": "%s (current: %s)",
   "message.itemmilestonelog.targets_header": "Target items (%s):",
   "message.itemmilestonelog.world_first_recorded": "★ World First! %s first obtained %s at %s"
 }

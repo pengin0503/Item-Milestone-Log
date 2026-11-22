@@ -96,10 +96,10 @@ Detection is possession-based. Items produced by machines, automation, AE2 autoc
 (Note: items placed directly into an Ender Chest, inside a Shulker Box, or into another mod's storage are recorded once you take them out into your player inventory.)
 
 #### Features
-- **Per-player targets** — every player sets and tracks their own goal items
+- **Per-player targets with optional quantities (1–1,000,000)** — track e.g. `Diamond` ×1 and `Diamond ×100` as separate milestones based on simultaneous inventory possession
 - **Cumulative playtime, Day & date records**, stored per world, shown as e.g. `27h 15m 30s (Day 12, 2026-11-22)`
-- **World-first records** — tracks the first player to obtain each item in the world (`/milestonelog firsts`, with optional server-wide announcements)
-- **In-game GUI** — view progress, search and add targets, browse/apply/save custom presets, and manage records without typing commands. Assign a key to *Open Milestone Log* under Options → Controls → Key Binds first: there is no default key, because `M` already opens the FTB Chunks map in ATM10. (Requires the mod on the client; vanilla clients can still join and use commands.)
+- **World-first records** — tracks the first player to obtain each item (and quantity) in the world (`/milestonelog firsts`, with optional server-wide announcements)
+- **In-game GUI** — view progress, search and add targets (with quantity input), browse/apply/save custom presets, and manage records without typing commands. Assign a key to *Open Milestone Log* under Options → Controls → Key Binds first: there is no default key, because `M` already opens the FTB Chunks map in ATM10. (Requires the mod on the client; vanilla clients can still join and use commands.)
 - **Chat notification & sound effect** the moment a goal item is first obtained (configurable sound, optional server-wide broadcast with `/milestonelog mutebroadcast` opt-out)
 - **Discord Webhook notifications** (optional, asynchronous)
 - **JSON Export / Import** — back up or transfer records with `/milestonelog export` and `import`
@@ -115,20 +115,20 @@ Detection is possession-based. Items produced by machines, automation, AE2 autoc
 #### Commands (no OP required, `/iml` works as an alias)
 - `/milestonelog` — summary: your playtime and progress
 - `/milestonelog playtime` — your current cumulative playtime
-- `/milestonelog add <item>` / `addhand` — add a goal item (or the one in your hand)
-- `/milestonelog remove <item>` — remove a personal goal
+- `/milestonelog add <item> [<count>]` / `addhand [<count>]` — add a goal item (with optional quantity 1–1,000,000)
+- `/milestonelog remove <item> [<count>]` — remove a personal goal
 - `/milestonelog targets` — goals with their recorded times, or "not yet obtained"
 - `/milestonelog list` — recorded milestones, earliest first, with Day and date
 - `/milestonelog preset list` / `preset <name>` — list or apply built-in and custom presets
 - `/milestonelog firsts` — list server-wide world-first milestones
 - `/milestonelog export` / `import <fileName>` — export or merge JSON records
 - `/milestonelog mutebroadcast` — toggle muting other players' milestone broadcasts
-- `/milestonelog reset <item>` / `resetall` — clear records (goals are kept)
+- `/milestonelog reset <item> [<count>]` / `resetall` — clear records (goals are kept)
 - OP commands: `/milestonelog preset save|delete|reload`, `firsts reset|resetall`, `exportall`, `admin players|<player> list|targets|reset|resetall|purge`
 
 #### Configuration
 `config/itemmilestonelog-common.toml` (1.21.1, 26.1.2, 26.2) or `config/itemmilestonelog-local.toml` (26.3):
-- `defaultTargets` — items everyone tracks by default
+- `defaultTargets` — items everyone tracks by default (supports `item#count`)
 - `scanIntervalTicks` — inventory scan interval (default 20 = 1 second)
 - `notifyPlayer`, `broadcastMilestones`, `announceWorldFirst` — notification behaviour
 - `milestoneSoundEnabled`, `milestoneSound` — obtainment sound effect
@@ -147,7 +147,7 @@ Detection is possession-based. Items produced by machines, automation, AE2 autoc
 Download the file that matches your Minecraft version.
 
 #### 日本語
-累計プレイ時間（バニラ統計の「プレイ時間」）・ゲーム内経過日数（Day）・現実の日付で、目標アイテムを初めて手に入れた瞬間を記録するModです。プレイヤーごとに目標を自由に設定でき、ATM Star用プリセットの内蔵に加え、JSONファイルやゲーム内操作でのカスタムプリセット作成にも対応しています。機械生産・自動クラフトで作ったアイテムも、インベントリに入った時点で記録されます（※エンダーチェスト・シュルカーボックスの中身・他Modのストレージ内に直接入ったアイテムは、プレイヤーのインベントリに取り出すまで記録されません）。達成時の効果音、ワールド内「世界初」記録、Discord Webhook通知、JSONエクスポート／インポート、OP向け管理コマンド、他Mod/KubeJS向けAPIも備えています。クリエイティブ／スペクテイターモードで手に入れたアイテムは記録しません（設定で変更できます）。コマンドだけでなく、専用GUI（操作設定の「Item Milestone Log」でキーを割り当てて開きます。初期状態ではキーは割り当てられていません）からも目標の検索・追加・削除や記録確認などの全機能を利用できます（専用サーバーではMOD未導入のクライアントもコマンドで利用でき、クライアントの言語設定に応じた英語または日本語で表示されます）。
+累計プレイ時間（バニラ統計の「プレイ時間」）・ゲーム内経過日数（Day）・現実の日付で、目標アイテムを初めて手に入れた瞬間を記録するModです。プレイヤーごとに目標を自由に設定でき、個数つき目標（1〜1,000,000個、同時所持数で判定。例：ダイヤ ×1 と ×100 を別々に登録可能）にも対応しています。ATM Star用プリセットの内蔵に加え、JSONファイルやゲーム内操作でのカスタムプリセット作成にも対応しています。機械生産・自動クラフトで作ったアイテムも、インベントリに入った時点で記録されます（※エンダーチェスト・シュルカーボックスの中身・他Modのストレージ内に直接入ったアイテムは、プレイヤーのインベントリに取り出すまでカウント・記録されません）。達成時の効果音、ワールド内「世界初」記録、Discord Webhook通知、JSONエクスポート／インポート、OP向け管理コマンド、他Mod/KubeJS向けAPIも備えています。クリエイティブ／スペクテイターモードで手に入れたアイテムは記録しません（設定で変更できます）。コマンドだけでなく、専用GUI（操作設定の「Item Milestone Log」でキーを割り当てて開きます。初期状態ではキーは割り当てられていません）からも目標の検索・個数指定での追加・削除や記録確認などの全機能を利用できます（専用サーバーではMOD未導入のクライアントもコマンドで利用でき、クライアントの言語設定に応じた英語または日本語で表示されます）。
 
 ## Screenshots to add after the first in-game test
 CurseForge does not require screenshots for a utility mod, but 2–3 images help the page a lot:

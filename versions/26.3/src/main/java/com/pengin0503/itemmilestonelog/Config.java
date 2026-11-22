@@ -1,5 +1,6 @@
 package com.pengin0503.itemmilestonelog;
 
+import com.pengin0503.itemmilestonelog.api.TargetKey;
 import net.minecraft.resources.Identifier;
 import net.neoforged.neoforge.common.ModConfigSpec;
 
@@ -9,9 +10,10 @@ public final class Config {
     private static final ModConfigSpec.Builder BUILDER = new ModConfigSpec.Builder();
 
     public static final ModConfigSpec.ConfigValue<List<? extends String>> DEFAULT_TARGETS = BUILDER
-            .comment("Item IDs that every player tracks by default, e.g. [\"minecraft:netherite_ingot\"].",
+            .comment("Item IDs that every player tracks by default, e.g. [\"minecraft:netherite_ingot\", \"minecraft:diamond#100\"].",
+                    "Append #<count> (1-1000000) to require a quantity greater than 1.",
                     "Players can add their own targets on top of these with /milestonelog add.")
-            .defineListAllowEmpty("defaultTargets", List.of(), () -> "minecraft:diamond", Config::validateItemId);
+            .defineListAllowEmpty("defaultTargets", List.of(), () -> "minecraft:diamond", Config::validateTargetEntry);
 
     public static final ModConfigSpec.IntValue SCAN_INTERVAL_TICKS = BUILDER
             .comment("Inventory scan interval in ticks (20 ticks = 1 second). Lower = more precise timestamps, slightly more cost.")
@@ -61,8 +63,12 @@ public final class Config {
     private Config() {
     }
 
-    private static boolean validateItemId(Object obj) {
-        return obj instanceof String s && s.contains(":") && Identifier.tryParse(s) != null;
+    static boolean validateTargetEntry(Object obj) {
+        if (!(obj instanceof String s)) {
+            return false;
+        }
+        TargetKey parsed = TargetKey.tryParseEncoded(s);
+        return parsed != null && parsed.itemId().contains(":") && Identifier.tryParse(parsed.itemId()) != null;
     }
 
     private static boolean validateSoundId(Object obj) {

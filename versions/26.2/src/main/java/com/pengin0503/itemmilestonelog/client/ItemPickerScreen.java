@@ -1,5 +1,6 @@
 package com.pengin0503.itemmilestonelog.client;
 
+import com.pengin0503.itemmilestonelog.api.TargetKey;
 import com.pengin0503.itemmilestonelog.network.MilestoneActionPayload;
 import com.pengin0503.itemmilestonelog.network.SyncMilestonesPayload;
 import net.minecraft.client.Minecraft;
@@ -33,6 +34,7 @@ public final class ItemPickerScreen extends Screen {
     private static final int ACTION_BTN_WIDTH = 64;
     private static final int ACTION_BTN_HEIGHT = 18;
     private static final int MAX_DISPLAYED_ROWS = 300;
+    private static final int COUNT_BOX_WIDTH = 56;
 
     @Nullable
     private static List<CatalogItem> cachedCatalog;
@@ -42,11 +44,16 @@ public final class ItemPickerScreen extends Screen {
 
     private final MilestoneScreen parent;
     private final List<CatalogItem> allItems;
-    private Set<String> trackedIds;
+    private Set<TargetKey> trackedTargets;
 
     private EditBox searchBox;
+    private EditBox countBox;
     private ItemListWidget listWidget;
     private String currentQuery = "";
+    private String currentCountText = "1";
+    private int parsedCount = TargetKey.MIN_COUNT;
+    private int countBoxX = 0;
+    private int countBoxY = 0;
     private int matchedCount = 0;
     private int displayedCount = 0;
     @Nullable
@@ -55,7 +62,7 @@ public final class ItemPickerScreen extends Screen {
     public ItemPickerScreen(MilestoneScreen parent) {
         super(Component.translatable("gui.itemmilestonelog.picker.title"));
         this.parent = parent;
-        this.trackedIds = parent.getTrackedItemIds();
+        this.trackedTargets = parent.getTrackedTargets();
         this.allItems = getOrBuildCatalog();
     }
 
@@ -93,7 +100,18 @@ public final class ItemPickerScreen extends Screen {
 
     public void updateData(SyncMilestonesPayload payload) {
         this.parent.updateData(payload);
-        this.trackedIds = this.parent.getTrackedItemIds();
+        this.trackedTargets = this.parent.getTrackedTargets();
+    }
+
+    static int parseCountInput(@Nullable String raw) {
+        if (raw == null) {
+            return TargetKey.MIN_COUNT;
+        }
+        String trimmed = raw.trim();
+        if (trimmed.isEmpty()) {
+            return TargetKey.MIN_COUNT;
+        }
+        return TargetKey.tryParseCount(trimmed);
     }
 
     @Override
@@ -117,16 +135,37 @@ public final class ItemPickerScreen extends Screen {
         refreshList();
 
         int backWidth = 120;
+        int backX = (this.width - backWidth) / 2;
         addRenderableWidget(Button.builder(
                         CommonComponents.GUI_BACK,
                         btn -> onClose())
-                .bounds((this.width - backWidth) / 2, this.height - 26, backWidth, 20)
+                .bounds(backX, this.height - 26, backWidth, 20)
                 .build());
+
+        int boxWidth = Math.min(COUNT_BOX_WIDTH, Math.max(36, this.width - (backX + backWidth) - 24));
+        this.countBoxX = this.width - 12 - boxWidth;
+        this.countBoxY = this.height - 26;
+        countBox = addRenderableWidget(new EditBox(
+                this.font, countBoxX, countBoxY, boxWidth, 20,
+                Component.translatable("gui.itemmilestonelog.picker.quantity")));
+        countBox.setMaxLength(8);
+        countBox.setHint(Component.literal("1"));
+        countBox.setValue(currentCountText);
+        countBox.setResponder(this::onCountChanged);
+        onCountChanged(currentCountText);
     }
 
     private void onSearchChanged(String query) {
         this.currentQuery = query;
         refreshList();
+    }
+
+    private void onCountChanged(String text) {
+        this.currentCountText = text;
+        this.parsedCount = parseCountInput(text);
+        if (countBox != null) {
+            countBox.setTextColor(this.parsedCount >= TargetKey.MIN_COUNT ? 0xFFE0E0E0 : 0xFFFF5555);
+        }
     }
 
     private void refreshList() {
@@ -185,6 +224,15 @@ public final class ItemPickerScreen extends Screen {
                 ? Component.translatable("gui.itemmilestonelog.picker.count_capped", displayedCount, matchedCount)
                 : Component.translatable("gui.itemmilestonelog.picker.count", matchedCount, allItems.size());
         graphics.text(this.font, countText, 12, this.height - 20, 0xFFB0B0B0, false);
+
+        int backRight = (this.width + 120) / 2;
+        Component fullQtyLabel = Component.translatable("gui.itemmilestonelog.picker.quantity");
+        int fullWidth = this.font.width(fullQtyLabel);
+        if (countBoxX - backRight >= fullWidth + 10) {
+            graphics.text(this.font, fullQtyLabel, countBoxX - fullWidth - 4, countBoxY + 6, 0xFFB0B0B0, false);
+        } else if (countBoxX - backRight >= this.font.width("×") + 6) {
+            graphics.text(this.font, "×", countBoxX - this.font.width("×") - 3, countBoxY + 6, 0xFFB0B0B0, false);
+        }
 
         if (matchedCount == 0 && listWidget != null) {
             int centerY = listWidget.getY() + listWidget.getHeight() / 2 - 4;
@@ -253,9 +301,11 @@ public final class ItemPickerScreen extends Screen {
             int width = getContentWidth();
             int height = getContentHeight();
 
-            boolean alreadyTracked = trackedIds.contains(item.id);
+            boolean countValid = parsedCount >= TargetKey.MIN_COUNT;
+            boolean alreadyTracked = countValid && trackedTargets.contains(new TargetKey(item.id, parsedCount));
+            boolean canAdd = countValid && !alreadyTracked;
 
-            if (hovering && !alreadyTracked) {
+            if (hovering && canAdd) {
                 graphics.fill(left, top, left + width, top + height, 0x22FFFFFF);
             }
 
@@ -268,13 +318,13 @@ public final class ItemPickerScreen extends Screen {
 
             int btnX = left + width - ACTION_BTN_WIDTH - 4;
             int btnY = top + (height - ACTION_BTN_HEIGHT) / 2;
-            boolean btnHovered = !alreadyTracked
+            boolean btnHovered = canAdd
                     && mouseX >= btnX && mouseX < btnX + ACTION_BTN_WIDTH
                     && mouseY >= btnY && mouseY < btnY + ACTION_BTN_HEIGHT;
 
-            int bgColor = alreadyTracked ? 0xFF2B2B2B : (btnHovered ? 0xFF4E6B4E : 0xFF3A3A3A);
-            int borderColor = alreadyTracked ? 0xFF505050 : (btnHovered ? 0xFF88CC88 : 0xFF707070);
-            int labelColor = alreadyTracked ? 0xFF88CC88 : 0xFFFFFFFF;
+            int bgColor = !canAdd ? 0xFF2B2B2B : (btnHovered ? 0xFF4E6B4E : 0xFF3A3A3A);
+            int borderColor = !canAdd ? 0xFF505050 : (btnHovered ? 0xFF88CC88 : 0xFF707070);
+            int labelColor = alreadyTracked ? 0xFF88CC88 : (canAdd ? 0xFFFFFFFF : 0xFF808080);
 
             graphics.fill(btnX, btnY, btnX + ACTION_BTN_WIDTH, btnY + ACTION_BTN_HEIGHT, borderColor);
             graphics.fill(btnX + 1, btnY + 1, btnX + ACTION_BTN_WIDTH - 1, btnY + ACTION_BTN_HEIGHT - 1, bgColor);
@@ -298,12 +348,13 @@ public final class ItemPickerScreen extends Screen {
 
         @Override
         public boolean mouseClicked(MouseButtonEvent event, boolean isDoubleClick) {
-            if (event.button() == 0 && !trackedIds.contains(item.id)) {
+            if (event.button() == 0 && parsedCount >= TargetKey.MIN_COUNT
+                    && !trackedTargets.contains(new TargetKey(item.id, parsedCount))) {
                 if (ItemPickerScreen.this.minecraft != null) {
                     ItemPickerScreen.this.minecraft.getSoundManager()
                             .play(SimpleSoundInstance.forUI(SoundEvents.UI_BUTTON_CLICK, 1.0F));
                 }
-                ClientMilestoneHandler.sendAction(MilestoneActionPayload.Action.ADD_TARGET, item.id);
+                ClientMilestoneHandler.sendAction(MilestoneActionPayload.Action.ADD_TARGET, item.id, parsedCount);
                 return true;
             }
             return false;

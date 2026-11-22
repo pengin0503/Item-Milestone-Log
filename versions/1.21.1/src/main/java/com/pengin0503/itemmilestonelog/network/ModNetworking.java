@@ -64,11 +64,11 @@ public final class ModNetworking {
                 return;
             }
             MilestoneService.ActionResult result = switch (payload.action()) {
-                case ADD_TARGET -> MilestoneService.addTarget(player, payload.argument());
-                case ADD_HAND -> MilestoneService.addHandTarget(player);
-                case REMOVE_TARGET -> MilestoneService.removeTarget(player, payload.argument());
+                case ADD_TARGET -> MilestoneService.addTarget(player, payload.argument(), payload.count());
+                case ADD_HAND -> MilestoneService.addHandTarget(player, payload.count());
+                case REMOVE_TARGET -> MilestoneService.removeTarget(player, payload.argument(), payload.count());
                 case APPLY_PRESET -> MilestoneService.applyPreset(player, payload.argument());
-                case RESET_RECORD -> MilestoneService.resetRecord(player, payload.argument());
+                case RESET_RECORD -> MilestoneService.resetRecord(player, payload.argument(), payload.count());
                 case RESET_ALL -> MilestoneService.resetAllRecords(player);
                 case SAVE_PRESET -> MilestoneService.savePreset(player, payload.argument());
                 case DELETE_PRESET -> MilestoneService.deletePreset(player, payload.argument());

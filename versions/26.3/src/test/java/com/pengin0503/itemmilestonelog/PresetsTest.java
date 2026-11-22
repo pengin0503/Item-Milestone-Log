@@ -1,5 +1,6 @@
 package com.pengin0503.itemmilestonelog;
 
+import com.pengin0503.itemmilestonelog.api.TargetKey;
 import net.minecraft.resources.Identifier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -22,6 +23,7 @@ class PresetsTest {
     void resetPresets(@TempDir Path emptyDir) {
         Presets.reloadFrom(emptyDir);
     }
+
     @Test
     void allPresetsContainValidIdentifiers() {
         assertFalse(Presets.PRESETS.isEmpty());
@@ -42,14 +44,17 @@ class PresetsTest {
     }
 
     @Test
-    void loadsCustomPresetsHandlesMalformedAndIgnoresBuiltinCollision(@TempDir Path dir) throws Exception {
+    void loadsCustomPresetsHandlesMalformedQuantityObjectsAndIgnoresBuiltinCollision(@TempDir Path dir) throws Exception {
         Files.writeString(dir.resolve("my_pack.json"), """
                 {
                   "name": "My Pack Goals",
                   "items": [
                     "minecraft:diamond",
+                    {"item": "minecraft:diamond", "count": 100},
                     "othermod:custom_item",
                     "minecraft:diamond",
+                    {"item": "minecraft:iron_ingot", "count": 0},
+                    {"item": "minecraft:gold_ingot", "count": 1000001},
                     "not valid id"
                   ]
                 }
@@ -70,31 +75,43 @@ class PresetsTest {
         assertNotNull(custom);
         assertFalse(custom.builtin());
         assertEquals("My Pack Goals", custom.displayName());
-        assertEquals(List.of("minecraft:diamond", "othermod:custom_item"), custom.items());
+        assertEquals(List.of(
+                TargetKey.of("minecraft:diamond"),
+                TargetKey.of("minecraft:diamond", 100),
+                TargetKey.of("othermod:custom_item")
+        ), custom.items());
 
         assertNull(Presets.get("broken"));
         assertNull(Presets.get("empty"));
         assertTrue(Presets.get("atm_star").builtin());
 
+        // Reset back to clean dir
         Presets.reloadFrom(dir.resolve("clean"));
     }
 
     @Test
-    void savesOverwritesAndDeletesCustomPresets(@TempDir Path dir) throws Exception {
+    void savesOverwritesAndDeletesCustomPresetsWithQuantityFormat(@TempDir Path dir) throws Exception {
         Presets.reloadFrom(dir);
 
-        assertFalse(Presets.saveCustomTo(dir, "starter_set", List.of("minecraft:oak_log", "minecraft:cobblestone")));
-        assertTrue(Files.isRegularFile(dir.resolve("starter_set.json")));
+        assertFalse(Presets.saveCustomTo(dir, "starter_set", List.of(
+                TargetKey.of("minecraft:oak_log"),
+                TargetKey.of("minecraft:cobblestone", 64))));
+        Path savedPath = dir.resolve("starter_set.json");
+        assertTrue(Files.isRegularFile(savedPath));
+        String jsonText = Files.readString(savedPath);
+        assertTrue(jsonText.contains("\"minecraft:oak_log\""), jsonText);
+        assertTrue(jsonText.contains("\"item\": \"minecraft:cobblestone\""), jsonText);
+        assertTrue(jsonText.contains("\"count\": 64"), jsonText);
         assertNotNull(Presets.get("starter_set"));
 
-        assertTrue(Presets.saveCustomTo(dir, "starter_set", List.of("minecraft:diamond")));
-        assertEquals(List.of("minecraft:diamond"), Presets.get("starter_set").items());
+        assertTrue(Presets.saveCustomTo(dir, "starter_set", List.of(TargetKey.of("minecraft:diamond"))));
+        assertEquals(List.of(TargetKey.of("minecraft:diamond")), Presets.get("starter_set").items());
 
-        assertThrows(IllegalArgumentException.class, () -> Presets.saveCustomTo(dir, "atm_star", List.of("minecraft:dirt")));
-        assertThrows(IllegalArgumentException.class, () -> Presets.saveCustomTo(dir, "Bad Name", List.of("minecraft:dirt")));
+        assertThrows(IllegalArgumentException.class, () -> Presets.saveCustomTo(dir, "atm_star", List.of(TargetKey.of("minecraft:dirt"))));
+        assertThrows(IllegalArgumentException.class, () -> Presets.saveCustomTo(dir, "Bad Name", List.of(TargetKey.of("minecraft:dirt"))));
 
         assertTrue(Presets.deleteCustomFrom(dir, "starter_set"));
-        assertFalse(Files.exists(dir.resolve("starter_set.json")));
+        assertFalse(Files.exists(savedPath));
         assertNull(Presets.get("starter_set"));
         assertFalse(Presets.deleteCustomFrom(dir, "atm_star"));
 

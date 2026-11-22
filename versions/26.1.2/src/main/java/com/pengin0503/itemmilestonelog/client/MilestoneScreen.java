@@ -2,6 +2,7 @@ package com.pengin0503.itemmilestonelog.client;
 
 import com.pengin0503.itemmilestonelog.Playtime;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
+import com.pengin0503.itemmilestonelog.api.TargetKey;
 import com.pengin0503.itemmilestonelog.network.MilestoneActionPayload;
 import com.pengin0503.itemmilestonelog.network.SyncMilestonesPayload;
 import com.pengin0503.itemmilestonelog.network.TargetEntry;
@@ -60,12 +61,12 @@ public final class MilestoneScreen extends Screen {
         return data;
     }
 
-    public Set<String> getTrackedItemIds() {
-        Set<String> ids = new HashSet<>();
+    public Set<TargetKey> getTrackedTargets() {
+        Set<TargetKey> keys = new HashSet<>();
         for (TargetEntry entry : data.targets()) {
-            ids.add(entry.itemId());
+            keys.add(entry.key());
         }
-        return ids;
+        return keys;
     }
 
     public void updateData(SyncMilestonesPayload newData) {
@@ -218,32 +219,38 @@ public final class MilestoneScreen extends Screen {
         listWidget.clearAllEntries();
         if (viewMode == ViewMode.TARGETS) {
             for (TargetEntry target : data.targets()) {
-                MilestoneRecord recorded = data.records().get(target.itemId());
+                TargetKey key = target.key();
+                MilestoneRecord recorded = data.records().get(key);
+                Integer currentProgress = (recorded == null && key.count() > TargetKey.MIN_COUNT)
+                        ? data.progress().getOrDefault(key, 0)
+                        : null;
                 listWidget.addRow(new MilestoneRow(
-                        target.itemId(),
+                        key,
                         target.personal(),
                         target.defaultTarget(),
                         recorded,
+                        currentProgress,
                         true
                 ));
             }
         } else {
-            List<Map.Entry<String, MilestoneRecord>> sorted = new ArrayList<>(data.records().entrySet());
-            sorted.sort(Comparator.comparingInt((Map.Entry<String, MilestoneRecord> e) -> e.getValue().playTicks())
+            List<Map.Entry<TargetKey, MilestoneRecord>> sorted = new ArrayList<>(data.records().entrySet());
+            sorted.sort(Comparator.comparingInt((Map.Entry<TargetKey, MilestoneRecord> e) -> e.getValue().playTicks())
                     .thenComparing(Map.Entry::getKey));
-            for (Map.Entry<String, MilestoneRecord> entry : sorted) {
+            for (Map.Entry<TargetKey, MilestoneRecord> entry : sorted) {
                 listWidget.addRow(new MilestoneRow(
                         entry.getKey(),
                         false,
                         false,
                         entry.getValue(),
+                        null,
                         false
                 ));
             }
         }
     }
 
-    private void openConfirmResetSingle(String itemId, Component itemDisplayName) {
+    private void openConfirmResetSingle(TargetKey targetKey, Component itemDisplayName) {
         if (this.minecraft == null) {
             return;
         }
@@ -253,7 +260,7 @@ public final class MilestoneScreen extends Screen {
                 Component.translatable("gui.itemmilestonelog.confirm_reset.message", itemDisplayName),
                 Component.translatable("gui.itemmilestonelog.button.reset"),
                 CommonComponents.GUI_CANCEL,
-                () -> ClientMilestoneHandler.sendAction(MilestoneActionPayload.Action.RESET_RECORD, itemId)
+                () -> ClientMilestoneHandler.sendAction(MilestoneActionPayload.Action.RESET_RECORD, targetKey.itemId(), targetKey.count())
         ));
     }
 
@@ -278,7 +285,7 @@ public final class MilestoneScreen extends Screen {
         graphics.centeredText(this.font, this.title, this.width / 2, 8, 0xFFFFFFFF);
 
         long achievedCount = data.targets().stream()
-                .filter(t -> data.records().containsKey(t.itemId()))
+                .filter(t -> data.records().containsKey(t.key()))
                 .count();
         Component header = Component.translatable(
                 "gui.itemmilestonelog.header",
@@ -336,38 +343,46 @@ public final class MilestoneScreen extends Screen {
     }
 
     private final class MilestoneRow extends ContainerObjectSelectionList.Entry<MilestoneRow> {
-        private final String itemId;
+        private final TargetKey targetKey;
         private final ItemStack iconStack;
         private final Component displayName;
         private final boolean defaultTarget;
         @Nullable
         private final MilestoneRecord recordedRecord;
+        @Nullable
+        private final Integer currentProgress;
         private final List<Button> rowButtons = new ArrayList<>();
         @Nullable
         private final Button resetButton;
         @Nullable
         private final Button removeOrDefaultButton;
 
-        public MilestoneRow(String itemId, boolean personal, boolean defaultTarget,
-                            @Nullable MilestoneRecord recordedRecord, boolean showTargetControls) {
-            this.itemId = itemId;
+        public MilestoneRow(TargetKey targetKey, boolean personal, boolean defaultTarget,
+                            @Nullable MilestoneRecord recordedRecord, @Nullable Integer currentProgress,
+                            boolean showTargetControls) {
+            this.targetKey = targetKey;
             this.defaultTarget = defaultTarget;
             this.recordedRecord = recordedRecord;
+            this.currentProgress = currentProgress;
 
-            Identifier id = Identifier.tryParse(itemId);
+            Identifier id = Identifier.tryParse(targetKey.itemId());
+            Component baseName;
             if (id != null && BuiltInRegistries.ITEM.containsKey(id)) {
                 Item item = BuiltInRegistries.ITEM.getValue(id);
                 this.iconStack = new ItemStack(item);
-                this.displayName = item.getName(this.iconStack);
+                baseName = item.getName(this.iconStack);
             } else {
                 this.iconStack = new ItemStack(Items.BARRIER);
-                this.displayName = Component.literal(itemId);
+                baseName = Component.literal(targetKey.itemId());
             }
+            this.displayName = targetKey.count() > TargetKey.MIN_COUNT
+                    ? baseName.copy().append(Component.literal(targetKey.formatSuffix()))
+                    : baseName;
 
             if (recordedRecord != null) {
                 this.resetButton = Button.builder(
                                 Component.translatable("gui.itemmilestonelog.button.reset"),
-                                btn -> openConfirmResetSingle(this.itemId, this.displayName))
+                                btn -> openConfirmResetSingle(this.targetKey, this.displayName))
                         .bounds(0, 0, 50, 20)
                         .tooltip(Tooltip.create(Component.translatable("gui.itemmilestonelog.tooltip.reset")))
                         .build();
@@ -380,7 +395,8 @@ public final class MilestoneScreen extends Screen {
                 if (personal) {
                     this.removeOrDefaultButton = Button.builder(
                                     Component.translatable("gui.itemmilestonelog.button.remove"),
-                                    btn -> ClientMilestoneHandler.sendAction(MilestoneActionPayload.Action.REMOVE_TARGET, this.itemId))
+                                    btn -> ClientMilestoneHandler.sendAction(
+                                            MilestoneActionPayload.Action.REMOVE_TARGET, this.targetKey.itemId(), this.targetKey.count()))
                             .bounds(0, 0, 54, 20)
                             .tooltip(Tooltip.create(Component.translatable("gui.itemmilestonelog.tooltip.remove")))
                             .build();
@@ -429,7 +445,10 @@ public final class MilestoneScreen extends Screen {
             int textX = left + 26;
             int maxTextWidth = Math.max(40, rightEdge - textX - 4);
 
-            String nameStr = displayName.getString();
+            Component nameComponent = currentProgress != null
+                    ? Component.translatable("message.itemmilestonelog.target_progress", displayName, currentProgress)
+                    : displayName;
+            String nameStr = nameComponent.getString();
             if (defaultTarget && removeOrDefaultButton != null && removeOrDefaultButton.active) {
                 nameStr = nameStr + " [" + Component.translatable("gui.itemmilestonelog.badge.default").getString() + "]";
             }
