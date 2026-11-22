@@ -20,6 +20,7 @@ import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.tick.PlayerTickEvent;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -36,14 +37,20 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class Tracker {
     private static volatile String lastWarnedSoundId = null;
     private static final Set<String> WARNED_DEFAULT_TARGETS = ConcurrentHashMap.newKeySet();
+    private static volatile List<? extends String> lastDefaultTargets = null;
+    private static volatile Set<TargetKey> cachedDefaultTargets = Set.of();
 
     private Tracker() {
     }
 
     /** Parses server-configured defaultTargets into valid {@link TargetKey}s, warning once per invalid entry. */
     public static Set<TargetKey> defaultTargets() {
+        List<? extends String> current = Config.DEFAULT_TARGETS.get();
+        if (current == lastDefaultTargets) {
+            return cachedDefaultTargets;
+        }
         Set<TargetKey> result = new LinkedHashSet<>();
-        for (String raw : Config.DEFAULT_TARGETS.get()) {
+        for (String raw : current) {
             TargetKey parsed = TargetKey.tryParseEncoded(raw);
             if (parsed != null && parsed.itemId().contains(":") && ResourceLocation.tryParse(parsed.itemId()) != null) {
                 result.add(parsed);
@@ -51,7 +58,9 @@ public final class Tracker {
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Ignoring invalid defaultTargets entry '{}'", raw);
             }
         }
-        return result;
+        lastDefaultTargets = current;
+        cachedDefaultTargets = Collections.unmodifiableSet(new LinkedHashSet<>(result));
+        return cachedDefaultTargets;
     }
 
     /** Effective targets for a player: global defaults from config + personal targets. */
