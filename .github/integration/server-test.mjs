@@ -20,7 +20,8 @@ const { values: opt } = parseArgs({
     port: { type: 'string', default: '25565' },
     'rcon-port': { type: 'string', default: '25575' },
     'rcon-password': { type: 'string', default: 'iml-ci' },
-    'scan-interval-ticks': { type: 'string', default: '600' },
+    // Must match scanIntervalTicks in the server's config (SCAN_INTERVAL_TICKS in server-lib.sh).
+    'scan-interval-ticks': { type: 'string', default: '240' },
     'server-dir': { type: 'string', default: '' },
   },
 });
@@ -284,9 +285,9 @@ async function freshBotFlow(rcon) {
 
   await check('picking up a target item records it immediately', async () => {
     const from = session.messages.length;
-    await rcon.command(
-      `execute at ${BOT_NAME} run summon minecraft:item ~ ~ ~ {Item:{id:"minecraft:cobblestone",count:1},PickupDelay:0}`);
-    await sleep(1500);
+    // Taken out of the inventory right after the pickup, so the record has to come from
+    // the pickup hook: the inventory scan (every SCAN_SECONDS) is unlikely to run in between.
+    await summonAndPickUp(rcon, 'minecraft:cobblestone');
     const cleared = await rcon.command(`clear ${BOT_NAME} minecraft:cobblestone`);
     if (!/Removed 1/.test(cleared)) throw new Error(`the bot did not pick the item up: ${cleared}`);
     const hit = await waitFor(session, from, /^★ Milestone recorded: Cobblestone at playtime \d+h \d{2}m \d{2}s$/, 4000);
@@ -348,7 +349,11 @@ async function freshBotFlow(rcon) {
 }
 
 async function creativeModeFlow(session, rcon) {
+  // Waiting for a record made by the scan: one scan interval, plus time for the message.
   const scanMs = (SCAN_SECONDS + 5) * 1000;
+  // Waiting for nothing to be recorded: one full scan interval plus 2 s, so at least one
+  // scan runs in the meantime (the scan runs every SCAN_SECONDS for each player).
+  const oneScanMs = (SCAN_SECONDS + 2) * 1000;
   await check('creative mode: targets for the checks below', async () => {
     await command(session, 'milestonelog add minecraft:gold_ingot', /^Now tracking: Gold Ingot$/);
     await command(session, 'milestonelog add minecraft:iron_ingot', /^Now tracking: Iron Ingot$/);
@@ -358,7 +363,7 @@ async function creativeModeFlow(session, rcon) {
     await rcon.command(`gamemode creative ${BOT_NAME}`);
     const from = session.messages.length;
     await summonAndPickUp(rcon, 'minecraft:gold_ingot');
-    await sleep(scanMs - 3000);
+    await sleep(oneScanMs);
     assertNotRecorded(session, from, 'Gold Ingot');
   });
   await check('back in survival, an item carried out of creative mode is not recorded', async () => {
@@ -418,8 +423,11 @@ async function multiPlayerAndPresetManagementFlow(session, rcon) {
     await command(bot2, 'milestonelog mutebroadcast', /^Milestone broadcasts from other players are now muted\.$/);
 
     bFrom = bot2.messages.length;
+    const sFrom = session.messages.length;
     await summonAndPickUp(rcon, 'minecraft:charcoal', BOT_NAME);
-    await sleep(3000);
+    // A broadcast would go out together with ImlBot's own notice.
+    await waitFor(session, sFrom, /^★ Milestone recorded: Charcoal at playtime /, 4000);
+    await sleep(1000);
     const leaked = bot2.messages.slice(bFrom).find((m) => /recorded Charcoal/.test(m.text));
     if (leaked) throw new Error(`muted player still received broadcast: ${leaked.text}`);
 

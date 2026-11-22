@@ -15,24 +15,30 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# build ──┬── server-test ──┬── release-check ── release (tags only)
+#         └── migration ────┘
 jobs:
   build:
+    # Compiles and unit-tests every Minecraft version against both NeoForge versions.
     # "min" is the NeoForge version the release jar is compiled against (and the lowest
     # version the mod declares support for); "latest" is the newest NeoForge build listed
-    # in gradle.properties (neo_version_latest). Both jobs compile and unit-test against
-    # their NeoForge, then run the release jar (compiled against "min") on a production
-    # NeoForge server of that version.
-    name: MC ${{ matrix.mc }} / NeoForge ${{ matrix.neo }}
+    # in gradle.properties (neo_version_latest). The "min" job uploads the release jar,
+    # which server-test then runs on a production server of both NeoForge versions.
+    #
+    # setup-gradle keys its cache on the workflow name, this job's id and its matrix:
+    # renaming either or changing the matrix makes every job miss its Gradle cache once.
+    name: Build MC ${{ matrix.mc }} / NeoForge ${{ matrix.neo }}
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-    strategy:
+    timeout-minutes: 20
+    strategy: &versions
       fail-fast: false
       matrix:
         mc: ['1.21.1', '26.1.2', '26.2', '26.3']
         neo: [min, latest]
         include:
-          # bot: a vanilla-protocol client (mineflayer) joins the server. mineflayer
-          # supports 1.21.1 and 26.1.x, not 26.2/26.3 yet; those get RCON checks only.
+          # bot (used by server-test): a vanilla-protocol client (mineflayer) joins the
+          # server. mineflayer supports 1.21.1 and 26.1.x, not 26.2/26.3 yet; those get
+          # RCON checks only.
           - mc: '1.21.1'
             java: '21'
             bot: true
@@ -56,37 +62,24 @@ jobs:
           java-version: ${{ matrix.java }}
           distribution: 'temurin'
 
+      # The builds run through the Gradle wrapper, so gradle/wrapper/gradle-wrapper.properties
+      # is the one place the Gradle version is set.
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v5
         with:
-          gradle-version: '9.2.1'
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: .github/integration/package-lock.json
+          # Only pushes to main write the Gradle cache; pull requests and tags only read it.
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
 
       - name: Select NeoForge version
         id: neo
-        run: |
-          props="versions/${{ matrix.mc }}/gradle.properties"
-          min="$(grep -E '^neo_version=' "$props" | cut -d= -f2-)"
-          version="$min"
-          if [ "${{ matrix.neo }}" = "latest" ]; then
-            version="$(grep -E '^neo_version_latest=' "$props" | cut -d= -f2-)"
-          fi
-          echo "NeoForge $version (release jar compiled against $min)"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "min=$min" >> "$GITHUB_OUTPUT"
+        run: .github/scripts/neoforge-version.sh ${{ matrix.mc }} ${{ matrix.neo }}
 
       - name: Build and run unit tests
-        run: gradle -p versions/${{ matrix.mc }} build -Pneo_version=${{ steps.neo.outputs.version }} --console=plain
+        run: ./gradlew -p versions/${{ matrix.mc }} build -Pneo_version=${{ steps.neo.outputs.version }} --console=plain
 
       - name: Build the release jar against the minimum NeoForge
         if: matrix.neo == 'latest'
-        run: gradle -p versions/${{ matrix.mc }} jar -Pneo_version=${{ steps.neo.outputs.min }} --console=plain
+        run: ./gradlew -p versions/${{ matrix.mc }} jar -Pneo_version=${{ steps.neo.outputs.min }} --console=plain
 
       - name: Check the jar contents
         run: .github/scripts/verify-jar.sh ${{ matrix.mc }}
@@ -99,13 +92,69 @@ jobs:
           path: versions/${{ matrix.mc }}/build/libs/*.jar
           if-no-files-found: error
 
+      - name: Upload unit test reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: unit-test-reports-${{ matrix.mc }}-${{ matrix.neo }}
+          path: versions/${{ matrix.mc }}/build/reports/tests/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  server-test:
+    # Runs the release jar (compiled against the minimum NeoForge, from the "min" build
+    # job) on a production NeoForge dedicated server of this job's NeoForge version.
+    # !cancelled(): a failed build of one version does not hold back the other versions.
+    name: Server MC ${{ matrix.mc }} / NeoForge ${{ matrix.neo }}
+    needs: build
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy: *versions
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup JDK ${{ matrix.java }}
+        uses: actions/setup-java@v5
+        with:
+          java-version: ${{ matrix.java }}
+          distribution: 'temurin'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: .github/integration/package-lock.json
+
+      - name: Select NeoForge version
+        id: neo
+        run: .github/scripts/neoforge-version.sh ${{ matrix.mc }} ${{ matrix.neo }}
+
+      - name: Download the release jar
+        uses: actions/download-artifact@v7
+        with:
+          name: itemmilestonelog-${{ matrix.mc }}
+          path: versions/${{ matrix.mc }}/build/libs
+
+      # The NeoForge installer downloads Minecraft and the libraries and patches the
+      # server; install_server (server-lib.sh) skips it when libraries/ already has this
+      # NeoForge version. The migration job uses the same cache entries.
+      - name: Restore the NeoForge server
+        uses: actions/cache@v5
+        with:
+          path: build/server/${{ matrix.mc }}-${{ steps.neo.outputs.version }}/libraries
+          key: neoforge-server-v1-${{ runner.os }}-${{ matrix.mc }}-${{ steps.neo.outputs.version }}
+
       - name: Install integration test client
         run: npm ci --prefix .github/integration --no-audit --no-fund
 
       - name: Run the release jar on a NeoForge dedicated server
         run: .github/scripts/run-server-tests.sh ${{ matrix.mc }} ${{ steps.neo.outputs.version }} ${{ matrix.bot }}
 
-      - name: Upload test reports and server logs
+      - name: Upload server logs
         if: always()
         uses: actions/upload-artifact@v6
         with:
@@ -114,17 +163,19 @@ jobs:
             build/server-logs/
             build/server/*/logs/
             build/server/*/config/
-            versions/${{ matrix.mc }}/build/reports/tests/
           if-no-files-found: ignore
+          retention-days: 7
 
   migration:
     # A 1.21.1 world, with records made by the 1.21.1 jar, opened by the 26.1.2 jar
     # on a 26.1.2 server: the records must come over (issue #13). mineflayer joins
     # both servers; it does not support 26.2/26.3, which share the 26.1.2 code.
+    # It only needs the jars, so it runs next to server-test.
     name: 1.21.1 world opened on 26.1.2
     needs: build
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -144,6 +195,16 @@ jobs:
           cache: npm
           cache-dependency-path: .github/integration/package-lock.json
 
+      - name: Select NeoForge versions
+        id: neo
+        run: |
+          latest() { grep -E '^neo_version_latest=' "versions/$1/gradle.properties" | cut -d= -f2-; }
+          old="$(latest 1.21.1)"
+          new="$(latest 26.1.2)"
+          echo "NeoForge $old (1.21.1) and $new (26.1.2)"
+          echo "old=$old" >> "$GITHUB_OUTPUT"
+          echo "new=$new" >> "$GITHUB_OUTPUT"
+
       - name: Download the 1.21.1 release jar
         uses: actions/download-artifact@v7
         with:
@@ -156,13 +217,23 @@ jobs:
           name: itemmilestonelog-26.1.2
           path: versions/26.1.2/build/libs
 
+      - name: Restore the NeoForge 1.21.1 server
+        uses: actions/cache@v5
+        with:
+          path: build/server/1.21.1-${{ steps.neo.outputs.old }}/libraries
+          key: neoforge-server-v1-${{ runner.os }}-1.21.1-${{ steps.neo.outputs.old }}
+
+      - name: Restore the NeoForge 26.1.2 server
+        uses: actions/cache@v5
+        with:
+          path: build/server/26.1.2-${{ steps.neo.outputs.new }}/libraries
+          key: neoforge-server-v1-${{ runner.os }}-26.1.2-${{ steps.neo.outputs.new }}
+
       - name: Install integration test client
         run: npm ci --prefix .github/integration --no-audit --no-fund
 
       - name: Open a 1.21.1 world on a 26.1.2 server
-        run: |
-          latest() { grep -E '^neo_version_latest=' "versions/$1/gradle.properties" | cut -d= -f2-; }
-          .github/scripts/run-migration-test.sh "$(latest 1.21.1)" "$(latest 26.1.2)"
+        run: .github/scripts/run-migration-test.sh ${{ steps.neo.outputs.old }} ${{ steps.neo.outputs.new }}
 
       - name: Upload server logs
         if: always()
@@ -173,12 +244,14 @@ jobs:
             build/server-logs/
             build/server/*/logs/
           if-no-files-found: ignore
+          retention-days: 7
 
   release-check:
     # Runs on every build, so a broken release is found before the tag is pushed.
     name: Check the release files
-    needs: [build, migration]
+    needs: [build, server-test, migration]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -198,6 +271,7 @@ jobs:
     needs: release-check
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:

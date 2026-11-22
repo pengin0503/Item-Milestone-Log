@@ -9,7 +9,9 @@
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TEST_JS="$ROOT/.github/integration/server-test.mjs"
-SCAN_INTERVAL_TICKS=600
+# 240 ticks (12 s): long enough to tell the pickup hook (the tests give it 4 s) from
+# the inventory scan, short enough that waiting for a scan does not dominate the run.
+SCAN_INTERVAL_TICKS=240
 JAVA="${JAVA:-java}"
 SERVER_PGID=""
 SERVER_LOG=""
@@ -123,9 +125,10 @@ EOF
   ]
 }
 EOF
-  # A long scan interval lets the tests tell the pickup hook and the inventory scan apart.
-  # NeoForge rewrites a config file that lacks the spec's comments (keeping a .bak of
-  # it) but keeps valid values; check_config makes sure this one was used.
+  # SCAN_INTERVAL_TICKS (see the top of this file) lets the tests tell the pickup hook
+  # and the inventory scan apart. NeoForge rewrites a config file that lacks the spec's
+  # comments (keeping a .bak of it) but keeps valid values; check_config makes sure
+  # this one was used.
   cat > "$CONFIG_FILE" <<EOF
 defaultTargets = []
 scanIntervalTicks = $SCAN_INTERVAL_TICKS
@@ -159,8 +162,8 @@ start_server() {
       echo "::endgroup::"
       return 1
     fi
-    sleep 2
-    waited=$((waited + 2))
+    sleep 1
+    waited=$((waited + 1))
   done
   echo "Server is up after ~${waited}s"
   echo "::endgroup::"
@@ -171,8 +174,8 @@ stop_server() {
   node "$TEST_JS" --phase stop || true
   local waited=0
   while kill -0 "$SERVER_PGID" 2>/dev/null && [ "$waited" -lt 120 ]; do
-    sleep 2
-    waited=$((waited + 2))
+    sleep 1
+    waited=$((waited + 1))
   done
   if kill -0 "$SERVER_PGID" 2>/dev/null; then
     echo "::warning::Server (MC $MC, NeoForge $NEO) did not stop within 120s after /stop"

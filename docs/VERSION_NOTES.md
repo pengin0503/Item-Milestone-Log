@@ -132,26 +132,32 @@ Item Milestone Log の複数バージョン対応（`1.21.1` / `26.1.2` / `26.2`
 3. **新バージョン（例: 26.4）を追加する場合**:
    - 直近バージョン（`versions/26.3`）をコピーして `versions/<new_mc>` を作成。
    - `gradle.properties` の `minecraft_version` / `minecraft_version_range` / `neo_version` / `neo_version_range` / `neo_version_latest` を更新。
-   - `.github/workflows/main.yml` の `matrix.mc` と `matrix.include` にエントリを追加（mineflayer が対応していれば `bot: true`）。
+   - `.github/workflows/main.yml` の `build` ジョブの `matrix.mc` と `matrix.include` にエントリを追加（mineflayer が対応していれば `bot: true`）。`server-test` は同じ matrix（YAML アンカー `&versions`）を使います。
    - 設定ファイル名や保存データの場所が変わる場合は `.github/scripts/server-lib.sh`（`use_server`）も更新。
    - `.github/scripts/check-release.sh` の `MC_VERSIONS` に追加。
    - ローカルで `./gradlew -p versions/<new_mc> build`（テスト含む）と GitHub Actions の全マトリックス成功を確認。
 
 ## CI（`.github/workflows/main.yml`）
 
-各MCバージョン × NeoForge（下限・最新）の8ジョブ（`build`）で、次を行います。
+ジョブの流れ: `build` → `server-test` と `migration`（並行）→ `release-check` → `release`（タグのみ）。
 
-1. `gradle build`（そのNeoForgeでコンパイル＋単体テスト）。最新版のジョブは、その後リリース用jarを下限で作り直します。
+`build`（各MCバージョン × NeoForge（下限・最新）の8ジョブ）:
+
+1. `./gradlew build`（そのNeoForgeでコンパイル＋単体テスト）。最新版のジョブは、その後リリース用jarを下限で作り直します。Gradle のバージョンは `gradle/wrapper/gradle-wrapper.properties` だけで決まります。Gradle のキャッシュは main への push だけが保存し、PR とタグは読むだけです。
 2. `.github/scripts/verify-jar.sh`: jar に mods.toml・ロゴ・翻訳・主要クラスがあるか、mods.toml の値と依存範囲、`${...}` の展開漏れ、開発用ファイルの混入を確認。
-3. `.github/scripts/run-server-tests.sh`: NeoForge 公式インストーラーで本番の専用サーバーを入れ、jar を `mods/` に置いて起動し、`.github/integration/server-test.mjs` を実行。
-   - 全バージョン: RCON でコマンド登録（`/milestonelog`・`/iml`・`/iml <サブコマンド>`）、設定ファイルが読まれたこと、ログにMOD由来のスタックトレース・リンクエラーがないこと。
-   - 1.21.1 / 26.1.2: mineflayer（バニラプロトコル、MOD未導入扱い）が参加し、英語フォールバック付きメッセージ、各コマンド、拾得による即時記録、インベントリスキャンによる記録、プリセット、reset/resetall、クリエイティブで記録されないこと（持ち帰ったアイテムの扱いを含む）、サーバー再起動後のデータ保持を確認。mineflayer 4.39 は 26.2 / 26.3 に未対応のため、その2バージョンは RCON のみです。
-4. 下限ジョブの jar を成果物 `itemmilestonelog-<mc>` としてアップロード（CurseForge 用）。
+3. 下限ジョブの jar を成果物 `itemmilestonelog-<mc>` としてアップロード（CurseForge 用、`server-test`・`migration`・リリースでも使用）。
 
-続くジョブ:
+`server-test`（同じ8ジョブ。`build` の後）: 下限でコンパイルしたリリース用jar（成果物 `itemmilestonelog-<mc>`）を、そのジョブのNeoForge（下限・最新）の本番サーバーで動かします。
 
-- `migration`（`.github/scripts/run-migration-test.sh`）: 1.21.1 のサーバー（最新NeoForge）で記録を作り、そのワールドを 26.1.2 のサーバーで開いて、記録が引き継がれること、新しいファイルが書かれ旧ファイルが残ることを確認します。
-- `release-check`（`.github/scripts/check-release.sh`）: 4つのjarがそろっていること、全バージョンの `mod_version` が同じこと、`CHANGELOG.md` にその版の節があることを毎回確認し、リリースノートを作ります。
+- `.github/scripts/run-server-tests.sh`: NeoForge 公式インストーラーで本番の専用サーバーを入れ、jar を `mods/` に置いて起動し、`.github/integration/server-test.mjs` を実行。インストール結果（`build/server/<mc>-<neo>/libraries`）は MC と NeoForge のバージョンをキーに actions/cache で再利用し、導入済みならインストーラーは動きません。
+  - 全バージョン: RCON でコマンド登録（`/milestonelog`・`/iml`・`/iml <サブコマンド>`）、設定ファイルが読まれたこと、ログにMOD由来のスタックトレース・リンクエラーがないこと。
+  - 1.21.1 / 26.1.2: mineflayer（バニラプロトコル、MOD未導入扱い）が参加し、英語フォールバック付きメッセージ、各コマンド、拾得による即時記録、インベントリスキャンによる記録、プリセット、reset/resetall、クリエイティブで記録されないこと（持ち帰ったアイテムの扱いを含む）、サーバー再起動後のデータ保持を確認。mineflayer 4.39 は 26.2 / 26.3 に未対応のため、その2バージョンは RCON のみです。
+  - テスト用サーバーのスキャン間隔は 240 tick（12秒、`server-lib.sh` の `SCAN_INTERVAL_TICKS`）。拾得の記録は4秒以内を求めるので、拾得フックとスキャンを区別できます。
+
+並行するジョブとその後:
+
+- `migration`（`.github/scripts/run-migration-test.sh`、`build` の後に `server-test` と並行）: 1.21.1 のサーバー（最新NeoForge）で記録を作り、そのワールドを 26.1.2 のサーバーで開いて、記録が引き継がれること、新しいファイルが書かれ旧ファイルが残ることを確認します。
+- `release-check`（`.github/scripts/check-release.sh`、`build`・`server-test`・`migration` がすべて成功した後）: 4つのjarがそろっていること、全バージョンの `mod_version` が同じこと、`CHANGELOG.md` にその版の節があることを毎回確認し、リリースノートを作ります。
 - `release`: `v<mod_version>` のタグを push したときだけ動き、4つのjarを添付した GitHub Release を作ります（`GITHUB_TOKEN` のみ使用）。
 
 GUI（キー操作・画面）は自動テストの対象外です。
