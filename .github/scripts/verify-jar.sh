@@ -46,6 +46,8 @@ expect_toml "version=\"$(prop mod_version)\""
 expect_toml 'logoFile="logo.png"'
 expect_toml "versionRange=\"$(prop neo_version_range)\""
 expect_toml "versionRange=\"$(prop minecraft_version_range)\""
+expect_toml 'displayTest="IGNORE_ALL_VERSION"'
+expect_toml 'updateJSONURL="https://raw.githubusercontent.com/pengin0503/Item-Milestone-Log/main/docs/updates.json"'
 
 if grep -q '\${' <<< "$toml"; then
   echo "  FAIL  unexpanded \${...} placeholders in mods.toml"

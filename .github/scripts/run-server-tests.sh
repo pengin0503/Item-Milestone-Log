@@ -31,7 +31,7 @@ BOT_FLAG=()
 [ "$BOT" = "true" ] && BOT_FLAG=(--bot)
 
 start_server "$LOG_DIR/server-1.log"
-node "$TEST_JS" --phase fresh --mc "$MC" --scan-interval-ticks "$SCAN_INTERVAL_TICKS" "${BOT_FLAG[@]}" || status=1
+node "$TEST_JS" --phase fresh --mc "$MC" --scan-interval-ticks "$SCAN_INTERVAL_TICKS" --server-dir "$SERVER_DIR" "${BOT_FLAG[@]}" || status=1
 stop_server
 check_log "$LOG_DIR/server-1.log" || status=1
 check_config || status=1
@@ -40,7 +40,7 @@ if [ "$BOT" = "true" ]; then
   check_data_file || status=1
 
   start_server "$LOG_DIR/server-2.log"
-  node "$TEST_JS" --phase restart --mc "$MC" "${BOT_FLAG[@]}" || status=1
+  node "$TEST_JS" --phase restart --mc "$MC" --server-dir "$SERVER_DIR" "${BOT_FLAG[@]}" || status=1
   stop_server
   check_log "$LOG_DIR/server-2.log" || status=1
 fi

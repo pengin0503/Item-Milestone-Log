@@ -1,13 +1,15 @@
 package com.pengin0503.itemmilestonelog;
 
-import com.mojang.logging.LogUtils;
 import com.pengin0503.itemmilestonelog.network.ModNetworking;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.config.ModConfig;
 import net.neoforged.neoforge.common.NeoForge;
+import net.neoforged.neoforge.event.server.ServerStartingEvent;
+import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import org.slf4j.Logger;
+import com.mojang.logging.LogUtils;
 
 /**
  * Item Milestone Log
@@ -31,7 +33,18 @@ public class ItemMilestoneLog {
         modEventBus.addListener(ModNetworking::registerPayloads);
         NeoForge.EVENT_BUS.register(Tracker.class);
         NeoForge.EVENT_BUS.register(MilestoneCommands.class);
+        NeoForge.EVENT_BUS.addListener(ItemMilestoneLog::onServerStarting);
+        NeoForge.EVENT_BUS.addListener(ItemMilestoneLog::onServerStopping);
 
         LOGGER.info("Item Milestone Log loaded");
+    }
+
+    private static void onServerStarting(ServerStartingEvent event) {
+        int custom = Presets.reload();
+        LOGGER.info("[ItemMilestoneLog] Loaded {} preset(s) ({} custom)", Presets.names().size(), custom);
+    }
+
+    private static void onServerStopping(ServerStoppingEvent event) {
+        DiscordNotifier.shutdown();
     }
 }

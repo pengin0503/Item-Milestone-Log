@@ -36,6 +36,37 @@ public final class Config {
                     "recorded either, until that item is no longer in the player's inventory.")
             .define("ignoreCreativeAndSpectator", true);
 
+    /** Play a sound effect to the player when one of their target items is recorded. */
+    public static final ModConfigSpec.BooleanValue MILESTONE_SOUND_ENABLED = BUILDER
+            .comment("Play a sound to the player when a milestone is recorded (independent of notifyPlayer).")
+            .define("milestoneSoundEnabled", true);
+
+    /** Vanilla sound event ID to play when a milestone is recorded. */
+    public static final ModConfigSpec.ConfigValue<String> MILESTONE_SOUND = BUILDER
+            .comment("Sound event ID to play when a milestone is recorded.")
+            .define("milestoneSound", "minecraft:ui.toast.challenge_complete", Config::validateSoundId);
+
+    /** Announce server-wide world-first records to all online players. */
+    public static final ModConfigSpec.BooleanValue ANNOUNCE_WORLD_FIRST = BUILDER
+            .comment("Announce to all online players when someone records a world-first item in this world.")
+            .define("announceWorldFirst", false);
+
+    /** Discord webhook URL for milestone notifications (empty = disabled; never logged). */
+    public static final ModConfigSpec.ConfigValue<String> DISCORD_WEBHOOK_URL = BUILDER
+            .comment("Optional Discord webhook URL for milestone notifications. Leave empty to disable.",
+                    "Treat this URL as a secret; it is never printed to logs or chat.")
+            .define("discordWebhookUrl", "");
+
+    /** Scope of Discord notifications: "all" or "world_first". */
+    public static final ModConfigSpec.ConfigValue<String> DISCORD_NOTIFY_SCOPE = BUILDER
+            .comment("Which milestones to send to Discord: \"all\" or \"world_first\".")
+            .define("discordNotifyScope", "all", Config::validateDiscordScope);
+
+    /** Show a one-time usage hint when a player joins a world for the first time. */
+    public static final ModConfigSpec.BooleanValue SHOW_FIRST_JOIN_HINT = BUILDER
+            .comment("Show a one-time chat tip when a player joins for the first time.")
+            .define("showFirstJoinHint", true);
+
     static final ModConfigSpec SPEC = BUILDER.build();
 
     private Config() {
@@ -43,5 +74,13 @@ public final class Config {
 
     private static boolean validateItemId(Object obj) {
         return obj instanceof String s && s.contains(":") && ResourceLocation.tryParse(s) != null;
+    }
+
+    private static boolean validateSoundId(Object obj) {
+        return obj instanceof String s && !s.isBlank() && ResourceLocation.tryParse(s) != null;
+    }
+
+    private static boolean validateDiscordScope(Object obj) {
+        return obj instanceof String s && ("all".equals(s) || "world_first".equals(s));
     }
 }

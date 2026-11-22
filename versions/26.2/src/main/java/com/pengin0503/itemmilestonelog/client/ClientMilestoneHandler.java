@@ -50,6 +50,14 @@ public final class ClientMilestoneHandler {
             screen.updateData(payload);
             return;
         }
+        if (current instanceof PresetListScreen presetList) {
+            presetList.updateData(payload);
+            return;
+        }
+        if (current instanceof SavePresetScreen savePreset) {
+            savePreset.updateParentData(payload);
+            return;
+        }
         if (current instanceof ItemPickerScreen picker) {
             picker.updateData(payload);
             return;
@@ -58,8 +66,6 @@ public final class ClientMilestoneHandler {
             confirm.updateParentData(payload);
             return;
         }
-        // Only open on an empty screen: the player may have opened another screen
-        // (inventory, a map, ...) while waiting for the server's answer.
         if (payload.openScreen() && current == null) {
             mc.gui.setScreen(new MilestoneScreen(payload));
         }
