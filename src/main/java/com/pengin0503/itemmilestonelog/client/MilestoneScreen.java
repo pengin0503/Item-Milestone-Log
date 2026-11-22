@@ -44,6 +44,8 @@ public final class MilestoneScreen extends Screen {
     private ViewMode viewMode = ViewMode.TARGETS;
     @Nullable
     private Component feedbackMessage;
+    private int elapsedTicks = 0;
+    private int feedbackY = 0;
 
     private MilestoneListWidget listWidget;
     private Button targetsTabButton;
@@ -71,6 +73,7 @@ public final class MilestoneScreen extends Screen {
     public void updateData(SyncMilestonesPayload newData) {
         double prevScroll = listWidget != null ? listWidget.getScrollAmount() : 0.0;
         this.data = newData;
+        this.elapsedTicks = 0;
         if (newData.feedback() != null) {
             this.feedbackMessage = newData.feedback();
         }
@@ -83,13 +86,60 @@ public final class MilestoneScreen extends Screen {
     }
 
     @Override
+    public void tick() {
+        super.tick();
+        if (this.minecraft != null && !this.minecraft.isPaused()) {
+            this.elapsedTicks++;
+        }
+    }
+
+    @Override
     protected void init() {
+        int gap = 4;
+        int maxRowWidth = Math.min(500, this.width - 16);
+
+        List<ButtonSpec> addSpecs = List.of(
+                new ButtonSpec(
+                        Component.translatable("gui.itemmilestonelog.button.add"),
+                        btn -> {
+                            if (this.minecraft != null) {
+                                this.minecraft.setScreen(new ItemPickerScreen(this));
+                            }
+                        },
+                        Tooltip.create(Component.translatable("gui.itemmilestonelog.button.add"))),
+                new ButtonSpec(
+                        Component.translatable("gui.itemmilestonelog.button.add_hand"),
+                        btn -> ClientMilestoneHandler.sendAction(MilestoneActionPayload.Action.ADD_HAND, ""),
+                        Tooltip.create(Component.translatable("gui.itemmilestonelog.button.add_hand")))
+        );
+
+        List<ButtonSpec> presetSpecs = new ArrayList<>();
+        for (String presetName : data.presetNames()) {
+            Component label = presetDisplayName(presetName);
+            presetSpecs.add(new ButtonSpec(
+                    label,
+                    btn -> ClientMilestoneHandler.sendAction(MilestoneActionPayload.Action.APPLY_PRESET, presetName),
+                    Tooltip.create(label)));
+        }
+
+        List<ButtonSpec> combinedSpecs = new ArrayList<>(addSpecs.size() + presetSpecs.size());
+        combinedSpecs.addAll(addSpecs);
+        combinedSpecs.addAll(presetSpecs);
+
+        int combinedWidthPerBtn = combinedSpecs.isEmpty()
+                ? maxRowWidth
+                : (maxRowWidth - gap * (combinedSpecs.size() - 1)) / combinedSpecs.size();
+        boolean splitActionRows = !presetSpecs.isEmpty() && combinedWidthPerBtn < 120;
+
+        int footerHeight = splitActionRows ? 88 : 66;
+        this.feedbackY = this.height - footerHeight + 6;
+
         int listTop = 58;
-        int listBottom = this.height - 66;
+        int listBottom = this.height - footerHeight;
         int listHeight = Math.max(40, listBottom - listTop);
 
         // View mode tabs (Targets / Recorded)
-        int tabWidth = 120;
+        int tabWidth = Math.min(130, (this.width - 24) / 2);
         int tabGap = 6;
         int tabsTotalWidth = tabWidth * 2 + tabGap;
         int tabsLeft = (this.width - tabsTotalWidth) / 2;
@@ -112,64 +162,52 @@ public final class MilestoneScreen extends Screen {
         listWidget = addRenderableWidget(new MilestoneListWidget(this.minecraft, this.width, listHeight, listTop, 28));
         populateList();
 
-        // Bottom action buttons - Row 1: Add Target, Add Held Item, Presets
-        int row1Y = this.height - 46;
-        int row2Y = this.height - 24;
-        int gap = 4;
-
-        List<ButtonSpec> row1Specs = new ArrayList<>();
-        row1Specs.add(new ButtonSpec(
-                Component.translatable("gui.itemmilestonelog.button.add"),
-                btn -> {
-                    if (this.minecraft != null) {
-                        this.minecraft.setScreen(new ItemPickerScreen(this));
-                    }
-                },
-                null));
-        row1Specs.add(new ButtonSpec(
-                Component.translatable("gui.itemmilestonelog.button.add_hand"),
-                btn -> ClientMilestoneHandler.sendAction(MilestoneActionPayload.Action.ADD_HAND, ""),
-                null));
-        for (String presetName : data.presetNames()) {
-            row1Specs.add(new ButtonSpec(
-                    presetDisplayName(presetName),
-                    btn -> ClientMilestoneHandler.sendAction(MilestoneActionPayload.Action.APPLY_PRESET, presetName),
-                    null));
+        // Bottom action buttons
+        int bottomRowY = this.height - 24;
+        if (splitActionRows) {
+            addButtonRow(addSpecs, this.height - 68, maxRowWidth, gap);
+            addButtonRow(presetSpecs, this.height - 46, maxRowWidth, gap);
+        } else {
+            addButtonRow(combinedSpecs, this.height - 46, maxRowWidth, gap);
         }
 
-        int maxRowWidth = Math.min(480, this.width - 16);
-        int count = row1Specs.size();
-        int btnWidth = Math.max(70, (maxRowWidth - gap * (count - 1)) / count);
-        int actualRow1Width = btnWidth * count + gap * (count - 1);
-        int startX = (this.width - actualRow1Width) / 2;
-
-        for (int i = 0; i < count; i++) {
-            ButtonSpec spec = row1Specs.get(i);
-            Button.Builder builder = Button.builder(spec.label, spec.onPress)
-                    .bounds(startX + i * (btnWidth + gap), row1Y, btnWidth, 20);
-            if (spec.tooltip != null) {
-                builder.tooltip(spec.tooltip);
-            }
-            addRenderableWidget(builder.build());
-        }
-
-        // Bottom action buttons - Row 2: Reset All Records, Close
-        int row2BtnWidth = 140;
+        // Bottom row: Reset All Records, Close
+        int row2BtnWidth = Math.min(140, (maxRowWidth - 8) / 2);
         int row2TotalWidth = row2BtnWidth * 2 + 8;
         int row2StartX = (this.width - row2TotalWidth) / 2;
 
         resetAllButton = addRenderableWidget(Button.builder(
                         Component.translatable("gui.itemmilestonelog.button.reset_all"),
                         btn -> openConfirmResetAll())
-                .bounds(row2StartX, row2Y, row2BtnWidth, 20)
+                .bounds(row2StartX, bottomRowY, row2BtnWidth, 20)
                 .build());
         resetAllButton.active = !data.records().isEmpty();
 
         addRenderableWidget(Button.builder(
                         CommonComponents.GUI_DONE,
                         btn -> onClose())
-                .bounds(row2StartX + row2BtnWidth + 8, row2Y, row2BtnWidth, 20)
+                .bounds(row2StartX + row2BtnWidth + 8, bottomRowY, row2BtnWidth, 20)
                 .build());
+    }
+
+    private void addButtonRow(List<ButtonSpec> specs, int y, int maxRowWidth, int gap) {
+        if (specs.isEmpty()) {
+            return;
+        }
+        int count = specs.size();
+        int btnWidth = Math.max(60, (maxRowWidth - gap * (count - 1)) / count);
+        int actualRowWidth = btnWidth * count + gap * (count - 1);
+        int startX = (this.width - actualRowWidth) / 2;
+
+        for (int i = 0; i < count; i++) {
+            ButtonSpec spec = specs.get(i);
+            Button.Builder builder = Button.builder(spec.label, spec.onPress)
+                    .bounds(startX + i * (btnWidth + gap), y, btnWidth, 20);
+            if (spec.tooltip != null) {
+                builder.tooltip(spec.tooltip);
+            }
+            addRenderableWidget(builder.build());
+        }
     }
 
     private void switchView(ViewMode mode) {
@@ -250,13 +288,13 @@ public final class MilestoneScreen extends Screen {
         // Title
         guiGraphics.drawCenteredString(this.font, this.title, this.width / 2, 8, 0xFFFFFF);
 
-        // Header summary: current playtime + achieved / total targets
+        // Header summary: current playtime (live ticking) + achieved / total targets
         long achievedCount = data.targets().stream()
                 .filter(t -> data.records().containsKey(t.itemId()))
                 .count();
         Component header = Component.translatable(
                 "gui.itemmilestonelog.header",
-                Playtime.format(data.currentPlaytimeTicks()),
+                Playtime.format(data.currentPlaytimeTicks() + elapsedTicks),
                 achievedCount,
                 data.targets().size()
         );
@@ -275,7 +313,7 @@ public final class MilestoneScreen extends Screen {
         if (feedbackMessage != null) {
             int maxWidth = this.width - 20;
             String trimmed = this.font.plainSubstrByWidth(feedbackMessage.getString(), maxWidth);
-            guiGraphics.drawCenteredString(this.font, trimmed, this.width / 2, this.height - 60, 0xFFE88A);
+            guiGraphics.drawCenteredString(this.font, trimmed, this.width / 2, this.feedbackY, 0xFFE88A);
         }
     }
 

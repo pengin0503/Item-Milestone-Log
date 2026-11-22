@@ -18,6 +18,7 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 
+import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -27,12 +28,20 @@ import java.util.Set;
 /**
  * Searchable item selector screen for adding new personal target items.
  *
- * Pre-caches all registered items with lowercase name and registry ID so
- * real-time search stays responsive even in large modpacks such as ATM10.
+ * Caches the sorted item catalog per language/registry size and caps displayed
+ * rows so real-time search stays smooth even in huge modpacks such as ATM10.
+ * Supports multi-token search and {@code @modid} namespace filtering.
  */
 public final class ItemPickerScreen extends Screen {
     private static final int ACTION_BTN_WIDTH = 64;
     private static final int ACTION_BTN_HEIGHT = 18;
+    private static final int MAX_DISPLAYED_ROWS = 300;
+
+    @Nullable
+    private static List<CatalogItem> cachedCatalog;
+    @Nullable
+    private static String cachedLanguage;
+    private static int cachedRegistrySize = -1;
 
     private final MilestoneScreen parent;
     private final List<CatalogItem> allItems;
@@ -42,16 +51,24 @@ public final class ItemPickerScreen extends Screen {
     private ItemListWidget listWidget;
     private String currentQuery = "";
     private int matchedCount = 0;
+    private int displayedCount = 0;
+    @Nullable
+    private ItemStack hoveredIconStack = null;
 
     public ItemPickerScreen(MilestoneScreen parent) {
         super(Component.translatable("gui.itemmilestonelog.picker.title"));
         this.parent = parent;
         this.trackedIds = parent.getTrackedItemIds();
-        this.allItems = buildCatalog();
+        this.allItems = getOrBuildCatalog();
     }
 
-    private static List<CatalogItem> buildCatalog() {
-        List<CatalogItem> catalog = new ArrayList<>();
+    private static List<CatalogItem> getOrBuildCatalog() {
+        String lang = Minecraft.getInstance().getLanguageManager().getSelected();
+        int regSize = BuiltInRegistries.ITEM.size();
+        if (cachedCatalog != null && regSize == cachedRegistrySize && lang.equals(cachedLanguage)) {
+            return cachedCatalog;
+        }
+        List<CatalogItem> catalog = new ArrayList<>(regSize);
         for (Item item : BuiltInRegistries.ITEM) {
             if (item == Items.AIR) {
                 continue;
@@ -62,6 +79,7 @@ public final class ItemPickerScreen extends Screen {
             String nameStr = name.getString();
             catalog.add(new CatalogItem(
                     id,
+                    rl.getNamespace().toLowerCase(Locale.ROOT),
                     new ItemStack(item),
                     name,
                     nameStr.toLowerCase(Locale.ROOT),
@@ -69,6 +87,9 @@ public final class ItemPickerScreen extends Screen {
             ));
         }
         catalog.sort(Comparator.comparing(c -> c.lowerName));
+        cachedCatalog = catalog;
+        cachedLanguage = lang;
+        cachedRegistrySize = regSize;
         return catalog;
     }
 
@@ -116,15 +137,36 @@ public final class ItemPickerScreen extends Screen {
         }
         listWidget.clearAllEntries();
         String trimmed = currentQuery.trim().toLowerCase(Locale.ROOT);
-        int count = 0;
+        String[] tokens = trimmed.isEmpty() ? new String[0] : trimmed.split("\\s+");
+
+        int matches = 0;
+        int shown = 0;
         for (CatalogItem item : allItems) {
-            if (trimmed.isEmpty() || item.lowerName.contains(trimmed) || item.lowerId.contains(trimmed)) {
-                listWidget.addRow(new ItemRow(item));
-                count++;
+            if (matchesQuery(item, tokens)) {
+                matches++;
+                if (shown < MAX_DISPLAYED_ROWS) {
+                    listWidget.addRow(new ItemRow(item));
+                    shown++;
+                }
             }
         }
-        this.matchedCount = count;
+        this.matchedCount = matches;
+        this.displayedCount = shown;
         listWidget.setScrollAmount(0.0);
+    }
+
+    private static boolean matchesQuery(CatalogItem item, String[] tokens) {
+        for (String token : tokens) {
+            if (token.startsWith("@")) {
+                String modQuery = token.substring(1);
+                if (!modQuery.isEmpty() && !item.lowerNamespace.contains(modQuery)) {
+                    return false;
+                }
+            } else if (!item.lowerName.contains(token) && !item.lowerId.contains(token)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     @Override
@@ -136,11 +178,14 @@ public final class ItemPickerScreen extends Screen {
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
+        this.hoveredIconStack = null;
         super.render(guiGraphics, mouseX, mouseY, partialTick);
 
         guiGraphics.drawCenteredString(this.font, this.title, this.width / 2, 8, 0xFFFFFF);
 
-        Component countText = Component.translatable("gui.itemmilestonelog.picker.count", matchedCount, allItems.size());
+        Component countText = matchedCount > displayedCount
+                ? Component.translatable("gui.itemmilestonelog.picker.count_capped", displayedCount, matchedCount)
+                : Component.translatable("gui.itemmilestonelog.picker.count", matchedCount, allItems.size());
         guiGraphics.drawString(this.font, countText, 12, this.height - 20, 0xB0B0B0, false);
 
         if (matchedCount == 0 && listWidget != null) {
@@ -148,6 +193,10 @@ public final class ItemPickerScreen extends Screen {
             guiGraphics.drawCenteredString(this.font,
                     Component.translatable("gui.itemmilestonelog.picker.no_results"),
                     this.width / 2, centerY, 0xA0A0A0);
+        }
+
+        if (hoveredIconStack != null) {
+            guiGraphics.renderTooltip(this.font, hoveredIconStack, mouseX, mouseY);
         }
     }
 
@@ -158,6 +207,7 @@ public final class ItemPickerScreen extends Screen {
 
     private record CatalogItem(
             String id,
+            String lowerNamespace,
             ItemStack stack,
             Component displayName,
             String lowerName,
@@ -207,8 +257,13 @@ public final class ItemPickerScreen extends Screen {
                 guiGraphics.fill(left, top, left + width, top + height, 0x22FFFFFF);
             }
 
-            // Item icon
-            guiGraphics.renderItem(item.stack, left + 4, top + 5);
+            // Item icon (+ tooltip on hover)
+            int iconX = left + 4;
+            int iconY = top + 5;
+            guiGraphics.renderItem(item.stack, iconX, iconY);
+            if (hovering && mouseX >= iconX && mouseX < iconX + 16 && mouseY >= iconY && mouseY < iconY + 16) {
+                ItemPickerScreen.this.hoveredIconStack = item.stack;
+            }
 
             // Right-side lightweight Add / Tracked button
             int btnX = left + width - ACTION_BTN_WIDTH - 4;

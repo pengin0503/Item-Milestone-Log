@@ -25,14 +25,16 @@ public record MilestoneActionPayload(Action action, String argument) implements 
     public static final StreamCodec<FriendlyByteBuf, MilestoneActionPayload> STREAM_CODEC =
             StreamCodec.of(MilestoneActionPayload::encode, MilestoneActionPayload::decode);
 
+    private static final int MAX_ARGUMENT_LENGTH = 256;
+
     private static void encode(FriendlyByteBuf buf, MilestoneActionPayload payload) {
         buf.writeEnum(payload.action);
-        buf.writeUtf(payload.argument == null ? "" : payload.argument);
+        buf.writeUtf(payload.argument == null ? "" : payload.argument, MAX_ARGUMENT_LENGTH);
     }
 
     private static MilestoneActionPayload decode(FriendlyByteBuf buf) {
         Action action = buf.readEnum(Action.class);
-        String arg = buf.readUtf();
+        String arg = buf.readUtf(MAX_ARGUMENT_LENGTH);
         return new MilestoneActionPayload(action, arg);
     }
 

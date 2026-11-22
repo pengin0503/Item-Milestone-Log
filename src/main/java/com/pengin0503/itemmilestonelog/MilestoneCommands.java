@@ -9,17 +9,19 @@ import net.minecraft.commands.CommandBuildContext;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.SharedSuggestionProvider;
+import net.minecraft.commands.arguments.ResourceLocationArgument;
 import net.minecraft.commands.arguments.item.ItemArgument;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.Item;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 
+import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -41,6 +43,22 @@ public final class MilestoneCommands {
     private static LiteralArgumentBuilder<CommandSourceStack> root(CommandBuildContext buildContext) {
         SuggestionProvider<CommandSourceStack> presetSuggestions = (ctx, builder) ->
                 SharedSuggestionProvider.suggest(Presets.PRESETS.keySet(), builder);
+        SuggestionProvider<CommandSourceStack> personalTargetSuggestions = (ctx, builder) -> {
+            ServerPlayer sp = ctx.getSource().getPlayer();
+            if (sp == null) {
+                return builder.buildFuture();
+            }
+            MilestoneData.PlayerData pd = MilestoneData.get(sp.server).playerOrNull(sp.getUUID());
+            return SharedSuggestionProvider.suggest(pd != null ? pd.targets : Set.of(), builder);
+        };
+        SuggestionProvider<CommandSourceStack> recordedSuggestions = (ctx, builder) -> {
+            ServerPlayer sp = ctx.getSource().getPlayer();
+            if (sp == null) {
+                return builder.buildFuture();
+            }
+            MilestoneData.PlayerData pd = MilestoneData.get(sp.server).playerOrNull(sp.getUUID());
+            return SharedSuggestionProvider.suggest(pd != null ? pd.records.keySet() : Set.of(), builder);
+        };
 
         return Commands.literal("milestonelog")
                 .executes(MilestoneCommands::summary)
@@ -50,8 +68,9 @@ public final class MilestoneCommands {
                                 .executes(ctx -> add(ctx, itemId(ctx)))))
                 .then(Commands.literal("addhand").executes(MilestoneCommands::addHand))
                 .then(Commands.literal("remove")
-                        .then(Commands.argument("item", ItemArgument.item(buildContext))
-                                .executes(ctx -> remove(ctx, itemId(ctx)))))
+                        .then(Commands.argument("item", ResourceLocationArgument.id())
+                                .suggests(personalTargetSuggestions)
+                                .executes(ctx -> remove(ctx, ResourceLocationArgument.getId(ctx, "item").toString()))))
                 .then(Commands.literal("targets").executes(MilestoneCommands::targets))
                 .then(Commands.literal("list").executes(MilestoneCommands::list))
                 .then(Commands.literal("preset")
@@ -59,8 +78,9 @@ public final class MilestoneCommands {
                                 .suggests(presetSuggestions)
                                 .executes(ctx -> preset(ctx, StringArgumentType.getString(ctx, "name")))))
                 .then(Commands.literal("reset")
-                        .then(Commands.argument("item", ItemArgument.item(buildContext))
-                                .executes(ctx -> reset(ctx, itemId(ctx)))))
+                        .then(Commands.argument("item", ResourceLocationArgument.id())
+                                .suggests(recordedSuggestions)
+                                .executes(ctx -> reset(ctx, ResourceLocationArgument.getId(ctx, "item").toString()))))
                 .then(Commands.literal("resetall").executes(MilestoneCommands::resetAll));
     }
 
@@ -70,19 +90,14 @@ public final class MilestoneCommands {
         return ctx.getSource().getPlayerOrException();
     }
 
-    private static MilestoneData.PlayerData data(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
-        ServerPlayer player = player(ctx);
-        return MilestoneData.get(player.server).player(player.getUUID());
+    @Nullable
+    private static MilestoneData.PlayerData dataOrNull(ServerPlayer player) {
+        return MilestoneData.get(player.server).playerOrNull(player.getUUID());
     }
 
     private static String itemId(CommandContext<CommandSourceStack> ctx) {
         Item item = ItemArgument.getItem(ctx, "item").getItem();
         return BuiltInRegistries.ITEM.getKey(item).toString();
-    }
-
-    private static Component itemName(String itemId) {
-        Item item = BuiltInRegistries.ITEM.get(ResourceLocation.parse(itemId));
-        return item.getDescription();
     }
 
     private static int send(CommandContext<CommandSourceStack> ctx, Component msg) {
@@ -94,9 +109,10 @@ public final class MilestoneCommands {
 
     private static int summary(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
         ServerPlayer player = player(ctx);
-        MilestoneData.PlayerData pd = data(ctx);
+        MilestoneData.PlayerData pd = dataOrNull(player);
         Set<String> targets = Tracker.effectiveTargets(pd);
-        long done = targets.stream().filter(pd.records::containsKey).count();
+        Map<String, Integer> records = pd != null ? pd.records : Map.of();
+        long done = targets.stream().filter(records::containsKey).count();
         return send(ctx, Component.translatable("message.itemmilestonelog.summary",
                 Playtime.format(Playtime.currentTicks(player)), done, targets.size()));
     }
@@ -121,34 +137,36 @@ public final class MilestoneCommands {
 
     private static int targets(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
         ServerPlayer player = player(ctx);
-        MilestoneData.PlayerData pd = data(ctx);
+        MilestoneData.PlayerData pd = dataOrNull(player);
         Set<String> targets = Tracker.effectiveTargets(pd);
         if (targets.isEmpty()) {
             return send(ctx, Component.translatable("message.itemmilestonelog.no_targets"));
         }
+        Map<String, Integer> records = pd != null ? pd.records : Map.of();
         List<String> sorted = new ArrayList<>(targets);
         sorted.sort(String::compareTo);
         ctx.getSource().sendSuccess(() -> Component.translatable("message.itemmilestonelog.targets_header", sorted.size()), false);
         for (String id : sorted) {
-            Integer ticks = pd.records.get(id);
+            Integer ticks = records.get(id);
             Component line = ticks != null
-                    ? Component.translatable("message.itemmilestonelog.target_done", itemName(id), Playtime.format(ticks))
-                    : Component.translatable("message.itemmilestonelog.target_pending", itemName(id));
+                    ? Component.translatable("message.itemmilestonelog.target_done", MilestoneService.itemName(id), Playtime.format(ticks))
+                    : Component.translatable("message.itemmilestonelog.target_pending", MilestoneService.itemName(id));
             ctx.getSource().sendSuccess(() -> line, false);
         }
         return sorted.size();
     }
 
     private static int list(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
-        MilestoneData.PlayerData pd = data(ctx);
-        if (pd.records.isEmpty()) {
+        ServerPlayer player = player(ctx);
+        MilestoneData.PlayerData pd = dataOrNull(player);
+        if (pd == null || pd.records.isEmpty()) {
             return send(ctx, Component.translatable("message.itemmilestonelog.no_records"));
         }
-        List<java.util.Map.Entry<String, Integer>> entries = new ArrayList<>(pd.records.entrySet());
-        entries.sort(java.util.Comparator.comparingInt(java.util.Map.Entry::getValue));
+        List<Map.Entry<String, Integer>> entries = new ArrayList<>(pd.records.entrySet());
+        entries.sort(java.util.Comparator.comparingInt(Map.Entry::getValue));
         ctx.getSource().sendSuccess(() -> Component.translatable("message.itemmilestonelog.records_header", entries.size()), false);
         for (var e : entries) {
-            Component line = Component.translatable("message.itemmilestonelog.target_done", itemName(e.getKey()), Playtime.format(e.getValue()));
+            Component line = Component.translatable("message.itemmilestonelog.target_done", MilestoneService.itemName(e.getKey()), Playtime.format(e.getValue()));
             ctx.getSource().sendSuccess(() -> line, false);
         }
         return entries.size();

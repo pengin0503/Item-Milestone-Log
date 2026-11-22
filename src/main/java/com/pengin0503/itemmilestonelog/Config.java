@@ -1,5 +1,6 @@
 package com.pengin0503.itemmilestonelog;
 
+import net.minecraft.resources.ResourceLocation;
 import net.neoforged.neoforge.common.ModConfigSpec;
 
 import java.util.List;
@@ -34,6 +35,6 @@ public final class Config {
     }
 
     private static boolean validateItemId(Object obj) {
-        return obj instanceof String s && s.contains(":");
+        return obj instanceof String s && s.contains(":") && ResourceLocation.tryParse(s) != null;
     }
 }

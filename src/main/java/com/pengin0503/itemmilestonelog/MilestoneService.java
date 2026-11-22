@@ -72,16 +72,19 @@ public final class MilestoneService {
     }
 
     public static ActionResult removeTarget(ServerPlayer player, String itemId) {
-        if (!isValidItemId(itemId)) {
+        if (itemId == null || itemId.isEmpty()) {
             return new ActionResult(false, Component.translatable("message.itemmilestonelog.invalid_item", String.valueOf(itemId)));
         }
         MilestoneData data = MilestoneData.get(player.server);
-        MilestoneData.PlayerData pd = data.player(player.getUUID());
-        if (!pd.targets.remove(itemId)) {
-            return new ActionResult(false, Component.translatable("message.itemmilestonelog.not_target", itemName(itemId)));
+        MilestoneData.PlayerData pd = data.playerOrNull(player.getUUID());
+        if (pd != null && pd.targets.remove(itemId)) {
+            data.setDirty();
+            return new ActionResult(true, Component.translatable("message.itemmilestonelog.removed", itemName(itemId)));
         }
-        data.setDirty();
-        return new ActionResult(true, Component.translatable("message.itemmilestonelog.removed", itemName(itemId)));
+        if (!isValidItemId(itemId)) {
+            return new ActionResult(false, Component.translatable("message.itemmilestonelog.invalid_item", itemId));
+        }
+        return new ActionResult(false, Component.translatable("message.itemmilestonelog.not_target", itemName(itemId)));
     }
 
     public static ActionResult applyPreset(ServerPlayer player, String name) {
@@ -104,29 +107,36 @@ public final class MilestoneService {
                 added++;
             }
         }
-        data.setDirty();
+        if (added > 0) {
+            data.setDirty();
+        }
         return new ActionResult(true, Component.translatable("message.itemmilestonelog.preset_applied", name, added, skippedMissing));
     }
 
     public static ActionResult resetRecord(ServerPlayer player, String itemId) {
-        if (!isValidItemId(itemId)) {
+        if (itemId == null || itemId.isEmpty()) {
             return new ActionResult(false, Component.translatable("message.itemmilestonelog.invalid_item", String.valueOf(itemId)));
         }
         MilestoneData data = MilestoneData.get(player.server);
-        MilestoneData.PlayerData pd = data.player(player.getUUID());
-        if (pd.records.remove(itemId) == null) {
-            return new ActionResult(false, Component.translatable("message.itemmilestonelog.not_recorded", itemName(itemId)));
+        MilestoneData.PlayerData pd = data.playerOrNull(player.getUUID());
+        if (pd != null && pd.records.remove(itemId) != null) {
+            data.setDirty();
+            return new ActionResult(true, Component.translatable("message.itemmilestonelog.reset_done", itemName(itemId)));
         }
-        data.setDirty();
-        return new ActionResult(true, Component.translatable("message.itemmilestonelog.reset_done", itemName(itemId)));
+        if (!isValidItemId(itemId)) {
+            return new ActionResult(false, Component.translatable("message.itemmilestonelog.invalid_item", itemId));
+        }
+        return new ActionResult(false, Component.translatable("message.itemmilestonelog.not_recorded", itemName(itemId)));
     }
 
     public static ActionResult resetAllRecords(ServerPlayer player) {
         MilestoneData data = MilestoneData.get(player.server);
-        MilestoneData.PlayerData pd = data.player(player.getUUID());
-        int count = pd.records.size();
-        pd.records.clear();
-        data.setDirty();
+        MilestoneData.PlayerData pd = data.playerOrNull(player.getUUID());
+        int count = pd != null ? pd.records.size() : 0;
+        if (count > 0) {
+            pd.records.clear();
+            data.setDirty();
+        }
         return new ActionResult(true, Component.translatable("message.itemmilestonelog.resetall_done", count));
     }
 

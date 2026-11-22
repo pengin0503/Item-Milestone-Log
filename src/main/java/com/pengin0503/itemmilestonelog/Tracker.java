@@ -118,20 +118,27 @@ public final class Tracker {
         ItemMilestoneLog.LOGGER.info("[ItemMilestoneLog] {} first obtained {} at playtime {} ({} ticks)",
                 player.getGameProfile().getName(), itemId, Playtime.format(ticks), ticks);
 
+        Component itemName = MilestoneService.itemName(itemId);
+
         if (Config.NOTIFY_PLAYER.get()) {
-            var item = BuiltInRegistries.ITEM.get(net.minecraft.resources.ResourceLocation.parse(itemId));
             Component msg = Component.translatable("message.itemmilestonelog.recorded",
-                    item.getDescription(), Playtime.format(ticks));
+                    itemName, Playtime.format(ticks));
             player.sendSystemMessage(msg);
         }
         if (Config.BROADCAST.get()) {
             Component msg = Component.translatable("message.itemmilestonelog.recorded_broadcast",
-                    player.getDisplayName(), itemId, Playtime.format(ticks));
+                    player.getDisplayName(), itemName, Playtime.format(ticks));
             for (ServerPlayer other : player.server.getPlayerList().getPlayers()) {
                 if (other != player) {
                     other.sendSystemMessage(msg);
                 }
             }
+        }
+        if (player.connection != null && player.connection.hasChannel(com.pengin0503.itemmilestonelog.network.SyncMilestonesPayload.TYPE)) {
+            net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(
+                    player,
+                    MilestoneService.createSyncPayload(player, false, null)
+            );
         }
     }
 }
