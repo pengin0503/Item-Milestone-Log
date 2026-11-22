@@ -12,7 +12,7 @@ public final class Config {
     public static final ModConfigSpec.ConfigValue<List<? extends String>> DEFAULT_TARGETS = BUILDER
             .comment("Item IDs that every player tracks by default, e.g. [\"minecraft:netherite_ingot\"].",
                     "Players can add their own targets on top of these with /milestonelog add.")
-            .defineListAllowEmpty("defaultTargets", List.of(), () -> "", Config::validateItemId);
+            .defineListAllowEmpty("defaultTargets", List.of(), () -> "minecraft:diamond", Config::validateItemId);
 
     /** How often (in ticks) each player's inventory is scanned for tracked items. */
     public static final ModConfigSpec.IntValue SCAN_INTERVAL_TICKS = BUILDER

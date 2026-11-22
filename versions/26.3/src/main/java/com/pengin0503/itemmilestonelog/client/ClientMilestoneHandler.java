@@ -58,7 +58,9 @@ public final class ClientMilestoneHandler {
             confirm.updateParentData(payload);
             return;
         }
-        if (payload.openScreen()) {
+        // Only open on an empty screen: the player may have opened another screen
+        // (inventory, a map, ...) while waiting for the server's answer.
+        if (payload.openScreen() && current == null) {
             mc.gui.setScreen(new MilestoneScreen(payload));
         }
     }

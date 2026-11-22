@@ -36,13 +36,16 @@ public final class MilestoneCommands {
     public static void onRegisterCommands(RegisterCommandsEvent event) {
         CommandBuildContext buildContext = event.getBuildContext();
         event.getDispatcher().register(root(buildContext));
+        // A redirect only forwards what follows "/iml", so the alias needs its own
+        // executes() for "/iml" alone to show the summary like "/milestonelog".
         event.getDispatcher().register(LiteralArgumentBuilder.<CommandSourceStack>literal("iml")
+                .executes(MilestoneCommands::summary)
                 .redirect(event.getDispatcher().getRoot().getChild("milestonelog")));
     }
 
     private static LiteralArgumentBuilder<CommandSourceStack> root(CommandBuildContext buildContext) {
         SuggestionProvider<CommandSourceStack> presetSuggestions = (ctx, builder) ->
-                SharedSuggestionProvider.suggest(Presets.PRESETS.keySet(), builder);
+                SharedSuggestionProvider.suggest(Presets.names(), builder);
         SuggestionProvider<CommandSourceStack> personalTargetSuggestions = (ctx, builder) -> {
             ServerPlayer sp = ctx.getSource().getPlayer();
             if (sp == null) {
@@ -113,13 +116,13 @@ public final class MilestoneCommands {
         Set<String> targets = Tracker.effectiveTargets(pd);
         Map<String, Integer> records = pd != null ? pd.records : Map.of();
         long done = targets.stream().filter(records::containsKey).count();
-        return send(ctx, Component.translatable("message.itemmilestonelog.summary",
+        return send(ctx, ServerLang.tr("message.itemmilestonelog.summary",
                 Playtime.format(Playtime.currentTicks(player)), done, targets.size()));
     }
 
     private static int playtime(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
         ServerPlayer player = player(ctx);
-        return send(ctx, Component.translatable("message.itemmilestonelog.playtime",
+        return send(ctx, ServerLang.tr("message.itemmilestonelog.playtime",
                 Playtime.format(Playtime.currentTicks(player))));
     }
 
@@ -140,17 +143,17 @@ public final class MilestoneCommands {
         MilestoneData.PlayerData pd = dataOrNull(player);
         Set<String> targets = Tracker.effectiveTargets(pd);
         if (targets.isEmpty()) {
-            return send(ctx, Component.translatable("message.itemmilestonelog.no_targets"));
+            return send(ctx, ServerLang.tr("message.itemmilestonelog.no_targets"));
         }
         Map<String, Integer> records = pd != null ? pd.records : Map.of();
         List<String> sorted = new ArrayList<>(targets);
         sorted.sort(String::compareTo);
-        ctx.getSource().sendSuccess(() -> Component.translatable("message.itemmilestonelog.targets_header", sorted.size()), false);
+        ctx.getSource().sendSuccess(() -> ServerLang.tr("message.itemmilestonelog.targets_header", sorted.size()), false);
         for (String id : sorted) {
             Integer ticks = records.get(id);
             Component line = ticks != null
-                    ? Component.translatable("message.itemmilestonelog.target_done", MilestoneService.itemName(id), Playtime.format(ticks))
-                    : Component.translatable("message.itemmilestonelog.target_pending", MilestoneService.itemName(id));
+                    ? ServerLang.tr("message.itemmilestonelog.target_done", MilestoneService.itemName(id), Playtime.format(ticks))
+                    : ServerLang.tr("message.itemmilestonelog.target_pending", MilestoneService.itemName(id));
             ctx.getSource().sendSuccess(() -> line, false);
         }
         return sorted.size();
@@ -160,13 +163,13 @@ public final class MilestoneCommands {
         ServerPlayer player = player(ctx);
         MilestoneData.PlayerData pd = dataOrNull(player);
         if (pd == null || pd.records.isEmpty()) {
-            return send(ctx, Component.translatable("message.itemmilestonelog.no_records"));
+            return send(ctx, ServerLang.tr("message.itemmilestonelog.no_records"));
         }
         List<Map.Entry<String, Integer>> entries = new ArrayList<>(pd.records.entrySet());
         entries.sort(java.util.Comparator.comparingInt(Map.Entry::getValue));
-        ctx.getSource().sendSuccess(() -> Component.translatable("message.itemmilestonelog.records_header", entries.size()), false);
+        ctx.getSource().sendSuccess(() -> ServerLang.tr("message.itemmilestonelog.records_header", entries.size()), false);
         for (var e : entries) {
-            Component line = Component.translatable("message.itemmilestonelog.target_done", MilestoneService.itemName(e.getKey()), Playtime.format(e.getValue()));
+            Component line = ServerLang.tr("message.itemmilestonelog.target_done", MilestoneService.itemName(e.getKey()), Playtime.format(e.getValue()));
             ctx.getSource().sendSuccess(() -> line, false);
         }
         return entries.size();

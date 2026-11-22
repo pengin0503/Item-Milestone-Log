@@ -1,0 +1,12 @@
+{
+  "name": "itemmilestonelog-integration-tests",
+  "private": true,
+  "description": "Runs Item Milestone Log against a real dedicated server, with a vanilla-protocol client (mineflayer) and RCON.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "mineflayer": "4.39.0"
+  }
+}

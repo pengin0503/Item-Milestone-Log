@@ -1,48 +1,106 @@
 name: Build
 
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
-    name: Build (MC ${{ matrix.mc }})
+    # "min" is the NeoForge version the release jar is compiled against (and the lowest
+    # version the mod declares support for); "latest" re-checks everything on the newest
+    # NeoForge build listed in gradle.properties (neo_version_latest).
+    name: MC ${{ matrix.mc }} / NeoForge ${{ matrix.neo }}
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
+        mc: ['1.21.1', '26.1.2', '26.2', '26.3']
+        neo: [min, latest]
         include:
+          # bot: a vanilla-protocol client (mineflayer) joins the server. mineflayer
+          # supports 1.21.1 and 26.1.x, not 26.2/26.3 yet; those get RCON checks only.
           - mc: '1.21.1'
             java: '21'
+            bot: true
           - mc: '26.1.2'
             java: '25'
+            bot: true
           - mc: '26.2'
             java: '25'
+            bot: false
           - mc: '26.3'
             java: '25'
+            bot: false
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          fetch-tags: true
+        uses: actions/checkout@v5
 
       - name: Setup JDK ${{ matrix.java }}
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: ${{ matrix.java }}
           distribution: 'temurin'
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v5
         with:
           gradle-version: '9.2.1'
 
-      - name: Build with Gradle (MC ${{ matrix.mc }})
-        run: gradle -p versions/${{ matrix.mc }} build
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: .github/integration/package-lock.json
 
-      - name: Upload built mod JAR (MC ${{ matrix.mc }})
-        uses: actions/upload-artifact@v4
+      - name: Select NeoForge version
+        id: neo
+        run: |
+          props="versions/${{ matrix.mc }}/gradle.properties"
+          key=neo_version
+          if [ "${{ matrix.neo }}" = "latest" ]; then key=neo_version_latest; fi
+          version="$(grep -E "^${key}=" "$props" | cut -d= -f2-)"
+          echo "NeoForge $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build and run unit tests
+        run: gradle -p versions/${{ matrix.mc }} build -Pneo_version=${{ steps.neo.outputs.version }} --console=plain
+
+      - name: Check the jar contents
+        run: .github/scripts/verify-jar.sh ${{ matrix.mc }}
+
+      - name: Upload release jar
+        if: matrix.neo == 'min'
+        uses: actions/upload-artifact@v5
         with:
           name: itemmilestonelog-${{ matrix.mc }}
           path: versions/${{ matrix.mc }}/build/libs/*.jar
           if-no-files-found: error
+
+      - name: Install integration test client
+        run: npm ci --prefix .github/integration --no-audit --no-fund
+
+      - name: Run on a dedicated server
+        run: .github/scripts/run-server-tests.sh ${{ matrix.mc }} ${{ steps.neo.outputs.version }} ${{ matrix.bot }}
+
+      - name: Upload test reports and server logs
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: test-logs-${{ matrix.mc }}-${{ matrix.neo }}
+          path: |
+            build/server-logs/
+            versions/${{ matrix.mc }}/run/logs/
+            versions/${{ matrix.mc }}/build/reports/tests/
+          if-no-files-found: ignore

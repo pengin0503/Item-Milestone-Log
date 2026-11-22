@@ -19,11 +19,14 @@ import java.util.UUID;
  * Per-world storage: for each player, their personal target items and the
  * cumulative playtime ticks at which each target was first obtained.
  *
- * Uses the exact same NBT structure ("players" -> UUID -> { "targets": [...], "records": {...} })
- * as 1.21.1 so existing world records remain compatible.
+ * Stored in the server-wide data storage (not a dimension's) as
+ * {@code <world>/data/itemmilestonelog/milestones.dat}. The NBT structure inside
+ * ("players" -> UUID -> { "targets": [...], "records": {...} }) is the same as in
+ * the 1.21.1 version, but the 1.21.1 version keeps it in a different file
+ * ({@code <world>/data/itemmilestonelog_data.dat}).
  */
 public class MilestoneData extends SavedData {
-    private static final Identifier DATA_ID = Identifier.withDefaultNamespace(ItemMilestoneLog.MOD_ID + "_data");
+    private static final Identifier DATA_ID = Identifier.fromNamespaceAndPath(ItemMilestoneLog.MOD_ID, "milestones");
 
     /** Per-player state. */
     public static final class PlayerData {
@@ -59,7 +62,8 @@ public class MilestoneData extends SavedData {
     private final Map<UUID, PlayerData> players = new LinkedHashMap<>();
 
     public static MilestoneData get(MinecraftServer server) {
-        return server.overworld().getDataStorage().computeIfAbsent(TYPE);
+        // Not tied to a dimension, so it lives in the server's own data storage.
+        return server.getDataStorage().computeIfAbsent(TYPE);
     }
 
     public PlayerData player(UUID uuid) {

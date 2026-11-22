@@ -89,9 +89,17 @@ public final class Tracker {
 
     @SubscribeEvent
     public static void onItemPickup(ItemEntityPickupEvent.Post event) {
-        if (event.getPlayer() instanceof ServerPlayer player) {
-            tryRecord(player, BuiltInRegistries.ITEM.getKey(event.getItemEntity().getItem().getItem()).toString());
+        if (!(event.getPlayer() instanceof ServerPlayer player)) {
+            return;
         }
+        // Post fires after the pickup: the item entity's own stack has already been
+        // shrunk (and is empty, i.e. AIR, after a full pickup), so read the copy of
+        // the stack from before the pickup and only record if something was taken.
+        ItemStack before = event.getOriginalStack();
+        if (before.isEmpty() || event.getItemEntity().getItem().getCount() >= before.getCount()) {
+            return;
+        }
+        tryRecord(player, BuiltInRegistries.ITEM.getKey(before.getItem()).toString());
     }
 
     private static void tryRecord(ServerPlayer player, String itemId) {
@@ -121,12 +129,12 @@ public final class Tracker {
         Component itemName = MilestoneService.itemName(itemId);
 
         if (Config.NOTIFY_PLAYER.get()) {
-            Component msg = Component.translatable("message.itemmilestonelog.recorded",
+            Component msg = ServerLang.tr("message.itemmilestonelog.recorded",
                     itemName, Playtime.format(ticks));
             player.sendSystemMessage(msg);
         }
         if (Config.BROADCAST.get()) {
-            Component msg = Component.translatable("message.itemmilestonelog.recorded_broadcast",
+            Component msg = ServerLang.tr("message.itemmilestonelog.recorded_broadcast",
                     player.getDisplayName(), itemName, Playtime.format(ticks));
             for (ServerPlayer other : player.server.getPlayerList().getPlayers()) {
                 if (other != player) {
