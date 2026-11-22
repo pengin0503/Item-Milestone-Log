@@ -174,7 +174,7 @@ public class MyModEvents {
         String itemId = event.getItemId();
         int ticks = event.getPlayTicks();
         long day = event.getDay();
-        // Query read-only API:
+        // Query read-only API (on MC 26.x, use event.getPlayer().level().getServer()):
         var worldFirst = ItemMilestoneLogApi.getWorldFirst(
                 event.getPlayer().getServer(), itemId);
     }

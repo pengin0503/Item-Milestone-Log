@@ -120,11 +120,11 @@ public final class MilestoneService {
         int skippedMissing = 0;
         for (String id : preset.items()) {
             ResourceLocation rl = ResourceLocation.tryParse(id);
-            if (rl == null || !BuiltInRegistries.ITEM.containsKey(rl)) {
+            if (rl == null || !BuiltInRegistries.ITEM.containsKey(rl) || BuiltInRegistries.ITEM.get(rl) == Items.AIR) {
                 skippedMissing++;
                 continue;
             }
-            if (pd.targets.add(id)) {
+            if (pd.targets.add(rl.toString())) {
                 added++;
             }
         }

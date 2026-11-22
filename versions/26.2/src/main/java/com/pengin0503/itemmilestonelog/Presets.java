@@ -177,7 +177,7 @@ public final class Presets {
                 continue;
             }
             Identifier rl = Identifier.tryParse(rawItem);
-            if (rl != null) {
+            if (rl != null && !"minecraft:air".equals(rl.toString())) {
                 deduped.add(rl.toString());
             }
         }
@@ -208,7 +208,7 @@ public final class Presets {
         Set<String> deduped = new LinkedHashSet<>();
         for (String item : items) {
             Identifier rl = Identifier.tryParse(item);
-            if (rl != null) {
+            if (rl != null && !"minecraft:air".equals(rl.toString())) {
                 deduped.add(rl.toString());
             }
         }

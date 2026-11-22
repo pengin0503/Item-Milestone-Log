@@ -123,11 +123,11 @@ public final class MilestoneService {
         int skippedMissing = 0;
         for (String idStr : preset.items()) {
             Identifier id = Identifier.tryParse(idStr);
-            if (id == null || !BuiltInRegistries.ITEM.containsKey(id)) {
+            if (id == null || !BuiltInRegistries.ITEM.containsKey(id) || BuiltInRegistries.ITEM.getValue(id) == Items.AIR) {
                 skippedMissing++;
                 continue;
             }
-            if (pd.targets.add(idStr)) {
+            if (pd.targets.add(id.toString())) {
                 added++;
             }
         }

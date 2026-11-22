@@ -1,6 +1,7 @@
 package com.pengin0503.itemmilestonelog;
 
 import net.minecraft.resources.Identifier;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -17,6 +18,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PresetsTest {
+    @AfterEach
+    void resetPresets(@TempDir Path emptyDir) {
+        Presets.reloadFrom(emptyDir);
+    }
     @Test
     void allPresetsContainValidIdentifiers() {
         assertFalse(Presets.PRESETS.isEmpty());

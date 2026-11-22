@@ -238,7 +238,8 @@ public final class MilestoneScreen extends Screen {
             }
         } else {
             List<Map.Entry<String, MilestoneRecord>> sorted = new ArrayList<>(data.records().entrySet());
-            sorted.sort(Comparator.comparingInt(e -> e.getValue().playTicks()));
+            sorted.sort(Comparator.comparingInt((Map.Entry<String, MilestoneRecord> e) -> e.getValue().playTicks())
+                    .thenComparing(Map.Entry::getKey));
             for (Map.Entry<String, MilestoneRecord> entry : sorted) {
                 listWidget.addRow(new MilestoneRow(
                         entry.getKey(),

@@ -33,11 +33,11 @@ class ServerLangTest {
         Path sources = Path.of(dir);
         assertTrue(Files.isDirectory(sources), "sources not found at " + sources);
 
-        Pattern call = Pattern.compile("ServerLang\\.tr(?:ForLang)?\\((?:[^,\"]+,\\s*)?\"([^\"]+)\"");
+        Pattern literal = Pattern.compile("\"(message\\.itemmilestonelog\\.[a-z0-9_.]+)\"");
         Set<String> used = new TreeSet<>();
         try (Stream<Path> files = Files.walk(sources)) {
             for (Path file : files.filter(p -> p.toString().endsWith(".java")).toList()) {
-                Matcher matcher = call.matcher(Files.readString(file));
+                Matcher matcher = literal.matcher(Files.readString(file));
                 while (matcher.find()) {
                     used.add(matcher.group(1));
                 }

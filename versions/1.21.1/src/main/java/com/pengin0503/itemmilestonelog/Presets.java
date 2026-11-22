@@ -179,7 +179,7 @@ public final class Presets {
                 continue;
             }
             ResourceLocation rl = ResourceLocation.tryParse(rawItem);
-            if (rl != null) {
+            if (rl != null && !"minecraft:air".equals(rl.toString())) {
                 deduped.add(rl.toString());
             }
         }
@@ -212,7 +212,7 @@ public final class Presets {
         Set<String> deduped = new LinkedHashSet<>();
         for (String item : items) {
             ResourceLocation rl = ResourceLocation.tryParse(item);
-            if (rl != null) {
+            if (rl != null && !"minecraft:air".equals(rl.toString())) {
                 deduped.add(rl.toString());
             }
         }

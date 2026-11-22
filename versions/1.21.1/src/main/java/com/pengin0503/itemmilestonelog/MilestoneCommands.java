@@ -275,7 +275,8 @@ public final class MilestoneCommands {
             return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.no_records"));
         }
         List<Map.Entry<String, MilestoneRecord>> entries = new ArrayList<>(pd.records.entrySet());
-        entries.sort(Comparator.comparingInt(e -> e.getValue().playTicks()));
+        entries.sort(Comparator.comparingInt((Map.Entry<String, MilestoneRecord> e) -> e.getValue().playTicks())
+                .thenComparing(Map.Entry::getKey));
         ctx.getSource().sendSuccess(() -> ServerLang.tr(player, "message.itemmilestonelog.records_header", entries.size()), false);
         for (var e : entries) {
             Component line = ServerLang.tr(player, "message.itemmilestonelog.target_done",
@@ -559,7 +560,8 @@ public final class MilestoneCommands {
             return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.admin_no_records", name));
         }
         List<Map.Entry<String, MilestoneRecord>> entries = new ArrayList<>(pd.records.entrySet());
-        entries.sort(Comparator.comparingInt(e -> e.getValue().playTicks()));
+        entries.sort(Comparator.comparingInt((Map.Entry<String, MilestoneRecord> e) -> e.getValue().playTicks())
+                .thenComparing(Map.Entry::getKey));
         source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.admin_records_header", name, entries.size()), false);
         for (var e : entries) {
             source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.target_done",

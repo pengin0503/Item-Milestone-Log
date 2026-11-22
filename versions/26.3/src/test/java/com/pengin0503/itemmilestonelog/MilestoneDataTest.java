@@ -201,4 +201,19 @@ class MilestoneDataTest {
         MilestoneData loaded = MilestoneData.CODEC.parse(NbtOps.INSTANCE, root).getOrThrow();
         assertNull(loaded.playerOrNull(UUID.randomUUID()));
     }
+
+    @Test
+    void emptyOptionalFieldsAreNotWritten() {
+        MilestoneData data = new MilestoneData();
+        data.player(PLAYER_A).targets.add("minecraft:diamond");
+
+        CompoundTag saved = (CompoundTag) MilestoneData.CODEC.encodeStart(NbtOps.INSTANCE, data).getOrThrow();
+        CompoundTag player = saved.getCompoundOrEmpty("players").getCompoundOrEmpty(PLAYER_A.toString());
+        assertTrue(player.contains("targets"));
+        assertFalse(player.contains("carriedFromCreative"), player::toString);
+        assertFalse(player.contains("lastKnownName"), player::toString);
+        assertFalse(player.contains("firstJoinHintShown"), player::toString);
+        assertFalse(player.contains("muteBroadcasts"), player::toString);
+        assertFalse(saved.contains("worldFirsts"), saved::toString);
+    }
 }

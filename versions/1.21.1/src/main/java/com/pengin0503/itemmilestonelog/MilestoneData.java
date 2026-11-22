@@ -156,7 +156,7 @@ public class MilestoneData extends SavedData {
                             ? recTag.getLong("epoch")
                             : MilestoneRecord.UNKNOWN_EPOCH;
                     pd.records.put(itemId, new MilestoneRecord(ticks, day, epoch));
-                } else {
+                } else if (records.contains(itemId, Tag.TAG_ANY_NUMERIC)) {
                     // Backward compatibility: 1.0.0 stored records as plain integers.
                     pd.records.put(itemId, MilestoneRecord.legacy(records.getInt(itemId)));
                 }

@@ -179,9 +179,9 @@ public final class MilestoneExport {
                 if (!el.isJsonPrimitive() || !el.getAsJsonPrimitive().isString()) {
                     continue;
                 }
-                String itemId = el.getAsString();
-                if (Identifier.tryParse(itemId) != null) {
-                    targets.add(itemId);
+                Identifier rl = Identifier.tryParse(el.getAsString());
+                if (rl != null && !"minecraft:air".equals(rl.toString())) {
+                    targets.add(rl.toString());
                 }
             }
         }
@@ -193,8 +193,8 @@ public final class MilestoneExport {
             }
             JsonObject recordsObj = root.getAsJsonObject("records");
             for (Map.Entry<String, JsonElement> entry : recordsObj.entrySet()) {
-                String itemId = entry.getKey();
-                if (Identifier.tryParse(itemId) == null || !entry.getValue().isJsonObject()) {
+                Identifier rl = Identifier.tryParse(entry.getKey());
+                if (rl == null || "minecraft:air".equals(rl.toString()) || !entry.getValue().isJsonObject()) {
                     continue;
                 }
                 JsonObject recObj = entry.getValue().getAsJsonObject();
@@ -211,7 +211,7 @@ public final class MilestoneExport {
                 long epoch = recObj.has("epoch") && recObj.get("epoch").isJsonPrimitive() && recObj.get("epoch").getAsJsonPrimitive().isNumber()
                         ? recObj.get("epoch").getAsLong()
                         : MilestoneRecord.UNKNOWN_EPOCH;
-                records.put(itemId, new MilestoneRecord(ticks, day, epoch));
+                records.put(rl.toString(), new MilestoneRecord(ticks, day, epoch));
             }
         }
 
