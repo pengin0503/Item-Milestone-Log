@@ -230,11 +230,15 @@ public final class MilestoneScreen extends Screen {
             for (TargetEntry target : data.targets()) {
                 TargetKey key = target.key();
                 MilestoneRecord recorded = data.records().get(key);
+                Integer currentProgress = (recorded == null && key.count() > TargetKey.MIN_COUNT)
+                        ? data.progress().getOrDefault(key, 0)
+                        : null;
                 listWidget.addRow(new MilestoneRow(
                         key,
                         target.personal(),
                         target.defaultTarget(),
                         recorded,
+                        currentProgress,
                         true
                 ));
             }
@@ -248,6 +252,7 @@ public final class MilestoneScreen extends Screen {
                         false,
                         false,
                         entry.getValue(),
+                        null,
                         false
                 ));
             }
@@ -359,6 +364,8 @@ public final class MilestoneScreen extends Screen {
         private final boolean defaultTarget;
         @Nullable
         private final MilestoneRecord recordedRecord;
+        @Nullable
+        private final Integer currentProgress;
         private final List<Button> rowButtons = new ArrayList<>();
         @Nullable
         private final Button resetButton;
@@ -366,10 +373,12 @@ public final class MilestoneScreen extends Screen {
         private final Button removeOrDefaultButton;
 
         public MilestoneRow(TargetKey targetKey, boolean personal, boolean defaultTarget,
-                            @Nullable MilestoneRecord recordedRecord, boolean showTargetControls) {
+                            @Nullable MilestoneRecord recordedRecord, @Nullable Integer currentProgress,
+                            boolean showTargetControls) {
             this.targetKey = targetKey;
             this.defaultTarget = defaultTarget;
             this.recordedRecord = recordedRecord;
+            this.currentProgress = currentProgress;
 
             ResourceLocation rl = ResourceLocation.tryParse(targetKey.itemId());
             Component baseName;
@@ -448,7 +457,10 @@ public final class MilestoneScreen extends Screen {
             int textX = left + 26;
             int maxTextWidth = Math.max(40, rightEdge - textX - 4);
 
-            String nameStr = displayName.getString();
+            Component nameComponent = currentProgress != null
+                    ? Component.translatable("message.itemmilestonelog.target_progress", displayName, currentProgress)
+                    : displayName;
+            String nameStr = nameComponent.getString();
             if (defaultTarget && removeOrDefaultButton != null && removeOrDefaultButton.active) {
                 nameStr = nameStr + " [" + Component.translatable("gui.itemmilestonelog.badge.default").getString() + "]";
             }

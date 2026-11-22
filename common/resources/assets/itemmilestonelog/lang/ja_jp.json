@@ -119,6 +119,7 @@
   "message.itemmilestonelog.summary": "累計プレイ時間: %s | マイルストーン: %s / %s 件記録済み。詳細は /milestonelog targets",
   "message.itemmilestonelog.target_done": "✔ %s — %s",
   "message.itemmilestonelog.target_pending": "… %s — 未取得",
+  "message.itemmilestonelog.target_progress": "%s (現在 %s)",
   "message.itemmilestonelog.targets_header": "目標アイテム（%s件）:",
   "message.itemmilestonelog.world_first_recorded": "★ 世界初！%s が %s を %s にワールド初取得しました"
 }

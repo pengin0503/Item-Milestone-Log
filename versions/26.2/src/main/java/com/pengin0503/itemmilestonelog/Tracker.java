@@ -259,21 +259,34 @@ public final class Tracker {
     }
 
     private static int countItemInPossession(ServerPlayer player, String targetItemId) {
-        int total = 0;
+        return countItemsInPossession(player, Set.of(targetItemId)).getOrDefault(targetItemId, 0);
+    }
+
+    public static Map<String, Integer> countItemsInPossession(ServerPlayer player, Set<String> itemIds) {
+        if (itemIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Integer> counts = new HashMap<>();
         var inventory = player.getInventory();
         for (int i = 0; i < inventory.getContainerSize(); i++) {
             ItemStack stack = inventory.getItem(i);
-            if (!stack.isEmpty() && targetItemId.equals(itemId(stack))) {
-                total += stack.getCount();
+            if (!stack.isEmpty()) {
+                String id = itemId(stack);
+                if (itemIds.contains(id)) {
+                    counts.merge(id, stack.getCount(), Integer::sum);
+                }
             }
         }
         if (player.containerMenu != null) {
             ItemStack cursor = player.containerMenu.getCarried();
-            if (!cursor.isEmpty() && targetItemId.equals(itemId(cursor))) {
-                total += cursor.getCount();
+            if (!cursor.isEmpty()) {
+                String id = itemId(cursor);
+                if (itemIds.contains(id)) {
+                    counts.merge(id, cursor.getCount(), Integer::sum);
+                }
             }
         }
-        return total;
+        return counts;
     }
 
     private static void tryRecordForItem(ServerPlayer player, String itemId, int minCountFromEvent) {

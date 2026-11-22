@@ -344,12 +344,30 @@ public final class MilestoneCommands {
         Map<TargetKey, MilestoneRecord> records = pd != null ? pd.records : Map.of();
         List<TargetKey> sorted = new ArrayList<>(targets);
         sorted.sort(TargetKey::compareTo);
+
+        Set<String> progressItemIds = new LinkedHashSet<>();
+        for (TargetKey key : sorted) {
+            if (key.count() > TargetKey.MIN_COUNT && !records.containsKey(key)) {
+                progressItemIds.add(key.itemId());
+            }
+        }
+        Map<String, Integer> possessionCounts = Tracker.countItemsInPossession(player, progressItemIds);
+
         ctx.getSource().sendSuccess(() -> ServerLang.tr(player, "message.itemmilestonelog.targets_header", sorted.size()), false);
         for (TargetKey key : sorted) {
             MilestoneRecord rec = records.get(key);
-            Component line = rec != null
-                    ? ServerLang.tr(player, "message.itemmilestonelog.target_done", MilestoneService.targetDisplayName(key), Playtime.format(rec.playTicks()))
-                    : ServerLang.tr(player, "message.itemmilestonelog.target_pending", MilestoneService.targetDisplayName(key));
+            Component line;
+            if (rec != null) {
+                line = ServerLang.tr(player, "message.itemmilestonelog.target_done",
+                        MilestoneService.targetDisplayName(key), Playtime.format(rec.playTicks()));
+            } else {
+                Component label = MilestoneService.targetDisplayName(key);
+                if (key.count() > TargetKey.MIN_COUNT) {
+                    int current = possessionCounts.getOrDefault(key.itemId(), 0);
+                    label = ServerLang.tr(player, "message.itemmilestonelog.target_progress", label, current);
+                }
+                line = ServerLang.tr(player, "message.itemmilestonelog.target_pending", label);
+            }
             ctx.getSource().sendSuccess(() -> line, false);
         }
         return sorted.size();

@@ -362,10 +362,18 @@ async function quantityTargetsFlow(session, rcon) {
     await sleep(oneScanMs);
     assertNotRecorded(session, from4, 'Diamond ×5');
 
+    const t4From = session.messages.length;
+    await say(session, '/milestonelog targets');
+    await waitFor(session, t4From, /^… Diamond ×5 \(current: 4\) — not yet obtained$/);
+
     const from5 = session.messages.length;
     await rcon.command(`give ${BOT_NAME} minecraft:diamond 1`);
     const hit = await waitFor(session, from5, /^★ Milestone recorded: Diamond ×5 at playtime \d+h \d{2}m \d{2}s$/, scanMs);
     assertFallback(hit, 'message.itemmilestonelog.recorded');
+
+    const t5From = session.messages.length;
+    await say(session, '/milestonelog targets');
+    await waitFor(session, t5From, /^✔ Diamond ×5 — \d+h \d{2}m \d{2}s$/);
 
     await rcon.command(`clear ${BOT_NAME} minecraft:diamond`);
     await command(session, 'milestonelog reset minecraft:diamond 5', /^Record cleared: Diamond ×5/);

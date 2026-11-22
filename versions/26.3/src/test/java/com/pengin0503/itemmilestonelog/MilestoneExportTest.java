@@ -91,6 +91,34 @@ class MilestoneExportTest {
     }
 
     @Test
+    void skipsInvalidCountsDuringImportWithoutFailingValidEntries(@TempDir Path dir) throws Exception {
+        Path mixedFile = dir.resolve("Mixed.json");
+        Files.writeString(mixedFile, """
+                {
+                  "format": 1,
+                  "player": { "uuid": "11111111-1111-1111-1111-111111111111", "name": "Mixed" },
+                  "targets": [
+                    "minecraft:diamond",
+                    "minecraft:gold_ingot#0",
+                    { "item": "minecraft:iron_ingot", "count": 1000001 },
+                    { "item": "minecraft:emerald", "count": 50 }
+                  ],
+                  "records": {
+                    "minecraft:diamond": { "ticks": 100, "day": 1, "epoch": 1795600000000 },
+                    "minecraft:gold_ingot#0": { "ticks": 200, "day": 1, "epoch": 1795600000000 },
+                    "minecraft:iron_ingot#10": { "ticks": 300, "day": 1, "epoch": 1795600000000, "count": -5 },
+                    "minecraft:emerald#50": { "ticks": 400, "day": 2, "epoch": 1795600000000, "count": 50 }
+                  }
+                }
+                """);
+        MilestoneExport.ImportPayload payload = MilestoneExport.parseSinglePlayerExport(mixedFile);
+        assertEquals(List.of(TargetKey.of("minecraft:diamond"), TargetKey.of("minecraft:emerald", 50)), payload.targets());
+        assertEquals(2, payload.records().size());
+        assertEquals(100, payload.records().get(TargetKey.of("minecraft:diamond")).playTicks());
+        assertEquals(400, payload.records().get(TargetKey.of("minecraft:emerald", 50)).playTicks());
+    }
+
+    @Test
     void rejectsUnsupportedFormatAndExportAllSchema(@TempDir Path dir) throws Exception {
         Path badFormat = dir.resolve("v2.json");
         Files.writeString(badFormat, """

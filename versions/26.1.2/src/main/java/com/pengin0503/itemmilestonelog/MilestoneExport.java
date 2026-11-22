@@ -201,8 +201,11 @@ public final class MilestoneExport {
             }
             for (JsonElement el : root.getAsJsonArray("targets")) {
                 if (el.isJsonPrimitive() && el.getAsJsonPrimitive().isString()) {
-                    TargetKey parsedKey = TargetKey.tryParseEncoded(el.getAsString());
+                    String rawTarget = el.getAsString();
+                    TargetKey parsedKey = TargetKey.tryParseEncoded(rawTarget);
                     if (parsedKey == null) {
+                        ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid target '{}' in export file {}",
+                                rawTarget, file.getFileName());
                         continue;
                     }
                     Identifier rl = Identifier.tryParse(parsedKey.itemId());
@@ -212,9 +215,12 @@ public final class MilestoneExport {
                 } else if (el.isJsonObject()) {
                     JsonObject obj = el.getAsJsonObject();
                     if (!obj.has("item") || !obj.get("item").isJsonPrimitive() || !obj.get("item").getAsJsonPrimitive().isString()) {
+                        ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid target object in export file {}",
+                                file.getFileName());
                         continue;
                     }
-                    Identifier rl = Identifier.tryParse(obj.get("item").getAsString().trim());
+                    String rawItem = obj.get("item").getAsString().trim();
+                    Identifier rl = Identifier.tryParse(rawItem);
                     if (rl == null || "minecraft:air".equals(rl.toString())) {
                         continue;
                     }
@@ -222,6 +228,8 @@ public final class MilestoneExport {
                     if (obj.has("count")) {
                         count = parseStrictJsonCount(obj.get("count"));
                         if (count < TargetKey.MIN_COUNT) {
+                            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping target '{}' with invalid count in export file {}",
+                                    rawItem, file.getFileName());
                             continue;
                         }
                     }
@@ -242,6 +250,8 @@ public final class MilestoneExport {
                 }
                 TargetKey keyFromMap = TargetKey.tryParseEncoded(entry.getKey());
                 if (keyFromMap == null) {
+                    ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid record key '{}' in export file {}",
+                            entry.getKey(), file.getFileName());
                     continue;
                 }
                 Identifier rl = Identifier.tryParse(keyFromMap.itemId());
@@ -260,6 +270,8 @@ public final class MilestoneExport {
                 if (recObj.has("count")) {
                     int parsedCount = parseStrictJsonCount(recObj.get("count"));
                     if (parsedCount < TargetKey.MIN_COUNT) {
+                        ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping record '{}' with invalid count in export file {}",
+                                entry.getKey(), file.getFileName());
                         continue;
                     }
                     count = parsedCount;

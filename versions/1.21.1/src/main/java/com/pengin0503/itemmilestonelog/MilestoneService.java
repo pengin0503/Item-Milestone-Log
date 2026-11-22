@@ -310,6 +310,23 @@ public final class MilestoneService {
             records.putAll(pd.records);
         }
 
+        // Q9: compute current possession count for unachieved targets with count > 1 at sync time.
+        Set<String> progressItemIds = new java.util.HashSet<>();
+        for (TargetKey key : sortedTargets) {
+            if (key.count() > TargetKey.MIN_COUNT && !records.containsKey(key)) {
+                progressItemIds.add(key.itemId());
+            }
+        }
+        Map<TargetKey, Integer> progress = new LinkedHashMap<>();
+        if (!progressItemIds.isEmpty()) {
+            Map<String, Integer> counts = Tracker.countItemsInPossession(player, progressItemIds);
+            for (TargetKey key : sortedTargets) {
+                if (key.count() > TargetKey.MIN_COUNT && !records.containsKey(key)) {
+                    progress.put(key, counts.getOrDefault(key.itemId(), 0));
+                }
+            }
+        }
+
         List<PresetEntry> presetEntries = new ArrayList<>();
         for (Presets.PresetDefinition p : Presets.all()) {
             presetEntries.add(new PresetEntry(
@@ -324,6 +341,7 @@ public final class MilestoneService {
         return new SyncMilestonesPayload(
                 targetEntries,
                 records,
+                progress,
                 currentPlaytime,
                 presetEntries,
                 canManagePresets(player),
