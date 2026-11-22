@@ -25,7 +25,7 @@ public final class ServerLang {
     private static final String DEFAULT_LANG = "en_us";
     private static final List<String> BUNDLED_LANGUAGES = List.of("en_us", "ja_jp");
 
-    private static volatile Map<String, Map<String, String>> languageTables;
+    private static final Map<String, Map<String, String>> languageTables = loadAll();
 
     private ServerLang() {
     }
@@ -76,12 +76,7 @@ public final class ServerLang {
     }
 
     private static Map<String, Map<String, String>> tables() {
-        Map<String, Map<String, String>> map = languageTables;
-        if (map == null) {
-            map = loadAll();
-            languageTables = map;
-        }
-        return map;
+        return languageTables;
     }
 
     private static Map<String, Map<String, String>> loadAll() {
