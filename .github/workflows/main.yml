@@ -30,6 +30,10 @@ jobs:
     name: Build MC ${{ matrix.mc }} / NeoForge ${{ matrix.neo }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # Whether this job writes its Minecraft version's NeoForm cache entry (see "Restore
+      # the NeoForm cache"): the "latest" job does, on pushes to main.
+      SAVES_NEOFORM_CACHE: ${{ matrix.neo == 'latest' && github.ref == 'refs/heads/main' }}
     strategy: &versions
       fail-fast: false
       matrix:
@@ -69,6 +73,29 @@ jobs:
         with:
           # Only pushes to main write the Gradle cache; pull requests and tags only read it.
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+          # Has a cache entry of its own (see below). setup-gradle deletes this directory
+          # right after restoring its own entry and before saving it.
+          gradle-home-cache-excludes: caches/neoformruntime
+
+      # ModDevGradle runs NeoForm Runtime, which keeps Minecraft (downloaded, decompiled
+      # and patched with NeoForge) and the game assets in ~/.gradle/caches/neoformruntime:
+      # most of the Gradle cache, 0.8-1.2 GB per Minecraft version. setup-gradle would save
+      # it again on every push to main, once per job, and a job without an entry of its own
+      # falls back to another Minecraft version's, whose content then piles up in its own.
+      # Instead, each Minecraft version has one entry, keyed on the files that set the
+      # versions it depends on (Minecraft, NeoForge, Parchment, ModDevGradle), so it is
+      # written only when they change. Both jobs of a Minecraft version read it; the
+      # "latest" job writes it, because it builds against both NeoForge versions.
+      # Restored after setup-gradle, which deletes the directory (see above).
+      - name: Restore the NeoForm cache
+        id: neoform
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.gradle/caches/neoformruntime
+          key: neoform-v1-${{ runner.os }}-${{ matrix.mc }}-${{ hashFiles(format('versions/{0}/gradle.properties', matrix.mc), format('versions/{0}/*.gradle', matrix.mc)) }}
+          # On a version change: the previous entry of this Minecraft version, so that only
+          # the steps for the new version run. Its other results are deleted before saving.
+          restore-keys: neoform-v1-${{ runner.os }}-${{ matrix.mc }}-
 
       - name: TEMP report the restored Gradle cache
         run: bash .github/scripts/tmp-cache-report.sh restored
@@ -76,6 +103,10 @@ jobs:
       - name: Select NeoForge version
         id: neo
         run: .github/scripts/neoforge-version.sh ${{ matrix.mc }} ${{ matrix.neo }}
+
+      # For "Delete the NeoForm results that the build did not use" below.
+      - name: Mark the start of the build
+        run: touch "$RUNNER_TEMP/build-start"
 
       - name: Build and run unit tests
         run: ./gradlew -p versions/${{ matrix.mc }} build -Pneo_version=${{ steps.neo.outputs.version }} --console=plain
@@ -90,6 +121,19 @@ jobs:
       - name: TEMP report the Gradle cache after the build
         if: always()
         run: bash .github/scripts/tmp-cache-report.sh built
+
+      # Only when there is no entry for this key yet (after a version change), and only
+      # after a successful build, so a failed build saves nothing.
+      - name: Delete the NeoForm results that the build did not use
+        if: env.SAVES_NEOFORM_CACHE == 'true' && steps.neoform.outputs.cache-hit != 'true'
+        run: .github/scripts/prune-neoform-cache.sh "$RUNNER_TEMP/build-start"
+
+      - name: Save the NeoForm cache
+        if: env.SAVES_NEOFORM_CACHE == 'true' && steps.neoform.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ~/.gradle/caches/neoformruntime
+          key: ${{ steps.neoform.outputs.cache-primary-key }}
 
       - name: Upload release jar
         if: matrix.neo == 'min'

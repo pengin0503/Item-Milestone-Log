@@ -144,6 +144,7 @@ Item Milestone Log の複数バージョン対応（`1.21.1` / `26.1.2` / `26.2`
 `build`（各MCバージョン × NeoForge（下限・最新）の8ジョブ）:
 
 1. `./gradlew build`（そのNeoForgeでコンパイル＋単体テスト）。最新版のジョブは、その後リリース用jarを下限で作り直します。Gradle のバージョンは `gradle/wrapper/gradle-wrapper.properties` だけで決まります。Gradle のキャッシュは main への push だけが保存し、PR とタグは読むだけです。
+   - NeoForm Runtime のキャッシュ（`~/.gradle/caches/neoformruntime`: 逆コンパイル・パッチ済みの Minecraft とゲームアセット、MC バージョンごとに約 0.8〜1.2 GB）は setup-gradle のキャッシュから外し、MC バージョンごとに1つの actions/cache エントリにしています。キーは `versions/<mc>/gradle.properties` と `versions/<mc>/*.gradle` のハッシュなので、保存されるのはそれらが変わった後の main への push だけです。書くのは両方の NeoForge でビルドする最新版のジョブで、下限のジョブは読むだけです。前のエントリから復元して保存するときは、`.github/scripts/prune-neoform-cache.sh` がそのビルドで使わなかった結果（古い NeoForge 用など）を消してから保存します。
 2. `.github/scripts/verify-jar.sh`: jar に mods.toml・ロゴ・翻訳・主要クラスがあるか、mods.toml の値と依存範囲、`${...}` の展開漏れ、開発用ファイルの混入を確認。
 3. 下限ジョブの jar を成果物 `itemmilestonelog-<mc>` としてアップロード（CurseForge 用、`server-test`・`migration`・リリースでも使用）。
 
