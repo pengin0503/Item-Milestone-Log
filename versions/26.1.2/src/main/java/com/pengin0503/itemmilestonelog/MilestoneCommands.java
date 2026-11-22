@@ -115,7 +115,9 @@ public final class MilestoneCommands {
         MilestoneData.PlayerData pd = dataOrNull(player);
         Set<String> targets = Tracker.effectiveTargets(pd);
         Map<String, Integer> records = pd != null ? pd.records : Map.of();
-        long done = targets.stream().filter(records::containsKey).count();
+        // int, not long: a long argument is sent as an NBT long, which some clients and
+        // chat relays cannot render (mineflayer shows it as an empty string).
+        int done = (int) targets.stream().filter(records::containsKey).count();
         return send(ctx, ServerLang.tr("message.itemmilestonelog.summary",
                 Playtime.format(Playtime.currentTicks(player)), done, targets.size()));
     }

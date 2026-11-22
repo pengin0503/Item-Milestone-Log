@@ -16,8 +16,10 @@ concurrency:
 jobs:
   build:
     # "min" is the NeoForge version the release jar is compiled against (and the lowest
-    # version the mod declares support for); "latest" re-checks everything on the newest
-    # NeoForge build listed in gradle.properties (neo_version_latest).
+    # version the mod declares support for); "latest" is the newest NeoForge build listed
+    # in gradle.properties (neo_version_latest). Both jobs compile and unit-test against
+    # their NeoForge, then run the release jar (compiled against "min") on a production
+    # NeoForge server of that version.
     name: MC ${{ matrix.mc }} / NeoForge ${{ matrix.neo }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -68,14 +70,21 @@ jobs:
         id: neo
         run: |
           props="versions/${{ matrix.mc }}/gradle.properties"
-          key=neo_version
-          if [ "${{ matrix.neo }}" = "latest" ]; then key=neo_version_latest; fi
-          version="$(grep -E "^${key}=" "$props" | cut -d= -f2-)"
-          echo "NeoForge $version"
+          min="$(grep -E '^neo_version=' "$props" | cut -d= -f2-)"
+          version="$min"
+          if [ "${{ matrix.neo }}" = "latest" ]; then
+            version="$(grep -E '^neo_version_latest=' "$props" | cut -d= -f2-)"
+          fi
+          echo "NeoForge $version (release jar compiled against $min)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "min=$min" >> "$GITHUB_OUTPUT"
 
       - name: Build and run unit tests
         run: gradle -p versions/${{ matrix.mc }} build -Pneo_version=${{ steps.neo.outputs.version }} --console=plain
+
+      - name: Build the release jar against the minimum NeoForge
+        if: matrix.neo == 'latest'
+        run: gradle -p versions/${{ matrix.mc }} jar -Pneo_version=${{ steps.neo.outputs.min }} --console=plain
 
       - name: Check the jar contents
         run: .github/scripts/verify-jar.sh ${{ matrix.mc }}
@@ -91,7 +100,7 @@ jobs:
       - name: Install integration test client
         run: npm ci --prefix .github/integration --no-audit --no-fund
 
-      - name: Run on a dedicated server
+      - name: Run the release jar on a NeoForge dedicated server
         run: .github/scripts/run-server-tests.sh ${{ matrix.mc }} ${{ steps.neo.outputs.version }} ${{ matrix.bot }}
 
       - name: Upload test reports and server logs
@@ -101,6 +110,7 @@ jobs:
           name: test-logs-${{ matrix.mc }}-${{ matrix.neo }}
           path: |
             build/server-logs/
-            versions/${{ matrix.mc }}/run/logs/
+            build/server/*/logs/
+            build/server/*/config/
             versions/${{ matrix.mc }}/build/reports/tests/
           if-no-files-found: ignore

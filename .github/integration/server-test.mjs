@@ -131,6 +131,9 @@ async function connectRcon() {
 // ------------------------------------------------------------------- bot
 
 async function joinBot() {
+  // On 1.21.1, mineflayer 4.39 prints a PartialReadError (item components in an
+  // armor trim entry) for one of the join packets it cannot fully parse. It is not
+  // fatal, and not caused by this mod, which adds no items, recipes or registries.
   const { default: mineflayer } = await import('mineflayer');
   const bot = mineflayer.createBot({
     host: opt.host,
@@ -194,18 +197,26 @@ function assertFallback(hit, key) {
 // ---------------------------------------------------------------- phases
 
 async function rconChecks(rcon) {
-  await check('RCON: /milestonelog is registered', async () => {
+  // "help <command>" prints one usage line per subcommand. The root node is itself
+  // executable, so Brigadier shows the subcommands as optional: "/milestonelog [add] <item>".
+  await check('RCON: /milestonelog and all its subcommands are registered', async () => {
     const out = await rcon.command('help milestonelog');
-    if (!/milestonelog add/.test(out) || !/milestonelog resetall/.test(out)) throw new Error(out);
+    const expected = ['playtime', 'add] <item>', 'addhand', 'remove] <item>', 'targets', 'list',
+      'preset] <name>', 'reset] <item>', 'resetall'];
+    const missing = expected.filter((s) => !out.includes(`/milestonelog [${s}`));
+    if (missing.length > 0) throw new Error(`missing: ${missing.join(', ')}\n${out}`);
   });
-  await check('RCON: /iml alias is registered', async () => {
-    const out = await rcon.command('help iml');
-    if (!/iml/.test(out) || /Unknown/i.test(out)) throw new Error(out);
-  });
-  await check('RCON: player-only commands refuse the console cleanly', async () => {
-    const out = await rcon.command('milestonelog');
-    if (!/player/i.test(out)) throw new Error(out);
-  });
+  // The console is not a player, so every command answers with the "player required"
+  // error. That still shows "/iml" executes on its own (a bare redirect would be
+  // "Unknown or incomplete command") and forwards its subcommands to /milestonelog.
+  // ("help iml" prints nothing for a redirect, and the full "help" listing is longer
+  // than one RCON packet, so neither is used here.)
+  for (const cmd of ['milestonelog', 'iml', 'iml playtime']) {
+    await check(`RCON: /${cmd} runs and refuses the console cleanly`, async () => {
+      const out = await rcon.command(cmd);
+      if (!/player/i.test(out) || /unknown|incomplete|incorrect/i.test(out)) throw new Error(out || '(empty answer)');
+    });
+  }
 }
 
 async function freshBotFlow(rcon) {
@@ -311,6 +322,7 @@ const rcon = await connectRcon();
 try {
   if (opt.phase === 'stop') {
     await rcon.command('stop').catch(() => {});
+    process.exit(0);
   } else if (opt.phase === 'fresh') {
     console.log(`Integration tests (MC ${opt.mc}, phase fresh${opt.bot ? ', with vanilla client' : ', RCON only'})`);
     await rconChecks(rcon);
