@@ -16,7 +16,9 @@ public record MilestoneActionPayload(Action action, String argument) implements 
         REMOVE_TARGET,
         APPLY_PRESET,
         RESET_RECORD,
-        RESET_ALL
+        RESET_ALL,
+        SAVE_PRESET,
+        DELETE_PRESET
     }
 
     public static final Type<MilestoneActionPayload> TYPE = new Type<>(

@@ -104,6 +104,25 @@ simulation-distance=4
 difficulty=peaceful
 max-players=4
 EOF
+  mkdir -p "$SERVER_DIR/config/itemmilestonelog/presets"
+  cat > "$SERVER_DIR/config/itemmilestonelog/presets/ci_custom.json" <<'EOF'
+{
+  "name": "CI Custom Pack",
+  "items": [
+    "minecraft:emerald",
+    "othermod:missing_item"
+  ]
+}
+EOF
+  printf '{ broken json' > "$SERVER_DIR/config/itemmilestonelog/presets/broken.json"
+  cat > "$SERVER_DIR/config/itemmilestonelog/presets/atm_star.json" <<'EOF'
+{
+  "name": "Fake ATM Star",
+  "items": [
+    "minecraft:dirt"
+  ]
+}
+EOF
   # A long scan interval lets the tests tell the pickup hook and the inventory scan apart.
   # NeoForge rewrites a config file that lacks the spec's comments (keeping a .bak of
   # it) but keeps valid values; check_config makes sure this one was used.
@@ -111,7 +130,7 @@ EOF
 defaultTargets = []
 scanIntervalTicks = $SCAN_INTERVAL_TICKS
 notifyPlayer = true
-broadcastMilestones = false
+broadcastMilestones = true
 EOF
 }
 

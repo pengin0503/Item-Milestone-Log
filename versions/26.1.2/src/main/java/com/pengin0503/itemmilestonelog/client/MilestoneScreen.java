@@ -1,6 +1,7 @@
 package com.pengin0503.itemmilestonelog.client;
 
 import com.pengin0503.itemmilestonelog.Playtime;
+import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.network.MilestoneActionPayload;
 import com.pengin0503.itemmilestonelog.network.SyncMilestonesPayload;
 import com.pengin0503.itemmilestonelog.network.TargetEntry;
@@ -110,27 +111,26 @@ public final class MilestoneScreen extends Screen {
                         Tooltip.create(Component.translatable("gui.itemmilestonelog.button.add_hand")))
         );
 
-        List<ButtonSpec> presetSpecs = new ArrayList<>();
-        for (String presetName : data.presetNames()) {
-            Component label = presetDisplayName(presetName);
-            presetSpecs.add(new ButtonSpec(
-                    label,
-                    btn -> ClientMilestoneHandler.sendAction(MilestoneActionPayload.Action.APPLY_PRESET, presetName),
-                    Tooltip.create(label)));
-        }
+        List<ButtonSpec> presetSpecs = List.of(
+                new ButtonSpec(
+                        Component.translatable("gui.itemmilestonelog.button.presets"),
+                        btn -> {
+                            if (this.minecraft != null) {
+                                this.minecraft.setScreen(new PresetListScreen(this));
+                            }
+                        },
+                        Tooltip.create(Component.translatable("gui.itemmilestonelog.button.presets")))
+        );
 
         List<ButtonSpec> combinedSpecs = new ArrayList<>(addSpecs.size() + presetSpecs.size());
         combinedSpecs.addAll(addSpecs);
         combinedSpecs.addAll(presetSpecs);
 
-        // One row only when every label fits its button; otherwise long labels such as
-        // the Japanese "add held item" would scroll inside the button.
         int widestLabel = 0;
         for (ButtonSpec spec : combinedSpecs) {
             widestLabel = Math.max(widestLabel, this.font.width(spec.label));
         }
-        boolean splitActionRows = !presetSpecs.isEmpty()
-                && ActionRowLayout.needsSplit(maxRowWidth, combinedSpecs.size(), gap, widestLabel);
+        boolean splitActionRows = ActionRowLayout.needsSplit(maxRowWidth, combinedSpecs.size(), gap, widestLabel);
 
         int footerHeight = splitActionRows ? 88 : 66;
         this.feedbackY = this.height - footerHeight + 6;
@@ -218,19 +218,20 @@ public final class MilestoneScreen extends Screen {
         listWidget.clearAllEntries();
         if (viewMode == ViewMode.TARGETS) {
             for (TargetEntry target : data.targets()) {
-                Integer recordedTicks = data.records().get(target.itemId());
+                MilestoneRecord recorded = data.records().get(target.itemId());
                 listWidget.addRow(new MilestoneRow(
                         target.itemId(),
                         target.personal(),
                         target.defaultTarget(),
-                        recordedTicks,
+                        recorded,
                         true
                 ));
             }
         } else {
-            List<Map.Entry<String, Integer>> sorted = new ArrayList<>(data.records().entrySet());
-            sorted.sort(Comparator.comparingInt(Map.Entry::getValue));
-            for (Map.Entry<String, Integer> entry : sorted) {
+            List<Map.Entry<String, MilestoneRecord>> sorted = new ArrayList<>(data.records().entrySet());
+            sorted.sort(Comparator.comparingInt((Map.Entry<String, MilestoneRecord> e) -> e.getValue().playTicks())
+                    .thenComparing(Map.Entry::getKey));
+            for (Map.Entry<String, MilestoneRecord> entry : sorted) {
                 listWidget.addRow(new MilestoneRow(
                         entry.getKey(),
                         false,
@@ -268,14 +269,6 @@ public final class MilestoneScreen extends Screen {
                 CommonComponents.GUI_CANCEL,
                 () -> ClientMilestoneHandler.sendAction(MilestoneActionPayload.Action.RESET_ALL, "")
         ));
-    }
-
-    private static Component presetDisplayName(String presetName) {
-        String key = "gui.itemmilestonelog.preset." + presetName;
-        if (net.minecraft.locale.Language.getInstance().has(key)) {
-            return Component.translatable(key);
-        }
-        return Component.translatable("gui.itemmilestonelog.preset.generic", presetName);
     }
 
     @Override
@@ -318,8 +311,6 @@ public final class MilestoneScreen extends Screen {
     private record ButtonSpec(Component label, Button.OnPress onPress, @Nullable Tooltip tooltip) {
     }
 
-    // --------------------------------------------------------- list widget
-
     private final class MilestoneListWidget extends ContainerObjectSelectionList<MilestoneRow> {
         public MilestoneListWidget(Minecraft mc, int width, int height, int y, int itemHeight) {
             super(mc, width, height, y, itemHeight);
@@ -350,17 +341,18 @@ public final class MilestoneScreen extends Screen {
         private final Component displayName;
         private final boolean defaultTarget;
         @Nullable
-        private final Integer recordedTicks;
+        private final MilestoneRecord recordedRecord;
         private final List<Button> rowButtons = new ArrayList<>();
         @Nullable
         private final Button resetButton;
         @Nullable
         private final Button removeOrDefaultButton;
 
-        public MilestoneRow(String itemId, boolean personal, boolean defaultTarget, @Nullable Integer recordedTicks, boolean showTargetControls) {
+        public MilestoneRow(String itemId, boolean personal, boolean defaultTarget,
+                            @Nullable MilestoneRecord recordedRecord, boolean showTargetControls) {
             this.itemId = itemId;
             this.defaultTarget = defaultTarget;
-            this.recordedTicks = recordedTicks;
+            this.recordedRecord = recordedRecord;
 
             Identifier id = Identifier.tryParse(itemId);
             if (id != null && BuiltInRegistries.ITEM.containsKey(id)) {
@@ -372,7 +364,7 @@ public final class MilestoneScreen extends Screen {
                 this.displayName = Component.literal(itemId);
             }
 
-            if (recordedTicks != null) {
+            if (recordedRecord != null) {
                 this.resetButton = Button.builder(
                                 Component.translatable("gui.itemmilestonelog.button.reset"),
                                 btn -> openConfirmResetSingle(this.itemId, this.displayName))
@@ -413,10 +405,9 @@ public final class MilestoneScreen extends Screen {
             int left = getContentX();
             int top = getContentY();
             int width = getContentWidth();
-            int height = getContentHeight();
 
             if (hovering) {
-                graphics.fill(left, top, left + width, top + height, 0x22FFFFFF);
+                graphics.fill(left, top, left + width, top + getContentHeight(), 0x22FFFFFF);
             }
 
             graphics.item(iconStack, left + 4, top + 4);
@@ -447,8 +438,9 @@ public final class MilestoneScreen extends Screen {
 
             Component statusComponent;
             int statusColor;
-            if (recordedTicks != null) {
-                statusComponent = Component.translatable("gui.itemmilestonelog.status.recorded", Playtime.format(recordedTicks));
+            if (recordedRecord != null) {
+                statusComponent = Component.translatable("gui.itemmilestonelog.status.recorded",
+                        Playtime.formatRecord(recordedRecord));
                 statusColor = 0xFF55FF55;
             } else {
                 statusComponent = Component.translatable("gui.itemmilestonelog.status.pending");

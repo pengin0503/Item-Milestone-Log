@@ -7,18 +7,12 @@ import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.config.ModConfig;
 import net.neoforged.neoforge.common.NeoForge;
+import net.neoforged.neoforge.event.server.ServerStartingEvent;
+import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import org.slf4j.Logger;
 
 /**
- * Item Milestone Log
- *
- * Records the cumulative playtime (the vanilla "Time Played" statistic,
- * Stats.PLAY_TIME) at which a player first obtains each of their personally
- * tracked target items.
- *
- * All tracking, storage and commands run on the (integrated or dedicated)
- * server, and the GUI network payloads are optional so vanilla clients can
- * still join a server that has this mod installed.
+ * Item Milestone Log (Minecraft 26.3).
  */
 @Mod(ItemMilestoneLog.MOD_ID)
 public class ItemMilestoneLog {
@@ -31,7 +25,18 @@ public class ItemMilestoneLog {
         modEventBus.addListener(ModNetworking::registerPayloads);
         NeoForge.EVENT_BUS.register(Tracker.class);
         NeoForge.EVENT_BUS.register(MilestoneCommands.class);
+        NeoForge.EVENT_BUS.addListener(ItemMilestoneLog::onServerStarting);
+        NeoForge.EVENT_BUS.addListener(ItemMilestoneLog::onServerStopping);
 
         LOGGER.info("Item Milestone Log loaded");
+    }
+
+    private static void onServerStarting(ServerStartingEvent event) {
+        int custom = Presets.reload();
+        LOGGER.info("[ItemMilestoneLog] Loaded {} preset(s) ({} custom)", Presets.names().size(), custom);
+    }
+
+    private static void onServerStopping(ServerStoppingEvent event) {
+        DiscordNotifier.shutdown();
     }
 }

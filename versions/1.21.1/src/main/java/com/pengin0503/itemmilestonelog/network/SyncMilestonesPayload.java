@@ -1,6 +1,7 @@
 package com.pengin0503.itemmilestonelog.network;
 
 import com.pengin0503.itemmilestonelog.ItemMilestoneLog;
+import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.ComponentSerialization;
@@ -19,9 +20,10 @@ import java.util.Map;
  */
 public record SyncMilestonesPayload(
         List<TargetEntry> targets,
-        Map<String, Integer> records,
+        Map<String, MilestoneRecord> records,
         int currentPlaytimeTicks,
-        List<String> presetNames,
+        List<PresetEntry> presets,
+        boolean canManagePresets,
         boolean openScreen,
         @Nullable Component feedback
 ) implements CustomPacketPayload {
@@ -41,18 +43,25 @@ public record SyncMilestonesPayload(
         }
 
         buf.writeVarInt(payload.records.size());
-        for (Map.Entry<String, Integer> e : payload.records.entrySet()) {
+        for (Map.Entry<String, MilestoneRecord> e : payload.records.entrySet()) {
+            MilestoneRecord rec = e.getValue();
             buf.writeUtf(e.getKey());
-            buf.writeVarInt(e.getValue());
+            buf.writeVarInt(rec.playTicks());
+            buf.writeLong(rec.day());
+            buf.writeLong(rec.epochMillis());
         }
 
         buf.writeVarInt(payload.currentPlaytimeTicks);
 
-        buf.writeVarInt(payload.presetNames.size());
-        for (String name : payload.presetNames) {
-            buf.writeUtf(name);
+        buf.writeVarInt(payload.presets.size());
+        for (PresetEntry preset : payload.presets) {
+            buf.writeUtf(preset.id());
+            buf.writeUtf(preset.displayName() == null ? "" : preset.displayName());
+            buf.writeVarInt(preset.itemCount());
+            buf.writeBoolean(preset.builtin());
         }
 
+        buf.writeBoolean(payload.canManagePresets);
         buf.writeBoolean(payload.openScreen);
 
         boolean hasFeedback = payload.feedback != null;
@@ -73,21 +82,28 @@ public record SyncMilestonesPayload(
         }
 
         int recordCount = buf.readVarInt();
-        Map<String, Integer> records = new LinkedHashMap<>(recordCount);
+        Map<String, MilestoneRecord> records = new LinkedHashMap<>(recordCount);
         for (int i = 0; i < recordCount; i++) {
             String itemId = buf.readUtf();
             int ticks = buf.readVarInt();
-            records.put(itemId, ticks);
+            long day = buf.readLong();
+            long epoch = buf.readLong();
+            records.put(itemId, new MilestoneRecord(ticks, day, epoch));
         }
 
         int playtime = buf.readVarInt();
 
         int presetCount = buf.readVarInt();
-        List<String> presets = new ArrayList<>(presetCount);
+        List<PresetEntry> presets = new ArrayList<>(presetCount);
         for (int i = 0; i < presetCount; i++) {
-            presets.add(buf.readUtf());
+            String id = buf.readUtf();
+            String displayName = buf.readUtf();
+            int itemCount = buf.readVarInt();
+            boolean builtin = buf.readBoolean();
+            presets.add(new PresetEntry(id, displayName, itemCount, builtin));
         }
 
+        boolean canManagePresets = buf.readBoolean();
         boolean openScreen = buf.readBoolean();
 
         Component feedback = null;
@@ -95,7 +111,7 @@ public record SyncMilestonesPayload(
             feedback = ComponentSerialization.TRUSTED_STREAM_CODEC.decode(buf);
         }
 
-        return new SyncMilestonesPayload(targets, records, playtime, presets, openScreen, feedback);
+        return new SyncMilestonesPayload(targets, records, playtime, presets, canManagePresets, openScreen, feedback);
     }
 
     @Override

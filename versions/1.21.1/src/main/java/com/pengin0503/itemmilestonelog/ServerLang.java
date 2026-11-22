@@ -3,55 +3,120 @@ package com.pengin0503.itemmilestonelog;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.server.level.ServerPlayer;
 
+import javax.annotation.Nullable;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.Reader;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
  * Builds the chat messages that the server sends to players.
  *
- * Every message is a translatable component that also carries an English
- * fallback taken from this mod's own {@code en_us.json}. Clients with the mod
- * installed show the message in their own language; vanilla clients, which have
- * no translations for this mod, show the English fallback instead of the raw
- * translation key.
+ * Every message is a translatable component that also carries a fallback taken
+ * from the mod's bundled language files ({@code en_us.json}, {@code ja_jp.json}).
+ * Clients with the mod installed show the message in their own language; vanilla
+ * clients show the fallback matching their reported client language (falling back
+ * to English if no bundled translation exists for that language).
  */
 public final class ServerLang {
-    private static final String EN_US_PATH = "/assets/" + ItemMilestoneLog.MOD_ID + "/lang/en_us.json";
+    private static final String DEFAULT_LANG = "en_us";
+    private static final List<String> BUNDLED_LANGUAGES = List.of("en_us", "ja_jp");
 
-    private static volatile Map<String, String> fallbacks;
+    private static final Map<String, Map<String, String>> languageTables = loadAll();
 
     private ServerLang() {
     }
 
     /** A translatable component with the English text of {@code key} as its fallback. */
     public static MutableComponent tr(String key, Object... args) {
-        String fallback = fallbacks().get(key);
+        return trForLang(DEFAULT_LANG, key, args);
+    }
+
+    /**
+     * A translatable component whose fallback matches {@code player}'s client language
+     * when bundled, or English otherwise.
+     */
+    public static MutableComponent tr(@Nullable ServerPlayer player, String key, Object... args) {
+        if (player == null) {
+            return tr(key, args);
+        }
+        String lang = player.clientInformation() != null ? player.clientInformation().language() : DEFAULT_LANG;
+        return trForLang(lang, key, args);
+    }
+
+    /**
+     * A translatable component whose fallback matches the source player's client language,
+     * or English when the source is not a player (e.g. server console / RCON).
+     */
+    public static MutableComponent tr(@Nullable CommandSourceStack source, String key, Object... args) {
+        ServerPlayer player = source != null ? source.getPlayer() : null;
+        return tr(player, key, args);
+    }
+
+    /**
+     * A translatable component whose fallback uses the specified language code if bundled,
+     * or English otherwise.
+     */
+    public static MutableComponent trForLang(@Nullable String language, String key, Object... args) {
+        String fallback = lookupFallback(language, key);
         return fallback != null
                 ? Component.translatableWithFallback(key, fallback, args)
                 : Component.translatable(key, args);
     }
 
-    /** English texts by translation key, loaded once from the mod's {@code en_us.json}. */
-    static Map<String, String> fallbacks() {
-        Map<String, String> map = fallbacks;
-        if (map == null) {
-            map = load();
-            fallbacks = map;
+    @Nullable
+    static String lookupFallback(@Nullable String language, String key) {
+        Map<String, Map<String, String>> all = tables();
+        if (language != null && !language.isBlank()) {
+            String normalized = language.toLowerCase(Locale.ROOT);
+            Map<String, String> langMap = all.get(normalized);
+            if (langMap != null) {
+                String value = langMap.get(key);
+                if (value != null) {
+                    return value;
+                }
+            }
         }
-        return map;
+        Map<String, String> enMap = all.get(DEFAULT_LANG);
+        return enMap != null ? enMap.get(key) : null;
     }
 
-    private static Map<String, String> load() {
-        try (InputStream in = ServerLang.class.getResourceAsStream(EN_US_PATH)) {
+    /** English texts by translation key, loaded once from the mod's {@code en_us.json}. */
+    static Map<String, String> fallbacks() {
+        return tables().getOrDefault(DEFAULT_LANG, Map.of());
+    }
+
+    private static Map<String, Map<String, String>> tables() {
+        return languageTables;
+    }
+
+    private static Map<String, Map<String, String>> loadAll() {
+        Map<String, Map<String, String>> all = new HashMap<>();
+        for (String lang : BUNDLED_LANGUAGES) {
+            Map<String, String> loaded = loadLang(lang);
+            if (!loaded.isEmpty()) {
+                all.put(lang, loaded);
+            }
+        }
+        return Map.copyOf(all);
+    }
+
+    private static Map<String, String> loadLang(String lang) {
+        String path = "/assets/" + ItemMilestoneLog.MOD_ID + "/lang/" + lang + ".json";
+        try (InputStream in = ServerLang.class.getResourceAsStream(path)) {
             if (in == null) {
-                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] {} was not found; vanilla clients will see translation keys", EN_US_PATH);
+                if (DEFAULT_LANG.equals(lang)) {
+                    ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] {} was not found; vanilla clients will see translation keys", path);
+                }
                 return Map.of();
             }
             try (Reader reader = new InputStreamReader(in, StandardCharsets.UTF_8)) {
@@ -65,7 +130,7 @@ public final class ServerLang {
                 return Map.copyOf(map);
             }
         } catch (Exception e) {
-            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Could not read {}; vanilla clients will see translation keys", EN_US_PATH, e);
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Could not read {}; skipping language fallback", path, e);
             return Map.of();
         }
     }

@@ -28,17 +28,16 @@ class ServerLangTest {
 
     @Test
     void everyKeyUsedByServerCodeHasAnEnglishFallback() throws IOException {
-        // Set by build.gradle so the test does not depend on the working directory.
         String dir = System.getProperty("itemmilestonelog.mainSourceDir");
         assertNotNull(dir, "system property itemmilestonelog.mainSourceDir is not set");
         Path sources = Path.of(dir);
         assertTrue(Files.isDirectory(sources), "sources not found at " + sources);
 
-        Pattern call = Pattern.compile("ServerLang\\.tr\\(\\s*\"([^\"]+)\"");
+        Pattern literal = Pattern.compile("\"(message\\.itemmilestonelog\\.[a-z0-9_.]+)\"");
         Set<String> used = new TreeSet<>();
         try (Stream<Path> files = Files.walk(sources)) {
             for (Path file : files.filter(p -> p.toString().endsWith(".java")).toList()) {
-                Matcher matcher = call.matcher(Files.readString(file));
+                Matcher matcher = literal.matcher(Files.readString(file));
                 while (matcher.find()) {
                     used.add(matcher.group(1));
                 }
@@ -51,12 +50,17 @@ class ServerLangTest {
     }
 
     @Test
-    void rendersEnglishTextWhenTheClientHasNoTranslation() {
-        // A vanilla client has no entry for the key, so it falls back to the English text.
+    void rendersEnglishAndJapaneseFallbacksForVanillaClients() {
         assertEquals("Now tracking: Diamond",
                 ServerLang.tr("message.itemmilestonelog.added", "Diamond").getString());
         assertEquals("Playtime: 1h 02m 03s | Milestones: 2 / 5 targets recorded. Use /milestonelog targets to see details.",
                 ServerLang.tr("message.itemmilestonelog.summary", "1h 02m 03s", 2, 5).getString());
+        assertEquals("目標に追加しました: Diamond",
+                ServerLang.trForLang("ja_jp", "message.itemmilestonelog.added", "Diamond").getString());
+        assertEquals("目標に追加しました: Diamond",
+                ServerLang.trForLang("ja_JP", "message.itemmilestonelog.added", "Diamond").getString());
+        assertEquals("Now tracking: Diamond",
+                ServerLang.trForLang("fr_fr", "message.itemmilestonelog.added", "Diamond").getString());
     }
 
     @Test

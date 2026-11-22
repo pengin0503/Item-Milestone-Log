@@ -50,6 +50,14 @@ public final class ClientMilestoneHandler {
             screen.updateData(payload);
             return;
         }
+        if (current instanceof PresetListScreen presetList) {
+            presetList.updateData(payload);
+            return;
+        }
+        if (current instanceof SavePresetScreen savePreset) {
+            savePreset.updateParentData(payload);
+            return;
+        }
         if (current instanceof ItemPickerScreen picker) {
             picker.updateData(payload);
             return;

@@ -70,9 +70,15 @@ public final class ModNetworking {
                 case APPLY_PRESET -> MilestoneService.applyPreset(player, payload.argument());
                 case RESET_RECORD -> MilestoneService.resetRecord(player, payload.argument());
                 case RESET_ALL -> MilestoneService.resetAllRecords(player);
+                case SAVE_PRESET -> MilestoneService.savePreset(player, payload.argument());
+                case DELETE_PRESET -> MilestoneService.deletePreset(player, payload.argument());
             };
             SyncMilestonesPayload sync = MilestoneService.createSyncPayload(player, false, result.message());
             PacketDistributor.sendToPlayer(player, sync);
+            if (result.success() && (payload.action() == MilestoneActionPayload.Action.SAVE_PRESET
+                    || payload.action() == MilestoneActionPayload.Action.DELETE_PRESET)) {
+                MilestoneService.syncAllOnlineGuiPlayers(player.server, player);
+            }
         });
     }
 

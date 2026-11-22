@@ -1,42 +1,41 @@
 package com.pengin0503.itemmilestonelog;
 
+import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
+import com.pengin0503.itemmilestonelog.api.MilestoneRecordedEvent;
 import com.pengin0503.itemmilestonelog.network.SyncMilestonesPayload;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.game.ClientboundSoundPacket;
+import net.minecraft.resources.Identifier;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.sounds.SoundEvent;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.GameType;
 import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.entity.player.ItemEntityPickupEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.tick.PlayerTickEvent;
-import net.neoforged.neoforge.network.PacketDistributor;
 
 import java.util.HashSet;
 import java.util.LinkedHashSet;
+import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * Watches tracked items entering a player's possession and records the
- * cumulative playtime at that moment.
- *
- * Detection is deliberately possession-based ("first time the item is in
- * your inventory") rather than crafting-based, so items produced by
- * machines, automation or modded crafting (e.g. Mekanism, AE2 autocrafting
- * in modpacks such as All the Mods 10) are recorded as well.
- *
- * With {@code ignoreCreativeAndSpectator} (the default), nothing is recorded in
- * creative or spectator mode. The items a player still carries when switching back
- * are remembered (MilestoneData.PlayerData#carriedFromCreative) and not recorded
- * while any of them is still in the inventory; the scan forgets an item once it is
- * gone, and the next one to arrive is recorded as usual.
+ * cumulative playtime, in-game day, and wall-clock time at that moment.
  */
 public final class Tracker {
+    private static volatile String lastWarnedSoundId = null;
+
     private Tracker() {
     }
 
-    /** Effective targets for a player: global defaults from config + personal targets. */
     public static Set<String> effectiveTargets(MilestoneData.PlayerData pd) {
         Set<String> all = new HashSet<>();
         for (String s : Config.DEFAULT_TARGETS.get()) {
@@ -49,13 +48,38 @@ public final class Tracker {
     }
 
     @SubscribeEvent
+    public static void onPlayerLoggedIn(PlayerEvent.PlayerLoggedInEvent event) {
+        if (!(event.getEntity() instanceof ServerPlayer player)) {
+            return;
+        }
+        MinecraftServer server = player.level().getServer();
+        MilestoneData data = MilestoneData.get(server);
+        MilestoneData.PlayerData pd = data.player(player.getUUID());
+        String name = player.getGameProfile().name();
+        if (name != null && !name.equals(pd.lastKnownName)) {
+            pd.lastKnownName = name;
+            data.setDirty();
+        }
+        if (Config.SHOW_FIRST_JOIN_HINT.get() && !pd.firstJoinHintShown) {
+            pd.firstJoinHintShown = true;
+            data.setDirty();
+            boolean hasMod = player.connection != null
+                    && player.connection.hasChannel(SyncMilestonesPayload.TYPE);
+            String key = hasMod
+                    ? "message.itemmilestonelog.join_hint_mod"
+                    : "message.itemmilestonelog.join_hint_vanilla";
+            player.sendSystemMessage(ServerLang.tr(player, key));
+        }
+    }
+
+    @SubscribeEvent
     public static void onPlayerTick(PlayerTickEvent.Post event) {
         if (!(event.getEntity() instanceof ServerPlayer player)) {
             return;
         }
         int interval = Config.SCAN_INTERVAL_TICKS.get();
-        // Stagger scans a little per player so not everyone is scanned on the same tick.
-        if ((player.tickCount + (player.getUUID().hashCode() & 0xF)) % interval != 0) {
+        int phase = Math.floorMod(player.getUUID().hashCode(), interval);
+        if ((player.tickCount + phase) % interval != 0) {
             return;
         }
         if (recordingPaused(player)) {
@@ -85,17 +109,11 @@ public final class Tracker {
                 record(player, data, id);
             }
         }
-        // Forget the items carried out of creative mode that are gone now.
         if (!carried.isEmpty() && carried.retainAll(stillCarried)) {
             data.setDirty();
         }
     }
 
-    /**
-     * Leaving creative or spectator mode: remember what the player still carries, so
-     * those items are not recorded as if they had been obtained in survival.
-     * LOWEST priority, so a listener that cancels the change runs first.
-     */
     @SubscribeEvent(priority = EventPriority.LOWEST)
     public static void onGameModeChange(PlayerEvent.PlayerChangeGameModeEvent event) {
         if (!(event.getEntity() instanceof ServerPlayer player) || !Config.IGNORE_CREATIVE_AND_SPECTATOR.get()) {
@@ -144,9 +162,6 @@ public final class Tracker {
         if (!(event.getPlayer() instanceof ServerPlayer player)) {
             return;
         }
-        // Post fires after the pickup: the item entity's own stack has already been
-        // shrunk (and is empty, i.e. AIR, after a full pickup), so read the copy of
-        // the stack from before the pickup and only record if something was taken.
         ItemStack before = event.getOriginalStack();
         if (before.isEmpty() || event.getItemEntity().getItem().getCount() >= before.getCount()) {
             return;
@@ -154,7 +169,6 @@ public final class Tracker {
         tryRecord(player, itemId(before));
     }
 
-    /** True while nothing is recorded for the player: creative or spectator mode, if so configured. */
     static boolean recordingPaused(ServerPlayer player) {
         return Config.IGNORE_CREATIVE_AND_SPECTATOR.get() && (player.isCreative() || player.isSpectator());
     }
@@ -163,7 +177,6 @@ public final class Tracker {
         return mode == GameType.CREATIVE || mode == GameType.SPECTATOR;
     }
 
-    /** The player's items carried out of creative mode, or an empty set if they don't count. */
     private static Set<String> carriedFromCreative(MilestoneData.PlayerData pd) {
         if (pd == null || !Config.IGNORE_CREATIVE_AND_SPECTATOR.get()) {
             return Set.of();
@@ -195,34 +208,86 @@ public final class Tracker {
         if (pd.records.containsKey(itemId)) {
             return;
         }
+        MinecraftServer server = player.level().getServer();
         int ticks = Playtime.currentTicks(player);
-        pd.records.put(itemId, ticks);
+        long day = Playtime.currentDay(server);
+        long epochMillis = System.currentTimeMillis();
+        MilestoneRecord rec = new MilestoneRecord(ticks, day, epochMillis);
+
+        String playerName = player.getGameProfile().name();
+        if (playerName != null && !playerName.equals(pd.lastKnownName)) {
+            pd.lastKnownName = playerName;
+        }
+        pd.records.put(itemId, rec);
+        boolean worldFirst = data.recordWorldFirstIfAbsent(itemId, player.getUUID(), playerName, rec);
         data.setDirty();
 
         ItemMilestoneLog.LOGGER.info("[ItemMilestoneLog] {} first obtained {} at playtime {} ({} ticks)",
-                player.getGameProfile().name(), itemId, Playtime.format(ticks), ticks);
+                playerName, itemId, Playtime.formatRecord(rec), ticks);
 
         Component itemName = MilestoneService.itemName(itemId);
 
         if (Config.NOTIFY_PLAYER.get()) {
-            Component msg = ServerLang.tr("message.itemmilestonelog.recorded",
+            Component msg = ServerLang.tr(player, "message.itemmilestonelog.recorded",
                     itemName, Playtime.format(ticks));
             player.sendSystemMessage(msg);
         }
         if (Config.BROADCAST.get()) {
-            Component msg = ServerLang.tr("message.itemmilestonelog.recorded_broadcast",
-                    player.getDisplayName(), itemName, Playtime.format(ticks));
-            for (ServerPlayer other : player.level().getServer().getPlayerList().getPlayers()) {
-                if (other != player) {
-                    other.sendSystemMessage(msg);
+            String formattedTicks = Playtime.format(ticks);
+            for (ServerPlayer other : server.getPlayerList().getPlayers()) {
+                if (other == player) {
+                    continue;
                 }
+                MilestoneData.PlayerData otherPd = data.playerOrNull(other.getUUID());
+                if (otherPd != null && otherPd.muteBroadcasts) {
+                    continue;
+                }
+                other.sendSystemMessage(ServerLang.tr(other, "message.itemmilestonelog.recorded_broadcast",
+                        player.getDisplayName(), itemName, formattedTicks));
             }
         }
-        if (player.connection != null && player.connection.hasChannel(SyncMilestonesPayload.TYPE)) {
-            PacketDistributor.sendToPlayer(
-                    player,
-                    MilestoneService.createSyncPayload(player, false, null)
-            );
+        if (worldFirst && Config.ANNOUNCE_WORLD_FIRST.get()) {
+            String formattedRecord = Playtime.formatRecord(rec);
+            for (ServerPlayer recipient : server.getPlayerList().getPlayers()) {
+                MilestoneData.PlayerData recPd = data.playerOrNull(recipient.getUUID());
+                if (recPd != null && recPd.muteBroadcasts) {
+                    continue;
+                }
+                recipient.sendSystemMessage(ServerLang.tr(recipient, "message.itemmilestonelog.world_first_recorded",
+                        player.getDisplayName(), itemName, formattedRecord));
+            }
+        }
+        if (Config.MILESTONE_SOUND_ENABLED.get()) {
+            playMilestoneSound(player);
+        }
+
+        NeoForge.EVENT_BUS.post(new MilestoneRecordedEvent(player, itemId, ticks, day, epochMillis));
+        DiscordNotifier.notifyMilestone(playerName != null ? playerName : "", itemId, rec, worldFirst);
+        MilestoneService.syncPlayerIfOpen(player);
+    }
+
+    private static void playMilestoneSound(ServerPlayer player) {
+        String soundId = Config.MILESTONE_SOUND.get();
+        Identifier id = soundId != null ? Identifier.tryParse(soundId) : null;
+        if (id == null || !BuiltInRegistries.SOUND_EVENT.containsKey(id)) {
+            if (!Objects.equals(lastWarnedSoundId, soundId)) {
+                lastWarnedSoundId = soundId;
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Unknown milestoneSound '{}'; skipping sound", soundId);
+            }
+            return;
+        }
+        SoundEvent event = BuiltInRegistries.SOUND_EVENT.getValue(id);
+        if (event != null && player.connection != null) {
+            player.connection.send(new ClientboundSoundPacket(
+                    BuiltInRegistries.SOUND_EVENT.wrapAsHolder(event),
+                    SoundSource.PLAYERS,
+                    player.getX(),
+                    player.getY(),
+                    player.getZ(),
+                    1.0F,
+                    1.0F,
+                    ThreadLocalRandom.current().nextLong()
+            ));
         }
     }
 }
