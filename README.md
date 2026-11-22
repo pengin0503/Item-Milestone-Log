@@ -14,8 +14,9 @@ Detection is possession-based, not crafting-based, so items produced by machines
 
 - Per-player target items: every player tracks their own goals
 - Records cumulative playtime (`minecraft:play_time`) at first obtainment, stored per world
-- **In-game GUI** (default key `M`, rebindable in Controls): view playtime and progress, browse targets and recorded milestones, search and add items, add your held item, apply presets, remove personal targets, and reset records with confirmation
+- **In-game GUI** (assign a key under Controls; there is no default key): view playtime and progress, browse targets and recorded milestones, search and add items, add your held item, apply presets, remove personal targets, and reset records with confirmation
 - Chat notification the moment a milestone is recorded (configurable, optional server-wide broadcast)
+- Nothing is recorded in creative or spectator mode (configurable)
 - Built-in presets: `atm_star` (All the Mods 10 endgame) and `vanilla_endgame`
 - Server-wide default targets via config file
 - **Optional client installation** — on a dedicated server, vanilla clients can still join without installing the mod and use all `/milestonelog` commands; installing the mod on the client unlocks the GUI
@@ -25,7 +26,7 @@ Detection is possession-based, not crafting-based, so items produced by machines
 
 ### GUI
 
-Press **`M`** (configurable under *Controls → Item Milestone Log*) to open the Item Milestone Log screen. Everything available via commands can also be done from the GUI:
+Assign a key to **Open Milestone Log** under *Options → Controls → Key Binds → Item Milestone Log*, then press it to open the Item Milestone Log screen. There is no default key: the obvious one, `M`, already opens the full-screen map of FTB Chunks, which All the Mods 10 includes. Everything available via commands can also be done from the GUI:
 
 - View your current cumulative playtime and overall progress in the header
 - Switch between **Targets** (distinguishing personal targets and server-configured default targets) and **Recorded** milestones (earliest first)
@@ -63,10 +64,17 @@ config type). On a dedicated server, edit the file on the server.
 - `scanIntervalTicks` — inventory scan interval in ticks (default 20 ticks = 1 s, 1–1200)
 - `notifyPlayer` — chat notification on record (default true)
 - `broadcastMilestones` — announce records to all players (default false)
+- `ignoreCreativeAndSpectator` — record nothing in creative or spectator mode (default true)
 
 Items picked up from the ground, crafted by hand or taken out of a furnace are recorded
 right away; items that arrive in other ways (machines, AE2, chests, `/give`) are found
 by the inventory scan, so their timestamp can be up to `scanIntervalTicks` late.
+
+With `ignoreCreativeAndSpectator`, items taken in creative mode do not count either:
+items you still carry when you switch back to survival or adventure are only recorded
+once they have left your inventory and you obtain them again. This works per item
+type, so putting such an item in a chest and taking it out later does count; use
+`/milestonelog reset <item>` if that was not meant as a milestone.
 
 ## Saved data
 
@@ -77,8 +85,9 @@ Targets and records are stored per world, for all players in one file:
 | 1.21.1 | `<world>/data/itemmilestonelog_data.dat` |
 | 26.1.2 / 26.2 / 26.3 | `<world>/data/itemmilestonelog/milestones.dat` |
 
-Records are not carried over when a 1.21.1 world is opened with a 26.x version of
-the mod (the 1.21.1 file stays in place and is not modified).
+When a 1.21.1 world is opened with a 26.x version of the mod, the records are read
+from the 1.21.1 file and saved in the new one; the 1.21.1 file stays in place and is
+not modified.
 
 ## Supported Versions & Requirements
 
@@ -122,10 +131,24 @@ for both the minimum and the latest NeoForge in `gradle.properties`:
    1.21.1 and 26.1.2, a vanilla-protocol client ([mineflayer](https://github.com/PrismarineJS/mineflayer))
    that joins without the mod and runs the commands, gets items recorded by pickup
    and by the inventory scan, and checks that the records survive a server restart.
+   It also checks that nothing is recorded in creative mode.
    mineflayer does not support 26.2 and 26.3 yet, so those get the RCON checks only.
+
+A further job opens a world made on a 1.21.1 server, with records, on a 26.1.2 server
+and checks that the records come over (`.github/scripts/run-migration-test.sh`).
 
 The jars from the minimum-NeoForge jobs are uploaded as the workflow artifacts
 `itemmilestonelog-<mc_version>`. The GUI is not covered by the automated tests.
+
+### Releasing
+
+1. Set `mod_version` in all four `versions/*/gradle.properties` and add a
+   `## <version>` section to [CHANGELOG.md](CHANGELOG.md).
+2. Once CI is green on `main`, push the tag `v<version>` (for example `v1.0.0`).
+   The workflow runs all tests again and publishes a GitHub Release with the four jars
+   and that changelog section. It stops if the tag, the versions and the jars do not
+   match (`.github/scripts/check-release.sh`, which also runs on every pull request).
+3. Upload the jars to CurseForge as described in [CURSEFORGE.md](CURSEFORGE.md).
 
 ## License
 

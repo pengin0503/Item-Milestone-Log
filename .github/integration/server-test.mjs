@@ -6,10 +6,13 @@
 // player actually sees.
 //
 // Phases:
-//   fresh    first start: command registration over RCON, then (with --bot) the
-//            full player flow: commands, recording by inventory scan and by pickup
-//   restart  after a server restart (with --bot): the data saved before is back
-//   stop     stop the server over RCON
+//   fresh           first start: command registration over RCON, then (with --bot)
+//                   the full player flow: commands, recording by inventory scan and
+//                   by pickup, nothing recorded in creative mode
+//   restart         after a server restart (with --bot): the data saved before is back
+//   migrate-before  on 1.21.1 (always with the client): make a record to carry over
+//   migrate-after   on 26.1.2, same world: the 1.21.1 record is there
+//   stop            stop the server over RCON
 import net from 'node:net';
 import { once } from 'node:events';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -185,6 +188,32 @@ async function command(session, cmd, pattern, timeoutMs) {
   return waitFor(session, from, pattern, timeoutMs);
 }
 
+/** Fails if a "Milestone recorded" message for `name` arrived after index `from`. */
+function assertNotRecorded(session, from, name) {
+  const hit = session.messages.slice(from).find((m) => m.text.startsWith(`★ Milestone recorded: ${name} at`));
+  if (hit) throw new Error(`${name} was recorded: ${hit.text}`);
+}
+
+/** How many of `item` the bot has ("clear <player> <item> 0" only counts). */
+async function countItem(rcon, item) {
+  const out = await rcon.command(`clear ${BOT_NAME} ${item} 0`);
+  const m = /Found (\d+)/.exec(out);
+  return m ? Number(m[1]) : 0;
+}
+
+/** Drops one `item` at the bot's feet and waits until the bot has picked it up. */
+async function summonAndPickUp(rcon, item) {
+  const before = await countItem(rcon, item);
+  await rcon.command(
+    `execute at ${BOT_NAME} run summon minecraft:item ~ ~ ~ {Item:{id:"${item}",count:1},PickupDelay:0}`);
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    await sleep(250);
+    if (await countItem(rcon, item) > before) return;
+  }
+  throw new Error(`the bot did not pick up ${item}`);
+}
+
 /** The message must be a translatable component of `key` that carries an English fallback. */
 function assertFallback(hit, key) {
   const { msg } = hit;
@@ -288,29 +317,106 @@ async function freshBotFlow(rcon) {
     await command(session, 'milestonelog remove minecraft:diamond', /^Stopped tracking: Diamond$/);
   });
   await check('/milestonelog reset', async () => {
+    // Without the dirt in the inventory, so the scan does not record it again.
+    await rcon.command(`clear ${BOT_NAME} minecraft:dirt`);
     await command(session, 'milestonelog reset minecraft:dirt', /^Record cleared: Dirt/);
   });
   await check('/milestonelog reset of something not recorded', async () => {
     await command(session, 'milestonelog reset minecraft:dirt', /^No record for: Dirt$/);
   });
 
+  await creativeModeFlow(session, rcon);
+
   session.bot.quit();
   await sleep(1000);
+}
+
+// ignoreCreativeAndSpectator is on by default. The scan interval is long, so a scan
+// is only known to have run when it records something: a second target given at the
+// same time (iron, copper) shows that the scan has also looked at the gold ingot.
+async function creativeModeFlow(session, rcon) {
+  const scanMs = (SCAN_SECONDS + 5) * 1000;
+  await check('creative mode: targets for the checks below', async () => {
+    await command(session, 'milestonelog add minecraft:gold_ingot', /^Now tracking: Gold Ingot$/);
+    await command(session, 'milestonelog add minecraft:iron_ingot', /^Now tracking: Iron Ingot$/);
+    await command(session, 'milestonelog add minecraft:copper_ingot', /^Now tracking: Copper Ingot$/);
+  });
+  await check('creative mode: nothing is recorded, by pickup or by the scan', async () => {
+    await rcon.command(`gamemode creative ${BOT_NAME}`);
+    const from = session.messages.length;
+    await summonAndPickUp(rcon, 'minecraft:gold_ingot');
+    // Long enough for at least one scan (which does not run in creative mode).
+    await sleep(scanMs - 3000);
+    assertNotRecorded(session, from, 'Gold Ingot');
+  });
+  await check('back in survival, an item carried out of creative mode is not recorded', async () => {
+    await rcon.command(`gamemode survival ${BOT_NAME}`);
+    const from = session.messages.length;
+    await rcon.command(`give ${BOT_NAME} minecraft:iron_ingot 1`);
+    await waitFor(session, from, /^★ Milestone recorded: Iron Ingot at playtime /, scanMs);
+    await sleep(500);
+    assertNotRecorded(session, from, 'Gold Ingot');
+  });
+  await check('picking up more of it while still carrying it is not recorded either', async () => {
+    const from = session.messages.length;
+    await summonAndPickUp(rcon, 'minecraft:gold_ingot');
+    await sleep(2000);
+    assertNotRecorded(session, from, 'Gold Ingot');
+  });
+  await check('once it has left the inventory, the next one is recorded', async () => {
+    await rcon.command(`clear ${BOT_NAME} minecraft:gold_ingot`);
+    let from = session.messages.length;
+    // This scan finds no gold ingot any more, so it forgets it.
+    await rcon.command(`give ${BOT_NAME} minecraft:copper_ingot 1`);
+    await waitFor(session, from, /^★ Milestone recorded: Copper Ingot at playtime /, scanMs);
+    from = session.messages.length;
+    await summonAndPickUp(rcon, 'minecraft:gold_ingot');
+    await waitFor(session, from, /^★ Milestone recorded: Gold Ingot at playtime /, 4000);
+  });
 }
 
 async function restartBotFlow() {
   const session = await joinBot();
   // Saved before the restart: cobblestone (recorded), dirt (record reset),
-  // 7 vanilla_endgame items (diamond removed again) = 9 targets, 1 record.
+  // 7 vanilla_endgame items (diamond removed again), gold, iron and copper ingots
+  // (recorded) = 12 targets, 4 records.
   await check('targets and records survive a server restart', async () => {
     const from = session.messages.length;
     session.bot.chat('/milestonelog targets');
-    await waitFor(session, from, /^Target items \(9\):$/);
+    await waitFor(session, from, /^Target items \(12\):$/);
     await waitFor(session, from, /^✔ Cobblestone — \d+h \d{2}m \d{2}s$/);
+    await waitFor(session, from, /^✔ Gold Ingot — \d+h \d{2}m \d{2}s$/);
     await waitFor(session, from, /^… Dirt — not yet obtained$/);
   });
   await check('/milestonelog resetall after the restart', async () => {
-    await command(session, 'milestonelog resetall', /^Cleared 1 records\. Targets were kept\.$/);
+    await command(session, 'milestonelog resetall', /^Cleared 4 records\. Targets were kept\.$/);
+  });
+  session.bot.quit();
+  await sleep(1000);
+}
+
+// A 1.21.1 world with one record and one pending target, to be opened by 26.1.2.
+async function migrateBeforeFlow(rcon) {
+  const session = await joinBot();
+  await check('1.21.1: a record to carry over', async () => {
+    await command(session, 'milestonelog add minecraft:cobblestone', /^Now tracking: Cobblestone$/);
+    await command(session, 'milestonelog add minecraft:dirt', /^Now tracking: Dirt$/);
+    const from = session.messages.length;
+    await summonAndPickUp(rcon, 'minecraft:cobblestone');
+    await waitFor(session, from, /^★ Milestone recorded: Cobblestone at playtime /, 4000);
+  });
+  session.bot.quit();
+  await sleep(1000);
+}
+
+async function migrateAfterFlow() {
+  const session = await joinBot();
+  await check('26.1.2: the targets and the record made by 1.21.1 are there', async () => {
+    const from = session.messages.length;
+    session.bot.chat('/milestonelog targets');
+    await waitFor(session, from, /^Target items \(2\):$/);
+    await waitFor(session, from, /^✔ Cobblestone — \d+h \d{2}m \d{2}s$/);
+    await waitFor(session, from, /^… Dirt — not yet obtained$/);
   });
   session.bot.quit();
   await sleep(1000);
@@ -330,6 +436,12 @@ try {
   } else if (opt.phase === 'restart') {
     console.log(`Integration tests (MC ${opt.mc}, phase restart)`);
     await restartBotFlow();
+  } else if (opt.phase === 'migrate-before') {
+    console.log(`Migration test (MC ${opt.mc}, before)`);
+    await migrateBeforeFlow(rcon);
+  } else if (opt.phase === 'migrate-after') {
+    console.log(`Migration test (MC ${opt.mc}, after)`);
+    await migrateAfterFlow();
   } else {
     throw new Error(`unknown phase ${opt.phase}`);
   }

@@ -5,11 +5,12 @@ Sections marked *(paste)* go into CurseForge as they are.
 
 ## Before the first upload
 
-- [ ] CI is green on `main` (all 8 jobs of the **Build** workflow).
-- [ ] The four jars come from that run (see [Getting the jars](#getting-the-jars)).
+- [ ] CI is green on `main` (all jobs of the **Build** workflow).
+- [ ] The four jars come from the GitHub Release of the version tag, or from that
+      CI run (see [Getting the jars](#getting-the-jars)).
 - [ ] Quick manual check in a client with the mod installed (not covered by CI):
-      the `M` key opens the screen, targets can be added from the item picker,
-      presets and resets work.
+      after assigning a key to *Open Milestone Log* under Controls, the key opens the
+      screen, targets can be added from the item picker, presets and resets work.
 - [ ] Optional but recommended for the ATM10 audience: run `/milestonelog preset atm_star`
       in ATM10 and check that it reports `0 skipped` (issue #15).
 
@@ -51,17 +52,18 @@ version, so tag each file with exactly one game version.
 - If CurseForge does not list one of the 26.x game versions yet, upload that file
   once the version is available rather than tagging it with a different version.
 
-### Changelog for 1.0.0 *(paste)*
+### Changelog *(paste)*
 
-```
-First release.
-- Records your cumulative playtime (Time Played statistic) the first time each of your target items enters your inventory, and notifies you in chat.
-- Per-player targets, server-wide default targets (config), presets: atm_star, vanilla_endgame.
-- In-game GUI (default key M) when the mod is also installed on the client; vanilla clients can join a server with the mod and use all /milestonelog (/iml) commands.
-- English and Japanese.
-```
+Paste the section of the version from [CHANGELOG.md](CHANGELOG.md). The GitHub
+Release of the version has the same text.
 
 ## Getting the jars
+
+From a release (recommended): push the tag `v<version>` on `main` (see *Releasing* in
+the README). When the **Build** workflow has passed, the GitHub Release
+`v<version>` has the four jars attached. They do not expire.
+
+Without a tag:
 
 1. Open the **Actions** tab on GitHub → workflow **Build** → the latest successful run on `main`.
 2. Under **Artifacts**, download `itemmilestonelog-1.21.1`, `itemmilestonelog-26.1.2`,
@@ -92,8 +94,9 @@ Detection is possession-based. Items produced by machines, automation, AE2 autoc
 #### Features
 - **Per-player targets** — every player sets and tracks their own goal items
 - **Cumulative playtime records**, stored per world, shown as e.g. `27h 15m 30s`
-- **In-game GUI** — press `M` (rebindable) to view progress, search and add targets, apply presets, and manage records without typing commands (requires the mod on the client; vanilla clients can still join and use commands)
+- **In-game GUI** — view progress, search and add targets, apply presets, and manage records without typing commands. Assign a key to *Open Milestone Log* under Options → Controls → Key Binds first: there is no default key, because `M` already opens the FTB Chunks map in ATM10. (Requires the mod on the client; vanilla clients can still join and use commands.)
 - **Chat notification** the moment a goal item is first obtained (configurable; optional server-wide broadcast)
+- **Creative mode doesn't count** — nothing is recorded in creative or spectator mode, including items you bring back to survival (configurable)
 - **Built-in presets**: `atm_star` (ATM Star + its 9 components) and `vanilla_endgame`
 - **Server-wide default targets** via the config file
 - **Optional client installation** — on a dedicated server, vanilla clients can join without installing anything and use all commands, with messages shown in English
@@ -114,6 +117,7 @@ Detection is possession-based. Items produced by machines, automation, AE2 autoc
 - `defaultTargets` — items everyone tracks by default
 - `scanIntervalTicks` — inventory scan interval (default 20 = 1 second)
 - `notifyPlayer`, `broadcastMilestones` — notification behaviour
+- `ignoreCreativeAndSpectator` — record nothing in creative or spectator mode (default true)
 
 #### Requirements
 | Minecraft | NeoForge | Java |
@@ -126,12 +130,12 @@ Detection is possession-based. Items produced by machines, automation, AE2 autoc
 Download the file that matches your Minecraft version.
 
 #### 日本語
-累計プレイ時間（バニラ統計の「プレイ時間」）で、目標アイテムを初めて手に入れた瞬間を記録するModです。プレイヤーごとに目標を自由に設定でき、ATM Star用プリセットも内蔵しています。機械生産・自動クラフトで作ったアイテムも、インベントリに入った時点で記録されます。コマンドだけでなく、キー入力（初期設定 `M`）で開く専用GUIからも目標の検索・追加・削除や記録確認などの全機能を利用できます（専用サーバーではMOD未導入のクライアントもコマンドで利用でき、メッセージは英語で表示されます）。
+累計プレイ時間（バニラ統計の「プレイ時間」）で、目標アイテムを初めて手に入れた瞬間を記録するModです。プレイヤーごとに目標を自由に設定でき、ATM Star用プリセットも内蔵しています。機械生産・自動クラフトで作ったアイテムも、インベントリに入った時点で記録されます。クリエイティブ／スペクテイターモードで手に入れたアイテムは記録しません（設定で変更できます）。コマンドだけでなく、専用GUI（操作設定の「Item Milestone Log」でキーを割り当てて開きます。初期状態ではキーは割り当てられていません）からも目標の検索・追加・削除や記録確認などの全機能を利用できます（専用サーバーではMOD未導入のクライアントもコマンドで利用でき、メッセージは英語で表示されます）。
 
 ## Screenshots to add after the first in-game test
 CurseForge does not require screenshots for a utility mod, but 2–3 images help the page a lot:
 1. Chat showing "★ Milestone recorded: … at playtime …" right after picking up a goal item
-2. The GUI (`M`) with a mix of recorded and pending targets
+2. The GUI with a mix of recorded and pending targets
 3. Output of `/milestonelog preset atm_star` followed by `/milestonelog targets` in ATM10
 
 They can be added under the project's Images section after the file is approved, so they do not block the first upload.

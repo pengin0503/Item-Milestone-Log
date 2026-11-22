@@ -13,7 +13,6 @@ import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 import net.neoforged.neoforge.client.settings.KeyConflictContext;
 import net.neoforged.neoforge.common.NeoForge;
-import org.lwjgl.glfw.GLFW;
 
 /**
  * Client-only entrypoint for Item Milestone Log (Minecraft 26.1.2).
@@ -24,11 +23,12 @@ public final class ItemMilestoneLogClient {
             Identifier.fromNamespaceAndPath(ItemMilestoneLog.MOD_ID, "general"));
     public static final String KEY_OPEN_GUI = "key." + ItemMilestoneLog.MOD_ID + ".open_gui";
 
+    // No default key: M, the obvious choice, is also the full-screen map key of FTB Chunks,
+    // which All the Mods 10 includes (issue #17). Players pick a key under Controls.
     public static final KeyMapping OPEN_GUI_MAPPING = new KeyMapping(
             KEY_OPEN_GUI,
             KeyConflictContext.IN_GAME,
-            InputConstants.Type.KEYSYM,
-            GLFW.GLFW_KEY_M,
+            InputConstants.UNKNOWN,
             KEY_CATEGORY
     );
 

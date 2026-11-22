@@ -4,12 +4,15 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.GameType;
+import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.event.entity.player.ItemEntityPickupEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.tick.PlayerTickEvent;
 
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.Set;
 
 /**
@@ -20,6 +23,12 @@ import java.util.Set;
  * your inventory") rather than crafting-based, so items produced by
  * machines, automation or modded crafting (e.g. Mekanism, AE2 autocrafting
  * in modpacks such as All the Mods 10) are recorded as well.
+ *
+ * With {@code ignoreCreativeAndSpectator} (the default), nothing is recorded in
+ * creative or spectator mode. The items a player still carries when switching back
+ * are remembered (MilestoneData.PlayerData#carriedFromCreative) and not recorded
+ * while any of them is still in the inventory; the scan forgets an item once it is
+ * gone, and the next one to arrive is recorded as usual.
  */
 public final class Tracker {
     private Tracker() {
@@ -47,43 +56,84 @@ public final class Tracker {
         if ((player.tickCount + (player.getUUID().hashCode() & 0xF)) % interval != 0) {
             return;
         }
-        MilestoneData data = MilestoneData.get(player.server);
-        MilestoneData.PlayerData pd = data.playerOrNull(player.getUUID());
-        Set<String> targets = effectiveTargets(pd);
-        if (targets.isEmpty()) {
+        if (recordingPaused(player)) {
             return;
         }
-        Set<String> pending = new HashSet<>(targets);
+        MilestoneData data = MilestoneData.get(player.server);
+        MilestoneData.PlayerData pd = data.playerOrNull(player.getUUID());
+        Set<String> pending = new HashSet<>(effectiveTargets(pd));
         if (pd != null) {
             pending.removeAll(pd.records.keySet());
         }
-        if (pending.isEmpty()) {
+        Set<String> carried = carriedFromCreative(pd);
+        if (pending.isEmpty() && carried.isEmpty()) {
             return;
         }
+        Set<String> stillCarried = new HashSet<>();
         var inventory = player.getInventory();
-        for (int i = 0; i < inventory.getContainerSize() && !pending.isEmpty(); i++) {
+        for (int i = 0; i < inventory.getContainerSize(); i++) {
             ItemStack stack = inventory.getItem(i);
             if (stack.isEmpty()) {
                 continue;
             }
-            String id = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
-            if (pending.remove(id)) {
+            String id = itemId(stack);
+            if (carried.contains(id)) {
+                stillCarried.add(id);
+            } else if (pending.remove(id)) {
                 record(player, data, id);
             }
+        }
+        // Forget the items carried out of creative mode that are gone now.
+        if (!carried.isEmpty() && carried.retainAll(stillCarried)) {
+            data.setDirty();
+        }
+    }
+
+    /**
+     * Leaving creative or spectator mode: remember what the player still carries, so
+     * those items are not recorded as if they had been obtained in survival.
+     * LOWEST priority, so a listener that cancels the change runs first.
+     */
+    @SubscribeEvent(priority = EventPriority.LOWEST)
+    public static void onGameModeChange(PlayerEvent.PlayerChangeGameModeEvent event) {
+        if (!(event.getEntity() instanceof ServerPlayer player) || !Config.IGNORE_CREATIVE_AND_SPECTATOR.get()) {
+            return;
+        }
+        if (!isCreativeOrSpectator(event.getCurrentGameMode()) || isCreativeOrSpectator(event.getNewGameMode())) {
+            return;
+        }
+        Set<String> carried = new LinkedHashSet<>();
+        var inventory = player.getInventory();
+        for (int i = 0; i < inventory.getContainerSize(); i++) {
+            ItemStack stack = inventory.getItem(i);
+            if (!stack.isEmpty()) {
+                carried.add(itemId(stack));
+            }
+        }
+        MilestoneData data = MilestoneData.get(player.server);
+        MilestoneData.PlayerData existing = data.playerOrNull(player.getUUID());
+        if (existing != null) {
+            carried.removeAll(existing.records.keySet());
+        }
+        if (carried.isEmpty()) {
+            return;
+        }
+        if (data.player(player.getUUID()).carriedFromCreative.addAll(carried)) {
+            data.setDirty();
         }
     }
 
     @SubscribeEvent
     public static void onItemCrafted(PlayerEvent.ItemCraftedEvent event) {
         if (event.getEntity() instanceof ServerPlayer player) {
-            tryRecord(player, BuiltInRegistries.ITEM.getKey(event.getCrafting().getItem()).toString());
+            tryRecord(player, itemId(event.getCrafting()));
         }
     }
 
     @SubscribeEvent
     public static void onItemSmelted(PlayerEvent.ItemSmeltedEvent event) {
         if (event.getEntity() instanceof ServerPlayer player) {
-            tryRecord(player, BuiltInRegistries.ITEM.getKey(event.getSmelting().getItem()).toString());
+            tryRecord(player, itemId(event.getSmelting()));
         }
     }
 
@@ -99,16 +149,40 @@ public final class Tracker {
         if (before.isEmpty() || event.getItemEntity().getItem().getCount() >= before.getCount()) {
             return;
         }
-        tryRecord(player, BuiltInRegistries.ITEM.getKey(before.getItem()).toString());
+        tryRecord(player, itemId(before));
+    }
+
+    /** True while nothing is recorded for the player: creative or spectator mode, if so configured. */
+    static boolean recordingPaused(ServerPlayer player) {
+        return Config.IGNORE_CREATIVE_AND_SPECTATOR.get() && (player.isCreative() || player.isSpectator());
+    }
+
+    private static boolean isCreativeOrSpectator(GameType mode) {
+        return mode == GameType.CREATIVE || mode == GameType.SPECTATOR;
+    }
+
+    /** The player's items carried out of creative mode, or an empty set if they don't count. */
+    private static Set<String> carriedFromCreative(MilestoneData.PlayerData pd) {
+        if (pd == null || !Config.IGNORE_CREATIVE_AND_SPECTATOR.get()) {
+            return Set.of();
+        }
+        return pd.carriedFromCreative;
+    }
+
+    private static String itemId(ItemStack stack) {
+        return BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
     }
 
     private static void tryRecord(ServerPlayer player, String itemId) {
+        if (recordingPaused(player)) {
+            return;
+        }
         MilestoneData data = MilestoneData.get(player.server);
         MilestoneData.PlayerData pd = data.playerOrNull(player.getUUID());
         if (!effectiveTargets(pd).contains(itemId)) {
             return;
         }
-        if (pd != null && pd.records.containsKey(itemId)) {
+        if (pd != null && (pd.records.containsKey(itemId) || carriedFromCreative(pd).contains(itemId))) {
             return;
         }
         record(player, data, itemId);
