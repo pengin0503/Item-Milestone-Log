@@ -1,1 +1,161 @@
-IyBJdGVtIE1pbGVzdG9uZSBMb2cg4oCUIOi/veWKoOapn+iDvSDlrp/oo4Xku5Xmp5jmm7jvvIh2MS4xLjDvvIkKCuOBk+OBruaWh+abuOOBr+OAgUFJ77yI44G+44Gf44Gv6ZaL55m66ICF77yJ44GM44GT44Gu5paH5pu444Gg44GR44KS6Kqt44KT44Gn5a6f6KOF44KS5a6M6YGC44Gn44GN44KL44KI44GG44Gr5pu444GL44KM44Gf6Ieq5bex5a6M57WQ44Gu5LuV5qeY5pu444Gn44GC44KL44CC5a++6LGh44Oq44Od44K444OI44OqOiBwZW5naW4wNTAzL0l0ZW0tTWlsZXN0b25lLUxvZwoKIyMgMC4g5YmN5o+Q77yI54++5Zyo44Gu54q25oWL77yJCgotIE1vZDogSXRlbSBNaWxlc3RvbmUgTG9n77yIbW9kX2lkOiBgaXRlbW1pbGVzdG9uZWxvZ2DjgIHjg5Hjg4PjgrHjg7zjgrg6IGBjb20ucGVuZ2luMDUwMy5pdGVtbWlsZXN0b25lbG9nYO+8iQotIOWvvuW/nDogTWluZWNyYWZ0IDEuMjEuMSAvIDI2LjEuMiAvIDI2LjIgLyAyNi4z77yIYHZlcnNpb25zLzx2ZXI+L2Ag5qeL5oiQ44CB5YWx6YCa44Kz44O844OJ44GvIGBjb21tb24vYO+8ieOAguWFqOODkOODvOOCuOODp+ODs+OBp+apn+iDveOBr+WQjOS4gOOBp+OBquOBkeOCjOOBsOOBquOCieOBquOBhAotIOePvuihjOODkOODvOOCuOODp+ODsyAxLjAuMCDjga/lrozmiJDmuIjjgb/jgafjgIFDdXJzZUZvcmdlIOOBqyBCZXRhIOOBqOOBl+OBpuaPkOWHuua4iOOBv++8iOWvqeafu+S4re+8ieOAgioqMS4wLjAg44Gu44OV44Kh44Kk44Or44Gv5beu44GX5pu/44GI44Gq44GE44CC5pys5LuV5qeY44Gu5oiQ5p6c54mp44GvIDEuMS4wIOOBqOOBmeOCiyoq77yI5YWo44OQ44O844K444On44Oz44GuIGBncmFkbGUucHJvcGVydGllc2Ag562J44GuIG1vZCDjg5Djg7zjgrjjg6fjg7PjgpIgMS4xLjAg44Gr5LiK44GS44KL77yJCi0g5pei5a2Y44Gu5Li744Gq44Kv44Op44K577yI5ZCE44OQ44O844K444On44Oz6YWN5LiL77yJOgogIC0gYE1pbGVzdG9uZURhdGFg77yIU2F2ZWREYXRh77yJOiBOQlQg5ZCNIGBpdGVtbWlsZXN0b25lbG9nX2RhdGFg44CC5qeL6YCg44GvIGBwbGF5ZXJzYCDihpIgVVVJRCDjgZTjgajjga4gY29tcG91bmQg44GrIGB0YXJnZXRzYO+8iOaWh+Wtl+WIl+ODquOCueODiO+8ieOAgWByZWNvcmRzYO+8iGl0ZW1JZCDihpIgaW50IOOBriBwbGF5VGlja3PvvInjgIFgY2FycmllZEZyb21DcmVhdGl2ZWDvvIjmloflrZfliJfjg6rjgrnjg4jvvIkKICAtIGBNaWxlc3RvbmVTZXJ2aWNlYCAvIGBUcmFja2VyYDog6KiY6Yyy44Gu56K65a6a44Gv44GT44GT44KS6YCa44KL77yI44Kk44Oz44OZ44Oz44OI44Oq44K544Kt44Oj44Oz77yL44Kv44Op44OV44OIL+eyvumMrC/mi77lvpfjgqTjg5njg7Pjg4jjgIHjgq/jg6rjgqjjgqTjg4bjgqPjg5bjg7vjgrnjg5rjgq/jg4bjgqTjgr/jg7zpmaTlpJbjgYLjgorvvIkKICAtIGBNaWxlc3RvbmVDb21tYW5kc2A6IGAvbWlsZXN0b25lbG9nYO+8iOOCqOOCpOODquOCouOCuSBgL2ltbGDjgIFPUCDkuI3opoHvvInphY3kuIvjgasgYWRkIC8gYWRkaGFuZCAvIHJlbW92ZSAvIHRhcmdldHMgLyBsaXN0IC8gcGxheXRpbWUgLyBwcmVzZXQgLyByZXNldCAvIHJlc2V0YWxsCiAgLSBgQ29uZmlnYDogYGRlZmF1bHRUYXJnZXRzYOOAgWBzY2FuSW50ZXJ2YWxUaWNrc2DjgIFgbm90aWZ5UGxheWVyYO+8iOaXouWumiB0cnVl77yJ44CBYGJyb2FkY2FzdE1pbGVzdG9uZXNg77yI5pei5a6aIGZhbHNl77yJ44CBYGlnbm9yZUNyZWF0aXZlQW5kU3BlY3RhdG9yYO+8iOaXouWumiB0cnVl77yJCiAgLSBgbmV0d29yay9gOiBgUmVxdWVzdFN5bmNQYXlsb2FkYOOAgWBTeW5jTWlsZXN0b25lc1BheWxvYWRg44CBYE1pbGVzdG9uZUFjdGlvblBheWxvYWRg44CBYFRhcmdldEVudHJ5YOOAguODmuOCpOODreODvOODieOBryAqKm9wdGlvbmFsIOeZu+mMsioq44Gn44CB44OQ44OL44Op44Kv44Op44Kk44Ki44Oz44OI44KC5bCC55So44K144O844OQ44O844Gr5Y+C5Yqg44Gn44GN44KLCiAgLSBgY2xpZW50L2A6IGBNaWxlc3RvbmVTY3JlZW5g44CBYEl0ZW1QaWNrZXJTY3JlZW5g44CBYENvbmZpcm1SZXNldFNjcmVlbmDvvIhHVUkg5a6f6KOF5riI44G/77yJCiAgLSDoqIDoqp7jg5XjgqHjgqTjg6s6IGVuX3VzIC8gamFfanAKLSBDSTogR2l0SHViIEFjdGlvbnMg44GM5YWo44OQ44O844K444On44Oz44KS44OT44Or44OJ44GX44CB5pys55WqIE5lb0ZvcmdlIOWwgueUqOOCteODvOODkOODvOOBq+ODquODquODvOOCuSBKQVIg44KS6LyJ44Gb44Gm44Oc44OD44OI44OG44K544OI77yI44Kz44Oe44Oz44OJ5a6f6KGM44O76KiY6Yyy44O756e76KGM77yJ44KS5a6f6KGM44GX44Gm44GE44KLCgojIyAxLiDlhbHpgJrliLbntITvvIjlhajmqZ/og73jgavpgannlKjvvIkKCjEuICoqR1VJIOOBruODh+OCtuOCpOODs+OBr+WkieabtOOBl+OBquOBhCoq77yI5rG65a6a5riI44G/77yJ44CC6Kix5Y+v44GV44KM44KL44Gu44Gv5pei5a2Y44Os44Kk44Ki44Km44OI5YaF44Gn44Gu6KGo56S644OG44Kt44K544OI44Gu6L+95Yqg44O75aSJ5pu044Gu44G/44CC44Oc44K/44Oz6YWN572u44CB55S76Z2i5qeL5oiQ44CB6Imy44Gv5aSJ44GI44Gq44GECjIuIOaXouWtmOOCs+ODnuODs+ODieOBruani+aWh+ODu+WLleS9nOOBr+WkieOBiOOBquOBhOOAguOCs+ODnuODs+ODieOBr+i/veWKoOOBruOBvwozLiAqKlNhdmVkRGF0YSDjga7lvozmlrnkupLmj5vjgpLlv4XpoIgqKuOBqOOBmeOCi+OAgjEuMC4wIOOBruOCu+ODvOODluODh+ODvOOCv+OCkuiqreOBv+i+vOOCgeOBpuWjiuOCjOOBquOBhOOBk+OBqOOAgjEuMjEuMSDihpIgMjYueCDjga7ml6LlrZjjga7oqJjpjLLlvJXjgY3ntpnjgY7vvIjjg57jgqTjgrDjg6zjg7zjgrfjg6fjg7PvvInjgafjgoLmlrDjg5XjgqPjg7zjg6vjg4njgYzmrKDjgZHjgovloLTlkIjjga/jgIzkuI3mmI7jgI3jgajjgZfjgabmibHjgYTjgIHlvJXjgY3ntpnjgY7oh6rkvZPjga/ntpnntprjgZnjgovjgZPjgagKNC4g44OQ44OL44Op44Kv44Op44Kk44Ki44Oz44OI44GM5bCC55So44K144O844OQ44O844Gr5Y+C5Yqg44Gn44GN44KL5oCn6LOq44KS57at5oyB44GZ44KL77yI5paw6KaP44Oa44Kk44Ot44O844OJ44KS5L2c44KL5aC05ZCI44KCIG9wdGlvbmFsIOeZu+mMsuOAgeOCteODvOODkOODvOWBtOWHpueQhuOBr+OCr+ODqeOCpOOCouODs+ODiCBNb2Qg44Gu5pyJ54Sh44Gr5L6d5a2Y44GX44Gq44GE77yJCjUuIOi/veWKoOOBmeOCi+ihqOekuuODhuOCreOCueODiOOBryBlbl91cyAvIGphX2pwIOS4oeaWueOBqyBsYW5nIOOCreODvOOCkui/veWKoOOBmeOCiwo2LiDov73liqDkvp3lrZjjg6njgqTjg5bjg6njg6rjga/ljp/liYfjgarjgZfvvIhNaW5lY3JhZnQg5ZCM5qKx44GuIEdzb24g44Gv5L2/55So5Y+v77yJCjcuIOWun+ijheOBr+WFqDTjg5Djg7zjgrjjg6fjg7PvvIgxLjIxLjEgLyAyNi4xLjIgLyAyNi4yIC8gMjYuM++8ieOBq+ihjOOBhuOAguWQhOODkOODvOOCuOODp+ODs+OBriBBUEkg5beu55Ww44Gv5pei5a2Y44Kz44O844OJ44Gu5pu444GN5pa544Gr5ZCI44KP44Gb44KLCgojIyAyLiDlrp/mlr3poIbluo8KCkYxIOKGkiBGNCDihpIgRjMg4oaSIEY1IOKGkiBGNiDihpIgRjcg44Gu6aCG44Gr5a6f6KOF44GZ44KL77yIRjEg44GM44OH44O844K/5b2i5byP44Gu5Z+655uk44CBRjQg44GvIEYxIOOBruiomOmMsuani+mAoOOBq+S+neWtmO+8ieOAgkY4IOOBr+OCs+ODvOODieWkluOBruWPguiAg+aDheWgseOAggoKLS0tCgojIyBGMS4g6KiY6Yyy44Gr44CM44Ky44O844Og5YaFIERheeOAjeOBqOOAjOePvuWun+OBruaXpeS7mOOAjeOCkuS9teiomOOBmeOCiwoKIyMjIOS7leanmAotIOiomOmMsjHku7bjgpLmrKHjga4z5YCk44Gn6KGo44GZ5qeL6YCg44Gr5ouh5by144GZ44KL77yI5L6LOiBgTWlsZXN0b25lUmVjb3JkYCDjg6zjgrPjg7zjg4nlnovjgpLmlrDoqK3vvIk6CiAgLSBgcGxheVRpY2tzYO+8iGludO+8iTog57Sv6KiI44OX44Os44Kk5pmC6ZaT77yI5b6T5p2l6YCa44KK44CB44OQ44OL44Op57Wx6KiIIFBMQVlfVElNRe+8iQogIC0gYGRheWDvvIhsb25n77yJOiDoqJjpjLLmmYLngrnjga7jg6/jg7zjg6vjg4nntYzpgY7ml6XmlbDjgIJgZmxvb3Io6KiY6Yyy5pmC54K544GuIG92ZXJ3b3JsZCDjga4gZ2V0RGF5VGltZSgpIC8gMjQwMDApYOOAguihqOekuuaZguOBryAqKkRheSA9IGRheSArIDEqKu+8iOODr+ODvOODq+ODiemWi+Wni+aXpeOCkiBEYXkgMSDjgajjgZnjgovvvIkKICAtIGBlcG9jaE1pbGxpc2DvvIhsb25n77yJOiDoqJjpjLLmmYLngrnjga7nj77lrp/mmYLliLvvvIjjgrXjg7zjg5Djg7zjga4gYFN5c3RlbS5jdXJyZW50VGltZU1pbGxpcygpYO+8iQogIC0g5pen44OH44O844K/562J44Gn5YCk44GM54Sh44GE5aC05ZCI44GvIGRheSA9IC0x44CBZXBvY2hNaWxsaXMgPSAwIOOCkuOAjOS4jeaYjuOAjeOBqOOBl+OAgeihqOekuuOBp+OBr+aZguWIu+mDqOWIhuOBruOBv+WHuuOBme+8iERheeODu+aXpeS7mOOBr+ecgeeVpeOBmeOCi++8iQotIOihqOekujoKICAtIGAvbWlsZXN0b25lbG9nIGxpc3RgIOOBruWQhOihjDogYOOCouOCpOODhuODoOWQjSDigJQgMjdoIDE1bSAzMHMgKERheSAxMiwgMjAyNi0xMS0yMilgIOOBruW9ouW8j++8iERheeODu+aXpeS7mOOBr+WIpOaYjuOBl+OBpuOBhOOCi+WgtOWQiOOBruOBv+aLrOW8p+WGheOBq+i/veWKoO+8iQogIC0gR1VJIOOBruiomOmMsuihqOekujog5pei5a2Y44Gu6KGM44OG44Kt44K544OI44Gr5ZCM44GY5ous5byn5pu444GN44KS6L+95Yqg44GZ44KL44Gu44G/77yI44Os44Kk44Ki44Km44OI5aSJ5pu044Gq44GX77yJCiAgLSDml6Xku5jjga7ooajnpLrlvaLlvI/jga8gYHl5eXktTU0tZGRg44CB44K/44Kk44Og44K+44O844Oz44Gv44K144O844OQ44O877yI44K344Oz44Kw44Or44OX44Os44Kk5pmC44Gv44Gd44Gu44Oe44K344Oz77yJ44Gu44OH44OV44Kp44Or44OICgojIyMg5a6f6KOF44Oh44OiCi0gTkJUOiBgcmVjb3Jkc2Ag44Gu5ZCE5YCk44KSIGludCDjgYvjgokgY29tcG91bmQgYHsgInRpY2tzIjogaW50LCAiZGF5IjogbG9uZywgImVwb2NoIjogbG9uZyB9YCDjgavlpInmm7TjgZnjgovjgIIqKuODreODvOODieaZguOBr+S4oeW9ouW8j+OBq+WvvuW/nCoq44GZ44KL44GT44Go77yI5YCk44GMIGludCDjga7ml6flvaLlvI/jga8gdGlja3Mg44Gu44G/44Go44GX44Gm6Kqt44KA77yJCi0gYFN5bmNNaWxlc3RvbmVzUGF5bG9hZGAg44GuIHJlY29yZHMg44Gu5Z6L44KS5paw5qeL6YCg44Gr5ZCI44KP44Gb44Gm5aSJ5pu044GZ44KL77yI6YCa5L+h55u45omL44Gv5ZCM5LiAIE1vZCDlkIzlo6vjga7jgb/jgarjga7jgafjg5rjgqTjg63jg7zjg4nlvaLlvI/jga7kupLmj5vjga/kuI3opoHjgILjgZ/jgaDjgZcgb3B0aW9uYWwg55m76Yyy44Gv57at5oyB77yJCi0gR1VJ44CM6KiY6Yyy5riI44G/44CN44K/44OW44Gu5Lim44Gz6aCG77yIcGxheVRpY2tzIOaYh+mghu+8ieOBr+e2reaMgeOBmeOCiwotIOiomOmMsueiuuWumuOBruWFpeWPo++8iE1pbGVzdG9uZVNlcnZpY2UgLyBUcmFja2Vy77yJ44GnIGRheSDjgaggZXBvY2hNaWxsaXMg44KS5o6h5Y+W44GZ44KLCgojIyBGMi4g77yI5a++6LGh5aSW77yJCgrlsI7lhaXliY3jgqLjgqTjg4bjg6Djga7jgIzmjqjlrprjgI3jg57jg7zjgq/jga8gKirlrp/oo4XjgZfjgarjgYQqKu+8iOOCquODvOODiuODvOWIpOaWreOBp+mZpOWklua4iOOBv++8ieOAggoKIyMgRjMuIOWIneWPluW+l+aZguOBruOCteOCpuODs+ODiea8lOWHugoKIyMjIOS7leanmAotIOiomOmMsuOBjOeiuuWumuOBl+OBn+OBqOOBjeOAgemBlOaIkOOBl+OBn+acrOS6uuOBruOBv+OBq+mfs+OCkumztOOCieOBme+8iOOCteODvOODkOODvOWBtOOBi+OCiSBgU2VydmVyUGxheWVyI3BsYXlOb3RpZnlTb3VuZGAg562J44CB44OQ44OL44Op44Gu6Z+z44Kk44OZ44Oz44OI44KS5L2/44GG44CC5LuWIE1vZCDjga7pn7PmupDjga/kvb/jgo/jgarjgYTvvJ3jg5Djg4vjg6njgq/jg6njgqTjgqLjg7Pjg4jjgafjgoLps7TjgovvvIkKLSDjgrPjg7Pjg5XjgqPjgrDov73liqA6CiAgLSBgbWlsZXN0b25lU291bmRFbmFibGVkYO+8iGJvb2xlYW7jgIHml6LlrpogdHJ1Ze+8iQogIC0gYG1pbGVzdG9uZVNvdW5kYO+8iOaWh+Wtl+WIl+OAgeaXouWumiBgIm1pbmVjcmFmdDp1aS50b2FzdC5jaGFsbGVuZ2VfY29tcGxldGUiYO+8iTog5Yq55p6c6Z+z44GuIElE44CC5a2Y5Zyo44GX44Gq44GEIElEIOOBruWgtOWQiOOBr+mztOOCieOBleOBmiB3YXJuIOODreOCsDHlm57jga7jgb8KLSBgbm90aWZ5UGxheWVyYO+8iOODgeODo+ODg+ODiOmAmuefpe+8ieOBqOOBr+eLrOeri+OBqyBPTi9PRkYg44Gn44GN44KL44GT44GoCgojIyBGNC4g44K144O844OQ44O85YaF44CM5LiW55WM5Yid44CN6KiY6YyyCgojIyMg5LuV5qeYCi0g44Gd44Gu44Ov44O844Or44OJ44GnICoq6Kqw44GL44GM5pyA5Yid44Gr6KiY6Yyy44GX44Gf44Ki44Kk44OG44OgKiog44Gr44Gk44GE44Gm44CB44Ov44O844Or44OJ5YWo5L2T44GnMeS7tuOBoOOBkeOAjOS4lueVjOWIneOAjeiomOmMsuOCkuS/neaMgeOBmeOCizoKICAtIOS/neaMgeOBmeOCi+WApDogaXRlbUlk44CB44OX44Os44Kk44Ok44O8IFVVSUTjgIHjg5fjg6zjgqTjg6Tjg7zlkI3vvIjoqJjpjLLmmYLngrnvvInjgIFwbGF5VGlja3PjgIFkYXnjgIFlcG9jaE1pbGxpc++8iEYxIOOBruani+mAoOOCkua1geeUqO+8iQogIC0g5Yik5a6a44K/44Kk44Of44Oz44KwOiDpgJrluLjjga7oqJjpjLLnorrlrprmmYLjgILjgZ3jga4gaXRlbUlkIOOBruS4lueVjOWIneOBjOOBvuOBoOeEoeOBkeOCjOOBsOeZu+mMsuOBmeOCiwotIOODl+ODrOOCpOODpOODvOWAi+S6uuOBriBgcmVzZXRgIC8gYHJlc2V0YWxsYCDjgafjga/kuJbnlYzliJ3jga/mtojjgYjjgarjgYTvvIjkuJbnlYzjga7mrbTlj7LjgajjgZfjgabkv53mjIHvvIkKLSDnrqHnkIbnlKjjgrPjg57jg7Pjg4nvvIgqKuaoqemZkOODrOODmeODqzLlv4XpoIgqKu+8iToKICAtIGAvbWlsZXN0b25lbG9nIGZpcnN0cyByZXNldCA8aXRlbT5gOiDmjIflrprjgqLjgqTjg4bjg6Djga7kuJbnlYzliJ3jgpLliYrpmaQKICAtIGAvbWlsZXN0b25lbG9nIGZpcnN0cyByZXNldGFsbGA6IOS4lueVjOWIneOCkuWFqOWJiumZpO+8iOWun+ihjOWJjeOBq+W8leaVsOOBquOBl+OBp+OBr+WLleOBi+OBleOBquOBhOmAmuW4uOOBruOCs+ODnuODs+ODieeiuuiqjeOBr+S4jeimgeOBoOOBjOOAgeWun+ihjOe1kOaenOOCkuODgeODo+ODg+ODiOOBq+i/lOOBme+8iQotIOmWsuimp+OCs+ODnuODs+ODie+8iE9QIOS4jeimge+8iToKICAtIGAvbWlsZXN0b25lbG9nIGZpcnN0c2A6IOS4lueVjOWIneOBruS4gOimp+OCkuODgeODo+ODg+ODiOOBq+ihqOekuu+8iOOCouOCpOODhuODoOWQjeOAgeODl+ODrOOCpOODpOODvOWQjeOAgXBsYXl0aW1l44CBRGF544CB5pel5LuY44CCRjEg44Go5ZCM44GY6KGo56S65b2i5byP77yJCi0g6YCa55+lOiDjgrPjg7Pjg5XjgqPjgrAgYGFubm91bmNlV29ybGRGaXJzdGDvvIhib29sZWFu44CB5pei5a6aIGZhbHNl77yJ44CCdHJ1ZSDjga7jgajjgY3jgIHkuJbnlYzliJ3jgYznmbvpjLLjgZXjgozjgZ/jgonlhajjgqrjg7Pjg6njgqTjg7Pjg5fjg6zjgqTjg6Tjg7zjgavjg4Hjg6Pjg4Pjg4jpgJrnn6XjgZnjgosKLSBHVUkg44G444Gu6KGo56S66L+95Yqg44Gv44GX44Gq44GE77yI44Kz44Oe44Oz44OJ44Gu44G/77yJCgojIyMg5a6f6KOF44Oh44OiCi0gYE1pbGVzdG9uZURhdGFgIOOBqyBgd29ybGRGaXJzdHNg77yIaXRlbUlkIOKGkiDmp4vpgKDkvZPvvInjgpLov73liqDjgZfjgIFOQlQg44Kt44O8IGB3b3JsZEZpcnN0c2Ag44Gn5L+d5a2Y44GZ44KL44CCMS4wLjAg44Gu44K744O844OW44Gr44Gv54Sh44GE44Gu44Gn56m644Gn6ZaL5aeL77yI5b6M5pa55LqS5o+b77yJCi0gMS4yMS4xIOKGkiAyNi54IOOBruODnuOCpOOCsOODrOODvOOCt+ODp+ODs+WvvuixoeOBqyB3b3JsZEZpcnN0cyDjgoLlkKvjgoHjgosKCiMjIEY1LiBEaXNjb3JkIFdlYmhvb2sg6YCa55+lCgojIyMg5LuV5qeYCi0g44Kz44Oz44OV44Kj44Kw6L+95YqgOgogIC0gYGRpc2NvcmRXZWJob29rVXJsYO+8iOaWh+Wtl+WIl+OAgeaXouWumiBgIiJg77yJOiDnqbrjgarjgonnhKHlirnjgIIqKuOBk+OBriBVUkwg44Gv56eY5a+G5oOF5aCx44Go44GX44Gm5omx44GE44CB44Ot44Kw44O744OB44Oj44OD44OI44O744Ko44Op44O844Oh44OD44K744O844K444Gr5Ye65Yqb44GX44Gq44GEKioKICAtIGBkaXNjb3JkTm90aWZ5U2NvcGVg77yI5paH5a2X5YiX44CB5pei5a6aIGAiYWxsImDvvIk6IGAiYWxsImAgPSDlhajlk6Hjga7lhajoqJjpjLLjgIFgIndvcmxkX2ZpcnN0ImAgPSDkuJbnlYzliJ3jga7jgb8KLSDpgIHkv6HlhoXlrrk6IERpc2NvcmQgV2ViaG9vayDjga4gSlNPTiBgeyAiY29udGVudCI6ICIuLi4iIH1gIOW9ouW8j+OBruOBv++8iGVtYmVkcyDjga/kvb/jgo/jgarjgYTvvInjgIJjb250ZW50IOOBq+OBr+ODl+ODrOOCpOODpOODvOWQjeOAgeOCouOCpOODhuODoCBJROOAgeaVtOW9oua4iOOBvyBwbGF5dGltZeOAgURheeOAgeaXpeS7mOOCkuWQq+OCgeOCi+OAguS4lueVjOWIneOBruWgtOWQiOOBr+OBneOBruaXqOOCkuaYjuiomOOBmeOCiwotIOWun+ijheimgeS7tjoKICAtIGBqYXZhLm5ldC5odHRwLkh0dHBDbGllbnRgIOOCkuS9v+eUqOOBl+OAgSoq5bCC55So44Gu5Y2Y5LiA44K544Os44OD44OJIEV4ZWN1dG9yIOOBp+mdnuWQjOacn+mAgeS/oSoq44GZ44KL44CC44K144O844OQ44O844OG44Kj44OD44Kv44KS44OW44Ot44OD44Kv44GX44Gq44GECiAgLSDpgIHkv6HlpLHmlZfmmYLjga8gd2FybiDjg63jgrDjga7jgb/vvIhVUkwg44Gv5Ye644GV44Gq44GE77yJ44CC44Oq44OI44Op44Kk44GX44Gq44GECiAgLSDjgrXjg7zjg5Djg7zlgZzmraLmmYLjgasgRXhlY3V0b3Ig44KSIHNodXRkb3duIOOBmeOCiwogIC0g6YCB5L+h44Gv6KiY6Yyy56K65a6a44Kk44OZ44Oz44OI44GL44KJ44Gu44G/6KGM44GG77yIaW1wb3J0IOOBp+OBr+mAgeOCieOBquOBhO+8iQoKIyMgRjYuIOiomOmMsuOBruOCqOOCr+OCueODneODvOODiCAvIOOCpOODs+ODneODvOODiAoKIyMjIOS7leanmAotIOOCs+ODnuODs+ODie+8iOacrOS6uuOBruODh+ODvOOCv+OBjOWvvuixoeOAgU9QIOS4jeimge+8iToKICAtIGAvbWlsZXN0b25lbG9nIGV4cG9ydGA6IOiHquWIhuOBruebruaomeOBqOiomOmMsuOCkiBKU09OIOODleOCoeOCpOODq+OBq+abuOOBjeWHuuOBl+OAgeS/neWtmOWFiOODkeOCueOCkuODgeODo+ODg+ODiOOBp+efpeOCieOBm+OCiwogICAgLSDkv53lrZjlhYg6IOODr+ODvOODq+ODieODleOCqeODq+ODgOmFjeS4iyBgaXRlbW1pbGVzdG9uZWxvZy9leHBvcnRzLzzjg5fjg6zjgqTjg6Tjg7zlkI0+Lmpzb25g77yI5ZCM5ZCN44GM44GC44KM44Gw5LiK5pu444GN77yJCiAgLSBgL21pbGVzdG9uZWxvZyBpbXBvcnQgPGZpbGVOYW1lPmA6IOWQjOODleOCqeODq+ODgOWGheOBriBKU09OIOOCkuiqreOBv+i+vOOCk+OBp+iHquWIhuOBruODh+ODvOOCv+OBq+ODnuODvOOCuOOBmeOCiwogICAgLSDjg57jg7zjgrjopo/liYc6IOebruaomeOBr+WSjOmbhuWQiOOAguiomOmMsuOBryBpdGVtSWQg44GU44Go44GrICoqcGxheVRpY2tzIOOBjOWwj+OBleOBhOaWuSoqIOOCkuaOoeeUqOOBl+OAgWRheSAvIGVwb2NoTWlsbGlzIOOBr+aOoeeUqOOBl+OBn+WBtOOBruWApOOCkuS/neaMgeOBmeOCiwogICAgLSDjgqTjg7Pjg53jg7zjg4jjgafjga8gRjcg44Gu44Kk44OZ44Oz44OI44KS55m654Gr44GX44Gq44GE44CC5LiW55WM5Yid77yIRjTvvInjgoLmm7TmlrDjgZfjgarjgYTjgIJEaXNjb3JkIOmAmuefpe+8iEY177yJ44KC6YCB44KJ44Gq44GECi0gT1Ag55So44Kz44Oe44Oz44OJ77yI5qip6ZmQ44Os44OZ44OrMu+8iToKICAtIGAvbWlsZXN0b25lbG9nIGV4cG9ydGFsbGA6IOWFqOODl+ODrOOCpOODpOODvOWIhuOCkjHjg5XjgqHjgqTjg6sgYGl0ZW1taWxlc3RvbmVsb2cvZXhwb3J0cy9hbGwtcGxheWVycy5qc29uYCDjgavmm7jjgY3lh7rjgZkKLSBKU09OIOOCueOCreODvOODnu+8iGV4cG9ydCAvIGltcG9ydCDlhbHpgJrjgIFHc29uIOS9v+eUqO+8iToKCmBgYGpzb24KewogICJmb3JtYXQiOiAxLAogICJwbGF5ZXIiOiB7ICJ1dWlkIjogIuKApiIsICJuYW1lIjogIuKApiIgfSwKICAidGFyZ2V0cyI6IFsibWluZWNyYWZ0OmRpYW1vbmQiXSwKICAicmVjb3JkcyI6IHsKICAgICJtaW5lY3JhZnQ6ZGlhbW9uZCI6IHsgInRpY2tzIjogMTIzNDU2LCAiZGF5IjogMTEsICJlcG9jaCI6IDE3OTU2MDAwMDAwMDAgfQogIH0KfQpgYGAKCiAgLSBgZXhwb3J0YWxsYCDjga7loLTlkIjjga/jg4jjg4Pjg5fjg6zjg5njg6vjgpIgYHsgImZvcm1hdCI6IDEsICJwbGF5ZXJzIjogWyDkuIroqJggcGxheWVyIOOCquODluOCuOOCp+OCr+ODiOebuOW9k+OBrumFjeWIlyBdIH1gIOOBqOOBmeOCi++8iGltcG9ydCDjga/ljZjkuIDjg5fjg6zjgqTjg6Tjg7zlvaLlvI/jga7jgb/lr77lv5zjgafjgojjgYTvvIkKICAtIGBmb3JtYXRgIOOBjOaDs+WumuWkluOBruWApOOBquOCieOCpOODs+ODneODvOODiOOCkuS4reaWreOBl+OAgeOCqOODqeODvOOCkuODgeODo+ODg+ODiOOBq+i/lOOBmQotIOOCu+OCreODpeODquODhuOCozogYDxmaWxlTmFtZT5gIOOBr+OCteODi+OCv+OCpOOCuuOBmeOCi++8iOS9v+eUqOWPr+iDveaWh+Wtl+OBr+iLseaVsOWtl+ODu2AuYOODu2BfYOODu2AtYCDjga7jgb/jgIFgLi5gIOOCkuWQq+OCgOOCguOBruOBr+aLkuWQpu+8ieOAgmV4cG9ydHMg44OV44Kp44Or44OA5aSW44Gv6Kqt44G/5pu444GN44GX44Gq44GECgojIyBGNy4g6KiY6Yyy44Kk44OZ44Oz44OIIEFQSe+8iOS7liBNb2QgLyBLdWJlSlMg6YCj5pC677yJCgojIyMg5LuV5qeYCi0gYGFwaWAg44K144OW44OR44OD44Kx44O844K444Gr5YWs6ZaLIEFQSSDjgpLmlrDoqK3jgZnjgovvvIjjgrXjg7zjg5Djg7zlgbTjga7jgb/vvIk6CiAgLSBgTWlsZXN0b25lUmVjb3JkZWRFdmVudGA6IE5lb0ZvcmdlIOOBriBgRVZFTlRfQlVTYCDjgavmipXnqL/jgZXjgozjgovjgqTjg5njg7Pjg4jvvIjjgq3jg6Pjg7Pjgrvjg6vkuI3lj6/vvInjgILkv53mjIHjgZnjgovlgKQ6IGBTZXJ2ZXJQbGF5ZXJg44CBaXRlbUlk44CBcGxheVRpY2tz44CBZGF544CBZXBvY2hNaWxsaXPjgILnmbrngavjgr/jgqTjg5/jg7PjgrDjga8gKirpgJrluLjjga7oqJjpjLLnorrlrprmmYLjga7jgb8qKu+8iGltcG9ydOODu3Jlc2V0IOOBp+OBr+eZuueBq+OBl+OBquOBhO+8iQogIC0gYEl0ZW1NaWxlc3RvbmVMb2dBcGlgOiDoqq3jgb/lj5bjgorlsILnlKjjga7pnZnnmoTjg6Hjgr3jg4Pjg4kKICAgIC0gYGdldFJlY29yZChNaW5lY3JhZnRTZXJ2ZXIgc2VydmVyLCBVVUlEIHBsYXllciwgU3RyaW5nIGl0ZW1JZClgIOKGkiDoqJjpjLLvvIhGMSDjga7mp4vpgKDkvZPvvInjga4gT3B0aW9uYWwKICAgIC0gYGdldFRhcmdldHMoTWluZWNyYWZ0U2VydmVyIHNlcnZlciwgVVVJRCBwbGF5ZXIpYCDihpIg55uu5qiZIGl0ZW1JZCDjga4gU2V077yI5YCL5Lq655uu5qiZ77yL44OH44OV44Kp44Or44OI55uu5qiZ44Gu5a6f5Yq55YCk44Gn44Gv44Gq44GP44CB5L+d5a2Y44GV44KM44Gm44GE44KL5YCL5Lq655uu5qiZ44KS6L+U44GZ44CC44OH44OV44Kp44Or44OI55uu5qiZ44Gu6Kej5rG644Gv5ZG844Gz5Ye644GX5YG044Gu6LKs5YuZ44Go44GX44CB44Gd44Gu5peo44KSIEphdmFkb2Mg44Gr5piO6KiY77yJCiAgICAtIGBnZXRXb3JsZEZpcnN0KE1pbmVjcmFmdFNlcnZlciBzZXJ2ZXIsIFN0cmluZyBpdGVtSWQpYCDihpIg5LiW55WM5Yid6KiY6Yyy44GuIE9wdGlvbmFsCi0gUkVBRE1FIOOBq+WIqeeUqOS+i+OCkuiomOi8ieOBmeOCi++8iEphdmEg44Gu44Kk44OZ44Oz44OI6LO86Kqt5L6L44Go44CBS3ViZUpTIOOBi+OCiSBOZW9Gb3JnZSDjgqTjg5njg7Pjg4jjgpLos7zoqq3jgZnjgovkvovvvIkKCiMjIEY4LiBNb2RyaW50aCDlhazplovvvIjjgrPjg7zjg4nlpJbjg7vlj4LogIPvvIkKCi0g5pys5LuV5qeY44Gu5a6f6KOF5a++6LGh5aSW77yI44Kq44O844OK44O844GM5Yil6YCU5a++5b+c77yJ44CC44Oh44Oi44Gu44G/OgogIC0gSkFSIOOBryBDdXJzZUZvcmdlIOOBqOWQjOOBmOOCguOBruOCkua1geeUqOOBp+OBjeOCiwogIC0g44OX44Ot44K444Kn44Kv44OI44Gu44Oh44K/44OH44O844K/77yI5qaC6KaB44O76Kqs5piO44O744Op44Kk44K744Oz44K55paH77yJ44Gv44Oq44Od44K444OI44Oq44GuIGBDVVJTRUZPUkdFLm1kYCDjgpLlho3liKnnlKjjgZnjgosKCi0tLQoKIyMgMy4g44OJ44Kt44Ol44Oh44Oz44OI5pu05pawCgotIGBSRUFETUUubWRgOiDmlrDmqZ/og73jgIHmlrDjgrPjg57jg7Pjg4nvvIhmaXJzdHMgLyBleHBvcnQgLyBpbXBvcnQgLyBleHBvcnRhbGzvvInjgIHmlrDjgrPjg7Pjg5XjgqPjgrDjgIFGNyDjga4gQVBJIOWIqeeUqOS+i+OCkui/veiomAotIGBDSEFOR0VMT0cubWRgOiAxLjEuMCDjga7nr4DjgpLov73liqAKLSBgQ1VSU0VGT1JHRS5tZGA6IOiqrOaYjuaWh+OBuOOBrui/veiomOahiO+8iOaWsOapn+iDveOBrueuh+adoeabuOOBjeOAgeiLseiqnu+8i+aXpeacrOiqnu+8ieOCkuWPjeaYoAotIGxhbmc6IOi/veWKoOODoeODg+OCu+ODvOOCuOOBr+OBmeOBueOBpiBlbl91cyAvIGphX2pwIOS4oeaWuQoKIyMgNC4g44OG44K544OI44Go5a6M5LqG5p2h5Lu2CgotIOaXouWtmCBDSSDjga7jg5zjg4Pjg4jjg4bjgrnjg4jjgavku6XkuIvjgpLov73liqDjgZnjgos6CiAgLSBGMTog6KiY6Yyy44GrIGRheSAvIGVwb2NoIOOBjOS/neWtmOOBleOCjOOCi+OBk+OBqOOAgioqMS4wLjAg5b2i5byP44Gu44K744O844OW44OH44O844K/77yIcmVjb3JkcyDjgYwgaW50IOW9ouW8j++8ieOCkuiqreOBv+i+vOOCk+OBp+i1t+WLleOBp+OBjeOCi+OBk+OBqCoqCiAgLSBGNDogMuS6uuebruOBruODl+ODrOOCpOODpOODvOOBjOWQjOOBmOOCouOCpOODhuODoOOCkuiomOmMsuOBl+OBpuOCguS4lueVjOWIneOBjOS4iuabuOOBjeOBleOCjOOBquOBhOOBk+OBqOOAgmAvbWlsZXN0b25lbG9nIGZpcnN0c2Ag44Gn6KGo56S644GV44KM44KL44GT44GoCiAgLSBGNjogZXhwb3J0IOKGkiByZXNldGFsbCDihpIgaW1wb3J0IOOBp+iomOmMsuOBjOW+qeWFg+OBleOCjOOCi+OBk+OBqAogIC0gRjU6IFdlYmhvb2sgVVJMIOacquioreWumuOBp+iomOmMsuOBl+OBpuOCguS+i+WkluOBquOBj+mAmuW4uOWLleS9nOOBmeOCi+OBk+OBqO+8iOWun+mAgeS/oeOBruODhuOCueODiOOBr+OBl+OBquOBhO+8iQotIOWujOS6huadoeS7tjogR2l0SHViIEFjdGlvbnMg44GnICoq5YWoNOODkOODvOOCuOODp+ODs+OBruODk+ODq+ODieOBqOOCteODvOODkOODvOODhuOCueODiOOBjOaIkOWKnyoq44GX44CB44OQ44O844K444On44OzIDEuMS4wIOOBriBKQVIg44GMNOOBpOeUn+aIkOOBleOCjOOCi+OBk+OBqOOAguaXouWtmOODhuOCueODiOOCkuWjiuOBleOBquOBhOOBk+OBqAo=
+# Item Milestone Log — 追加機能 実装仕様書（v1.1.0）
+
+この文書は、AI（または開発者）がこの文書だけを読んで実装を完遂できるように書かれた自己完結の仕様書である。対象リポジトリ: pengin0503/Item-Milestone-Log
+
+## 0. 前提（現在の状態）
+
+- Mod: Item Milestone Log（mod_id: `itemmilestonelog`、パッケージ: `com.pengin0503.itemmilestonelog`）
+- 対応: Minecraft 1.21.1 / 26.1.2 / 26.2 / 26.3（`versions/<ver>/` 構成、共通コードは `common/`）。全バージョンで機能は同一でなければならない
+- 現行バージョン 1.0.0 は完成済みで、CurseForge に Beta として提出済み（審査中）。**1.0.0 のファイルは差し替えない。本仕様の成果物は 1.1.0 とする**（全バージョンの `gradle.properties` 等の mod バージョンを 1.1.0 に上げる）
+- 既存の主なクラス（各バージョン配下）:
+  - `MilestoneData`（SavedData）: NBT 名 `itemmilestonelog_data`。構造は `players` → UUID ごとの compound に `targets`（文字列リスト）、`records`（itemId → int の playTicks）、`carriedFromCreative`（文字列リスト）
+  - `MilestoneService` / `Tracker`: 記録の確定はここを通る（インベントリスキャン＋クラフト/精錬/拾得イベント、クリエイティブ・スペクテイター除外あり）
+  - `MilestoneCommands`: `/milestonelog`（エイリアス `/iml`、OP 不要）配下に add / addhand / remove / targets / list / playtime / preset / reset / resetall
+  - `Config`: `defaultTargets`、`scanIntervalTicks`、`notifyPlayer`（既定 true）、`broadcastMilestones`（既定 false）、`ignoreCreativeAndSpectator`（既定 true）
+  - `network/`: `RequestSyncPayload`、`SyncMilestonesPayload`、`MilestoneActionPayload`、`TargetEntry`。ペイロードは **optional 登録**で、バニラクライアントも専用サーバーに参加できる
+  - `client/`: `MilestoneScreen`、`ItemPickerScreen`、`ConfirmResetScreen`（GUI 実装済み）
+  - 言語ファイル: en_us / ja_jp
+- CI: GitHub Actions が全バージョンをビルドし、本番 NeoForge 専用サーバーにリリース JAR を載せてボットテスト（コマンド実行・記録・移行）を実行している
+
+## 1. 共通制約（全機能に適用）
+
+1. **GUI のデザインは変更しない**（決定済み）。許可されるのは既存レイアウト内での表示テキストの追加・変更のみ。ボタン配置、画面構成、色は変えない
+2. 既存コマンドの構文・動作は変えない。コマンドは追加のみ
+3. **SavedData の後方互換を必須**とする。1.0.0 のセーブデータを読み込めて壊れないこと。1.21.1 → 26.x の既存の記録引き継ぎ（マイグレーション）でも新フィールドが欠ける場合は「不明」として扱い、引き継ぎ自体は継続すること
+4. バニラクライアントが専用サーバーに参加できる性質を維持する（新規ペイロードを作る場合も optional 登録、サーバー側処理はクライアント Mod の有無に依存しない）
+5. 追加する表示テキストは en_us / ja_jp 両方に lang キーを追加する
+6. 追加依存ライブラリは原則なし（Minecraft 同梱の Gson は使用可）
+7. 実装は全4バージョン（1.21.1 / 26.1.2 / 26.2 / 26.3）に行う。各バージョンの API 差異は既存コードの書き方に合わせる
+
+## 2. 実施順序
+
+F1 → F4 → F3 → F5 → F6 → F7 の順に実装する（F1 がデータ形式の基盤、F4 は F1 の記録構造に依存）。F8 はコード外の参考情報。
+
+---
+
+## F1. 記録に「ゲーム内 Day」と「現実の日付」を併記する
+
+### 仕様
+- 記録1件を次の3値で表す構造に拡張する（例: `MilestoneRecord` レコード型を新設）:
+  - `playTicks`（int）: 累計プレイ時間（従来通り、バニラ統計 PLAY_TIME）
+  - `day`（long）: 記録時点のワールド経過日数。`floor(記録時点の overworld の getDayTime() / 24000)`。表示時は **Day = day + 1**（ワールド開始日を Day 1 とする）
+  - `epochMillis`（long）: 記録時点の現実時刻（サーバーの `System.currentTimeMillis()`）
+  - 旧データ等で値が無い場合は day = -1、epochMillis = 0 を「不明」とし、表示では時刻部分のみ出す（Day・日付は省略する）
+- 表示:
+  - `/milestonelog list` の各行: `アイテム名 — 27h 15m 30s (Day 12, 2026-11-22)` の形式（Day・日付は判明している場合のみ括弧内に追加）
+  - GUI の記録表示: 既存の行テキストに同じ括弧書きを追加するのみ（レイアウト変更なし）
+  - 日付の表示形式は `yyyy-MM-dd`、タイムゾーンはサーバー（シングルプレイ時はそのマシン）のデフォルト
+
+### 実装メモ
+- NBT: `records` の各値を int から compound `{ "ticks": int, "day": long, "epoch": long }` に変更する。**ロード時は両形式に対応**すること（値が int の旧形式は ticks のみとして読む）
+- `SyncMilestonesPayload` の records の型を新構造に合わせて変更する（通信相手は同一 Mod 同士のみなのでペイロード形式の互換は不要。ただし optional 登録は維持）
+- GUI「記録済み」タブの並び順（playTicks 昇順）は維持する
+- 記録確定の入口（MilestoneService / Tracker）で day と epochMillis を採取する
+
+## F2. （対象外）
+
+導入前アイテムの「推定」マークは **実装しない**（オーナー判断で除外済み）。
+
+## F3. 初取得時のサウンド演出
+
+### 仕様
+- 記録が確定したとき、達成した本人のみに音を鳴らす（サーバー側から `ServerPlayer#playNotifySound` 等、バニラの音イベントを使う。他 Mod の音源は使わない＝バニラクライアントでも鳴る）
+- コンフィグ追加:
+  - `milestoneSoundEnabled`（boolean、既定 true）
+  - `milestoneSound`（文字列、既定 `"minecraft:ui.toast.challenge_complete"`）: 効果音の ID。存在しない ID の場合は鳴らさず warn ログ1回のみ
+- `notifyPlayer`（チャット通知）とは独立に ON/OFF できること
+
+## F4. サーバー内「世界初」記録
+
+### 仕様
+- そのワールドで **誰かが最初に記録したアイテム** について、ワールド全体で1件だけ「世界初」記録を保持する:
+  - 保持する値: itemId、プレイヤー UUID、プレイヤー名（記録時点）、playTicks、day、epochMillis（F1 の構造を流用）
+  - 判定タイミング: 通常の記録確定時。その itemId の世界初がまだ無ければ登録する
+- プレイヤー個人の `reset` / `resetall` では世界初は消えない（世界の歴史として保持）
+- 管理用コマンド（**権限レベル2必須**）:
+  - `/milestonelog firsts reset <item>`: 指定アイテムの世界初を削除
+  - `/milestonelog firsts resetall`: 世界初を全削除（実行前に引数なしでは動かさない通常のコマンド確認は不要だが、実行結果をチャットに返す）
+- 閲覧コマンド（OP 不要）:
+  - `/milestonelog firsts`: 世界初の一覧をチャットに表示（アイテム名、プレイヤー名、playtime、Day、日付。F1 と同じ表示形式）
+- 通知: コンフィグ `announceWorldFirst`（boolean、既定 false）。true のとき、世界初が登録されたら全オンラインプレイヤーにチャット通知する
+- GUI への表示追加はしない（コマンドのみ）
+
+### 実装メモ
+- `MilestoneData` に `worldFirsts`（itemId → 構造体）を追加し、NBT キー `worldFirsts` で保存する。1.0.0 のセーブには無いので空で開始（後方互換）
+- 1.21.1 → 26.x のマイグレーション対象に worldFirsts も含める
+
+## F5. Discord Webhook 通知
+
+### 仕様
+- コンフィグ追加:
+  - `discordWebhookUrl`（文字列、既定 `""`）: 空なら無効。**この URL は秘密情報として扱い、ログ・チャット・エラーメッセージに出力しない**
+  - `discordNotifyScope`（文字列、既定 `"all"`）: `"all"` = 全員の全記録、`"world_first"` = 世界初のみ
+- 送信内容: Discord Webhook の JSON `{ "content": "..." }` 形式のみ（embeds は使わない）。content にはプレイヤー名、アイテム ID、整形済み playtime、Day、日付を含める。世界初の場合はその旨を明記する
+- 実装要件:
+  - `java.net.http.HttpClient` を使用し、**専用の単一スレッド Executor で非同期送信**する。サーバーティックをブロックしない
+  - 送信失敗時は warn ログのみ（URL は出さない）。リトライしない
+  - サーバー停止時に Executor を shutdown する
+  - 送信は記録確定イベントからのみ行う（import では送らない）
+
+## F6. 記録のエクスポート / インポート
+
+### 仕様
+- コマンド（本人のデータが対象、OP 不要）:
+  - `/milestonelog export`: 自分の目標と記録を JSON ファイルに書き出し、保存先パスをチャットで知らせる
+    - 保存先: ワールドフォルダ配下 `itemmilestonelog/exports/<プレイヤー名>.json`（同名があれば上書き）
+  - `/milestonelog import <fileName>`: 同フォルダ内の JSON を読み込んで自分のデータにマージする
+    - マージ規則: 目標は和集合。記録は itemId ごとに **playTicks が小さい方** を採用し、day / epochMillis は採用した側の値を保持する
+    - インポートでは F7 のイベントを発火しない。世界初（F4）も更新しない。Discord 通知（F5）も送らない
+- OP 用コマンド（権限レベル2）:
+  - `/milestonelog exportall`: 全プレイヤー分を1ファイル `itemmilestonelog/exports/all-players.json` に書き出す
+- JSON スキーマ（export / import 共通、Gson 使用）:
+
+```json
+{
+  "format": 1,
+  "player": { "uuid": "…", "name": "…" },
+  "targets": ["minecraft:diamond"],
+  "records": {
+    "minecraft:diamond": { "ticks": 123456, "day": 11, "epoch": 1795600000000 }
+  }
+}
+```
+
+  - `exportall` の場合はトップレベルを `{ "format": 1, "players": [ 上記 player オブジェクト相当の配列 ] }` とする（import は単一プレイヤー形式のみ対応でよい）
+  - `format` が想定外の値ならインポートを中断し、エラーをチャットに返す
+- セキュリティ: `<fileName>` はサニタイズする（使用可能文字は英数字・`.`・`_`・`-` のみ、`..` を含むものは拒否）。exports フォルダ外は読み書きしない
+
+## F7. 記録イベント API（他 Mod / KubeJS 連携）
+
+### 仕様
+- `api` サブパッケージに公開 API を新設する（サーバー側のみ）:
+  - `MilestoneRecordedEvent`: NeoForge の `EVENT_BUS` に投稿されるイベント（キャンセル不可）。保持する値: `ServerPlayer`、itemId、playTicks、day、epochMillis。発火タイミングは **通常の記録確定時のみ**（import・reset では発火しない）
+  - `ItemMilestoneLogApi`: 読み取り専用の静的メソッド
+    - `getRecord(MinecraftServer server, UUID player, String itemId)` → 記録（F1 の構造体）の Optional
+    - `getTargets(MinecraftServer server, UUID player)` → 目標 itemId の Set（個人目標＋デフォルト目標の実効値ではなく、保存されている個人目標を返す。デフォルト目標の解決は呼び出し側の責務とし、その旨を Javadoc に明記）
+    - `getWorldFirst(MinecraftServer server, String itemId)` → 世界初記録の Optional
+- README に利用例を記載する（Java のイベント購読例と、KubeJS から NeoForge イベントを購読する例）
+
+## F8. Modrinth 公開（コード外・参考）
+
+- 本仕様の実装対象外（オーナーが別途対応）。メモのみ:
+  - JAR は CurseForge と同じものを流用できる
+  - プロジェクトのメタデータ（概要・説明・ライセンス文）はリポジトリの `CURSEFORGE.md` を再利用する
+
+---
+
+## 3. ドキュメント更新
+
+- `README.md`: 新機能、新コマンド（firsts / export / import / exportall）、新コンフィグ、F7 の API 利用例を追記
+- `CHANGELOG.md`: 1.1.0 の節を追加
+- `CURSEFORGE.md`: 説明文への追記案（新機能の箇条書き、英語＋日本語）を反映
+- lang: 追加メッセージはすべて en_us / ja_jp 両方
+
+## 4. テストと完了条件
+
+- 既存 CI のボットテストに以下を追加する:
+  - F1: 記録に day / epoch が保存されること。**1.0.0 形式のセーブデータ（records が int 形式）を読み込んで起動できること**
+  - F4: 2人目のプレイヤーが同じアイテムを記録しても世界初が上書きされないこと。`/milestonelog firsts` で表示されること
+  - F6: export → resetall → import で記録が復元されること
+  - F5: Webhook URL 未設定で記録しても例外なく通常動作すること（実送信のテストはしない）
+- 完了条件: GitHub Actions で **全4バージョンのビルドとサーバーテストが成功**し、バージョン 1.1.0 の JAR が4つ生成されること。既存テストを壊さないこと
