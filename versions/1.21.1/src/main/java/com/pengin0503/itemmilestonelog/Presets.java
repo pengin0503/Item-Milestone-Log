@@ -127,7 +127,7 @@ public final class Presets {
                 continue;
             }
             if (!isValidId(id)) {
-                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Ignoring preset file {} (filename must match [a-z0-9_-]{{1,32}})", fileName);
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Ignoring preset file {} (filename must match [a-z0-9_-]{1,32})", fileName);
                 continue;
             }
             PresetDefinition parsed = parsePresetFile(file, fileName, id);
