@@ -60,6 +60,7 @@
 
 ### 実装メモ
 - `itemId#count` のパースは1か所（TargetKey のファクトリ）に集約し、不正な文字列（count が数値でない、範囲外）は無効な目標として読み飛ばす（warn ログ）
+- **個数の検証（1〜1,000,000 の整数であること）は TargetKey の検証1か所に集約し、全ての入力経路で同じ検証を通す**: コマンド引数、GUI 入力、プリセット JSON（Q5）、`defaultTargets`（Q5）、import JSON（Q7）、NBT ロード。範囲外・不正な個数が来た場合は、その要素だけを無効として読み飛ばし、warn ログを出す（読み込み全体を失敗させない）
 - アイテム ID 自体に `#` は含まれないため、このエンコーディングは安全
 
 ## Q2. 検出（同時所持数のカウント）
@@ -108,7 +109,7 @@
 ### 仕様
 - カスタムプリセット JSON（`config/itemmilestonelog/presets/<id>.json`）の items 要素を拡張する:
   - 従来形式の文字列 `"minecraft:diamond"` は count = 1 として読み込む（既存ファイル互換）
-  - 新形式のオブジェクト `{"item": "minecraft:diamond", "count": 100}` を読み込める
+  - 新形式のオブジェクト `{"item": "minecraft:diamond", "count": 100}` を読み込める。count が範囲外・不正な要素は読み飛ばす（Q1 の統一検証、warn ログ）
   - 保存時は count > 1 の要素のみオブジェクト形式で書き出し、count = 1 は文字列で書き出す
 - 組み込みプリセット（atm_star / vanilla_endgame）は全て count = 1 のままで内容不変
 - `Config.defaultTargets` の各要素でも `itemId#count` 記法（Q1 と同じエンコーディング）を受け付ける。`#` 無しは count = 1。不正な要素は従来通り warn して読み飛ばす
@@ -124,7 +125,7 @@
 
 ### 仕様
 - export JSON（F6）: 目標と記録に count を含める。形式は既存 JSON 構造の拡張とし、count = 1 の要素では count フィールドを省略してよい
-- import: count フィールドの無い旧形式ファイルは count = 1 としてマージできる。マージ規則（目標は和集合、記録は既存優先 等）は既存仕様のまま、組単位に読み替える
+- import: count フィールドの無い旧形式ファイルは count = 1 としてマージできる。マージ規則（目標は和集合、記録は既存優先 等）は既存仕様のまま、組単位に読み替える。count が範囲外・不正な要素はマージ対象から外す（Q1 の統一検証、warn ログ）
 - API（F7）:
   - `MilestoneRecordedEvent` に count を取得できるアクセサ（例: `getCount()`）を追加する
   - `ItemMilestoneLogApi` に (itemId, count) を扱うメソッドを追加する。既存メソッドは count = 1 の省略形として動作を維持する
@@ -136,13 +137,23 @@
 - `MilestoneActionPayload` の add / remove / reset 等のアクションにも count を含める
 - optional 登録は維持し、バニラクライアントが参加できる性質を変えない
 
+## Q9. 進捗表示（未達成の個数目標）
+
+### 仕様
+- まだ記録されていない count > 1 の目標について、**現在の所持合計数**を表示する:
+  - GUI（`MilestoneScreen`）の目標タブの行: アイテム名＋個数の後に現在数を併記する（例: `ダイヤモンド ×100 (現在 37)` の形式。文言は lang キーで定義し en / ja 両方に追加）
+  - `/milestonelog targets` の行にも同じ併記をする
+- count = 1 の目標と、記録済みの行には現在数を出さない（表示は従来通り）
+- 現在数は `SyncMilestonesPayload` に (itemId, count) → 現在数の対応として含めて同期する。サーバーは同期リクエストを受けた時点で対象アイテムを再カウントして載せる
+- 更新タイミングは画面を開いた時点と既存のライブ同期のタイミングに限る（毎 tick の送信はしない）
+
 ## 3. 実装順序
 
 1. Q1 データモデル（TargetKey、NBT 読み書き・移行）
 2. Q2 検出（カウントと記録確定の拡張）
 3. Q3 コマンド
 4. Q8 ネットワーク同期
-5. Q4 GUI
+5. Q4 GUI（Q9 進捗表示を含む）
 6. Q5 プリセット・コンフィグ
 7. Q6 世界初・通知
 8. Q7 export/import・API
