@@ -1,6 +1,7 @@
 package com.pengin0503.itemmilestonelog;
 
 import com.mojang.logging.LogUtils;
+import com.pengin0503.itemmilestonelog.network.ModNetworking;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
@@ -15,9 +16,9 @@ import org.slf4j.Logger;
  * Stats.PLAY_TIME) at which a player first obtains each of their personally
  * tracked target items.
  *
- * The mod is server-side only in behaviour: all tracking, storage and
- * commands run on the (integrated or dedicated) server, so vanilla clients
- * can join a server that has this mod installed.
+ * All tracking, storage and commands run on the (integrated or dedicated)
+ * server, and the GUI network payloads are optional so vanilla clients can
+ * still join a server that has this mod installed.
  */
 @Mod(ItemMilestoneLog.MOD_ID)
 public class ItemMilestoneLog {
@@ -27,6 +28,7 @@ public class ItemMilestoneLog {
     public ItemMilestoneLog(IEventBus modEventBus, ModContainer modContainer) {
         modContainer.registerConfig(ModConfig.Type.COMMON, Config.SPEC);
 
+        modEventBus.addListener(ModNetworking::registerPayloads);
         NeoForge.EVENT_BUS.register(Tracker.class);
         NeoForge.EVENT_BUS.register(MilestoneCommands.class);
 

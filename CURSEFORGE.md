@@ -33,10 +33,11 @@ Detection is possession-based. Items produced by machines, automation, AE2 autoc
 #### Features
 - **Per-player targets** — every player sets and tracks their own goal items
 - **Cumulative playtime records**, stored per world, shown as e.g. `27h 15m 30s`
+- **In-game GUI** — press `M` (rebindable) to view progress, search and add targets, apply presets, and manage records without typing commands (requires the mod on the client; vanilla clients can still join and use commands)
 - **Chat notification** the moment a goal item is first obtained (configurable; optional server-wide broadcast)
 - **Built-in presets**: `atm_star` (ATM Star + its 9 components) and `vanilla_endgame`
 - **Server-wide default targets** via the config file
-- **Server-side behaviour** — on a dedicated server, vanilla clients can join without installing anything
+- **Optional client installation** — on a dedicated server, vanilla clients can join without installing anything and use all commands
 - Languages: **English** and **Japanese**
 
 #### Commands (no OP required, `/iml` works as an alias)
@@ -58,7 +59,7 @@ Detection is possession-based. Items produced by machines, automation, AE2 autoc
 Minecraft **1.21.1**, NeoForge **21.1.x**, Java 21. Works in any 1.21.1 NeoForge pack, including All the Mods 10.
 
 #### 日本語
-累計プレイ時間（バニラ統計の「プレイ時間」）で、目標アイテムを初めて手に入れた瞬間を記録するModです。プレイヤーごとに目標を自由に設定でき、ATM Star用プリセットも内蔵しています。機械生産・自動クラフトで作ったアイテムも、インベントリに入った時点で記録されます。
+累計プレイ時間（バニラ統計の「プレイ時間」）で、目標アイテムを初めて手に入れた瞬間を記録するModです。プレイヤーごとに目標を自由に設定でき、ATM Star用プリセットも内蔵しています。機械生産・自動クラフトで作ったアイテムも、インベントリに入った時点で記録されます。コマンドだけでなく、キー入力（初期設定 `M`）で開く専用GUIからも目標の検索・追加・削除や記録確認などの全機能を利用できます（専用サーバーではバニラクライアントも従来どおりコマンドで利用可能）。
 
 ## Project license setting
 - Choose **Custom License** and paste the repository's `LICENSE` file text

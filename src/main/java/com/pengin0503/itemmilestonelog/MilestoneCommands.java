@@ -15,7 +15,6 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.Item;
-import net.minecraft.world.item.ItemStack;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 
@@ -109,33 +108,15 @@ public final class MilestoneCommands {
     }
 
     private static int add(CommandContext<CommandSourceStack> ctx, String itemId) throws CommandSyntaxException {
-        ServerPlayer player = player(ctx);
-        MilestoneData.PlayerData pd = data(ctx);
-        if (!pd.targets.add(itemId)) {
-            return send(ctx, Component.translatable("message.itemmilestonelog.already_target", itemName(itemId)));
-        }
-        MilestoneData.get(player.server).setDirty();
-        return send(ctx, Component.translatable("message.itemmilestonelog.added", itemName(itemId)));
+        return send(ctx, MilestoneService.addTarget(player(ctx), itemId).message());
     }
 
     private static int addHand(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
-        ServerPlayer player = player(ctx);
-        ItemStack held = player.getMainHandItem();
-        if (held.isEmpty()) {
-            return send(ctx, Component.translatable("message.itemmilestonelog.addhand_empty"));
-        }
-        String id = BuiltInRegistries.ITEM.getKey(held.getItem()).toString();
-        return add(ctx, id);
+        return send(ctx, MilestoneService.addHandTarget(player(ctx)).message());
     }
 
     private static int remove(CommandContext<CommandSourceStack> ctx, String itemId) throws CommandSyntaxException {
-        ServerPlayer player = player(ctx);
-        MilestoneData.PlayerData pd = data(ctx);
-        if (!pd.targets.remove(itemId)) {
-            return send(ctx, Component.translatable("message.itemmilestonelog.not_target", itemName(itemId)));
-        }
-        MilestoneData.get(player.server).setDirty();
-        return send(ctx, Component.translatable("message.itemmilestonelog.removed", itemName(itemId)));
+        return send(ctx, MilestoneService.removeTarget(player(ctx), itemId).message());
     }
 
     private static int targets(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
@@ -174,44 +155,14 @@ public final class MilestoneCommands {
     }
 
     private static int preset(CommandContext<CommandSourceStack> ctx, String name) throws CommandSyntaxException {
-        ServerPlayer player = player(ctx);
-        MilestoneData.PlayerData pd = data(ctx);
-        List<String> items = Presets.PRESETS.get(name);
-        if (items == null) {
-            return send(ctx, Component.translatable("message.itemmilestonelog.preset_unknown", name,
-                    String.join(", ", Presets.PRESETS.keySet())));
-        }
-        int added = 0;
-        int skippedMissing = 0;
-        for (String id : items) {
-            if (!BuiltInRegistries.ITEM.containsKey(ResourceLocation.parse(id))) {
-                skippedMissing++;
-                continue;
-            }
-            if (pd.targets.add(id)) {
-                added++;
-            }
-        }
-        MilestoneData.get(player.server).setDirty();
-        return send(ctx, Component.translatable("message.itemmilestonelog.preset_applied", name, added, skippedMissing));
+        return send(ctx, MilestoneService.applyPreset(player(ctx), name).message());
     }
 
     private static int reset(CommandContext<CommandSourceStack> ctx, String itemId) throws CommandSyntaxException {
-        ServerPlayer player = player(ctx);
-        MilestoneData.PlayerData pd = data(ctx);
-        if (pd.records.remove(itemId) == null) {
-            return send(ctx, Component.translatable("message.itemmilestonelog.not_recorded", itemName(itemId)));
-        }
-        MilestoneData.get(player.server).setDirty();
-        return send(ctx, Component.translatable("message.itemmilestonelog.reset_done", itemName(itemId)));
+        return send(ctx, MilestoneService.resetRecord(player(ctx), itemId).message());
     }
 
     private static int resetAll(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
-        ServerPlayer player = player(ctx);
-        MilestoneData.PlayerData pd = data(ctx);
-        int count = pd.records.size();
-        pd.records.clear();
-        MilestoneData.get(player.server).setDirty();
-        return send(ctx, Component.translatable("message.itemmilestonelog.resetall_done", count));
+        return send(ctx, MilestoneService.resetAllRecords(player(ctx)).message());
     }
 }
