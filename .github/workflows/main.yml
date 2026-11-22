@@ -77,11 +77,11 @@ jobs:
           # right after restoring its own entry and before saving it.
           gradle-home-cache-excludes: caches/neoformruntime
 
-      # ModDevGradle runs NeoForm Runtime, which keeps Minecraft (downloaded, decompiled
-      # and patched with NeoForge) and the game assets in ~/.gradle/caches/neoformruntime:
-      # most of the Gradle cache, 0.8-1.2 GB per Minecraft version. setup-gradle would save
-      # it again on every push to main, once per job, and a job without an entry of its own
-      # falls back to another Minecraft version's, whose content then piles up in its own.
+      # ModDevGradle runs NeoForm Runtime, which keeps Minecraft (downloaded and patched
+      # with NeoForge) and the game assets in ~/.gradle/caches/neoformruntime: 0.7-1 GB per
+      # Minecraft version, most of the Gradle cache. In setup-gradle's entry it would be
+      # saved again on every push to main, once per job, and a job without an entry of its
+      # own restores another Minecraft version's, whose content then piles up in its own.
       # Instead, each Minecraft version has one entry, keyed on the files that set the
       # versions it depends on (Minecraft, NeoForge, Parchment, ModDevGradle), so it is
       # written only when they change. Both jobs of a Minecraft version read it; the
@@ -96,9 +96,6 @@ jobs:
           # On a version change: the previous entry of this Minecraft version, so that only
           # the steps for the new version run. Its other results are deleted before saving.
           restore-keys: neoform-v1-${{ runner.os }}-${{ matrix.mc }}-
-
-      - name: TEMP report the restored Gradle cache
-        run: bash .github/scripts/tmp-cache-report.sh restored
 
       - name: Select NeoForge version
         id: neo
@@ -117,10 +114,6 @@ jobs:
 
       - name: Check the jar contents
         run: .github/scripts/verify-jar.sh ${{ matrix.mc }}
-
-      - name: TEMP report the Gradle cache after the build
-        if: always()
-        run: bash .github/scripts/tmp-cache-report.sh built
 
       # Only when there is no entry for this key yet (after a version change), and only
       # after a successful build, so a failed build saves nothing.
