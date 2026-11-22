@@ -1,5 +1,6 @@
 package com.pengin0503.itemmilestonelog.client;
 
+import com.pengin0503.itemmilestonelog.Presets;
 import com.pengin0503.itemmilestonelog.network.MilestoneActionPayload;
 import com.pengin0503.itemmilestonelog.network.SyncMilestonesPayload;
 import net.minecraft.client.gui.GuiGraphics;
@@ -42,7 +43,7 @@ public final class SavePresetScreen extends Screen {
         nameBox.setResponder(val -> {
             this.currentName = val;
             if (saveButton != null) {
-                saveButton.active = !val.trim().isEmpty();
+                saveButton.active = Presets.isValidId(val.trim());
             }
         });
         setInitialFocus(nameBox);
@@ -57,7 +58,7 @@ public final class SavePresetScreen extends Screen {
                         btn -> submit())
                 .bounds(startX, btnY, btnWidth, 20)
                 .build());
-        saveButton.active = !currentName.trim().isEmpty();
+        saveButton.active = Presets.isValidId(currentName.trim());
 
         addRenderableWidget(Button.builder(
                         CommonComponents.GUI_CANCEL,
