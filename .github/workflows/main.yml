@@ -70,6 +70,9 @@ jobs:
           # Only pushes to main write the Gradle cache; pull requests and tags only read it.
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
 
+      - name: TEMP report the restored Gradle cache
+        run: bash .github/scripts/tmp-cache-report.sh restored
+
       - name: Select NeoForge version
         id: neo
         run: .github/scripts/neoforge-version.sh ${{ matrix.mc }} ${{ matrix.neo }}
@@ -83,6 +86,10 @@ jobs:
 
       - name: Check the jar contents
         run: .github/scripts/verify-jar.sh ${{ matrix.mc }}
+
+      - name: TEMP report the Gradle cache after the build
+        if: always()
+        run: bash .github/scripts/tmp-cache-report.sh built
 
       - name: Upload release jar
         if: matrix.neo == 'min'
