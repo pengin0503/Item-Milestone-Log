@@ -33,7 +33,7 @@ jobs:
     env:
       # Whether this job writes its Minecraft version's NeoForm cache entry (see "Restore
       # the NeoForm cache"): the "latest" job does, on pushes to main.
-      SAVES_NEOFORM_CACHE: ${{ matrix.neo == 'latest' && github.ref == 'refs/heads/main' }}
+      SAVES_NEOFORM_CACHE: ${{ matrix.neo == 'latest' }}  # TEMP: also on this PR
     strategy: &versions
       fail-fast: false
       matrix:
@@ -72,7 +72,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v5
         with:
           # Only pushes to main write the Gradle cache; pull requests and tags only read it.
-          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+          cache-read-only: false  # TEMP: also on this PR
           # Has a cache entry of its own (see below). setup-gradle deletes this directory
           # right after restoring its own entry and before saving it.
           gradle-home-cache-excludes: caches/neoformruntime
