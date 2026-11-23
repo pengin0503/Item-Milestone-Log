@@ -142,7 +142,16 @@ public final class MilestoneCommands {
             if (server == null) {
                 return builder.buildFuture();
             }
-            return SharedSuggestionProvider.suggest(MilestoneExport.listExportFiles(server), builder);
+            List<String> files = MilestoneExport.listExportFiles(server);
+            if (ctx.getSource().hasPermission(2)) {
+                return SharedSuggestionProvider.suggest(files, builder);
+            }
+            ServerPlayer sp = ctx.getSource().getPlayer();
+            if (sp == null) {
+                return builder.buildFuture();
+            }
+            String ownFile = MilestoneExport.sanitizePlayerFileName(sp.getGameProfile().getName());
+            return SharedSuggestionProvider.suggest(files.contains(ownFile) ? List.of(ownFile) : List.of(), builder);
         };
         SuggestionProvider<CommandSourceStack> adminPlayerSuggestions = (ctx, builder) -> {
             MinecraftServer server = ctx.getSource().getServer();
@@ -528,6 +537,9 @@ public final class MilestoneCommands {
         }
         try {
             MilestoneExport.ImportPayload payload = MilestoneExport.parseSinglePlayerExport(file);
+            if (!MilestoneExport.canImport(payload, player.getUUID(), ctx.getSource().hasPermission(2))) {
+                return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.import_not_owner", fileName));
+            }
             MilestoneData data = MilestoneData.get(player.server);
             MilestoneExport.ImportMergeStats stats = MilestoneExport.mergeInto(data, player.getUUID(), payload);
             MilestoneService.syncPlayerIfOpen(player);

@@ -42,7 +42,20 @@ class TargetKeyTest {
         assertNull(TargetKey.tryParseEncoded("minecraft:diamond#1000001"));
         assertNull(TargetKey.tryParseEncoded("minecraft:diamond#abc"));
         assertNull(TargetKey.tryParseEncoded("minecraft:diamond#1#2"));
+        assertNull(TargetKey.tryParseEncoded("minecraft:stone #5"));
+        assertNull(TargetKey.tryParseEncoded("minecraft: stone"));
+        assertNull(TargetKey.tryParseEncoded("minecraft:\tstone"));
+        assertNull(TargetKey.tryParseEncoded("minecraft:\nstone#5"));
+        assertNull(TargetKey.tryParseEncoded("minecraft:\u0000stone"));
 
+        assertThrows(IllegalArgumentException.class, () -> new TargetKey(null, 1));
+        assertThrows(IllegalArgumentException.class, () -> new TargetKey("", 1));
+        assertThrows(IllegalArgumentException.class, () -> new TargetKey(" ", 1));
+        assertThrows(IllegalArgumentException.class, () -> new TargetKey(" minecraft:stone ", 1));
+        assertThrows(IllegalArgumentException.class, () -> new TargetKey("minecraft:stone ", 1));
+        assertThrows(IllegalArgumentException.class, () -> new TargetKey("minecraft:\tstone", 1));
+        assertThrows(IllegalArgumentException.class, () -> new TargetKey("minecraft:\nstone", 1));
+        assertThrows(IllegalArgumentException.class, () -> new TargetKey("minecraft:\u0000stone", 1));
         assertThrows(IllegalArgumentException.class, () -> new TargetKey("minecraft:diamond", 0));
         assertThrows(IllegalArgumentException.class, () -> new TargetKey("minecraft:diamond", 1_000_001));
         assertThrows(IllegalArgumentException.class, () -> new TargetKey("minecraft:diamond#2", 1));

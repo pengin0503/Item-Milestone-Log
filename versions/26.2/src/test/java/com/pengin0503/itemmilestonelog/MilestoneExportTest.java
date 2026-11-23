@@ -133,4 +133,33 @@ class MilestoneExportTest {
         assertTrue(Files.isRegularFile(allFile));
         assertThrows(IllegalArgumentException.class, () -> MilestoneExport.parseSinglePlayerExport(allFile));
     }
+
+    @Test
+    void enforcesOwnerUuidCheckUnlessPrivileged(@TempDir Path dir) throws Exception {
+        UUID alice = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        UUID bob = UUID.fromString("22222222-2222-2222-2222-222222222222");
+
+        MilestoneData data = new MilestoneData();
+        MilestoneExport.exportPlayer(dir, alice, "Alice", data.player(alice));
+        MilestoneExport.ImportPayload alicePayload = MilestoneExport.parseSinglePlayerExport(dir.resolve("Alice.json"));
+
+        assertEquals(alice, alicePayload.ownerUuid());
+        assertTrue(MilestoneExport.canImport(alicePayload, alice, false));
+        assertFalse(MilestoneExport.canImport(alicePayload, bob, false));
+        assertTrue(MilestoneExport.canImport(alicePayload, bob, true));
+
+        Path noOwnerFile = dir.resolve("NoOwner.json");
+        Files.writeString(noOwnerFile, """
+                { "format": 1, "targets": ["minecraft:diamond"], "records": {} }
+                """);
+        MilestoneExport.ImportPayload noOwnerPayload = MilestoneExport.parseSinglePlayerExport(noOwnerFile);
+        assertFalse(MilestoneExport.canImport(noOwnerPayload, alice, false));
+        assertTrue(MilestoneExport.canImport(noOwnerPayload, alice, true));
+
+        Path badUuidFile = dir.resolve("BadUuid.json");
+        Files.writeString(badUuidFile, """
+                { "format": 1, "player": { "uuid": "not-a-uuid" }, "targets": [], "records": {} }
+                """);
+        assertThrows(IllegalArgumentException.class, () -> MilestoneExport.parseSinglePlayerExport(badUuidFile));
+    }
 }

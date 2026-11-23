@@ -451,6 +451,8 @@ async function creativeModeFlow(session, rcon) {
 
 async function multiPlayerAndPresetManagementFlow(session, rcon) {
   const bot2 = await joinBot('ImlBot2');
+  await rcon.command(`execute at ${BOT_NAME} run tp ImlBot2 ~6 ~ ~`);
+  await sleep(500);
 
   await check('F9: non-OP player is denied /milestonelog admin', async () => {
     const from = bot2.messages.length;
@@ -495,6 +497,13 @@ async function multiPlayerAndPresetManagementFlow(session, rcon) {
     await command(session, 'milestonelog reset minecraft:charcoal', /^Record cleared: Charcoal/);
     await command(session, 'milestonelog remove minecraft:coal', /^Stopped tracking: Coal$/);
     await command(session, 'milestonelog remove minecraft:charcoal', /^Stopped tracking: Charcoal$/);
+  });
+
+  await check('F6: non-OP player cannot import another player\'s export file', async () => {
+    await command(session, 'milestonelog export',
+      /^Exported your milestones to itemmilestonelog\/exports\/ImlBot\.json$/);
+    await command(bot2, 'milestonelog import ImlBot.json',
+      /^Cannot import ImlBot\.json: this export belongs to another player\.$/);
   });
 
   await check('Custom preset: OP can save current targets to JSON and delete it', async () => {

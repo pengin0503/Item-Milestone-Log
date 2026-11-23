@@ -13,6 +13,7 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.level.storage.LevelResource;
 
+import javax.annotation.Nullable;
 import java.io.IOException;
 import java.io.Reader;
 import java.io.Writer;
@@ -35,7 +36,17 @@ public final class MilestoneExport {
     private static final Pattern SAFE_FILENAME = Pattern.compile("^[a-zA-Z0-9._-]+$");
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
-    public record ImportPayload(List<TargetKey> targets, Map<TargetKey, MilestoneRecord> records) {
+    public record ImportPayload(@Nullable UUID ownerUuid, List<TargetKey> targets, Map<TargetKey, MilestoneRecord> records) {
+        public ImportPayload(List<TargetKey> targets, Map<TargetKey, MilestoneRecord> records) {
+            this(null, targets, records);
+        }
+    }
+
+    public static boolean canImport(ImportPayload payload, UUID importerUuid, boolean isPrivileged) {
+        if (isPrivileged) {
+            return true;
+        }
+        return payload.ownerUuid() != null && payload.ownerUuid().equals(importerUuid);
     }
 
     public record ImportMergeStats(int addedTargets, int updatedRecords) {
@@ -194,6 +205,27 @@ public final class MilestoneExport {
             throw new IllegalArgumentException("invalid_format");
         }
 
+        UUID ownerUuid = null;
+        if (root.has("player")) {
+            if (!root.get("player").isJsonObject()) {
+                throw new IllegalArgumentException("invalid_format");
+            }
+            JsonObject playerObj = root.getAsJsonObject("player");
+            if (playerObj.has("uuid")) {
+                if (!playerObj.get("uuid").isJsonPrimitive() || !playerObj.get("uuid").getAsJsonPrimitive().isString()) {
+                    throw new IllegalArgumentException("invalid_format");
+                }
+                String rawUuid = playerObj.get("uuid").getAsString().trim();
+                if (!rawUuid.isEmpty()) {
+                    try {
+                        ownerUuid = UUID.fromString(rawUuid);
+                    } catch (IllegalArgumentException e) {
+                        throw new IllegalArgumentException("invalid_format", e);
+                    }
+                }
+            }
+        }
+
         List<TargetKey> targets = new ArrayList<>();
         if (root.has("targets")) {
             if (!root.get("targets").isJsonArray()) {
@@ -286,7 +318,7 @@ public final class MilestoneExport {
             }
         }
 
-        return new ImportPayload(targets, records);
+        return new ImportPayload(ownerUuid, targets, records);
     }
 
     public static ImportMergeStats mergeInto(MilestoneData data, UUID uuid, ImportPayload payload) {
