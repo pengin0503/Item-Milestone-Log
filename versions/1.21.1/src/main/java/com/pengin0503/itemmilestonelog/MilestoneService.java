@@ -126,7 +126,7 @@ public final class MilestoneService {
         }
         String normalizedId = TargetKey.normalizeItemId(itemId);
         if (normalizedId == null || !isKnownNonAirItem.test(normalizedId)) {
-            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_item", itemId));
+            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_item", String.valueOf(itemId)));
         }
         TargetKey key = new TargetKey(normalizedId, count);
         MilestoneData.PlayerData pd = data.player(playerId);
@@ -172,7 +172,7 @@ public final class MilestoneService {
                     TargetKey.MIN_COUNT, TargetKey.MAX_COUNT));
         }
         if (!TargetKey.isValidItemId(itemId)) {
-            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_item", itemId));
+            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_item", String.valueOf(itemId)));
         }
         String normalized = TargetKey.normalizeItemId(itemId);
         String normalizedId = normalized != null ? normalized : itemId;
@@ -312,7 +312,7 @@ public final class MilestoneService {
         }
         if (!Presets.isValidId(name) || Presets.get(name) == null) {
             return new ActionResult(false, ServerLang.tr(source, "message.itemmilestonelog.preset_unknown",
-                    name, String.join(", ", Presets.names())));
+                    String.valueOf(name), String.join(", ", Presets.names())));
         }
         try {
             if (Presets.deleteCustomFrom(presetsDir.get(), name)) {
@@ -348,7 +348,7 @@ public final class MilestoneService {
                     TargetKey.MIN_COUNT, TargetKey.MAX_COUNT));
         }
         if (!TargetKey.isValidItemId(itemId)) {
-            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_item", itemId));
+            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_item", String.valueOf(itemId)));
         }
         String normalized = TargetKey.normalizeItemId(itemId);
         String normalizedId = normalized != null ? normalized : itemId;

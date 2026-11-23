@@ -538,7 +538,7 @@ public final class MilestoneCommands {
         MilestoneData data = MilestoneData.get(source.getServer());
         TargetKey key = TargetKey.normalize(itemId, count);
         if (key == null) {
-            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.invalid_item", itemId));
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.invalid_item", String.valueOf(itemId)));
         }
         if (data.removeWorldFirst(key)) {
             return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.firsts_reset_done", MilestoneService.targetDisplayName(key)));
@@ -786,7 +786,7 @@ public final class MilestoneCommands {
         MilestoneData data = MilestoneData.get(source.getServer());
         TargetKey key = TargetKey.normalize(itemId, count);
         if (key == null) {
-            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.invalid_item", itemId));
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.invalid_item", String.valueOf(itemId)));
         }
         if (target.getValue().records.remove(key) != null) {
             data.setDirty();
