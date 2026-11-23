@@ -78,37 +78,15 @@ find_client_script() {
   printf '%s\n' "$found"
 }
 
-write_server_log4j_config() {
-  local config_path="$1"
-  cat > "$config_path" <<'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<Configuration status="warn">
-  <Appenders>
-    <Console name="Console" target="SYSTEM_OUT">
-      <PatternLayout pattern="[%d{HH:mm:ss}] [%t/%level] [%logger]: %msg%n%xEx"/>
-    </Console>
-    <File name="DebugFile" fileName="logs/debug.log" append="false">
-      <PatternLayout pattern="[%d{HH:mm:ss.SSS}] [%t/%level] [%logger]: %msg%n%xEx"/>
-    </File>
-  </Appenders>
-  <Loggers>
-    <Logger name="com.pengin0503.itemmilestonelog" level="debug" additivity="false">
-      <AppenderRef ref="Console"/>
-      <AppenderRef ref="DebugFile"/>
-    </Logger>
-    <Root level="info">
-      <AppenderRef ref="Console"/>
-      <AppenderRef ref="DebugFile"/>
-    </Root>
-  </Loggers>
-</Configuration>
-EOF
-}
-
+# The version line matters: without it the client treats options.txt as a
+# pre-1.13 file and the data fixer tries to parse key binding values as
+# legacy LWJGL2 numeric codes, which fails on "key.keyboard.m" and wedges
+# startup before quick play can connect (observed in the first CI run).
 prepare_client_options() {
   local run_dir="$1"
   mkdir -p "$run_dir"
   cat > "$run_dir/options.txt" <<'EOF'
+version:3955
 pauseOnLostFocus:false
 onboardAccessibility:false
 skipMultiplayerWarning:true
@@ -197,7 +175,7 @@ check_client_log_errors() {
   else
     echo "  PASS  no stack traces through mod code in client log"
   fi
-  if grep -nE 'ClassNotFoundException|NoClassDefFoundError|NoSuchMethodError|NoSuchFieldError' "$log" | grep -i 'itemmilestonelog\|pengin0503'; then
+  if grep -nE 'ClassNotFoundException|NoClassDefFoundError|NoSuchMethodError|NoSuchFieldError' "$log" | grep -Ei 'itemmilestonelog|pengin0503'; then
     echo "  FAIL  linkage errors involving the mod in client log"
     ok=1
   fi
@@ -217,7 +195,7 @@ run_scenario() {
   echo "  server jar:     ${server_jar#$ROOT/}"
   echo "================================================================"
 
-  local scenario_ok=0
+  local failed=0
   local server_log="$COMPAT_LOG_DIR/${name}-server.log"
   local client_log="$COMPAT_LOG_DIR/${name}-client.log"
   local server_snap="$COMPAT_LOG_DIR/${name}-server-prestop.log"
@@ -256,21 +234,21 @@ run_scenario() {
     fi
     if ! kill -0 "$CLIENT_PGID" 2>/dev/null; then
       echo "  FAIL  client process exited before joining the server"
-      scenario_ok=1
+      failed=1
       break
     fi
     if has_disconnect_error "$client_log" || has_disconnect_error "$server_log"; then
       echo "  FAIL  disconnect or negotiation failure observed while joining"
-      scenario_ok=1
+      failed=1
       break
     fi
     sleep 2
     waited=$((waited + 2))
   done
 
-  if [ "$joined" -eq 0 ] && [ "$scenario_ok" -eq 0 ]; then
+  if [ "$joined" -eq 0 ] && [ "$failed" -eq 0 ]; then
     echo "  FAIL  client did not join the server within 300s"
-    scenario_ok=1
+    failed=1
   fi
 
   # 2. Give the client a few seconds to enter gameplay, then press 'm' to open GUI
@@ -311,7 +289,7 @@ run_scenario() {
       if [ "$expect_server_req" = "true" ] && ! grep -q '\[ItemMilestoneLog\] Received RequestSyncPayload' "$server_log"; then
         echo "  FAIL  server log missing '[ItemMilestoneLog] Received RequestSyncPayload'"
       fi
-      scenario_ok=1
+      failed=1
     fi
   fi
 
@@ -323,7 +301,7 @@ run_scenario() {
   if has_disconnect_error "$server_snap"; then
     echo "  FAIL  disconnect / negotiation error in server log before shutdown:"
     grep -inE 'NetworkComponentNegotiator|Failed to negotiate|Disconnected|Connection lost|DecoderException|EncoderException|incompatible.*channel' "$server_snap" | head -n 20 | sed 's/^/    /'
-    scenario_ok=1
+    failed=1
   else
     echo "  PASS  no disconnect / negotiation errors in server log before shutdown"
   fi
@@ -331,7 +309,7 @@ run_scenario() {
   if has_disconnect_error "$client_snap"; then
     echo "  FAIL  disconnect / negotiation error in client log before shutdown:"
     grep -inE 'NetworkComponentNegotiator|Failed to negotiate|Disconnected|Connection lost|DecoderException|EncoderException|incompatible.*channel' "$client_snap" | head -n 20 | sed 's/^/    /'
-    scenario_ok=1
+    failed=1
   else
     echo "  PASS  no disconnect / negotiation errors in client log before shutdown"
   fi
@@ -339,10 +317,10 @@ run_scenario() {
   stop_client
   stop_server
 
-  check_log "$server_log" || scenario_ok=1
-  check_client_log_errors "$client_log" || scenario_ok=1
+  check_log "$server_log" || failed=1
+  check_client_log_errors "$client_log" || failed=1
 
-  if [ "$scenario_ok" -ne 0 ]; then
+  if [ "$failed" -ne 0 ]; then
     echo "::group::Tail of logs for failed scenario ($name)"
     echo "--- server log (last 80 lines) ---"
     tail -n 80 "$server_log" || true
@@ -351,7 +329,7 @@ run_scenario() {
     echo "::endgroup::"
   fi
 
-  return $scenario_ok
+  return $failed
 }
 
 DEV_PROJECT="$ROOT/versions/$MC"
@@ -359,9 +337,14 @@ OLD_PROJECT="$BASELINE_DIR/versions/$MC"
 DEV_JAR="$(find_mod_jar "$DEV_PROJECT/build/libs")"
 OLD_JAR="$(find_mod_jar "$OLD_PROJECT/build/libs")"
 
-LOG4J_CONFIG="$COMPAT_LOG_DIR/log4j2-compat.xml"
-write_server_log4j_config "$LOG4J_CONFIG"
-SERVER_JVM_OPTS=("-Dlog4j2.configurationFile=$LOG4J_CONFIG" "-Dlog4j.configurationFile=$LOG4J_CONFIG")
+# FML unconditionally replaces the log4j configuration with its own
+# log4j2.xml at launch (CommonLaunchHandler.overwriteLoggingConfiguration),
+# so a custom configurationFile is ignored. In that built-in config the
+# console appender's level is the forge.logging.console.level system
+# property (default info) while the debug file appender already takes
+# debug. Raising the console/file levels to debug is the supported way to
+# get the mod's debug lines into the captured server log.
+SERVER_JVM_OPTS=("-Dforge.logging.console.level=debug" "-Dforge.logging.file.level=debug")
 
 install_server
 start_xvfb
