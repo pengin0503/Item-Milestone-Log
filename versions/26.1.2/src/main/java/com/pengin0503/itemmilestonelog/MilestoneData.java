@@ -161,6 +161,11 @@ public class MilestoneData extends SavedData {
                     continue;
                 }
                 MilestoneRecord rec = countEntry.getValue();
+                if (rec == null) {
+                    ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping null record for '{}#{}' in SavedData",
+                            itemId, countEntry.getKey());
+                    continue;
+                }
                 if (rec.playTicks() < 0) {
                     ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping record for '{}#{}' with negative ticks {} in SavedData",
                             itemId, countEntry.getKey(), rec.playTicks());
@@ -357,6 +362,11 @@ public class MilestoneData extends SavedData {
                     continue;
                 }
                 WorldFirstEntry wf = countEntry.getValue();
+                if (wf == null) {
+                    ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping null worldFirst for '{}#{}' in SavedData",
+                            itemId, countEntry.getKey());
+                    continue;
+                }
                 if (wf.ticks() < 0) {
                     ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping worldFirst '{}#{}' with negative ticks {} in SavedData",
                             itemId, countEntry.getKey(), wf.ticks());

@@ -38,9 +38,14 @@ public final class ModNetworking {
         synchronized (state) {
             long elapsed = now - state.lastNanos;
             if (elapsed >= REFILL_INTERVAL_NANOS) {
-                int refill = (int) Math.min(MAX_BURST_TOKENS, elapsed / REFILL_INTERVAL_NANOS);
-                state.tokens = Math.min(MAX_BURST_TOKENS, state.tokens + refill);
-                state.lastNanos = now;
+                int refill = (int) (elapsed / REFILL_INTERVAL_NANOS);
+                if (state.tokens + refill >= MAX_BURST_TOKENS) {
+                    state.tokens = MAX_BURST_TOKENS;
+                    state.lastNanos = now;
+                } else {
+                    state.tokens += refill;
+                    state.lastNanos += refill * REFILL_INTERVAL_NANOS;
+                }
             }
             if (state.tokens <= 0) {
                 return false;
