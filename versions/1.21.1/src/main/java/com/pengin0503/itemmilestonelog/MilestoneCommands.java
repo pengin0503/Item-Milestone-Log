@@ -182,6 +182,31 @@ public final class MilestoneCommands {
             }
             return SharedSuggestionProvider.suggest(names, builder);
         };
+        SuggestionProvider<CommandSourceStack> adminPersonalTargetSuggestions = (ctx, builder) -> {
+            MinecraftServer server = ctx.getSource().getServer();
+            if (server == null) {
+                return builder.buildFuture();
+            }
+            String query = StringArgumentType.getString(ctx, "player");
+            ResolvedPlayer resolved = resolvePlayerData(server, query);
+            if (resolved.entry == null) {
+                return builder.buildFuture();
+            }
+            return SharedSuggestionProvider.suggest(itemIdsOf(resolved.entry.getValue().targets), builder);
+        };
+        SuggestionProvider<CommandSourceStack> adminPersonalTargetCountSuggestions = (ctx, builder) -> {
+            MinecraftServer server = ctx.getSource().getServer();
+            if (server == null) {
+                return builder.buildFuture();
+            }
+            String query = StringArgumentType.getString(ctx, "player");
+            ResolvedPlayer resolved = resolvePlayerData(server, query);
+            if (resolved.entry == null) {
+                return builder.buildFuture();
+            }
+            String itemId = ResourceLocationArgument.getId(ctx, "item").toString();
+            return SharedSuggestionProvider.suggest(countsForItem(resolved.entry.getValue().targets, itemId), builder);
+        };
         SuggestionProvider<CommandSourceStack> adminRecordedSuggestions = (ctx, builder) -> {
             MinecraftServer server = ctx.getSource().getServer();
             if (server == null) {
@@ -256,6 +281,7 @@ public final class MilestoneCommands {
                                         .suggests(personalTargetCountSuggestions)
                                         .executes(ctx -> remove(ctx, ResourceLocationArgument.getId(ctx, "item").toString(),
                                                 IntegerArgumentType.getInteger(ctx, "count"))))))
+                .then(Commands.literal("removeall").executes(MilestoneCommands::removeAll))
                 .then(Commands.literal("targets").executes(MilestoneCommands::targets))
                 .then(Commands.literal("list").executes(MilestoneCommands::list))
                 .then(Commands.literal("preset")
@@ -278,6 +304,10 @@ public final class MilestoneCommands {
                         .then(Commands.argument("name", StringArgumentType.word())
                                 .suggests(presetSuggestions)
                                 .executes(ctx -> presetProgress(ctx, StringArgumentType.getString(ctx, "name")))))
+                .then(Commands.literal("presetremove")
+                        .then(Commands.argument("name", StringArgumentType.word())
+                                .suggests(presetSuggestions)
+                                .executes(ctx -> presetRemove(ctx, StringArgumentType.getString(ctx, "name")))))
                 .then(Commands.literal("reset")
                         .then(Commands.argument("item", ResourceLocationArgument.id())
                                 .suggests(recordedSuggestions)
@@ -287,6 +317,7 @@ public final class MilestoneCommands {
                                         .executes(ctx -> reset(ctx, ResourceLocationArgument.getId(ctx, "item").toString(),
                                                 IntegerArgumentType.getInteger(ctx, "count"))))))
                 .then(Commands.literal("resetall").executes(MilestoneCommands::resetAll))
+                .then(Commands.literal("undo").executes(MilestoneCommands::undo))
                 .then(Commands.literal("firsts")
                         .executes(MilestoneCommands::firstsList)
                         .then(Commands.literal("reset")
@@ -342,6 +373,35 @@ public final class MilestoneCommands {
                                 .suggests(adminPlayerSuggestions)
                                 .then(Commands.literal("list").executes(ctx -> adminList(ctx, StringArgumentType.getString(ctx, "player"))))
                                 .then(Commands.literal("targets").executes(ctx -> adminTargets(ctx, StringArgumentType.getString(ctx, "player"))))
+                                .then(Commands.literal("add")
+                                        .then(Commands.argument("item", ItemArgument.item(buildContext))
+                                                .executes(ctx -> adminAdd(ctx, StringArgumentType.getString(ctx, "player"),
+                                                        itemId(ctx), TargetKey.MIN_COUNT))
+                                                .then(Commands.argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                                        .executes(ctx -> adminAdd(ctx, StringArgumentType.getString(ctx, "player"),
+                                                                itemId(ctx), IntegerArgumentType.getInteger(ctx, "count"))))))
+                                .then(Commands.literal("remove")
+                                        .then(Commands.argument("item", ResourceLocationArgument.id())
+                                                .suggests(adminPersonalTargetSuggestions)
+                                                .executes(ctx -> adminRemove(ctx, StringArgumentType.getString(ctx, "player"),
+                                                        ResourceLocationArgument.getId(ctx, "item").toString(), TargetKey.MIN_COUNT))
+                                                .then(Commands.argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                                        .suggests(adminPersonalTargetCountSuggestions)
+                                                        .executes(ctx -> adminRemove(ctx, StringArgumentType.getString(ctx, "player"),
+                                                                ResourceLocationArgument.getId(ctx, "item").toString(),
+                                                                IntegerArgumentType.getInteger(ctx, "count"))))))
+                                .then(Commands.literal("preset")
+                                        .then(Commands.argument("name", StringArgumentType.word())
+                                                .suggests(presetSuggestions)
+                                                .executes(ctx -> adminPreset(ctx, StringArgumentType.getString(ctx, "player"),
+                                                        StringArgumentType.getString(ctx, "name")))))
+                                .then(Commands.literal("grant")
+                                        .then(Commands.argument("item", ItemArgument.item(buildContext))
+                                                .executes(ctx -> adminGrant(ctx, StringArgumentType.getString(ctx, "player"),
+                                                        itemId(ctx), TargetKey.MIN_COUNT))
+                                                .then(Commands.argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                                        .executes(ctx -> adminGrant(ctx, StringArgumentType.getString(ctx, "player"),
+                                                                itemId(ctx), IntegerArgumentType.getInteger(ctx, "count"))))))
                                 .then(Commands.literal("reset")
                                         .then(Commands.argument("item", ResourceLocationArgument.id())
                                                 .suggests(adminRecordedSuggestions)
@@ -420,6 +480,10 @@ public final class MilestoneCommands {
         return respond(ctx, MilestoneService.removeTarget(player(ctx), itemId, count));
     }
 
+    private static int removeAll(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+        return respondWithUndoHint(ctx, MilestoneService.removeAllTargets(player(ctx)));
+    }
+
     private static int targets(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
         ServerPlayer player = player(ctx);
         MilestoneData.PlayerData pd = dataOrNull(player);
@@ -486,6 +550,10 @@ public final class MilestoneCommands {
 
     private static int preset(CommandContext<CommandSourceStack> ctx, String name) throws CommandSyntaxException {
         return respond(ctx, MilestoneService.applyPreset(player(ctx), name));
+    }
+
+    private static int presetRemove(CommandContext<CommandSourceStack> ctx, String name) throws CommandSyntaxException {
+        return respondWithUndoHint(ctx, MilestoneService.removePresetTargets(player(ctx), name));
     }
 
     // --------------------------------------------------------- F16 preset progress
@@ -619,11 +687,25 @@ public final class MilestoneCommands {
     }
 
     private static int reset(CommandContext<CommandSourceStack> ctx, String itemId, int count) throws CommandSyntaxException {
-        return respond(ctx, MilestoneService.resetRecord(player(ctx), itemId, count));
+        return respondWithUndoHint(ctx, MilestoneService.resetRecord(player(ctx), itemId, count));
     }
 
     private static int resetAll(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
-        return respond(ctx, MilestoneService.resetAllRecords(player(ctx)));
+        return respondWithUndoHint(ctx, MilestoneService.resetAllRecords(player(ctx)));
+    }
+
+    /** F23: restores the executing player's last reset or bulk removal from the past 10 minutes. */
+    private static int undo(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+        return respond(ctx, MilestoneService.undo(player(ctx)));
+    }
+
+    /** Like {@link #respond}, then adds the F23 {@code undo_hint} line when the operation stored an undo snapshot. */
+    private static int respondWithUndoHint(CommandContext<CommandSourceStack> ctx, MilestoneService.ActionResult result) {
+        int status = respond(ctx, result);
+        if (result.success() && result.undoable()) {
+            send(ctx, ServerLang.tr(ctx.getSource(), "message.itemmilestonelog.undo_hint"));
+        }
+        return status;
     }
 
     // --------------------------------------------------------- F4 world firsts
@@ -1164,6 +1246,83 @@ public final class MilestoneCommands {
             source.sendSuccess(() -> line, false);
         }
         return sorted.size();
+    }
+
+    private record TargetIdentity(UUID uuid, String name) {
+    }
+
+    @Nullable
+    private static TargetIdentity resolveTargetIdentity(CommandSourceStack source, String query,
+                                                        boolean allowOnlineWithoutData) {
+        MinecraftServer server = source.getServer();
+        ResolvedPlayer resolved = resolvePlayerData(server, query);
+        if (resolved.ambiguous()) {
+            source.sendFailure(ServerLang.tr(source, "message.itemmilestonelog.admin_player_ambiguous", query));
+            return null;
+        }
+        if (resolved.entry() != null) {
+            return new TargetIdentity(resolved.entry().getKey(),
+                    displayNameFor(resolved.entry().getKey(), resolved.entry().getValue()));
+        }
+        if (allowOnlineWithoutData) {
+            ServerPlayer online = server.getPlayerList().getPlayerByName(query);
+            if (online == null) {
+                try {
+                    online = server.getPlayerList().getPlayer(UUID.fromString(query));
+                } catch (IllegalArgumentException ignored) {
+                }
+            }
+            if (online != null) {
+                String profileName = online.getGameProfile().getName();
+                String name = (profileName != null && !profileName.isBlank()) ? profileName : online.getUUID().toString();
+                return new TargetIdentity(online.getUUID(), name);
+            }
+        }
+        source.sendFailure(ServerLang.tr(source, "message.itemmilestonelog.admin_player_not_found", query));
+        return null;
+    }
+
+    private static int adminAdd(CommandContext<CommandSourceStack> ctx, String query, String itemId, int count) {
+        CommandSourceStack source = ctx.getSource();
+        TargetIdentity target = resolveTargetIdentity(source, query, true);
+        if (target == null) {
+            return 0;
+        }
+        return respond(ctx, MilestoneService.adminAddTarget(
+                source.getServer(), source, target.uuid(), target.name(), itemId, count));
+    }
+
+    private static int adminRemove(CommandContext<CommandSourceStack> ctx, String query, String itemId, int count) {
+        CommandSourceStack source = ctx.getSource();
+        Map.Entry<UUID, MilestoneData.PlayerData> target = resolveOrReport(source, query);
+        if (target == null) {
+            return 0;
+        }
+        String name = displayNameFor(target.getKey(), target.getValue());
+        return respond(ctx, MilestoneService.adminRemoveTarget(
+                source.getServer(), source, target.getKey(), name, itemId, count));
+    }
+
+    private static int adminPreset(CommandContext<CommandSourceStack> ctx, String query, String presetName) {
+        CommandSourceStack source = ctx.getSource();
+        if (!Config.PRESETS_ENABLED.get()) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.feature_disabled"));
+        }
+        TargetIdentity target = resolveTargetIdentity(source, query, true);
+        if (target == null) {
+            return 0;
+        }
+        return respond(ctx, MilestoneService.adminApplyPreset(
+                source.getServer(), source, target.uuid(), target.name(), presetName));
+    }
+
+    private static int adminGrant(CommandContext<CommandSourceStack> ctx, String query, String itemId, int count) {
+        CommandSourceStack source = ctx.getSource();
+        TargetIdentity target = resolveTargetIdentity(source, query, true);
+        if (target == null) {
+            return 0;
+        }
+        return respond(ctx, Tracker.grantMilestone(source, target.uuid(), target.name(), itemId, count));
     }
 
     private static int adminReset(CommandContext<CommandSourceStack> ctx, String query, String itemId, int count) {

@@ -8,6 +8,7 @@ import com.pengin0503.itemmilestonelog.api.RecordCause;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
 import com.pengin0503.itemmilestonelog.network.ModNetworking;
 import com.pengin0503.itemmilestonelog.network.SyncMilestonesPayload;
+import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
@@ -44,11 +45,13 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BiConsumer;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.IntSupplier;
 import java.util.function.Predicate;
+import java.util.function.Supplier;
 
 /**
  * Watches tracked items entering a player's possession and records the
@@ -140,25 +143,61 @@ public final class Tracker {
             return;
         }
         MilestoneData data = MilestoneData.get(player.server);
-        MilestoneData.PlayerData pd = data.player(player.getUUID());
-        String name = player.getGameProfile().getName();
-        if (name != null && !name.equals(pd.lastKnownName)) {
-            pd.lastKnownName = name;
+        boolean hasMod = player.connection != null
+                && player.connection.hasChannel(SyncMilestonesPayload.TYPE);
+        List<Component> messages = processPlayerLogin(
+                data,
+                player.getUUID(),
+                player.getGameProfile().getName(),
+                defaultTargets(),
+                Config.FIRST_JOIN_PRESETS.get(),
+                Config.PRESETS_ENABLED.get(),
+                MilestoneService::isKnownNonAirItem,
+                Config.SHOW_FIRST_JOIN_HINT.get(),
+                hasMod,
+                player);
+        for (Component msg : messages) {
+            player.sendSystemMessage(msg);
+        }
+    }
+
+    static List<Component> processPlayerLogin(
+            MilestoneData data,
+            UUID playerId,
+            @Nullable String playerName,
+            Set<TargetKey> defaultTargets,
+            @Nullable List<? extends String> firstJoinPresets,
+            boolean presetsEnabled,
+            Predicate<String> isKnownNonAirItem,
+            boolean showFirstJoinHint,
+            boolean hasModChannel,
+            @Nullable ServerPlayer player) {
+        int firstJoinAdded = data.playerOrNull(playerId) == null
+                ? MilestoneService.applyFirstJoinPresets(
+                        data, playerId, firstJoinPresets, isKnownNonAirItem, presetsEnabled)
+                : 0;
+        MilestoneData.PlayerData pd = data.player(playerId);
+        if (playerName != null && !playerName.equals(pd.lastKnownName)) {
+            pd.lastKnownName = playerName;
             data.setDirty();
         }
-        if (cleanupProgressNotified(pd, effectiveTargets(pd))) {
+        if (cleanupProgressNotified(pd, effectiveTargets(defaultTargets, pd))) {
             data.setDirty();
         }
-        if (Config.SHOW_FIRST_JOIN_HINT.get() && !pd.firstJoinHintShown) {
+        List<Component> messages = new ArrayList<>(2);
+        if (firstJoinAdded > 0) {
+            messages.add(ServerLang.tr(
+                    player, "message.itemmilestonelog.first_join_presets", firstJoinAdded));
+        }
+        if (showFirstJoinHint && !pd.firstJoinHintShown) {
             pd.firstJoinHintShown = true;
             data.setDirty();
-            boolean hasMod = player.connection != null
-                    && player.connection.hasChannel(SyncMilestonesPayload.TYPE);
-            String key = hasMod
+            String key = hasModChannel
                     ? "message.itemmilestonelog.join_hint_mod"
                     : "message.itemmilestonelog.join_hint_vanilla";
-            player.sendSystemMessage(ServerLang.tr(player, key));
+            messages.add(ServerLang.tr(player, key));
         }
+        return messages;
     }
 
     @SubscribeEvent
@@ -974,6 +1013,209 @@ public final class Tracker {
             return false;
         }
         return record(player, data, normalized, true, RecordCause.API);
+    }
+
+    enum GrantStatus {
+        OFFLINE,
+        INVALID_COUNT,
+        INVALID_ITEM,
+        ALREADY_RECORDED,
+        TARGETS_LIMIT_REACHED,
+        GRANTED
+    }
+
+    record GrantResult(
+            GrantStatus status,
+            Component executorMessage,
+            @Nullable TargetKey key,
+            @Nullable MilestoneRecord record,
+            boolean autoAddedTarget,
+            List<Presets.PresetDefinition> completedPresets) {
+        boolean success() {
+            return status == GrantStatus.GRANTED;
+        }
+    }
+
+    /**
+     * F33 {@code /milestonelog admin <player> grant <item> [<count>]}: grants a milestone to an
+     * online player without checking possession or recording pause, never registers a world-first,
+     * auto-adds a missing target to personal targets (enforcing the cap), cleans F1 progress,
+     * evaluates F5 preset completion (updating {@code completedPresets}, notifying the target when
+     * {@code notifyPlayer} is true, and posting {@link PresetCompletedEvent}), notifies the target
+     * with {@code granted_notice} regardless of {@code notifyPlayer}, posts
+     * {@link MilestoneRecordedEvent} with {@link RecordCause#ADMIN_GRANT} and {@code worldFirst = false},
+     * logs an info line, and re-syncs the target's GUI. Does not broadcast, announce world-first,
+     * play sound, post to Discord, or broadcast F5 completion.
+     */
+    public static MilestoneService.ActionResult grantMilestone(
+            CommandSourceStack source,
+            UUID targetId,
+            String targetName,
+            String itemId,
+            int count) {
+        MinecraftServer server = source.getServer();
+        ServerPlayer online = server.getPlayerList().getPlayer(targetId);
+        String resolvedName = targetName;
+        if (online != null) {
+            String profileName = online.getGameProfile().getName();
+            if (profileName != null && !profileName.isBlank()) {
+                resolvedName = profileName;
+            }
+        }
+        String finalName = resolvedName;
+        MilestoneData data = MilestoneData.get(server);
+        GrantResult result = grantMilestone(
+                data,
+                targetId,
+                finalName,
+                online != null,
+                online,
+                source.getPlayer(),
+                itemId,
+                count,
+                defaultTargets(),
+                () -> new MilestoneRecord(
+                        Playtime.currentTicks(online),
+                        Playtime.currentDay(server),
+                        System.currentTimeMillis()),
+                Presets.all(),
+                MilestoneService::isKnownNonAirItem,
+                MilestoneService::targetDisplayName,
+                Config.PRESETS_ENABLED.get(),
+                Config.NOTIFY_PLAYER.get(),
+                (grantedKey, grantedRec) -> ItemMilestoneLog.LOGGER.info(
+                        "[ItemMilestoneLog] Admin {} granted {} to {} ({}) at playtime {} ({} ticks)",
+                        source.getTextName(),
+                        grantedKey.formatDisplayId(),
+                        finalName,
+                        targetId,
+                        Playtime.formatRecord(grantedRec, Config.displayTimeZone()),
+                        grantedRec.playTicks()),
+                msg -> {
+                    if (online != null) {
+                        online.sendSystemMessage(msg);
+                    }
+                },
+                event -> NeoForge.EVENT_BUS.post(event));
+        if (result.success() && online != null) {
+            MilestoneService.syncPlayerIfOpen(online);
+        }
+        return new MilestoneService.ActionResult(result.success(), result.executorMessage());
+    }
+
+    static GrantResult grantMilestone(
+            MilestoneData data,
+            UUID targetId,
+            String targetName,
+            boolean targetOnline,
+            @Nullable ServerPlayer targetPlayer,
+            @Nullable ServerPlayer executorPlayer,
+            String itemId,
+            int count,
+            Set<TargetKey> defaultTargets,
+            Supplier<MilestoneRecord> recordSupplier,
+            Collection<Presets.PresetDefinition> allPresets,
+            Predicate<String> isKnownNonAirItem,
+            Function<TargetKey, Component> displayName,
+            boolean presetsEnabled,
+            boolean notifyPlayer,
+            BiConsumer<TargetKey, MilestoneRecord> onLogged,
+            Consumer<Component> targetMessageSender,
+            Consumer<Event> eventPoster) {
+        Component literalTargetName = Component.literal(targetName);
+        if (!targetOnline) {
+            return new GrantResult(
+                    GrantStatus.OFFLINE,
+                    ServerLang.tr(executorPlayer, "message.itemmilestonelog.admin_grant_offline", literalTargetName),
+                    null, null, false, List.of());
+        }
+        if (!TargetKey.isValidCount(count)) {
+            return new GrantResult(
+                    GrantStatus.INVALID_COUNT,
+                    ServerLang.tr(executorPlayer, "message.itemmilestonelog.invalid_count",
+                            TargetKey.MIN_COUNT, TargetKey.MAX_COUNT),
+                    null, null, false, List.of());
+        }
+        String normalizedId = TargetKey.normalizeItemId(itemId);
+        if (normalizedId == null || !isKnownNonAirItem.test(normalizedId)) {
+            return new GrantResult(
+                    GrantStatus.INVALID_ITEM,
+                    ServerLang.tr(executorPlayer, "message.itemmilestonelog.invalid_item", String.valueOf(itemId)),
+                    null, null, false, List.of());
+        }
+        TargetKey key = new TargetKey(normalizedId, count);
+        Component keyDisplay = displayName.apply(key);
+
+        MilestoneData.PlayerData existingPd = data.playerOrNull(targetId);
+        if (existingPd != null && existingPd.records.containsKey(key)) {
+            return new GrantResult(
+                    GrantStatus.ALREADY_RECORDED,
+                    ServerLang.tr(executorPlayer, "message.itemmilestonelog.admin_grant_already",
+                            literalTargetName, keyDisplay),
+                    key, null, false, List.of());
+        }
+
+        boolean inEffective = effectiveTargets(defaultTargets, existingPd).contains(key);
+        boolean autoAdded = false;
+        if (!inEffective) {
+            int currentPersonalSize = existingPd != null ? existingPd.targets.size() : 0;
+            if (currentPersonalSize >= MilestoneService.MAX_PERSONAL_TARGETS) {
+                return new GrantResult(
+                        GrantStatus.TARGETS_LIMIT_REACHED,
+                        ServerLang.tr(executorPlayer, "message.itemmilestonelog.targets_limit_reached",
+                                MilestoneService.MAX_PERSONAL_TARGETS),
+                        key, null, false, List.of());
+            }
+            data.player(targetId).targets.add(key);
+            autoAdded = true;
+        }
+
+        MilestoneRecord rec = recordSupplier.get();
+        // World-first is never registered on admin grant; applyRecord also performs F1 progressNotified cleanup.
+        RecordOutcome outcome = applyRecord(data, targetId, targetName, key, rec, false);
+        if (outcome == RecordOutcome.ALREADY_RECORDED) {
+            return new GrantResult(
+                    GrantStatus.ALREADY_RECORDED,
+                    ServerLang.tr(executorPlayer, "message.itemmilestonelog.admin_grant_already",
+                            literalTargetName, keyDisplay),
+                    key, null, false, List.of());
+        }
+
+        List<Presets.PresetDefinition> completedPresets = evaluatePresetCompletions(
+                data,
+                targetId,
+                key,
+                allPresets,
+                isKnownNonAirItem,
+                presetsEnabled);
+
+        onLogged.accept(key, rec);
+
+        // granted_notice is sent regardless of notifyPlayer.
+        targetMessageSender.accept(ServerLang.tr(
+                targetPlayer,
+                "message.itemmilestonelog.granted_notice",
+                keyDisplay,
+                Playtime.format(rec.playTicks())));
+
+        // F5 preset completion: only personal preset_completed to the target when notifyPlayer is true (no broadcast).
+        if (notifyPlayer && !completedPresets.isEmpty()) {
+            for (Presets.PresetDefinition preset : completedPresets) {
+                Component presetName = MilestoneService.presetDisplayName(targetPlayer, preset);
+                targetMessageSender.accept(ServerLang.tr(
+                        targetPlayer,
+                        "message.itemmilestonelog.preset_completed",
+                        presetName));
+            }
+        }
+
+        postRecordEvents(targetPlayer, key, rec, outcome, completedPresets, RecordCause.ADMIN_GRANT, eventPoster);
+
+        return new GrantResult(
+                GrantStatus.GRANTED,
+                ServerLang.tr(executorPlayer, "message.itemmilestonelog.admin_granted",
+                        literalTargetName, keyDisplay),
+                key, rec, autoAdded, completedPresets);
     }
 
     private static boolean record(ServerPlayer player, MilestoneData data, TargetKey key, boolean syncImmediately) {

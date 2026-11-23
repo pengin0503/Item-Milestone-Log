@@ -608,4 +608,779 @@ class MilestoneServiceTest {
         assertEquals("あなたの記録を他のプレイヤーに公開しました。",
                 ServerLang.trForLang("ja_jp", "message.itemmilestonelog.privacy_off").getString());
     }
+
+    // ---- F23: undo ----
+
+    @Test
+    void undoRestoresResetRecordAndLeavesWorldFirstsUntouched() {
+        MilestoneData data = new MilestoneData();
+        UndoLogic.Store<TargetKey, MilestoneRecord> store = new UndoLogic.Store<>();
+        Set<String> knownItems = Set.of("minecraft:diamond", "minecraft:iron_ingot");
+        TargetKey diamond = TargetKey.of("minecraft:diamond");
+        TargetKey iron = TargetKey.of("minecraft:iron_ingot");
+        MilestoneRecord diamondRec = new MilestoneRecord(120, 1L, 1_000L);
+        MilestoneRecord ironRec = new MilestoneRecord(240, 2L, 2_000L);
+
+        MilestoneData.PlayerData pd = data.player(PLAYER_A);
+        pd.records.put(diamond, diamondRec);
+        pd.records.put(iron, ironRec);
+        data.recordWorldFirstIfAbsent(diamond, PLAYER_A, "Alice", diamondRec);
+
+        long t0 = 10_000L;
+        MilestoneService.ActionResult reset = MilestoneService.resetRecord(
+                data, PLAYER_A, null, "minecraft:diamond", 1, knownItems::contains, LITERAL_NAME, store, t0);
+        assertTrue(reset.success());
+        assertTrue(reset.undoable());
+        assertFalse(pd.records.containsKey(diamond));
+        assertNotNull(data.worldFirstOrNull(diamond));
+
+        MilestoneService.ActionResult undone = MilestoneService.undo(data, PLAYER_A, null, store, t0 + 100L);
+        assertTrue(undone.success());
+        assertEquals("Restored 1 record(s) from your last reset.", undone.message().getString());
+        assertEquals(diamondRec, pd.records.get(diamond));
+        assertEquals(ironRec, pd.records.get(iron));
+        assertEquals(PLAYER_A, data.worldFirstOrNull(diamond).playerUuid());
+
+        // Snapshot is consumed after a successful undo
+        MilestoneService.ActionResult second = MilestoneService.undo(data, PLAYER_A, null, store, t0 + 200L);
+        assertFalse(second.success());
+        assertEquals("Nothing to undo. Only your last reset or bulk removal within the past 10 minutes can be undone.",
+                second.message().getString());
+    }
+
+    @Test
+    void undoRestoresResetAllWithCompletedPresetsProgressNotifiedAndReRecordConflict() {
+        MilestoneData data = new MilestoneData();
+        UndoLogic.Store<TargetKey, MilestoneRecord> store = new UndoLogic.Store<>();
+        TargetKey diamond = TargetKey.of("minecraft:diamond");
+        TargetKey iron = TargetKey.of("minecraft:iron_ingot");
+        TargetKey emerald100 = TargetKey.of("minecraft:emerald", 100);
+        TargetKey gold100 = TargetKey.of("minecraft:gold_ingot", 100);
+
+        MilestoneRecord oldDiamond = new MilestoneRecord(100, 1L, 1_000L);
+        MilestoneRecord oldIron = new MilestoneRecord(500, 2L, 2_000L);
+        MilestoneData.PlayerData pd = data.player(PLAYER_A);
+        pd.records.put(diamond, oldDiamond);
+        pd.records.put(iron, oldIron);
+        pd.progressNotified.put(emerald100, 50);
+        pd.progressNotified.put(gold100, 90);
+        pd.completedPresets.add("vanilla_endgame");
+
+        long t0 = 5_000L;
+        MilestoneService.ActionResult resetAll = MilestoneService.resetAllRecords(data, PLAYER_A, null, store, t0);
+        assertTrue(resetAll.success());
+        assertTrue(resetAll.undoable());
+        assertTrue(pd.records.isEmpty());
+        assertTrue(pd.completedPresets.isEmpty());
+        assertTrue(pd.progressNotified.isEmpty());
+
+        // Before undo: diamond re-recorded later (300 > 100), iron re-recorded earlier (200 < 500),
+        // and new progressNotified entries appeared for gold100 and diamond
+        MilestoneRecord newDiamond = new MilestoneRecord(300, 3L, 3_000L);
+        MilestoneRecord newIron = new MilestoneRecord(200, 3L, 3_000L);
+        pd.records.put(diamond, newDiamond);
+        pd.records.put(iron, newIron);
+        pd.progressNotified.put(gold100, 10);
+        pd.progressNotified.put(diamond, 50);
+
+        MilestoneService.ActionResult undone = MilestoneService.undo(data, PLAYER_A, null, store, t0 + 1_000L);
+        assertTrue(undone.success());
+        assertEquals("Restored 1 record(s) from your last reset.", undone.message().getString());
+        assertEquals(oldDiamond, pd.records.get(diamond));
+        assertEquals(newIron, pd.records.get(iron));
+        assertEquals(Set.of("vanilla_endgame"), pd.completedPresets);
+        assertEquals(50, pd.progressNotified.get(emerald100));
+        assertEquals(10, pd.progressNotified.get(gold100));
+        assertFalse(pd.progressNotified.containsKey(diamond));
+    }
+
+    @Test
+    void undoPreservesSnapshotOnEmptyOrFailedResetOverwritesOnNextResetAndRespectsExpiryAndClear() {
+        MilestoneData data = new MilestoneData();
+        UndoLogic.Store<TargetKey, MilestoneRecord> store = new UndoLogic.Store<>();
+        Set<String> knownItems = Set.of("minecraft:diamond", "minecraft:iron_ingot");
+        TargetKey diamond = TargetKey.of("minecraft:diamond");
+        TargetKey iron = TargetKey.of("minecraft:iron_ingot");
+        MilestoneRecord diamondRec = new MilestoneRecord(100, 1L, 1_000L);
+        MilestoneRecord ironRec = new MilestoneRecord(200, 2L, 2_000L);
+
+        MilestoneData.PlayerData pd = data.player(PLAYER_A);
+        pd.records.put(diamond, diamondRec);
+        long t0 = 1_000L;
+
+        MilestoneService.ActionResult resetDiamond = MilestoneService.resetRecord(
+                data, PLAYER_A, null, "minecraft:diamond", 1, knownItems::contains, LITERAL_NAME, store, t0);
+        assertTrue(resetDiamond.success());
+        assertTrue(resetDiamond.undoable());
+
+        // Failed reset and 0-record resetall do not overwrite the stored snapshot
+        MilestoneService.ActionResult failedReset = MilestoneService.resetRecord(
+                data, PLAYER_A, null, "minecraft:iron_ingot", 1, knownItems::contains, LITERAL_NAME, store, t0 + 10L);
+        assertFalse(failedReset.success());
+        assertFalse(failedReset.undoable());
+        MilestoneService.ActionResult emptyResetAll = MilestoneService.resetAllRecords(data, PLAYER_A, null, store, t0 + 20L);
+        assertTrue(emptyResetAll.success());
+        assertFalse(emptyResetAll.undoable());
+
+        // Undo still restores diamond from the first reset
+        assertTrue(MilestoneService.undo(data, PLAYER_A, null, store, t0 + 30L).success());
+        assertEquals(diamondRec, pd.records.get(diamond));
+
+        // 1-step only: a second non-empty reset replaces the first snapshot
+        pd.records.put(iron, ironRec);
+        assertTrue(MilestoneService.resetRecord(
+                data, PLAYER_A, null, "minecraft:diamond", 1, knownItems::contains, LITERAL_NAME, store, t0 + 100L).undoable());
+        assertTrue(MilestoneService.resetRecord(
+                data, PLAYER_A, null, "minecraft:iron_ingot", 1, knownItems::contains, LITERAL_NAME, store, t0 + 200L).undoable());
+        assertTrue(MilestoneService.undo(data, PLAYER_A, null, store, t0 + 300L).success());
+        assertFalse(pd.records.containsKey(diamond));
+        assertEquals(ironRec, pd.records.get(iron));
+
+        // Expiry after 10 minutes
+        assertTrue(MilestoneService.resetRecord(
+                data, PLAYER_A, null, "minecraft:iron_ingot", 1, knownItems::contains, LITERAL_NAME, store, t0 + 400L).undoable());
+        assertFalse(MilestoneService.undo(
+                data, PLAYER_A, null, store, t0 + 400L + UndoLogic.VALIDITY_NANOS + 1L).success());
+
+        // Server stop clears all in-memory snapshots
+        pd.records.put(iron, ironRec);
+        assertTrue(MilestoneService.resetRecord(
+                data, PLAYER_A, null, "minecraft:iron_ingot", 1, knownItems::contains, LITERAL_NAME, store, t0 + 500L).undoable());
+        store.clear();
+        assertFalse(MilestoneService.undo(data, PLAYER_A, null, store, t0 + 501L).success());
+    }
+
+    @Test
+    void undoBulkRemovalRestoresTargetsRespectsLimitAndRendersJapaneseMessages() {
+        MilestoneData data = new MilestoneData();
+        UndoLogic.Store<TargetKey, MilestoneRecord> store = new UndoLogic.Store<>();
+        MilestoneData.PlayerData pd = data.player(PLAYER_A);
+
+        TargetKey alreadyPresent = TargetKey.of("minecraft:diamond");
+        TargetKey fits = TargetKey.of("minecraft:emerald");
+        TargetKey overLimit = TargetKey.of("minecraft:gold_ingot");
+        pd.targets.add(alreadyPresent);
+        for (int i = 0; i < MilestoneService.MAX_PERSONAL_TARGETS - 2; i++) {
+            pd.targets.add(TargetKey.of("minecraft:filler_" + i));
+        }
+
+        long t0 = 2_000L;
+        assertTrue(store.offer(PLAYER_A, UndoLogic.Snapshot.bulkRemoval(
+                List.of(alreadyPresent, fits, overLimit), Map.of(fits, 50), t0)));
+
+        MilestoneService.ActionResult undone = MilestoneService.undo(data, PLAYER_A, null, store, t0 + 50L);
+        assertTrue(undone.success());
+        assertEquals("Restored 1 target(s) from your last bulk removal.\n"
+                        + "1 more target(s) were skipped because your target list is full.",
+                undone.message().getString());
+        assertTrue(pd.targets.contains(fits));
+        assertFalse(pd.targets.contains(overLimit));
+        assertEquals(MilestoneService.MAX_PERSONAL_TARGETS, pd.targets.size());
+        assertEquals(50, pd.progressNotified.get(fits));
+
+        // Verify all F23 Japanese translations match the spec
+        assertEquals("直前のリセットから記録を 3 件戻しました。",
+                ServerLang.trForLang("ja_jp", "message.itemmilestonelog.undo_done", 3).getString());
+        assertEquals("直前の一括削除から目標を 2 件戻しました。",
+                ServerLang.trForLang("ja_jp", "message.itemmilestonelog.undo_done_targets", 2).getString());
+        assertEquals("10 分以内なら /milestonelog undo で元に戻せます。",
+                ServerLang.trForLang("ja_jp", "message.itemmilestonelog.undo_hint").getString());
+        assertEquals("取り消せるものがありません。取り消せるのは、10 分以内の直前のリセットか一括削除だけです。",
+                ServerLang.trForLang("ja_jp", "message.itemmilestonelog.undo_nothing").getString());
+    }
+
+    // ---- F28: presetremove / removeall ----
+
+    @Test
+    void removePresetTargetsMatchesNormalizedAndNonexistentKeysCleansProgressAndKeepsRecords(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("mixed_pack.json"), """
+                {
+                  "name": "Mixed Pack",
+                  "items": [
+                    "diamond",
+                    {"item": "minecraft:diamond", "count": 64},
+                    "missingmod:absent_item",
+                    {"item": "missingmod:absent_item", "count": 16}
+                  ]
+                }
+                """);
+        assertEquals(1, Presets.reloadFrom(dir));
+
+        MilestoneData data = new MilestoneData();
+        UndoLogic.Store<TargetKey, MilestoneRecord> store = new UndoLogic.Store<>();
+
+        // Disabled by config: rejects with feature_disabled, does not create PlayerData or store snapshot
+        MilestoneService.ActionResult disabled = MilestoneService.removePresetTargets(
+                data, PLAYER_A, null, "mixed_pack", false, store, 100L);
+        assertFalse(disabled.success());
+        assertFalse(disabled.undoable());
+        assertEquals("This feature is disabled on this server.", disabled.message().getString());
+        assertNull(data.playerOrNull(PLAYER_A));
+
+        // Unknown preset: rejects with preset_unknown
+        MilestoneService.ActionResult unknown = MilestoneService.removePresetTargets(
+                data, PLAYER_A, null, "no_such_preset", true, store, 200L);
+        assertFalse(unknown.success());
+        assertFalse(unknown.undoable());
+        assertTrue(unknown.message().getString().contains("Unknown preset 'no_such_preset'"));
+
+        // Player with no data: succeeds with 0 removed, does not create PlayerData, not undoable
+        MilestoneService.ActionResult noData = MilestoneService.removePresetTargets(
+                data, PLAYER_A, null, "mixed_pack", true, store, 300L);
+        assertTrue(noData.success());
+        assertFalse(noData.undoable());
+        assertEquals("Preset 'mixed_pack': stopped tracking 0 target(s). Records were kept.", noData.message().getString());
+        assertNull(data.playerOrNull(PLAYER_A));
+
+        TargetKey diamond = TargetKey.of("minecraft:diamond");
+        TargetKey diamond64 = TargetKey.of("minecraft:diamond", 64);
+        TargetKey diamond10 = TargetKey.of("minecraft:diamond", 10);
+        TargetKey absent = TargetKey.of("missingmod:absent_item");
+        TargetKey absent16 = TargetKey.of("missingmod:absent_item", 16);
+        TargetKey emerald = TargetKey.of("minecraft:emerald");
+        TargetKey defaultKey = TargetKey.of("minecraft:iron_ingot", 100);
+        MilestoneRecord diamondRec = new MilestoneRecord(100, 1L, 1_000L);
+        MilestoneRecord absent16Rec = new MilestoneRecord(200, 2L, 2_000L);
+
+        MilestoneData.PlayerData pd = data.player(PLAYER_A);
+        pd.targets.add(diamond);
+        pd.targets.add(diamond64);
+        pd.targets.add(diamond10);
+        pd.targets.add(absent);
+        pd.targets.add(absent16);
+        pd.targets.add(emerald);
+        pd.records.put(diamond, diamondRec);
+        pd.records.put(absent16, absent16Rec);
+        pd.progressNotified.put(diamond64, 50);
+        pd.progressNotified.put(absent16, 90);
+        pd.progressNotified.put(diamond10, 50);
+        pd.progressNotified.put(defaultKey, 50);
+        pd.completedPresets.add("vanilla_endgame");
+        data.recordWorldFirstIfAbsent(diamond, PLAYER_A, "Alice", diamondRec);
+
+        long t0 = 1_000L;
+        MilestoneService.ActionResult removed = MilestoneService.removePresetTargets(
+                data, PLAYER_A, null, "mixed_pack", true, store, t0);
+        assertTrue(removed.success());
+        assertTrue(removed.undoable());
+        assertEquals("Preset 'mixed_pack': stopped tracking 4 target(s). Records were kept.", removed.message().getString());
+
+        // Matching keys (including nonexistent-item keys) removed; non-matching count and other targets kept
+        assertEquals(Set.of(diamond10, emerald), pd.targets);
+        // §1.1: progressNotified cleaned for removed keys only; other personal and default target entries kept
+        assertFalse(pd.progressNotified.containsKey(diamond64));
+        assertFalse(pd.progressNotified.containsKey(absent16));
+        assertEquals(50, pd.progressNotified.get(diamond10));
+        assertEquals(50, pd.progressNotified.get(defaultKey));
+        // Records, completedPresets, and world firsts untouched
+        assertEquals(diamondRec, pd.records.get(diamond));
+        assertEquals(absent16Rec, pd.records.get(absent16));
+        assertEquals(Set.of("vanilla_endgame"), pd.completedPresets);
+        assertEquals(PLAYER_A, data.worldFirstOrNull(diamond).playerUuid());
+
+        // Undo restores all 4 targets (including nonexistent-item keys) and restores progressNotified only for unrecorded keys
+        MilestoneService.ActionResult undone = MilestoneService.undo(data, PLAYER_A, null, store, t0 + 100L);
+        assertTrue(undone.success());
+        assertEquals("Restored 4 target(s) from your last bulk removal.", undone.message().getString());
+        assertEquals(Set.of(diamond, diamond64, diamond10, absent, absent16, emerald), pd.targets);
+        assertEquals(50, pd.progressNotified.get(diamond64));
+        assertFalse(pd.progressNotified.containsKey(absent16), "already-recorded key must not regain progressNotified");
+
+        // Normalization check with un-namespaced preset entries and legacy un-namespaced personal target
+        TargetKey legacyIron = TargetKey.of("iron_ingot", 32);
+        pd.targets.add(legacyIron);
+        pd.progressNotified.put(legacyIron, 50);
+        Presets.PresetDefinition rawPreset = new Presets.PresetDefinition(
+                "raw_test", "Raw", List.of(TargetKey.of("diamond"), TargetKey.of("minecraft:iron_ingot", 32), TargetKey.of("minecraft:air")), false);
+        MilestoneService.ActionResult rawRemoved = MilestoneService.removePresetTargets(
+                data, PLAYER_A, null, rawPreset, store, t0 + 200L);
+        assertTrue(rawRemoved.success());
+        assertTrue(rawRemoved.undoable());
+        assertEquals("Preset 'raw_test': stopped tracking 2 target(s). Records were kept.", rawRemoved.message().getString());
+        assertFalse(pd.targets.contains(diamond));
+        assertFalse(pd.targets.contains(legacyIron));
+        assertFalse(pd.progressNotified.containsKey(legacyIron));
+
+        // Japanese translation matches the spec verbatim
+        assertEquals("プリセット 'mixed_pack' の目標を 4 件外しました。記録は残っています。",
+                ServerLang.trForLang("ja_jp", "message.itemmilestonelog.presetremove_done", "mixed_pack", 4).getString());
+    }
+
+    @Test
+    void removeAllTargetsRemovesAllPersonalTargetsCleansProgressAndKeepsRecordsAndWorldFirsts() {
+        MilestoneData data = new MilestoneData();
+        UndoLogic.Store<TargetKey, MilestoneRecord> store = new UndoLogic.Store<>();
+
+        // Missing PlayerData: succeeds with 0, not undoable, never creates PlayerData
+        MilestoneService.ActionResult emptyMissing = MilestoneService.removeAllTargets(data, PLAYER_A, null, store, 100L);
+        assertTrue(emptyMissing.success());
+        assertFalse(emptyMissing.undoable());
+        assertEquals("Stopped tracking 0 personal target(s). Records and default targets were kept.",
+                emptyMissing.message().getString());
+        assertNull(data.playerOrNull(PLAYER_A));
+
+        TargetKey diamond = TargetKey.of("minecraft:diamond");
+        TargetKey diamond64 = TargetKey.of("minecraft:diamond", 64);
+        TargetKey relic5 = TargetKey.of("missingmod:relic", 5);
+        TargetKey defaultKey = TargetKey.of("minecraft:iron_ingot", 100);
+        MilestoneRecord diamondRec = new MilestoneRecord(150, 1L, 1_500L);
+
+        MilestoneData.PlayerData pd = data.player(PLAYER_A);
+        pd.targets.add(diamond);
+        pd.targets.add(diamond64);
+        pd.targets.add(relic5);
+        pd.records.put(diamond, diamondRec);
+        pd.progressNotified.put(diamond64, 50);
+        pd.progressNotified.put(relic5, 90);
+        pd.progressNotified.put(defaultKey, 50);
+        pd.completedPresets.add("vanilla_endgame");
+        pd.muteProgressAlerts = true;
+        data.recordWorldFirstIfAbsent(diamond, PLAYER_A, "Alice", diamondRec);
+
+        long t0 = 5_000L;
+        MilestoneService.ActionResult result = MilestoneService.removeAllTargets(data, PLAYER_A, null, store, t0);
+        assertTrue(result.success());
+        assertTrue(result.undoable());
+        assertEquals("Stopped tracking 3 personal target(s). Records and default targets were kept.",
+                result.message().getString());
+        assertTrue(pd.targets.isEmpty());
+        // Removed keys' progressNotified are cleaned; non-personal default target entry stays intact
+        assertFalse(pd.progressNotified.containsKey(diamond64));
+        assertFalse(pd.progressNotified.containsKey(relic5));
+        assertEquals(50, pd.progressNotified.get(defaultKey));
+        // Records, completedPresets, world firsts, and personal settings are untouched
+        assertEquals(diamondRec, pd.records.get(diamond));
+        assertEquals(Set.of("vanilla_endgame"), pd.completedPresets);
+        assertTrue(pd.muteProgressAlerts);
+        assertEquals(PLAYER_A, data.worldFirstOrNull(diamond).playerUuid());
+
+        // Undo restores all personal targets and their progressNotified entries
+        MilestoneService.ActionResult undone = MilestoneService.undo(data, PLAYER_A, null, store, t0 + 50L);
+        assertTrue(undone.success());
+        assertEquals("Restored 3 target(s) from your last bulk removal.", undone.message().getString());
+        assertEquals(Set.of(diamond, diamond64, relic5), pd.targets);
+        assertEquals(50, pd.progressNotified.get(diamond64));
+        assertEquals(90, pd.progressNotified.get(relic5));
+        assertEquals(50, pd.progressNotified.get(defaultKey));
+
+        // Japanese translation matches the spec verbatim
+        assertEquals("個人の目標を 3 件外しました。記録とデフォルト目標は残っています。",
+                ServerLang.trForLang("ja_jp", "message.itemmilestonelog.removeall_done", 3).getString());
+    }
+
+    @Test
+    void bulkRemovalZeroCountPreservesPreviousUndoSnapshotAndUndoHandlesDuplicatesAndCapOverflow(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("small.json"), """
+                {
+                  "name": "Small",
+                  "items": ["minecraft:coal"]
+                }
+                """);
+        assertEquals(1, Presets.reloadFrom(dir));
+
+        MilestoneData data = new MilestoneData();
+        UndoLogic.Store<TargetKey, MilestoneRecord> store = new UndoLogic.Store<>();
+        Set<String> knownItems = Set.of("minecraft:diamond");
+        TargetKey diamond = TargetKey.of("minecraft:diamond");
+        TargetKey emerald = TargetKey.of("minecraft:emerald");
+        TargetKey gold = TargetKey.of("minecraft:gold_ingot");
+        TargetKey star = TargetKey.of("minecraft:nether_star");
+        MilestoneRecord diamondRec = new MilestoneRecord(100, 1L, 1_000L);
+
+        MilestoneData.PlayerData pd = data.player(PLAYER_A);
+        pd.records.put(diamond, diamondRec);
+
+        long t0 = 10_000L;
+        assertTrue(MilestoneService.resetRecord(
+                data, PLAYER_A, null, "minecraft:diamond", 1, knownItems::contains, LITERAL_NAME, store, t0).undoable());
+
+        // 0-removal presetremove and 0-removal removeall must NOT overwrite the previous reset snapshot
+        MilestoneService.ActionResult zeroPreset = MilestoneService.removePresetTargets(
+                data, PLAYER_A, null, "small", true, store, t0 + 10L);
+        assertTrue(zeroPreset.success());
+        assertFalse(zeroPreset.undoable());
+        MilestoneService.ActionResult zeroAll = MilestoneService.removeAllTargets(data, PLAYER_A, null, store, t0 + 20L);
+        assertTrue(zeroAll.success());
+        assertFalse(zeroAll.undoable());
+
+        // Undo still restores the earlier record reset
+        MilestoneService.ActionResult restoredReset = MilestoneService.undo(data, PLAYER_A, null, store, t0 + 30L);
+        assertTrue(restoredReset.success());
+        assertEquals("Restored 1 record(s) from your last reset.", restoredReset.message().getString());
+        assertEquals(diamondRec, pd.records.get(diamond));
+
+        // End-to-end removeall -> re-add duplicate + fill near 1024 cap -> undo
+        pd.targets.add(diamond);
+        pd.targets.add(emerald);
+        pd.targets.add(gold);
+        pd.targets.add(star);
+        pd.progressNotified.put(TargetKey.of("minecraft:emerald"), 50);
+
+        MilestoneService.ActionResult bulk = MilestoneService.removeAllTargets(data, PLAYER_A, null, store, t0 + 100L);
+        assertTrue(bulk.success());
+        assertTrue(bulk.undoable());
+        assertTrue(pd.targets.isEmpty());
+
+        // Re-add diamond (duplicate) and fill to MAX_PERSONAL_TARGETS - 1 (only 1 free slot left)
+        pd.targets.add(diamond);
+        for (int i = 0; i < MilestoneService.MAX_PERSONAL_TARGETS - 2; i++) {
+            pd.targets.add(TargetKey.of("minecraft:filler_" + i));
+        }
+        assertEquals(MilestoneService.MAX_PERSONAL_TARGETS - 1, pd.targets.size());
+
+        MilestoneService.ActionResult undone = MilestoneService.undo(data, PLAYER_A, null, store, t0 + 150L);
+        assertTrue(undone.success());
+        assertEquals("Restored 1 target(s) from your last bulk removal.\n"
+                        + "2 more target(s) were skipped because your target list is full.",
+                undone.message().getString());
+        assertEquals(MilestoneService.MAX_PERSONAL_TARGETS, pd.targets.size());
+        assertTrue(pd.targets.contains(diamond));
+        assertTrue(pd.targets.contains(emerald));
+        assertFalse(pd.targets.contains(gold));
+        assertFalse(pd.targets.contains(star));
+        assertEquals(50, pd.progressNotified.get(emerald));
+    }
+
+    // ---- F33: admin add / remove / preset ----
+
+    @Test
+    void adminAddTargetMatchesPlayerValidationCapMessagesAndSkipsUndo() {
+        MilestoneData data = new MilestoneData();
+        Set<String> knownItems = Set.of("minecraft:diamond", "minecraft:iron_ingot");
+        MilestoneService.UNDO_SNAPSHOTS.clear();
+
+        // Validation parity with player addTarget: invalid count / unknown / air never create PlayerData
+        assertFalse(MilestoneService.adminAddTarget(
+                data, PLAYER_A, "Alice", null, "minecraft:diamond", 0, knownItems::contains, LITERAL_NAME).success());
+        assertFalse(MilestoneService.adminAddTarget(
+                data, PLAYER_A, "Alice", null, "minecraft:diamond", TargetKey.MAX_COUNT + 1, knownItems::contains, LITERAL_NAME).success());
+        assertFalse(MilestoneService.adminAddTarget(
+                data, PLAYER_A, "Alice", null, "minecraft:air", 1, knownItems::contains, LITERAL_NAME).success());
+        assertFalse(MilestoneService.adminAddTarget(
+                data, PLAYER_A, "Alice", null, "minecraft:unknown", 1, knownItems::contains, LITERAL_NAME).success());
+        assertNull(data.playerOrNull(PLAYER_A));
+
+        // Normalization & literal player name safety (%s in player name is not interpreted as format)
+        MilestoneService.ActionResult added = MilestoneService.adminAddTarget(
+                data, PLAYER_A, "Alice%s", null, "diamond", 1, knownItems::contains, LITERAL_NAME);
+        assertTrue(added.success());
+        assertFalse(added.undoable());
+        assertEquals("Alice%s now tracks minecraft:diamond.", added.message().getString());
+        assertTrue(data.playerOrNull(PLAYER_A).targets.contains(TargetKey.of("minecraft:diamond")));
+        assertTrue(data.isDirty());
+
+        // Duplicate rejected with admin_already_target
+        MilestoneService.ActionResult dup = MilestoneService.adminAddTarget(
+                data, PLAYER_A, "Alice%s", null, "minecraft:diamond", 1, knownItems::contains, LITERAL_NAME);
+        assertFalse(dup.success());
+        assertEquals("Alice%s already tracks minecraft:diamond.", dup.message().getString());
+
+        // Quantity target allowed
+        MilestoneService.ActionResult qty = MilestoneService.adminAddTarget(
+                data, PLAYER_A, "Alice", null, "minecraft:diamond", 64, knownItems::contains, LITERAL_NAME);
+        assertTrue(qty.success());
+        assertEquals("Alice now tracks minecraft:diamond ×64.", qty.message().getString());
+        assertTrue(data.playerOrNull(PLAYER_A).targets.contains(TargetKey.of("minecraft:diamond", 64)));
+
+        // Cap parity (1024)
+        MilestoneData.PlayerData pd = data.player(PLAYER_A);
+        for (int i = pd.targets.size(); i < MilestoneService.MAX_PERSONAL_TARGETS; i++) {
+            pd.targets.add(TargetKey.of("minecraft:filler_" + i));
+        }
+        MilestoneService.ActionResult capped = MilestoneService.adminAddTarget(
+                data, PLAYER_A, "Alice", null, "minecraft:iron_ingot", 1, knownItems::contains, LITERAL_NAME);
+        assertFalse(capped.success());
+        assertEquals("Personal target limit reached (1024).", capped.message().getString());
+        assertFalse(pd.targets.contains(TargetKey.of("minecraft:iron_ingot")));
+        assertNull(MilestoneService.UNDO_SNAPSHOTS.peekValid(PLAYER_A, System.nanoTime()));
+
+        // Verify Japanese messages match spec verbatim
+        assertEquals("Alice の目標に minecraft:diamond を追加しました。",
+                ServerLang.trForLang("ja_jp", "message.itemmilestonelog.admin_added",
+                        Component.literal("Alice"), Component.literal("minecraft:diamond")).getString());
+        assertEquals("Alice はすでに minecraft:diamond を目標にしています。",
+                ServerLang.trForLang("ja_jp", "message.itemmilestonelog.admin_already_target",
+                        Component.literal("Alice"), Component.literal("minecraft:diamond")).getString());
+    }
+
+    @Test
+    void adminRemoveTargetMatchesPlayerValidationCleanupMessagesAndSkipsUndo() {
+        MilestoneData data = new MilestoneData();
+        Set<String> knownItems = Set.of("minecraft:diamond");
+        MilestoneService.UNDO_SNAPSHOTS.clear();
+
+        // Invalid count / syntax / missing data parity
+        assertFalse(MilestoneService.adminRemoveTarget(
+                data, PLAYER_A, "Alice", null, "minecraft:diamond", 0, knownItems::contains, LITERAL_NAME).success());
+        assertFalse(MilestoneService.adminRemoveTarget(
+                data, PLAYER_A, "Alice", null, "bad item", 1, knownItems::contains, LITERAL_NAME).success());
+        MilestoneService.ActionResult unknownMissing = MilestoneService.adminRemoveTarget(
+                data, PLAYER_A, "Alice", null, "othermod:missing", 1, knownItems::contains, LITERAL_NAME);
+        assertFalse(unknownMissing.success());
+        assertTrue(unknownMissing.message().getString().contains("Invalid or unknown item ID"));
+        MilestoneService.ActionResult knownMissing = MilestoneService.adminRemoveTarget(
+                data, PLAYER_A, "Alice%s", null, "minecraft:diamond", 1, knownItems::contains, LITERAL_NAME);
+        assertFalse(knownMissing.success());
+        assertEquals("Alice%s does not track minecraft:diamond as a personal target.", knownMissing.message().getString());
+        assertNull(data.playerOrNull(PLAYER_A));
+
+        // Removes uninstalled-mod item and cleans progressNotified (§1.1) while keeping records and completedPresets
+        TargetKey diamond100 = TargetKey.of("minecraft:diamond", 100);
+        TargetKey relic5 = TargetKey.of("uninstalled:relic", 5);
+        MilestoneRecord rec = new MilestoneRecord(300, 1L, 1_000L);
+        MilestoneData.PlayerData pd = data.player(PLAYER_A);
+        pd.targets.add(diamond100);
+        pd.targets.add(relic5);
+        pd.records.put(diamond100, rec);
+        pd.progressNotified.put(diamond100, 50);
+        pd.progressNotified.put(relic5, 90);
+        pd.completedPresets.add("vanilla_endgame");
+
+        MilestoneService.ActionResult removedMod = MilestoneService.adminRemoveTarget(
+                data, PLAYER_A, "Alice", null, "uninstalled:relic", 5, knownItems::contains, LITERAL_NAME);
+        assertTrue(removedMod.success());
+        assertFalse(removedMod.undoable());
+        assertEquals("Alice no longer tracks uninstalled:relic ×5.", removedMod.message().getString());
+        assertFalse(pd.targets.contains(relic5));
+        assertFalse(pd.progressNotified.containsKey(relic5));
+        assertEquals(50, pd.progressNotified.get(diamond100));
+
+        // Normalized un-namespaced removal cleans progressNotified and keeps records/completedPresets
+        MilestoneService.ActionResult removedDiamond = MilestoneService.adminRemoveTarget(
+                data, PLAYER_A, "Alice", null, "diamond", 100, knownItems::contains, LITERAL_NAME);
+        assertTrue(removedDiamond.success());
+        assertFalse(removedDiamond.undoable());
+        assertEquals("Alice no longer tracks minecraft:diamond ×100.", removedDiamond.message().getString());
+        assertFalse(pd.targets.contains(diamond100));
+        assertFalse(pd.progressNotified.containsKey(diamond100));
+        assertEquals(rec, pd.records.get(diamond100));
+        assertEquals(Set.of("vanilla_endgame"), pd.completedPresets);
+        assertNull(MilestoneService.UNDO_SNAPSHOTS.peekValid(PLAYER_A, System.nanoTime()));
+
+        // Verify Japanese messages match spec verbatim
+        assertEquals("Alice の目標から minecraft:diamond を外しました。",
+                ServerLang.trForLang("ja_jp", "message.itemmilestonelog.admin_removed",
+                        Component.literal("Alice"), Component.literal("minecraft:diamond")).getString());
+        assertEquals("Alice の個人の目標に minecraft:diamond はありません。",
+                ServerLang.trForLang("ja_jp", "message.itemmilestonelog.admin_not_target",
+                        Component.literal("Alice"), Component.literal("minecraft:diamond")).getString());
+    }
+
+    @Test
+    void adminApplyPresetMatchesPlayerValidationCapDisabledFlagAndMessages(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("mixed_pack.json"), """
+                {
+                  "name": "Mixed Pack",
+                  "items": [
+                    "minecraft:diamond",
+                    {"item": "minecraft:diamond", "count": 64},
+                    "minecraft:iron_ingot",
+                    "missingmod:absent_item",
+                    "minecraft:emerald"
+                  ]
+                }
+                """);
+        assertEquals(1, Presets.reloadFrom(dir));
+
+        MilestoneData data = new MilestoneData();
+        Set<String> knownItems = Set.of("minecraft:diamond", "minecraft:iron_ingot", "minecraft:emerald");
+
+        // presetsEnabled == false -> T feature_disabled message, no PlayerData created
+        MilestoneService.ActionResult disabled = MilestoneService.adminApplyPreset(
+                data, PLAYER_A, "Alice", null, "mixed_pack", knownItems::contains, false);
+        assertFalse(disabled.success());
+        assertEquals("This feature is disabled on this server.", disabled.message().getString());
+        assertNull(data.playerOrNull(PLAYER_A));
+
+        // Unknown preset -> preset_unknown
+        MilestoneService.ActionResult unknown = MilestoneService.adminApplyPreset(
+                data, PLAYER_A, "Alice", null, "no_such_preset", knownItems::contains, true);
+        assertFalse(unknown.success());
+        assertTrue(unknown.message().getString().contains("Unknown preset 'no_such_preset'"));
+
+        // Pre-track diamond so it is skipped as a duplicate
+        MilestoneData.PlayerData pd = data.player(PLAYER_A);
+        pd.targets.add(TargetKey.of("minecraft:diamond"));
+
+        MilestoneService.ActionResult applied = MilestoneService.adminApplyPreset(
+                data, PLAYER_A, "Alice%s", null, "mixed_pack", knownItems::contains, true);
+        assertTrue(applied.success());
+        assertFalse(applied.undoable());
+        assertEquals(
+                "Preset 'mixed_pack' applied to Alice%s: 3 targets added, 1 skipped (item not present in this pack).",
+                applied.message().getString());
+        assertEquals(Set.of(
+                TargetKey.of("minecraft:diamond"),
+                TargetKey.of("minecraft:diamond", 64),
+                TargetKey.of("minecraft:iron_ingot"),
+                TargetKey.of("minecraft:emerald")
+        ), pd.targets);
+
+        // Near cap (1 slot left): adds 1, skips 1 missing, appends preset_applied_limit for 3 capped
+        MilestoneData limitedData = new MilestoneData();
+        MilestoneData.PlayerData limitedPd = limitedData.player(PLAYER_A);
+        for (int i = 0; i < MilestoneService.MAX_PERSONAL_TARGETS - 1; i++) {
+            limitedPd.targets.add(TargetKey.of("minecraft:filler_" + i));
+        }
+        MilestoneService.ActionResult capped = MilestoneService.adminApplyPreset(
+                limitedData, PLAYER_A, "Bob", null, "mixed_pack", knownItems::contains, true);
+        assertTrue(capped.success());
+        assertEquals(MilestoneService.MAX_PERSONAL_TARGETS, limitedPd.targets.size());
+        assertEquals(
+                "Preset 'mixed_pack' applied to Bob: 1 targets added, 1 skipped (item not present in this pack).\n"
+                        + "3 more target(s) were skipped because your target list is full.",
+                capped.message().getString());
+
+        // Verify Japanese translation matches spec verbatim
+        assertEquals("プリセット 'mixed_pack' を Alice に適用: 3件追加、1件スキップ（このパックに存在しないアイテム）",
+                ServerLang.trForLang("ja_jp", "message.itemmilestonelog.admin_preset_applied",
+                        "mixed_pack", Component.literal("Alice"), 3, 1).getString());
+    }
+
+    // ---- F40: firstJoinPresets ----
+
+    @Test
+    void applyFirstJoinPresetsAppliesInOrderSkipsUnknownMissingDuplicatesAndCapsAtLimit(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("starter_a.json"), """
+                {
+                  "name": "Starter A",
+                  "items": [
+                    "diamond",
+                    {"item": "minecraft:diamond", "count": 64},
+                    "missingmod:absent_item"
+                  ]
+                }
+                """);
+        Files.writeString(dir.resolve("starter_b.json"), """
+                {
+                  "name": "Starter B",
+                  "items": [
+                    "minecraft:diamond",
+                    "minecraft:iron_ingot",
+                    "minecraft:emerald"
+                  ]
+                }
+                """);
+
+        // Build two large presets whose combined items exceed MAX_PERSONAL_TARGETS (1024)
+        StringBuilder large1 = new StringBuilder("{\"name\":\"Large 1\",\"items\":[");
+        StringBuilder large2 = new StringBuilder("{\"name\":\"Large 2\",\"items\":[");
+        Set<String> allLargeKnown = new HashSet<>();
+        for (int i = 0; i < 700; i++) {
+            if (i > 0) {
+                large1.append(',');
+            }
+            String id = "minecraft:item_" + i;
+            allLargeKnown.add(id);
+            large1.append('"').append(id).append('"');
+        }
+        large1.append("]}");
+        for (int i = 0; i < 500; i++) {
+            if (i > 0) {
+                large2.append(',');
+            }
+            String id = "minecraft:extra_" + i;
+            allLargeKnown.add(id);
+            large2.append('"').append(id).append('"');
+        }
+        large2.append("]}");
+        Files.writeString(dir.resolve("large_1.json"), large1.toString());
+        Files.writeString(dir.resolve("large_2.json"), large2.toString());
+        assertEquals(4, Presets.reloadFrom(dir));
+
+        MilestoneService.UNDO_SNAPSHOTS.clear();
+        MilestoneData data = new MilestoneData();
+        Set<String> knownItems = Set.of("minecraft:diamond", "minecraft:iron_ingot", "minecraft:emerald");
+
+        // Unknown preset IDs are skipped silently; valid presets apply in order with normalization & dedup
+        int added = MilestoneService.applyFirstJoinPresets(
+                data, PLAYER_A,
+                List.of("no_such_preset", "starter_a", "another_unknown", "starter_b"),
+                knownItems::contains, true);
+        assertEquals(4, added);
+        MilestoneData.PlayerData pd = data.playerOrNull(PLAYER_A);
+        assertNotNull(pd);
+        assertEquals(List.of(
+                TargetKey.of("minecraft:diamond"),
+                TargetKey.of("minecraft:diamond", 64),
+                TargetKey.of("minecraft:iron_ingot"),
+                TargetKey.of("minecraft:emerald")
+        ), List.copyOf(pd.targets));
+        assertTrue(pd.progressNotified.isEmpty(), "F1 baseline stays unset until first evaluation");
+        assertTrue(data.isDirty());
+        assertNull(MilestoneService.UNDO_SNAPSHOTS.peekValid(PLAYER_A, System.nanoTime()),
+                "firstJoinPresets must not create an F23 undo snapshot");
+
+        // Startup warning helper lists unknown IDs once in config order
+        assertEquals(List.of("no_such_preset", "another_unknown"),
+                MilestoneService.findUnknownFirstJoinPresets(
+                        List.of("no_such_preset", "starter_a", "another_unknown", "no_such_preset", "vanilla_endgame")));
+        assertTrue(MilestoneService.findUnknownFirstJoinPresets(List.of("starter_a", "vanilla_endgame")).isEmpty());
+        assertTrue(MilestoneService.findUnknownFirstJoinPresets(List.of()).isEmpty());
+        assertTrue(MilestoneService.findUnknownFirstJoinPresets(null).isEmpty());
+
+        // Cap behavior: applying large_1 (700) then large_2 (500) caps at MAX_PERSONAL_TARGETS (1024)
+        MilestoneData cappedData = new MilestoneData();
+        int cappedAdded = MilestoneService.applyFirstJoinPresets(
+                cappedData, PLAYER_A, List.of("large_1", "large_2"), allLargeKnown::contains, true);
+        assertEquals(MilestoneService.MAX_PERSONAL_TARGETS, cappedAdded);
+        MilestoneData.PlayerData cappedPd = cappedData.playerOrNull(PLAYER_A);
+        assertNotNull(cappedPd);
+        assertEquals(MilestoneService.MAX_PERSONAL_TARGETS, cappedPd.targets.size());
+        assertTrue(cappedPd.targets.contains(TargetKey.of("minecraft:item_0")));
+        assertTrue(cappedPd.targets.contains(TargetKey.of("minecraft:item_699")));
+        assertTrue(cappedPd.targets.contains(TargetKey.of("minecraft:extra_0")));
+        assertTrue(cappedPd.targets.contains(TargetKey.of("minecraft:extra_323")));
+        assertFalse(cappedPd.targets.contains(TargetKey.of("minecraft:extra_324")));
+    }
+
+    @Test
+    void applyFirstJoinPresetsSkipsExistingPlayerDataDisabledSwitchEmptyAndUnknown(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("all_missing.json"), """
+                {
+                  "name": "All Missing",
+                  "items": ["missingmod:absent_item"]
+                }
+                """);
+        assertEquals(1, Presets.reloadFrom(dir));
+        Set<String> knownItems = Set.of("minecraft:diamond", "minecraft:netherite_ingot");
+
+        // presetsEnabled = false -> does nothing, never creates PlayerData
+        MilestoneData disabledData = new MilestoneData();
+        assertEquals(0, MilestoneService.applyFirstJoinPresets(
+                disabledData, PLAYER_A, List.of("vanilla_endgame"), knownItems::contains, false));
+        assertNull(disabledData.playerOrNull(PLAYER_A));
+
+        // Empty or null preset list -> does nothing, never creates PlayerData
+        MilestoneData emptyData = new MilestoneData();
+        assertEquals(0, MilestoneService.applyFirstJoinPresets(
+                emptyData, PLAYER_A, List.of(), knownItems::contains, true));
+        assertEquals(0, MilestoneService.applyFirstJoinPresets(
+                emptyData, PLAYER_A, null, knownItems::contains, true));
+        assertNull(emptyData.playerOrNull(PLAYER_A));
+
+        // Only unknown preset IDs -> skips silently, never creates PlayerData
+        MilestoneData unknownData = new MilestoneData();
+        assertEquals(0, MilestoneService.applyFirstJoinPresets(
+                unknownData, PLAYER_A, List.of("missing_preset_1", "missing_preset_2"), knownItems::contains, true));
+        assertNull(unknownData.playerOrNull(PLAYER_A));
+
+        // Existing PlayerData (even empty, e.g. pre-F40 player or importall-created) -> does nothing
+        MilestoneData existingData = new MilestoneData();
+        MilestoneData.PlayerData existingPd = existingData.player(PLAYER_A);
+        existingPd.lastKnownName = "Veteran";
+        assertEquals(0, MilestoneService.applyFirstJoinPresets(
+                existingData, PLAYER_A, List.of("vanilla_endgame"), knownItems::contains, true));
+        assertTrue(existingPd.targets.isEmpty());
+
+        // Preset whose items are all absent from the pack adds 0 targets (and does not block a later preset)
+        MilestoneData zeroOnlyData = new MilestoneData();
+        assertEquals(0, MilestoneService.applyFirstJoinPresets(
+                zeroOnlyData, PLAYER_A, List.of("all_missing"), knownItems::contains, true));
+        MilestoneData chainedData = new MilestoneData();
+        assertEquals(2, MilestoneService.applyFirstJoinPresets(
+                chainedData, PLAYER_A, List.of("all_missing", "vanilla_endgame"), knownItems::contains, true));
+        assertEquals(Set.of(TargetKey.of("minecraft:diamond"), TargetKey.of("minecraft:netherite_ingot")),
+                chainedData.playerOrNull(PLAYER_A).targets);
+    }
 }
