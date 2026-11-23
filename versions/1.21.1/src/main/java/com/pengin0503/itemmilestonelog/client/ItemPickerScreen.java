@@ -44,10 +44,14 @@ public final class ItemPickerScreen extends Screen {
     @Nullable
     private static String cachedLanguage;
     private static int cachedRegistrySize = -1;
+    @Nullable
+    private static Object cachedLanguageInstance;
 
     private final MilestoneScreen parent;
     private final List<CatalogItem> allItems;
     private Set<TargetKey> trackedTargets;
+    @Nullable
+    private Component feedbackMessage;
 
     private EditBox searchBox;
     private EditBox countBox;
@@ -72,7 +76,9 @@ public final class ItemPickerScreen extends Screen {
     private static List<CatalogItem> getOrBuildCatalog() {
         String lang = Minecraft.getInstance().getLanguageManager().getSelected();
         int regSize = BuiltInRegistries.ITEM.size();
-        if (cachedCatalog != null && regSize == cachedRegistrySize && lang.equals(cachedLanguage)) {
+        Object langInstance = net.minecraft.locale.Language.getInstance();
+        if (cachedCatalog != null && regSize == cachedRegistrySize
+                && lang.equals(cachedLanguage) && langInstance == cachedLanguageInstance) {
             return cachedCatalog;
         }
         List<CatalogItem> catalog = new ArrayList<>(regSize);
@@ -97,12 +103,22 @@ public final class ItemPickerScreen extends Screen {
         cachedCatalog = catalog;
         cachedLanguage = lang;
         cachedRegistrySize = regSize;
+        cachedLanguageInstance = langInstance;
         return catalog;
     }
 
     public void updateData(SyncMilestonesPayload payload) {
-        this.parent.updateData(payload);
+        this.parent.updateData(payload, false);
         this.trackedTargets = this.parent.getTrackedTargets();
+        if (payload.feedback() != null) {
+            this.feedbackMessage = payload.feedback();
+        }
+    }
+
+    @Override
+    public void tick() {
+        super.tick();
+        this.parent.tickPlaytime();
     }
 
     static int parseCountInput(@Nullable String raw) {
@@ -138,6 +154,11 @@ public final class ItemPickerScreen extends Screen {
 
         int backWidth = 120;
         int backX = (this.width - backWidth) / 2;
+        int availRight = this.width - (backX + backWidth) - 16;
+        int boxWidth = Math.min(COUNT_BOX_WIDTH, Math.max(28, availRight));
+        if (backX + backWidth + 4 > this.width - 12 - boxWidth) {
+            backX = Math.max(8, this.width - 16 - boxWidth - backWidth);
+        }
         addRenderableWidget(Button.builder(
                         CommonComponents.GUI_BACK,
                         btn -> onClose())
@@ -145,7 +166,6 @@ public final class ItemPickerScreen extends Screen {
                 .build());
 
         // Small quantity input box placed in the empty bottom-right space without moving existing widgets.
-        int boxWidth = Math.min(COUNT_BOX_WIDTH, Math.max(36, this.width - (backX + backWidth) - 24));
         this.countBoxX = this.width - 12 - boxWidth;
         this.countBoxY = this.height - 26;
         countBox = addRenderableWidget(new EditBox(
@@ -226,16 +246,25 @@ public final class ItemPickerScreen extends Screen {
         Component countText = matchedCount > displayedCount
                 ? Component.translatable("gui.itemmilestonelog.picker.count_capped", displayedCount, matchedCount)
                 : Component.translatable("gui.itemmilestonelog.picker.count", matchedCount, allItems.size());
-        guiGraphics.drawString(this.font, countText, 12, this.height - 20, 0xB0B0B0, false);
+        int backLeft = Math.min((this.width - 120) / 2, this.countBoxX - 124);
+        if (backLeft - 16 >= this.font.width(countText)) {
+            guiGraphics.drawString(this.font, countText, 12, this.height - 20, 0xB0B0B0, false);
+        }
 
         // Quantity label to the left of the count box (uses short "×" if narrow).
-        int backRight = (this.width + 120) / 2;
+        int backRight = Math.min((this.width + 120) / 2, this.countBoxX - 4);
         Component fullQtyLabel = Component.translatable("gui.itemmilestonelog.picker.quantity");
         int fullWidth = this.font.width(fullQtyLabel);
         if (countBoxX - backRight >= fullWidth + 10) {
             guiGraphics.drawString(this.font, fullQtyLabel, countBoxX - fullWidth - 4, countBoxY + 6, 0xB0B0B0, false);
         } else if (countBoxX - backRight >= this.font.width("×") + 6) {
             guiGraphics.drawString(this.font, "×", countBoxX - this.font.width("×") - 3, countBoxY + 6, 0xB0B0B0, false);
+        }
+
+        if (feedbackMessage != null) {
+            int maxWidth = this.width - 20;
+            String trimmedFeedback = this.font.plainSubstrByWidth(feedbackMessage.getString(), maxWidth);
+            guiGraphics.drawCenteredString(this.font, trimmedFeedback, this.width / 2, this.height - 34, 0xFFE88A);
         }
 
         if (matchedCount == 0 && listWidget != null) {

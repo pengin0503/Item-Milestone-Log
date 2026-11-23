@@ -122,5 +122,6 @@
   "message.itemmilestonelog.target_pending": "… %s — 未取得",
   "message.itemmilestonelog.target_progress": "%s (現在 %s)",
   "message.itemmilestonelog.targets_header": "目標アイテム（%s件）:",
+  "message.itemmilestonelog.targets_limit_reached": "個人目標の登録上限（%s件）に達しています。",
   "message.itemmilestonelog.world_first_recorded": "★ 世界初！%s が %s を %s にワールド初取得しました"
 }

@@ -15,7 +15,7 @@ import net.neoforged.neoforge.client.settings.KeyConflictContext;
 import net.neoforged.neoforge.common.NeoForge;
 
 /**
- * Client-only entrypoint for Item Milestone Log (Minecraft 26.1.2).
+ * Client-only entrypoint for Item Milestone Log (Minecraft 26.2).
  */
 @Mod(value = ItemMilestoneLog.MOD_ID, dist = Dist.CLIENT)
 public final class ItemMilestoneLogClient {

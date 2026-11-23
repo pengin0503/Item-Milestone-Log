@@ -84,53 +84,64 @@ public record SyncMilestonesPayload(
         }
     }
 
+    private static final int MAX_LIST_ENTRIES = 4096;
+    private static final int MAX_STRING_LEN = 256;
+
+    private static int readBoundedCount(RegistryFriendlyByteBuf buf) {
+        int count = buf.readVarInt();
+        if (count < 0 || count > MAX_LIST_ENTRIES) {
+            throw new IllegalArgumentException("Payload entry count out of range: " + count);
+        }
+        return count;
+    }
+
     private static SyncMilestonesPayload decode(RegistryFriendlyByteBuf buf) {
-        int targetCount = buf.readVarInt();
-        List<TargetEntry> targets = new ArrayList<>(targetCount);
+        int targetCount = readBoundedCount(buf);
+        List<TargetEntry> targets = new ArrayList<>(Math.min(targetCount, 256));
         for (int i = 0; i < targetCount; i++) {
-            String itemId = buf.readUtf();
+            String itemId = buf.readUtf(MAX_STRING_LEN);
             int count = buf.readVarInt();
             boolean personal = buf.readBoolean();
             boolean defaultTarget = buf.readBoolean();
-            if (TargetKey.isValidCount(count)) {
+            if (TargetKey.isValidItemId(itemId) && TargetKey.isValidCount(count)) {
                 targets.add(new TargetEntry(itemId, count, personal, defaultTarget));
             }
         }
 
-        int recordCount = buf.readVarInt();
-        Map<TargetKey, MilestoneRecord> records = new LinkedHashMap<>(recordCount);
+        int recordCount = readBoundedCount(buf);
+        Map<TargetKey, MilestoneRecord> records = new LinkedHashMap<>(Math.min(recordCount, 256));
         for (int i = 0; i < recordCount; i++) {
-            String itemId = buf.readUtf();
+            String itemId = buf.readUtf(MAX_STRING_LEN);
             int count = buf.readVarInt();
             int ticks = buf.readVarInt();
             long day = buf.readLong();
             long epoch = buf.readLong();
-            if (TargetKey.isValidCount(count)) {
+            if (TargetKey.isValidItemId(itemId) && TargetKey.isValidCount(count) && ticks >= 0) {
                 records.put(new TargetKey(itemId, count), new MilestoneRecord(ticks, day, epoch));
             }
         }
 
-        int progressCount = buf.readVarInt();
-        Map<TargetKey, Integer> progress = new LinkedHashMap<>(progressCount);
+        int progressCount = readBoundedCount(buf);
+        Map<TargetKey, Integer> progress = new LinkedHashMap<>(Math.min(progressCount, 256));
         for (int i = 0; i < progressCount; i++) {
-            String itemId = buf.readUtf();
+            String itemId = buf.readUtf(MAX_STRING_LEN);
             int count = buf.readVarInt();
             int current = buf.readVarInt();
-            if (TargetKey.isValidCount(count) && current >= 0) {
+            if (TargetKey.isValidItemId(itemId) && TargetKey.isValidCount(count) && current >= 0) {
                 progress.put(new TargetKey(itemId, count), current);
             }
         }
 
-        int playtime = buf.readVarInt();
+        int playtime = Math.max(0, buf.readVarInt());
 
-        int presetCount = buf.readVarInt();
-        List<PresetEntry> presets = new ArrayList<>(presetCount);
+        int presetCount = readBoundedCount(buf);
+        List<PresetEntry> presets = new ArrayList<>(Math.min(presetCount, 64));
         for (int i = 0; i < presetCount; i++) {
-            String id = buf.readUtf();
-            String displayName = buf.readUtf();
+            String id = buf.readUtf(MAX_STRING_LEN);
+            String displayName = buf.readUtf(MAX_STRING_LEN);
             int itemCount = buf.readVarInt();
             boolean builtin = buf.readBoolean();
-            presets.add(new PresetEntry(id, displayName, itemCount, builtin));
+            presets.add(new PresetEntry(id, displayName, Math.max(0, itemCount), builtin));
         }
 
         boolean canManagePresets = buf.readBoolean();

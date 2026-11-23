@@ -90,6 +90,11 @@ class MilestoneDataTest {
         assertEquals(100, wf100.count());
         assertEquals(playerB, wf100.playerUuid());
         assertEquals("Bob", wf100.playerName());
+        assertEquals(99999, wf100.playTicks());
+        assertEquals(25L, wf100.day());
+        assertEquals(1795650000000L, wf100.epochMillis());
+        assertEquals(2, loaded.worldFirsts().size());
+        assertNull(loaded.worldFirstOrNull(netherite));
     }
 
     @Test
@@ -101,6 +106,7 @@ class MilestoneDataTest {
         playerTag.put("targets", targets);
         CompoundTag records = new CompoundTag();
         records.putInt("minecraft:diamond", 12340);
+        records.putInt("minecraft:dirt", -10); // negative ticks must be skipped
         playerTag.put("records", records);
 
         CompoundTag players = new CompoundTag();
@@ -112,6 +118,7 @@ class MilestoneDataTest {
         MilestoneData.PlayerData pd = loaded.playerOrNull(playerA);
         assertNotNull(pd);
         assertEquals(List.of(TargetKey.of("minecraft:diamond")), List.copyOf(pd.targets));
+        assertEquals(1, pd.records.size());
         assertEquals(MilestoneRecord.legacy(12340), pd.records.get(TargetKey.of("minecraft:diamond")));
         assertEquals("", pd.lastKnownName);
         assertFalse(pd.firstJoinHintShown);
@@ -120,7 +127,7 @@ class MilestoneDataTest {
     }
 
     @Test
-    void loadsLegacy101CompoundRecordsAndWorldFirstsAsCountOne() {
+    void loadsLegacy101CompoundRecordsAndWorldFirstsAsCountOneAndSkipsMissingOrNegativeTicks() {
         UUID playerA = UUID.fromString("11111111-1111-1111-1111-111111111111");
         CompoundTag playerTag = new CompoundTag();
         ListTag targets = new ListTag();
@@ -132,8 +139,17 @@ class MilestoneDataTest {
         rec.putInt("ticks", 4567);
         rec.putLong("day", 5L);
         rec.putLong("epoch", 1795600000000L);
+        CompoundTag missingTicksRec = new CompoundTag();
+        missingTicksRec.putLong("day", 2L);
+        CompoundTag negTicksRec = new CompoundTag();
+        negTicksRec.putInt("ticks", -5);
+        CompoundTag qtyMissingTicks = new CompoundTag();
+        qtyMissingTicks.put("10", missingTicksRec.copy());
         CompoundTag records = new CompoundTag();
         records.put("minecraft:diamond", rec);
+        records.put("minecraft:gold_ingot", missingTicksRec);
+        records.put("minecraft:iron_ingot", negTicksRec);
+        records.put("minecraft:coal", qtyMissingTicks);
         playerTag.put("records", records);
 
         CompoundTag players = new CompoundTag();
@@ -145,8 +161,11 @@ class MilestoneDataTest {
         wf.putInt("ticks", 4567);
         wf.putLong("day", 5L);
         wf.putLong("epoch", 1795600000000L);
+        CompoundTag wfNoTicks = new CompoundTag();
+        wfNoTicks.putString("uuid", playerA.toString());
         CompoundTag worldFirsts = new CompoundTag();
         worldFirsts.put("minecraft:diamond", wf);
+        worldFirsts.put("minecraft:gold_ingot", wfNoTicks);
 
         CompoundTag root = new CompoundTag();
         root.put("players", players);
@@ -156,7 +175,9 @@ class MilestoneDataTest {
         MilestoneData.PlayerData pd = loaded.playerOrNull(playerA);
         assertNotNull(pd);
         assertEquals(List.of(TargetKey.of("minecraft:diamond")), List.copyOf(pd.targets));
+        assertEquals(1, pd.records.size());
         assertEquals(new MilestoneRecord(4567, 5L, 1795600000000L), pd.records.get(TargetKey.of("minecraft:diamond")));
+        assertEquals(1, loaded.worldFirsts().size());
         WorldFirstRecord loadedWf = loaded.worldFirstOrNull(TargetKey.of("minecraft:diamond"));
         assertNotNull(loadedWf);
         assertEquals(1, loadedWf.count());
@@ -164,13 +185,20 @@ class MilestoneDataTest {
     }
 
     @Test
-    void ignoresMalformedUuidEntriesOnLoad() {
+    void ignoresMalformedUuidEntriesOnLoadWhileKeepingValidEntries() {
+        UUID validUuid = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        CompoundTag validPlayer = new CompoundTag();
+        validPlayer.putString("lastKnownName", "ValidAlice");
+
         CompoundTag root = new CompoundTag();
         CompoundTag players = new CompoundTag();
         players.put("not-a-valid-uuid", new CompoundTag());
+        players.put(validUuid.toString(), validPlayer);
         root.put("players", players);
 
         MilestoneData loaded = MilestoneData.load(root, null);
-        assertNull(loaded.playerOrNull(UUID.randomUUID()));
+        assertEquals(1, loaded.allPlayers().size());
+        assertNotNull(loaded.playerOrNull(validUuid));
+        assertEquals("ValidAlice", loaded.playerOrNull(validUuid).lastKnownName);
     }
 }

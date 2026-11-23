@@ -1,5 +1,6 @@
 package com.pengin0503.itemmilestonelog;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
@@ -12,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -44,8 +46,8 @@ public final class DiscordNotifier {
         try {
             uri = URI.create(url.trim());
             String scheme = uri.getScheme();
-            if (!"https".equalsIgnoreCase(scheme) && !"http".equalsIgnoreCase(scheme)) {
-                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Discord webhook skipped: invalid URL scheme");
+            if (!"https".equalsIgnoreCase(scheme)) {
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Discord webhook skipped: invalid URL scheme (https required)");
                 return;
             }
         } catch (IllegalArgumentException e) {
@@ -61,15 +63,19 @@ public final class DiscordNotifier {
 
         JsonObject body = new JsonObject();
         body.addProperty("content", content);
+        JsonObject allowedMentions = new JsonObject();
+        allowedMentions.add("parse", new JsonArray());
+        body.add("allowed_mentions", allowedMentions);
         String json = body.toString();
 
-        ExecutorService exec;
-        HttpClient client;
         synchronized (DiscordNotifier.class) {
-            exec = ensureExecutor();
-            client = ensureClient();
+            ExecutorService exec = ensureExecutor();
+            HttpClient client = ensureClient();
+            try {
+                exec.execute(() -> send(client, uri, json));
+            } catch (RejectedExecutionException ignored) {
+            }
         }
-        exec.execute(() -> send(client, uri, json));
     }
 
     private static void send(HttpClient client, URI uri, String json) {

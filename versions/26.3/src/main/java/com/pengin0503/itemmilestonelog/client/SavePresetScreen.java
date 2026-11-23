@@ -29,6 +29,12 @@ public final class SavePresetScreen extends Screen {
     }
 
     @Override
+    public void tick() {
+        super.tick();
+        this.parent.getParent().tickPlaytime();
+    }
+
+    @Override
     protected void init() {
         int boxWidth = Math.min(260, this.width - 40);
         int boxX = (this.width - boxWidth) / 2;

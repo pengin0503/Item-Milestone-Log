@@ -220,16 +220,15 @@ public final class MilestoneCommands {
                 .then(Commands.literal("preset")
                         .then(Commands.literal("list").executes(MilestoneCommands::presetList))
                         .then(Commands.literal("save")
-                                .requires(MilestoneService::canManagePresets)
+                                .executes(MilestoneCommands::presetSaveMissingName)
                                 .then(Commands.argument("name", StringArgumentType.word())
                                         .executes(ctx -> presetSave(ctx, StringArgumentType.getString(ctx, "name")))))
                         .then(Commands.literal("delete")
-                                .requires(MilestoneService::canManagePresets)
+                                .executes(MilestoneCommands::presetDeleteMissingName)
                                 .then(Commands.argument("name", StringArgumentType.word())
                                         .suggests(customPresetSuggestions)
                                         .executes(ctx -> presetDelete(ctx, StringArgumentType.getString(ctx, "name")))))
                         .then(Commands.literal("reload")
-                                .requires(MilestoneService::canManagePresets)
                                 .executes(MilestoneCommands::presetReload))
                         .then(Commands.argument("name", StringArgumentType.word())
                                 .suggests(presetSuggestions)
@@ -313,6 +312,10 @@ public final class MilestoneCommands {
         return 0;
     }
 
+    private static int respond(CommandContext<CommandSourceStack> ctx, MilestoneService.ActionResult result) {
+        return result.success() ? send(ctx, result.message()) : fail(ctx, result.message());
+    }
+
     // ------------------------------------------------------------ commands
 
     private static int summary(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
@@ -332,15 +335,15 @@ public final class MilestoneCommands {
     }
 
     private static int add(CommandContext<CommandSourceStack> ctx, String itemId, int count) throws CommandSyntaxException {
-        return send(ctx, MilestoneService.addTarget(player(ctx), itemId, count).message());
+        return respond(ctx, MilestoneService.addTarget(player(ctx), itemId, count));
     }
 
     private static int addHand(CommandContext<CommandSourceStack> ctx, int count) throws CommandSyntaxException {
-        return send(ctx, MilestoneService.addHandTarget(player(ctx), count).message());
+        return respond(ctx, MilestoneService.addHandTarget(player(ctx), count));
     }
 
     private static int remove(CommandContext<CommandSourceStack> ctx, String itemId, int count) throws CommandSyntaxException {
-        return send(ctx, MilestoneService.removeTarget(player(ctx), itemId, count).message());
+        return respond(ctx, MilestoneService.removeTarget(player(ctx), itemId, count));
     }
 
     private static int targets(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
@@ -354,9 +357,10 @@ public final class MilestoneCommands {
         List<TargetKey> sorted = new ArrayList<>(targets);
         sorted.sort(TargetKey::compareTo);
 
+        Set<String> carried = Tracker.carriedFromCreative(pd);
         Set<String> progressItemIds = new LinkedHashSet<>();
         for (TargetKey key : sorted) {
-            if (key.count() > TargetKey.MIN_COUNT && !records.containsKey(key)) {
+            if (key.count() > TargetKey.MIN_COUNT && !records.containsKey(key) && !carried.contains(key.itemId())) {
                 progressItemIds.add(key.itemId());
             }
         }
@@ -372,7 +376,7 @@ public final class MilestoneCommands {
             } else {
                 Component label = MilestoneService.targetDisplayName(key);
                 if (key.count() > TargetKey.MIN_COUNT) {
-                    int current = possessionCounts.getOrDefault(key.itemId(), 0);
+                    int current = carried.contains(key.itemId()) ? 0 : possessionCounts.getOrDefault(key.itemId(), 0);
                     label = ServerLang.tr(player, "message.itemmilestonelog.target_progress", label, current);
                 }
                 line = ServerLang.tr(player, "message.itemmilestonelog.target_pending", label);
@@ -401,7 +405,7 @@ public final class MilestoneCommands {
     }
 
     private static int preset(CommandContext<CommandSourceStack> ctx, String name) throws CommandSyntaxException {
-        return send(ctx, MilestoneService.applyPreset(player(ctx), name).message());
+        return respond(ctx, MilestoneService.applyPreset(player(ctx), name));
     }
 
     private static int presetList(CommandContext<CommandSourceStack> ctx) {
@@ -417,6 +421,23 @@ public final class MilestoneCommands {
                     display, p.id(), p.items().size(), typeLabel), false);
         }
         return all.size();
+    }
+
+    private static int presetSaveMissingName(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+        if (!MilestoneService.canManagePresets(source)) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_no_permission"));
+        }
+        return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_invalid_name", ""));
+    }
+
+    private static int presetDeleteMissingName(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+        if (!MilestoneService.canManagePresets(source)) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_no_permission"));
+        }
+        return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_unknown",
+                "", String.join(", ", Presets.names())));
     }
 
     private static int presetSave(CommandContext<CommandSourceStack> ctx, String name) throws CommandSyntaxException {
@@ -454,11 +475,11 @@ public final class MilestoneCommands {
     }
 
     private static int reset(CommandContext<CommandSourceStack> ctx, String itemId, int count) throws CommandSyntaxException {
-        return send(ctx, MilestoneService.resetRecord(player(ctx), itemId, count).message());
+        return respond(ctx, MilestoneService.resetRecord(player(ctx), itemId, count));
     }
 
     private static int resetAll(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
-        return send(ctx, MilestoneService.resetAllRecords(player(ctx)).message());
+        return respond(ctx, MilestoneService.resetAllRecords(player(ctx)));
     }
 
     // --------------------------------------------------------- F4 world firsts

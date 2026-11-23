@@ -40,6 +40,8 @@ class TargetKeyTest {
         assertNull(TargetKey.tryParseEncoded("minecraft:diamond#-5"));
         assertNull(TargetKey.tryParseEncoded("minecraft:diamond#+5"));
         assertNull(TargetKey.tryParseEncoded("minecraft:diamond#1000001"));
+        assertNull(TargetKey.tryParseEncoded("minecraft:diamond#2147483648"));
+        assertNull(TargetKey.tryParseEncoded("minecraft:diamond#99999999999999999999"));
         assertNull(TargetKey.tryParseEncoded("minecraft:diamond#abc"));
         assertNull(TargetKey.tryParseEncoded("minecraft:diamond#1#2"));
         assertNull(TargetKey.tryParseEncoded("minecraft:stone #5"));
@@ -47,6 +49,9 @@ class TargetKeyTest {
         assertNull(TargetKey.tryParseEncoded("minecraft:\tstone"));
         assertNull(TargetKey.tryParseEncoded("minecraft:\nstone#5"));
         assertNull(TargetKey.tryParseEncoded("minecraft:\u0000stone"));
+
+        assertEquals(-1, TargetKey.tryParseCount("2147483648"));
+        assertEquals(-1, TargetKey.tryParseCount("99999999999999999999"));
 
         assertThrows(IllegalArgumentException.class, () -> new TargetKey(null, 1));
         assertThrows(IllegalArgumentException.class, () -> new TargetKey("", 1));
@@ -66,8 +71,11 @@ class TargetKeyTest {
         assertTrue(Config.validateTargetEntry("minecraft:diamond"));
         assertTrue(Config.validateTargetEntry("minecraft:diamond#100"));
         assertTrue(Config.validateTargetEntry("minecraft:diamond#1000000"));
+        assertFalse(Config.validateTargetEntry("minecraft:air"));
+        assertFalse(Config.validateTargetEntry("minecraft:air#5"));
         assertFalse(Config.validateTargetEntry("minecraft:diamond#0"));
         assertFalse(Config.validateTargetEntry("minecraft:diamond#1000001"));
+        assertFalse(Config.validateTargetEntry("minecraft:diamond#2147483648"));
         assertFalse(Config.validateTargetEntry("minecraft:diamond#abc"));
         assertFalse(Config.validateTargetEntry("no_namespace#10"));
         assertFalse(Config.validateTargetEntry(123));

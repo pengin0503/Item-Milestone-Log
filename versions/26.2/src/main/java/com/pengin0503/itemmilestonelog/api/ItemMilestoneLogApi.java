@@ -12,6 +12,15 @@ import java.util.UUID;
 
 /**
  * Read-only server-side API for querying Item Milestone Log data from other mods or scripts.
+ *
+ * <p><strong>Thread-safety:</strong> All methods in this class access {@link MilestoneData}
+ * backed by the server's {@code SavedDataStorage} and must be called on the logical server
+ * thread only.
+ *
+ * <p><strong>Null handling:</strong> Required context arguments ({@code server} and {@code player})
+ * must not be {@code null} and throw {@link NullPointerException} if {@code null}. Query filter
+ * arguments ({@code itemId} and {@code target}) tolerate {@code null} (or invalid values) and
+ * return {@link Optional#empty()}.
  */
 public final class ItemMilestoneLogApi {
     private ItemMilestoneLogApi() {
@@ -19,6 +28,8 @@ public final class ItemMilestoneLogApi {
 
     /**
      * Returns the recorded milestone for the given player and item ID (quantity 1), if recorded.
+     *
+     * @throws NullPointerException if {@code server} or {@code player} is {@code null}
      */
     public static Optional<MilestoneRecord> getRecord(MinecraftServer server, UUID player, String itemId) {
         return getRecord(server, player, itemId, TargetKey.MIN_COUNT);
@@ -26,11 +37,13 @@ public final class ItemMilestoneLogApi {
 
     /**
      * Returns the recorded milestone for the given player, item ID, and quantity, if recorded.
+     *
+     * @throws NullPointerException if {@code server} or {@code player} is {@code null}
      */
     public static Optional<MilestoneRecord> getRecord(MinecraftServer server, UUID player, String itemId, int count) {
         Objects.requireNonNull(server, "server");
         Objects.requireNonNull(player, "player");
-        if (itemId == null || itemId.isEmpty() || itemId.indexOf('#') >= 0 || !TargetKey.isValidCount(count)) {
+        if (!TargetKey.isValidItemId(itemId) || !TargetKey.isValidCount(count)) {
             return Optional.empty();
         }
         return getRecord(server, player, new TargetKey(itemId, count));
@@ -38,6 +51,8 @@ public final class ItemMilestoneLogApi {
 
     /**
      * Returns the recorded milestone for the given player and target key, if recorded.
+     *
+     * @throws NullPointerException if {@code server} or {@code player} is {@code null}
      */
     public static Optional<MilestoneRecord> getRecord(MinecraftServer server, UUID player, TargetKey target) {
         Objects.requireNonNull(server, "server");
@@ -61,6 +76,8 @@ public final class ItemMilestoneLogApi {
      * <p>Note: This returns only the player's saved personal targets and does not include
      * server-configured {@code defaultTargets}. Resolving default targets is the caller's
      * responsibility.
+     *
+     * @throws NullPointerException if {@code server} or {@code player} is {@code null}
      */
     public static Set<String> getTargets(MinecraftServer server, UUID player) {
         Objects.requireNonNull(server, "server");
@@ -84,6 +101,8 @@ public final class ItemMilestoneLogApi {
      * <p>Note: This returns only the player's saved personal targets and does not include
      * server-configured {@code defaultTargets}. Resolving default targets is the caller's
      * responsibility.
+     *
+     * @throws NullPointerException if {@code server} or {@code player} is {@code null}
      */
     public static Set<TargetKey> getTargetKeys(MinecraftServer server, UUID player) {
         Objects.requireNonNull(server, "server");
@@ -97,6 +116,8 @@ public final class ItemMilestoneLogApi {
 
     /**
      * Returns the server's world-first record for the given item ID (quantity 1), if one exists.
+     *
+     * @throws NullPointerException if {@code server} is {@code null}
      */
     public static Optional<WorldFirstRecord> getWorldFirst(MinecraftServer server, String itemId) {
         return getWorldFirst(server, itemId, TargetKey.MIN_COUNT);
@@ -104,10 +125,12 @@ public final class ItemMilestoneLogApi {
 
     /**
      * Returns the server's world-first record for the given item ID and quantity, if one exists.
+     *
+     * @throws NullPointerException if {@code server} is {@code null}
      */
     public static Optional<WorldFirstRecord> getWorldFirst(MinecraftServer server, String itemId, int count) {
         Objects.requireNonNull(server, "server");
-        if (itemId == null || itemId.isEmpty() || itemId.indexOf('#') >= 0 || !TargetKey.isValidCount(count)) {
+        if (!TargetKey.isValidItemId(itemId) || !TargetKey.isValidCount(count)) {
             return Optional.empty();
         }
         return getWorldFirst(server, new TargetKey(itemId, count));
@@ -115,6 +138,8 @@ public final class ItemMilestoneLogApi {
 
     /**
      * Returns the server's world-first record for the given target key, if one exists.
+     *
+     * @throws NullPointerException if {@code server} is {@code null}
      */
     public static Optional<WorldFirstRecord> getWorldFirst(MinecraftServer server, TargetKey target) {
         Objects.requireNonNull(server, "server");

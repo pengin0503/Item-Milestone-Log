@@ -122,5 +122,6 @@
   "message.itemmilestonelog.target_pending": "… %s — not yet obtained",
   "message.itemmilestonelog.target_progress": "%s (current: %s)",
   "message.itemmilestonelog.targets_header": "Target items (%s):",
+  "message.itemmilestonelog.targets_limit_reached": "Personal target limit reached (%s).",
   "message.itemmilestonelog.world_first_recorded": "★ World First! %s first obtained %s at %s"
 }

@@ -460,6 +460,15 @@ async function multiPlayerAndPresetManagementFlow(session, rcon) {
     await waitFor(bot2, from, /Unknown or incomplete command|incorrect|permission/i);
   });
 
+  await check('Custom preset: non-OP player is denied preset reload/save/delete without falling back to apply', async () => {
+    await command(bot2, 'milestonelog preset reload',
+      /^You do not have permission to manage presets on this server\.$/);
+    await command(bot2, 'milestonelog preset save test_denied',
+      /^You do not have permission to manage presets on this server\.$/);
+    await command(bot2, 'milestonelog preset delete ci_custom',
+      /^You do not have permission to manage presets on this server\.$/);
+  });
+
   await check('F4: second player obtaining cobblestone does not overwrite world first', async () => {
     await command(bot2, 'milestonelog add minecraft:cobblestone', /^Now tracking: Cobblestone$/);
     const from = bot2.messages.length;

@@ -99,6 +99,11 @@ class MilestoneDataTest {
         assertEquals(100, wf100.count());
         assertEquals(playerB, wf100.playerUuid());
         assertEquals("Bob", wf100.playerName());
+        assertEquals(99999, wf100.playTicks());
+        assertEquals(25L, wf100.day());
+        assertEquals(1795650000000L, wf100.epochMillis());
+        assertEquals(2, loaded.worldFirsts().size());
+        assertNull(loaded.worldFirstOrNull(netherite));
     }
 
     /** The 1.21.1 1.0.0 file: plain int records and no new fields. */
@@ -205,20 +210,53 @@ class MilestoneDataTest {
 
     @Test
     void unreadableLegacyFileIsSkipped(@TempDir Path dir) throws IOException {
-        Path file = dir.resolve("itemmilestonelog_data.dat");
+        Path file = dir.resolve(MilestoneData.LEGACY_FILE);
+        Files.createDirectories(file.getParent());
         Files.writeString(file, "not an NBT file");
         assertNull(MilestoneData.readLegacy(file));
+
+        // Legacy file without a "data" compound tag must also return null rather than empty migration
+        Path noDataTagFile = dir.resolve("no_data.dat");
+        CompoundTag noDataRoot = new CompoundTag();
+        noDataRoot.putInt("DataVersion", 3955);
+        NbtIo.writeCompressed(noDataRoot, noDataTagFile);
+        assertNull(MilestoneData.readLegacy(noDataTagFile));
     }
 
     @Test
-    void ignoresMalformedUuidEntriesOnLoad() {
+    void ignoresMalformedUuidEntriesAndInvalidCodecRecordsWhileKeepingValidEntries() {
+        CompoundTag validPlayer = new CompoundTag();
+        validPlayer.putString("lastKnownName", "ValidAlice");
+        ListTag targets = new ListTag();
+        targets.add(StringTag.valueOf("minecraft:diamond"));
+        targets.add(StringTag.valueOf("minecraft:emerald#0"));
+        targets.add(StringTag.valueOf("minecraft:stone #5"));
+        validPlayer.put("targets", targets);
+
+        CompoundTag records = new CompoundTag();
+        records.putInt("minecraft:diamond", 100);
+        records.putInt("minecraft:dirt", -50);
+        validPlayer.put("records", records);
+
         CompoundTag root = new CompoundTag();
         CompoundTag players = new CompoundTag();
         players.put("not-a-valid-uuid", new CompoundTag());
+        players.put(PLAYER_A.toString(), validPlayer);
         root.put("players", players);
 
         MilestoneData loaded = MilestoneData.CODEC.parse(NbtOps.INSTANCE, root).getOrThrow();
-        assertNull(loaded.playerOrNull(UUID.randomUUID()));
+        assertEquals(1, loaded.allPlayers().size());
+        MilestoneData.PlayerData pd = loaded.playerOrNull(PLAYER_A);
+        assertNotNull(pd);
+        assertEquals("ValidAlice", pd.lastKnownName);
+        assertEquals(List.of(TargetKey.of("minecraft:diamond")), List.copyOf(pd.targets));
+        assertEquals(1, pd.records.size());
+        assertEquals(MilestoneRecord.legacy(100), pd.records.get(TargetKey.of("minecraft:diamond")));
+
+        // Empty root tag decodes cleanly with all keys absent
+        MilestoneData emptyLoaded = MilestoneData.CODEC.parse(NbtOps.INSTANCE, new CompoundTag()).getOrThrow();
+        assertTrue(emptyLoaded.allPlayers().isEmpty());
+        assertTrue(emptyLoaded.worldFirsts().isEmpty());
     }
 
     @Test

@@ -79,7 +79,11 @@ public final class Config {
             return false;
         }
         TargetKey parsed = TargetKey.tryParseEncoded(s);
-        return parsed != null && parsed.itemId().contains(":") && ResourceLocation.tryParse(parsed.itemId()) != null;
+        if (parsed == null || !parsed.itemId().contains(":")) {
+            return false;
+        }
+        ResourceLocation rl = ResourceLocation.tryParse(parsed.itemId());
+        return rl != null && !"minecraft:air".equals(rl.toString());
     }
 
     private static boolean validateSoundId(Object obj) {

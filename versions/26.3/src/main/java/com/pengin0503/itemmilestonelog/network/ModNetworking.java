@@ -7,13 +7,48 @@ import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 import net.neoforged.neoforge.network.registration.PayloadRegistrar;
 
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 /**
  * Registers optional network payloads for GUI synchronization and actions.
+ *
+ * The registrar is marked {@code optional()} so vanilla clients without this mod
+ * can still connect to a dedicated server and use all commands normally.
  */
 public final class ModNetworking {
     private static final String PROTOCOL_VERSION = "1";
+    private static final long REFILL_INTERVAL_NANOS = 50_000_000L; // 20 actions/sec steady rate
+    private static final int MAX_BURST_TOKENS = 40;
+    private static final Map<UUID, RateLimitState> RATE_LIMITS = new ConcurrentHashMap<>();
+
+    private static final class RateLimitState {
+        long lastNanos = System.nanoTime();
+        int tokens = MAX_BURST_TOKENS;
+    }
+
+    private static boolean tryAcquireRateLimit(ServerPlayer player) {
+        if (RATE_LIMITS.size() > 1024) {
+            RATE_LIMITS.clear();
+        }
+        long now = System.nanoTime();
+        RateLimitState state = RATE_LIMITS.computeIfAbsent(player.getUUID(), u -> new RateLimitState());
+        synchronized (state) {
+            long elapsed = now - state.lastNanos;
+            if (elapsed >= REFILL_INTERVAL_NANOS) {
+                int refill = (int) Math.min(MAX_BURST_TOKENS, elapsed / REFILL_INTERVAL_NANOS);
+                state.tokens = Math.min(MAX_BURST_TOKENS, state.tokens + refill);
+                state.lastNanos = now;
+            }
+            if (state.tokens <= 0) {
+                return false;
+            }
+            state.tokens--;
+            return true;
+        }
+    }
 
     private static volatile Consumer<SyncMilestonesPayload> clientSyncHandler = payload -> {
     };
@@ -48,7 +83,7 @@ public final class ModNetworking {
 
     private static void handleRequestSync(RequestSyncPayload payload, IPayloadContext context) {
         context.enqueueWork(() -> {
-            if (context.player() instanceof ServerPlayer player) {
+            if (context.player() instanceof ServerPlayer player && tryAcquireRateLimit(player)) {
                 SyncMilestonesPayload sync = MilestoneService.createSyncPayload(player, true, null);
                 PacketDistributor.sendToPlayer(player, sync);
             }
@@ -57,7 +92,7 @@ public final class ModNetworking {
 
     private static void handleAction(MilestoneActionPayload payload, IPayloadContext context) {
         context.enqueueWork(() -> {
-            if (!(context.player() instanceof ServerPlayer player)) {
+            if (!(context.player() instanceof ServerPlayer player) || !tryAcquireRateLimit(player)) {
                 return;
             }
             MilestoneService.ActionResult result = switch (payload.action()) {

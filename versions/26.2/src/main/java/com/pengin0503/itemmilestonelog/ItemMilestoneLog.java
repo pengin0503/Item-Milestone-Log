@@ -12,7 +12,7 @@ import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import org.slf4j.Logger;
 
 /**
- * Item Milestone Log (Minecraft 26.1.2).
+ * Item Milestone Log (Minecraft 26.2).
  */
 @Mod(ItemMilestoneLog.MOD_ID)
 public class ItemMilestoneLog {
