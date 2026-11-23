@@ -167,6 +167,7 @@ public final class MilestoneService {
         int added = 0;
         int addedWithCount = 0;
         int skippedMissing = 0;
+        int skippedLimit = 0;
         for (TargetKey entry : preset.items()) {
             ResourceLocation rl = ResourceLocation.tryParse(entry.itemId());
             if (rl == null || !BuiltInRegistries.ITEM.containsKey(rl) || BuiltInRegistries.ITEM.get(rl) == Items.AIR) {
@@ -178,7 +179,8 @@ public final class MilestoneService {
                 continue;
             }
             if (pd.targets.size() >= MAX_PERSONAL_TARGETS) {
-                break;
+                skippedLimit++;
+                continue;
             }
             if (pd.targets.add(normalized)) {
                 added++;
@@ -190,11 +192,18 @@ public final class MilestoneService {
         if (added > 0) {
             data.setDirty();
         }
+        Component result;
         if (addedWithCount > 0) {
-            return new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.preset_applied_with_counts",
-                    name, added, addedWithCount, skippedMissing));
+            result = ServerLang.tr(player, "message.itemmilestonelog.preset_applied_with_counts",
+                    name, added, addedWithCount, skippedMissing);
+        } else {
+            result = ServerLang.tr(player, "message.itemmilestonelog.preset_applied", name, added, skippedMissing);
         }
-        return new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.preset_applied", name, added, skippedMissing));
+        if (skippedLimit > 0) {
+            result = result.copy().append(Component.literal("\n"))
+                    .append(ServerLang.tr(player, "message.itemmilestonelog.preset_applied_limit", skippedLimit));
+        }
+        return new ActionResult(true, result);
     }
 
     public static ActionResult savePreset(ServerPlayer player, String rawName) {
@@ -219,7 +228,8 @@ public final class MilestoneService {
             String key = overwritten ? "message.itemmilestonelog.preset_overwritten" : "message.itemmilestonelog.preset_saved";
             return new ActionResult(true, ServerLang.tr(player, key, name, items.size()));
         } catch (IOException | IllegalArgumentException e) {
-            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.preset_save_failed", name, e.getMessage()));
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Failed to save preset {}", name, e);
+            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.preset_save_failed", name));
         }
     }
 
@@ -241,7 +251,8 @@ public final class MilestoneService {
             return new ActionResult(false, ServerLang.tr(source, "message.itemmilestonelog.preset_unknown",
                     name, String.join(", ", Presets.names())));
         } catch (IOException e) {
-            return new ActionResult(false, ServerLang.tr(source, "message.itemmilestonelog.preset_delete_failed", name, e.getMessage()));
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Failed to delete preset {}", name, e);
+            return new ActionResult(false, ServerLang.tr(source, "message.itemmilestonelog.preset_delete_failed", name));
         }
     }
 

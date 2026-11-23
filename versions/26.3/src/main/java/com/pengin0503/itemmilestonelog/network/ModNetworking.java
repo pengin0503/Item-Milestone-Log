@@ -39,6 +39,11 @@ public final class ModNetworking {
     }
 
     private static boolean tryAcquireRateLimit(ServerPlayer player) {
+        return tryAcquireRateLimit(player.getUUID());
+    }
+
+    // Package-private for tests (a ServerPlayer cannot be constructed without a live server).
+    static boolean tryAcquireRateLimit(UUID playerId) {
         long now = System.nanoTime();
         if (RATE_LIMITS.size() > MAX_RATE_LIMIT_ENTRIES && now - lastCleanupNanos > CLEANUP_COOLDOWN_NANOS) {
             lastCleanupNanos = now;
@@ -50,7 +55,7 @@ public final class ModNetworking {
                 }
             });
         }
-        RateLimitState state = RATE_LIMITS.computeIfAbsent(player.getUUID(), u -> new RateLimitState());
+        RateLimitState state = RATE_LIMITS.computeIfAbsent(playerId, u -> new RateLimitState());
         synchronized (state) {
             long elapsed = now - state.lastNanos;
             if (elapsed >= REFILL_INTERVAL_NANOS) {
@@ -103,19 +108,20 @@ public final class ModNetworking {
     }
 
     private static void handleRequestSync(RequestSyncPayload payload, IPayloadContext context) {
+        if (!(context.player() instanceof ServerPlayer player) || !tryAcquireRateLimit(player)) {
+            return;
+        }
         context.enqueueWork(() -> {
-            if (context.player() instanceof ServerPlayer player && tryAcquireRateLimit(player)) {
-                SyncMilestonesPayload sync = MilestoneService.createSyncPayload(player, true, null);
-                PacketDistributor.sendToPlayer(player, sync);
-            }
+            SyncMilestonesPayload sync = MilestoneService.createSyncPayload(player, true, null);
+            PacketDistributor.sendToPlayer(player, sync);
         });
     }
 
     private static void handleAction(MilestoneActionPayload payload, IPayloadContext context) {
+        if (!(context.player() instanceof ServerPlayer player) || !tryAcquireRateLimit(player)) {
+            return;
+        }
         context.enqueueWork(() -> {
-            if (!(context.player() instanceof ServerPlayer player) || !tryAcquireRateLimit(player)) {
-                return;
-            }
             MilestoneService.ActionResult result = switch (payload.action()) {
                 case ADD_TARGET -> MilestoneService.addTarget(player, payload.argument(), payload.count());
                 case ADD_HAND -> MilestoneService.addHandTarget(player, payload.count());

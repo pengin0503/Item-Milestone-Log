@@ -34,6 +34,10 @@ public record TargetKey(String itemId, int count) implements Comparable<TargetKe
                 return false;
             }
         }
+        int colon = itemId.indexOf(':');
+        if (colon >= 0 && (colon == 0 || colon == itemId.length() - 1)) {
+            return false; // empty namespace or empty path
+        }
         return true;
     }
 

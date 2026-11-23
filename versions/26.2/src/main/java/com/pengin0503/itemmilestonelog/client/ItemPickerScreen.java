@@ -144,7 +144,7 @@ public final class ItemPickerScreen extends Screen {
         setInitialFocus(searchBox);
 
         int listTop = 50;
-        int listBottom = this.height - 34;
+        int listBottom = this.height - 44;
         int listHeight = Math.max(40, listBottom - listTop);
 
         listWidget = addRenderableWidget(new ItemListWidget(this.minecraft, this.width, listHeight, listTop, 26));
@@ -260,7 +260,7 @@ public final class ItemPickerScreen extends Screen {
         if (feedbackMessage != null) {
             int maxWidth = this.width - 20;
             String trimmedFeedback = this.font.plainSubstrByWidth(feedbackMessage.getString(), maxWidth);
-            graphics.centeredText(this.font, trimmedFeedback, this.width / 2, this.height - 34, 0xFFFFE88A);
+            graphics.centeredText(this.font, trimmedFeedback, this.width / 2, this.height - 39, 0xFFFFE88A);
         }
 
         if (matchedCount == 0 && listWidget != null) {

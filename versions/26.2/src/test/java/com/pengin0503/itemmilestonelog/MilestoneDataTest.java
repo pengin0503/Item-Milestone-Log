@@ -260,6 +260,73 @@ class MilestoneDataTest {
     }
 
     @Test
+    void skipsMalformedRecordAndWorldFirstEntriesIndividuallyWhileKeepingValidSiblings() {
+        CompoundTag playerTag = new CompoundTag();
+        ListTag targets = new ListTag();
+        targets.add(StringTag.valueOf("minecraft:diamond"));
+        playerTag.put("targets", targets);
+
+        CompoundTag rec = new CompoundTag();
+        rec.putInt("ticks", 4567);
+        rec.putLong("day", 5L);
+        rec.putLong("epoch", 1795600000000L);
+        CompoundTag missingTicksRec = new CompoundTag();
+        missingTicksRec.putLong("day", 2L);
+        CompoundTag qtyMissingTicks = new CompoundTag();
+        qtyMissingTicks.put("10", missingTicksRec.copy());
+        // Count map with one malformed and one valid entry: only the malformed one is dropped.
+        CompoundTag qtyMixed = new CompoundTag();
+        qtyMixed.put("10", missingTicksRec.copy());
+        qtyMixed.put("20", rec.copy());
+        // Value that is neither an int, a record object nor a count map.
+        CompoundTag records = new CompoundTag();
+        records.put("minecraft:diamond", rec);
+        records.put("minecraft:gold_ingot", missingTicksRec);
+        records.put("minecraft:coal", qtyMissingTicks);
+        records.put("minecraft:copper_ingot", qtyMixed);
+        records.put("minecraft:emerald", StringTag.valueOf("garbage"));
+        playerTag.put("records", records);
+
+        CompoundTag players = new CompoundTag();
+        players.put(PLAYER_A.toString(), playerTag);
+
+        CompoundTag wf = new CompoundTag();
+        wf.putString("uuid", PLAYER_A.toString());
+        wf.putString("name", "Alice");
+        wf.putInt("ticks", 4567);
+        wf.putLong("day", 5L);
+        wf.putLong("epoch", 1795600000000L);
+        CompoundTag wfNoTicks = new CompoundTag();
+        wfNoTicks.putString("uuid", PLAYER_A.toString());
+        CompoundTag wfQtyNoTicks = new CompoundTag();
+        wfQtyNoTicks.put("10", wfNoTicks.copy());
+        wfQtyNoTicks.put("20", wf.copy());
+        CompoundTag worldFirsts = new CompoundTag();
+        worldFirsts.put("minecraft:diamond", wf);
+        worldFirsts.put("minecraft:gold_ingot", wfNoTicks);
+        worldFirsts.put("minecraft:coal", wfQtyNoTicks);
+        worldFirsts.put("minecraft:emerald", StringTag.valueOf("garbage"));
+
+        CompoundTag root = new CompoundTag();
+        root.put("players", players);
+        root.put("worldFirsts", worldFirsts);
+
+        MilestoneData loaded = MilestoneData.CODEC.parse(NbtOps.INSTANCE, root).getOrThrow();
+        MilestoneData.PlayerData pd = loaded.playerOrNull(PLAYER_A);
+        assertNotNull(pd);
+        MilestoneRecord expected = new MilestoneRecord(4567, 5L, 1795600000000L);
+        assertEquals(2, pd.records.size(), pd.records::toString);
+        assertEquals(expected, pd.records.get(TargetKey.of("minecraft:diamond")));
+        assertEquals(expected, pd.records.get(TargetKey.of("minecraft:copper_ingot", 20)));
+
+        assertEquals(2, loaded.worldFirsts().size(), () -> loaded.worldFirsts().toString());
+        WorldFirstRecord loadedWf = loaded.worldFirstOrNull(TargetKey.of("minecraft:diamond"));
+        assertNotNull(loadedWf);
+        assertEquals("Alice", loadedWf.playerName());
+        assertNotNull(loaded.worldFirstOrNull(TargetKey.of("minecraft:coal", 20)));
+    }
+
+    @Test
     void emptyOptionalFieldsAreNotWritten() {
         MilestoneData data = new MilestoneData();
         data.player(PLAYER_A).targets.add(TargetKey.of("minecraft:diamond"));

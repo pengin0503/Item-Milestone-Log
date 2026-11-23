@@ -68,6 +68,31 @@ class ServerLangTest {
     }
 
     @Test
+    void everyGuiKeyUsedByClientScreensHasAnEnglishEntry() throws IOException {
+        Path sources = resolveMainSourceDir().resolve("com/pengin0503/itemmilestonelog/client");
+        assertTrue(Files.isDirectory(sources), "client sources not found at " + sources.toAbsolutePath());
+
+        Pattern literal = Pattern.compile("\"(gui\\.itemmilestonelog\\.[a-z0-9_.]+)\"");
+        Set<String> used = new TreeSet<>();
+        try (Stream<Path> files = Files.walk(sources)) {
+            for (Path file : files.filter(p -> p.toString().endsWith(".java")).toList()) {
+                Matcher matcher = literal.matcher(Files.readString(file));
+                while (matcher.find()) {
+                    String key = matcher.group(1);
+                    // Keys ending in '.' are prefixes completed at runtime (e.g. per-preset names) and checked separately.
+                    if (!key.endsWith(".")) {
+                        used.add(key);
+                    }
+                }
+            }
+        }
+        assertTrue(used.size() >= 10, "expected to find the client GUI keys, found " + used);
+        Set<String> missing = new TreeSet<>(used);
+        missing.removeAll(ServerLang.fallbacks().keySet());
+        assertTrue(missing.isEmpty(), "gui keys without an en_us.json entry: " + missing);
+    }
+
+    @Test
     void rendersEnglishAndJapaneseFallbacksForVanillaClients() {
         String enTemplate = ServerLang.fallbacks().get("message.itemmilestonelog.added");
         assertNotNull(enTemplate);
