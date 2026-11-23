@@ -197,7 +197,7 @@ check_client_log_errors() {
   else
     echo "  PASS  no stack traces through mod code in client log"
   fi
-  if grep -nE 'ClassNotFoundException|NoClassDefFoundError|NoSuchMethodError|NoSuchFieldError' "$log" | grep -i 'itemmilestonelog\|pengin0503'; then
+  if grep -nE 'ClassNotFoundException|NoClassDefFoundError|NoSuchMethodError|NoSuchFieldError' "$log" | grep -Ei 'itemmilestonelog|pengin0503'; then
     echo "  FAIL  linkage errors involving the mod in client log"
     ok=1
   fi
@@ -217,7 +217,7 @@ run_scenario() {
   echo "  server jar:     ${server_jar#$ROOT/}"
   echo "================================================================"
 
-  local scenario_ok=0
+  local failed=0
   local server_log="$COMPAT_LOG_DIR/${name}-server.log"
   local client_log="$COMPAT_LOG_DIR/${name}-client.log"
   local server_snap="$COMPAT_LOG_DIR/${name}-server-prestop.log"
@@ -256,21 +256,21 @@ run_scenario() {
     fi
     if ! kill -0 "$CLIENT_PGID" 2>/dev/null; then
       echo "  FAIL  client process exited before joining the server"
-      scenario_ok=1
+      failed=1
       break
     fi
     if has_disconnect_error "$client_log" || has_disconnect_error "$server_log"; then
       echo "  FAIL  disconnect or negotiation failure observed while joining"
-      scenario_ok=1
+      failed=1
       break
     fi
     sleep 2
     waited=$((waited + 2))
   done
 
-  if [ "$joined" -eq 0 ] && [ "$scenario_ok" -eq 0 ]; then
+  if [ "$joined" -eq 0 ] && [ "$failed" -eq 0 ]; then
     echo "  FAIL  client did not join the server within 300s"
-    scenario_ok=1
+    failed=1
   fi
 
   # 2. Give the client a few seconds to enter gameplay, then press 'm' to open GUI
@@ -311,7 +311,7 @@ run_scenario() {
       if [ "$expect_server_req" = "true" ] && ! grep -q '\[ItemMilestoneLog\] Received RequestSyncPayload' "$server_log"; then
         echo "  FAIL  server log missing '[ItemMilestoneLog] Received RequestSyncPayload'"
       fi
-      scenario_ok=1
+      failed=1
     fi
   fi
 
@@ -323,7 +323,7 @@ run_scenario() {
   if has_disconnect_error "$server_snap"; then
     echo "  FAIL  disconnect / negotiation error in server log before shutdown:"
     grep -inE 'NetworkComponentNegotiator|Failed to negotiate|Disconnected|Connection lost|DecoderException|EncoderException|incompatible.*channel' "$server_snap" | head -n 20 | sed 's/^/    /'
-    scenario_ok=1
+    failed=1
   else
     echo "  PASS  no disconnect / negotiation errors in server log before shutdown"
   fi
@@ -331,7 +331,7 @@ run_scenario() {
   if has_disconnect_error "$client_snap"; then
     echo "  FAIL  disconnect / negotiation error in client log before shutdown:"
     grep -inE 'NetworkComponentNegotiator|Failed to negotiate|Disconnected|Connection lost|DecoderException|EncoderException|incompatible.*channel' "$client_snap" | head -n 20 | sed 's/^/    /'
-    scenario_ok=1
+    failed=1
   else
     echo "  PASS  no disconnect / negotiation errors in client log before shutdown"
   fi
@@ -339,10 +339,10 @@ run_scenario() {
   stop_client
   stop_server
 
-  check_log "$server_log" || scenario_ok=1
-  check_client_log_errors "$client_log" || scenario_ok=1
+  check_log "$server_log" || failed=1
+  check_client_log_errors "$client_log" || failed=1
 
-  if [ "$scenario_ok" -ne 0 ]; then
+  if [ "$failed" -ne 0 ]; then
     echo "::group::Tail of logs for failed scenario ($name)"
     echo "--- server log (last 80 lines) ---"
     tail -n 80 "$server_log" || true
@@ -351,7 +351,7 @@ run_scenario() {
     echo "::endgroup::"
   fi
 
-  return $scenario_ok
+  return $failed
 }
 
 DEV_PROJECT="$ROOT/versions/$MC"
