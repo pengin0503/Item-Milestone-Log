@@ -1,6 +1,7 @@
 package com.pengin0503.itemmilestonelog.client;
 
 import com.pengin0503.itemmilestonelog.Playtime;
+import com.pengin0503.itemmilestonelog.TagTargets;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
 import com.pengin0503.itemmilestonelog.network.MilestoneActionPayload;
@@ -386,9 +387,17 @@ public final class MilestoneScreen extends Screen {
             this.recordedRecord = recordedRecord;
             this.currentProgress = currentProgress;
 
-            Identifier id = Identifier.tryParse(targetKey.itemId());
             Component baseName;
-            if (id != null && BuiltInRegistries.ITEM.containsKey(id)) {
+            // F8b: a tag target shows its first member as the icon (barrier if the tag is unknown or
+            // empty on this client) and the tag translation / "#ns:path" fallback as its name.
+            String iconItemId = targetKey.isTag() ? TagTargets.iconItemId(targetKey.itemId()) : targetKey.itemId();
+            Identifier id = iconItemId != null ? Identifier.tryParse(iconItemId) : null;
+            if (targetKey.isTag()) {
+                this.iconStack = (id != null && BuiltInRegistries.ITEM.containsKey(id))
+                        ? new ItemStack(BuiltInRegistries.ITEM.getValue(id))
+                        : new ItemStack(Items.BARRIER);
+                baseName = TagTargets.displayName(targetKey.itemId());
+            } else if (id != null && BuiltInRegistries.ITEM.containsKey(id)) {
                 Item item = BuiltInRegistries.ITEM.getValue(id);
                 this.iconStack = new ItemStack(item);
                 baseName = item.getName(this.iconStack);

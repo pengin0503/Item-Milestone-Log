@@ -231,7 +231,7 @@ class MilestoneExportTest {
     }
 
     @Test
-    void normalizesImplicitNamespacesAndSkipsTagSyntaxDuringImport(@TempDir Path dir) throws Exception {
+    void normalizesImplicitNamespacesAndAcceptsTagSyntaxDuringImport(@TempDir Path dir) throws Exception {
         Path file = dir.resolve("TagsAndShortIds.json");
         Files.writeString(file, """
                 {
@@ -241,19 +241,35 @@ class MilestoneExportTest {
                     { "item": "emerald", "count": 5 },
                     "#c:ingots/iron",
                     "#c:ingots/iron#10",
-                    { "item": "#minecraft:logs", "count": 64 }
+                    { "item": "#minecraft:logs", "count": 64 },
+                    "#",
+                    "##c:x",
+                    "#c:x#0",
+                    { "item": "#c:x#", "count": 2 }
                   ],
                   "records": {
                     "diamond": { "ticks": 120, "day": 1, "epoch": 1795600000000 },
                     "#c:ingots/iron": { "ticks": 240, "day": 1, "epoch": 1795600000000 },
-                    "#c:ingots/iron#10": { "ticks": 360, "day": 2, "epoch": 1795600000000 }
+                    "#c:ingots/iron#10": { "ticks": 360, "day": 2, "epoch": 1795600000000 },
+                    "#c:ingots/gold": { "ticks": 480, "day": 3, "epoch": 1795600000000, "count": 20 },
+                    "#c:ingots/copper#10": { "ticks": 500, "day": 3, "epoch": 1795600000000, "count": 20 },
+                    "##c:x": { "ticks": 600, "day": 3, "epoch": 1795600000000 }
                   }
                 }
                 """);
         MilestoneExport.ImportPayload payload = MilestoneExport.parseSinglePlayerExport(file);
-        assertEquals(List.of(TargetKey.of("minecraft:diamond"), TargetKey.of("minecraft:emerald", 5)), payload.targets());
-        assertEquals(1, payload.records().size());
+        assertEquals(List.of(
+                TargetKey.of("minecraft:diamond"),
+                TargetKey.of("minecraft:emerald", 5),
+                TargetKey.of("#c:ingots/iron"),
+                TargetKey.of("#c:ingots/iron", 10),
+                TargetKey.of("#minecraft:logs", 64)
+        ), payload.targets());
+        assertEquals(4, payload.records().size());
         assertEquals(120, payload.records().get(TargetKey.of("minecraft:diamond")).playTicks());
+        assertEquals(240, payload.records().get(TargetKey.of("#c:ingots/iron")).playTicks());
+        assertEquals(360, payload.records().get(TargetKey.of("#c:ingots/iron", 10)).playTicks());
+        assertEquals(480, payload.records().get(TargetKey.of("#c:ingots/gold", 20)).playTicks());
     }
 
     @Test
@@ -918,6 +934,7 @@ class MilestoneExportTest {
         TargetKey redstone = TargetKey.of("minecraft:redstone");
         TargetKey lapis10 = TargetKey.of("minecraft:lapis_lazuli", 10);
         TargetKey copper = TargetKey.of("minecraft:copper_ingot");
+        TargetKey ironTag = TargetKey.of("#c:ingots/iron");
 
         WorldFirstRecord existingDiamond = new WorldFirstRecord("minecraft:diamond", 1, alice, "Alice", 500, 2L, 2000L);
         WorldFirstRecord existingEmerald = new WorldFirstRecord("minecraft:emerald", 1, alice, "Alice", 500, 2L, 1000L);
@@ -944,10 +961,11 @@ class MilestoneExportTest {
                   { "key": "minecraft:redstone", "uuid": "22222222-2222-2222-2222-222222222222", "name": "Bob", "ticks": 100, "day": -1, "epoch": 0 },
                   { "key": "lapis_lazuli#10", "uuid": "22222222-2222-2222-2222-222222222222", "name": "Bob", "ticks": 420, "day": 5, "epoch": 1795600000000 },
                   { "key": "minecraft:copper_ingot", "uuid": "22222222-2222-2222-2222-222222222222", "ticks": 0 },
+                  { "key": "#c:ingots/iron", "uuid": "22222222-2222-2222-2222-222222222222", "ticks": 10 },
                   "not-an-object",
                   null,
                   { "uuid": "22222222-2222-2222-2222-222222222222", "ticks": 10 },
-                  { "key": "#c:ingots/iron", "uuid": "22222222-2222-2222-2222-222222222222", "ticks": 10 },
+                  { "key": "##c:x", "uuid": "22222222-2222-2222-2222-222222222222", "ticks": 10 },
                   { "key": "minecraft:air", "uuid": "22222222-2222-2222-2222-222222222222", "ticks": 10 },
                   { "key": "minecraft:stone#0", "uuid": "22222222-2222-2222-2222-222222222222", "ticks": 10 },
                   { "key": "minecraft:stone", "uuid": "not-a-uuid", "ticks": 10 },
@@ -964,10 +982,11 @@ class MilestoneExportTest {
         WorldFirstImportLogic.MergeResult<TargetKey, WorldFirstRecord> result =
                 MilestoneExport.parseAndMergeWorldFirsts(current, raw);
 
-        // Updated: diamond (1500 < 2000), lapis_lazuli#10 (new, implicit namespace normalized), copper_ingot (new, omitted optional fields).
-        assertEquals(3, result.updatedCount());
+        // Updated: diamond (1500 < 2000), lapis_lazuli#10 (new, implicit namespace normalized),
+        // copper_ingot (new, omitted optional fields), and #c:ingots/iron (new tag key).
+        assertEquals(4, result.updatedCount());
         assertEquals(14, result.skippedCount());
-        assertEquals(8, result.worldFirsts().size());
+        assertEquals(9, result.worldFirsts().size());
 
         // Earlier epoch wins even when incoming playTicks is higher.
         assertEquals(new WorldFirstRecord("minecraft:diamond", 1, bob, "Bob", 900, 1L, 1500L),
@@ -984,6 +1003,8 @@ class MilestoneExportTest {
                 result.worldFirsts().get(lapis10));
         assertEquals(new WorldFirstRecord("minecraft:copper_ingot", 1, bob, "", 0, MilestoneRecord.UNKNOWN_DAY, MilestoneRecord.UNKNOWN_EPOCH),
                 result.worldFirsts().get(copper));
+        assertEquals(new WorldFirstRecord("#c:ingots/iron", 1, bob, "", 10, MilestoneRecord.UNKNOWN_DAY, MilestoneRecord.UNKNOWN_EPOCH),
+                result.worldFirsts().get(ironTag));
 
         // Pure function must not mutate the input map.
         assertEquals(6, current.size());

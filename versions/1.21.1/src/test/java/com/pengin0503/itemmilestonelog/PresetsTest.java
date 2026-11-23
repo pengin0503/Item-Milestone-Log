@@ -171,7 +171,11 @@ class PresetsTest {
         Presets.PresetDefinition initial = Presets.get("handcrafted");
         assertNotNull(initial);
         assertEquals("My Handcrafted Pack", initial.displayName());
-        assertEquals(List.of(TargetKey.of("minecraft:dirt")), initial.items());
+        assertEquals(List.of(
+                TargetKey.of("minecraft:dirt"),
+                TargetKey.of("#c:ingots/iron"),
+                TargetKey.of("#minecraft:logs", 64)
+        ), initial.items());
 
         List<TargetKey> updated = List.of(
                 TargetKey.of("minecraft:diamond"),
@@ -204,6 +208,60 @@ class PresetsTest {
         Files.writeString(dir.resolve("corrupt_existing.json"), "{ not json");
         assertTrue(Presets.saveCustomTo(dir, "corrupt_existing", List.of(TargetKey.of("minecraft:stone"))));
         assertEquals("corrupt_existing", Presets.get("corrupt_existing").displayName());
+
+        Presets.reloadFrom(dir.resolve("clean"));
+    }
+
+    @Test
+    void keepsNonexistentTagTargetsInCustomPresetsAndRoundTrips(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("tag_pack.json"), """
+                {
+                  "name": "Tag Pack",
+                  "items": [
+                    "#nonexistentmod:rare_ores",
+                    "#nonexistentmod:rare_ores#100",
+                    { "item": "#nonexistentmod:gems", "count": 50 },
+                    "#nonexistentmod:rare_ores",
+                    "#",
+                    "##c:x",
+                    "#c:x#",
+                    "#c:x#0",
+                    "#c:x#abc",
+                    "#:x",
+                    "#c:",
+                    "c:x#1#2",
+                    { "item": "#nonexistentmod:bad_count", "count": 0 }
+                  ]
+                }
+                """);
+
+        assertEquals(1, Presets.reloadFrom(dir));
+        Presets.PresetDefinition preset = Presets.get("tag_pack");
+        assertNotNull(preset);
+        List<TargetKey> expected = List.of(
+                TargetKey.of("#nonexistentmod:rare_ores"),
+                TargetKey.of("#nonexistentmod:rare_ores", 100),
+                TargetKey.of("#nonexistentmod:gems", 50)
+        );
+        assertEquals(expected, preset.items());
+        assertTrue(preset.items().get(0).isTag());
+        assertEquals("nonexistentmod:rare_ores", preset.items().get(0).tagId());
+        assertEquals(100, preset.items().get(1).count());
+        assertEquals("nonexistentmod:gems", preset.items().get(2).tagId());
+
+        // Saving and reloading a preset with nonexistent tag targets preserves them cleanly
+        assertFalse(Presets.saveCustomTo(dir, "saved_tags", expected));
+        JsonObject savedJson = JsonParser.parseString(Files.readString(dir.resolve("saved_tags.json"))).getAsJsonObject();
+        JsonArray itemsArr = savedJson.getAsJsonArray("items");
+        assertEquals(3, itemsArr.size());
+        assertEquals("#nonexistentmod:rare_ores", itemsArr.get(0).getAsString());
+        assertEquals("#nonexistentmod:rare_ores", itemsArr.get(1).getAsJsonObject().get("item").getAsString());
+        assertEquals(100, itemsArr.get(1).getAsJsonObject().get("count").getAsInt());
+        assertEquals("#nonexistentmod:gems", itemsArr.get(2).getAsJsonObject().get("item").getAsString());
+        assertEquals(50, itemsArr.get(2).getAsJsonObject().get("count").getAsInt());
+
+        assertEquals(2, Presets.reloadFrom(dir));
+        assertEquals(expected, Presets.get("saved_tags").items());
 
         Presets.reloadFrom(dir.resolve("clean"));
     }

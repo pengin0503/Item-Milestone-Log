@@ -28,8 +28,12 @@ import java.util.UUID;
  * return {@link Optional#empty()}; the write methods return {@code false} for a {@code null}
  * {@code target}.
  *
- * <p><strong>Tag keys:</strong> In 1.1.0, {@link TargetKey} only represents item IDs; tag keys
- * ({@code #namespace:path}) are not accepted, and the write methods return {@code false} for them.
+ * <p><strong>Tag keys:</strong> {@link TargetKey} may represent an item tag whose
+ * {@link TargetKey#itemId()} starts with {@code '#'} (e.g. {@code "#c:ingots/iron"}). IDs returned
+ * by this API (such as from {@link #getTargets}, {@link #getTargetKeys}, or {@link WorldFirstRecord#itemId()})
+ * may therefore start with {@code '#'}; callers should check {@link TargetKey#isTag()} (or
+ * {@link TargetKey#isTagId(String)}) before treating an ID as a Minecraft {@code Identifier} /
+ * {@code ResourceLocation}.
  *
  * <p>Example KubeJS server script recording a milestone when a quest is completed:
  * <pre>{@code
@@ -48,15 +52,16 @@ public final class ItemMilestoneLogApi {
 
     /**
      * Adds {@code target} to the player's personal targets, with the same validation and limit as the
-     * {@code /milestonelog add} command: the item must exist in the registry and must not be air, and a
+     * {@code /milestonelog add} command: the item must exist in the registry and must not be air (for a
+     * tag key, the item tag must exist and contain at least one item, as with {@code addtag}), and a
      * player can have at most 1024 personal targets. Creates the player's saved data if missing. If the
      * player is online, their milestone GUI is re-synced.
      *
      * @param server the running server
      * @param player UUID of the player (online or offline)
-     * @param target the target to add; {@code null} returns {@code false}
+     * @param target the target to add (an item or a {@code '#'}-prefixed tag key); {@code null} returns {@code false}
      * @return {@code true} if the target was added; {@code false} if {@code target} is {@code null},
-     *         invalid, a tag key, already a personal target, or the limit is reached
+     *         invalid, an unknown item, an unknown or empty tag, already a personal target, or the limit is reached
      * @throws NullPointerException  if {@code server} or {@code player} is {@code null}
      * @throws IllegalStateException if not called on the server thread
      */
@@ -75,9 +80,9 @@ public final class ItemMilestoneLogApi {
      *
      * @param server the running server
      * @param player UUID of the player (online or offline)
-     * @param target the target to remove; {@code null} returns {@code false}
+     * @param target the target to remove (an item or a {@code '#'}-prefixed tag key); {@code null} returns {@code false}
      * @return {@code true} if the target was removed; {@code false} if {@code target} is {@code null},
-     *         a tag key, a {@code defaultTargets} key, or not a personal target
+     *         a {@code defaultTargets} key, or not a personal target
      * @throws NullPointerException  if {@code server} or {@code player} is {@code null}
      * @throws IllegalStateException if not called on the server thread
      */
@@ -99,9 +104,9 @@ public final class ItemMilestoneLogApi {
      * deeper than {@value #MAX_RECORD_NOW_DEPTH} levels return {@code false} and log a warning.
      *
      * @param player the online player to record for
-     * @param target the target to record; {@code null} returns {@code false}
+     * @param target the target to record (an item or a {@code '#'}-prefixed tag key); {@code null} returns {@code false}
      * @return {@code true} if a new record was created; {@code false} if {@code target} is
-     *         {@code null} or a tag key, not one of the player's effective targets (personal +
+     *         {@code null}, not one of the player's effective targets (personal +
      *         {@code defaultTargets}), already recorded, recording is paused for the player
      *         (creative/spectator with {@code ignoreCreativeAndSpectator}), the player is a
      *         {@code FakePlayer}, or the nesting depth limit was exceeded
@@ -169,7 +174,12 @@ public final class ItemMilestoneLogApi {
     }
 
     /**
-     * Returns an unmodifiable view of the player's stored personal target item IDs with quantity 1.
+     * Returns an unmodifiable view of the player's stored personal target IDs with quantity 1.
+     *
+     * <p>Returned IDs may start with {@code '#'} for item tag targets (e.g. {@code "#c:ingots/iron"});
+     * check {@link TargetKey#isTagId(String)} (or use {@link #getTargetKeys(MinecraftServer, UUID)}
+     * and {@link TargetKey#isTag()}) before treating an entry as an {@code Identifier} /
+     * {@code ResourceLocation}.
      *
      * <p>For all personal targets including quantity targets ({@code count > 1}), use
      * {@link #getTargetKeys(MinecraftServer, UUID)}.
@@ -197,7 +207,10 @@ public final class ItemMilestoneLogApi {
     }
 
     /**
-     * Returns an unmodifiable view of all stored personal targets (item + quantity) for the player.
+     * Returns an unmodifiable view of all stored personal targets (item or tag + quantity) for the player.
+     *
+     * <p>Check {@link TargetKey#isTag()} before treating {@link TargetKey#itemId()} as an item
+     * {@code Identifier} / {@code ResourceLocation}.
      *
      * <p>Note: This returns only the player's saved personal targets and does not include
      * server-configured {@code defaultTargets}. Resolving default targets is the caller's

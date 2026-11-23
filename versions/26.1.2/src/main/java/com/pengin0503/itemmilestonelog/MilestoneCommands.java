@@ -35,6 +35,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -73,12 +74,78 @@ public final class MilestoneCommands {
         return RequiredArgumentBuilder.argument(name, type);
     }
 
+    /** Item IDs of the non-tag keys (tag keys cannot be typed into the item commands, F8b). */
     private static Set<String> itemIdsOf(Set<TargetKey> keys) {
         Set<String> ids = new LinkedHashSet<>();
         for (TargetKey key : keys) {
-            ids.add(key.itemId());
+            if (!key.isTag()) {
+                ids.add(key.itemId());
+            }
         }
         return ids;
+    }
+
+    /** F8b: tag IDs (without the leading {@code '#'}) of the tag keys, as typed into the tag commands. */
+    static Set<String> tagIdsOf(Collection<TargetKey> keys) {
+        Set<String> ids = new LinkedHashSet<>();
+        for (TargetKey key : keys) {
+            if (key.isTag()) {
+                ids.add(key.tagId());
+            }
+        }
+        return ids;
+    }
+
+    /** Non-tag IDs among {@code ids}. */
+    private static List<String> nonTagIds(Collection<String> ids) {
+        List<String> out = new ArrayList<>();
+        for (String id : ids) {
+            if (!TargetKey.isTagId(id)) {
+                out.add(id);
+            }
+        }
+        return out;
+    }
+
+    /** F8b: tag IDs (without the leading {@code '#'}) among {@code ids}. */
+    private static List<String> tagIdsAmong(Collection<String> ids) {
+        List<String> out = new ArrayList<>();
+        for (String id : ids) {
+            if (TargetKey.isTagId(id)) {
+                out.add(id.substring(1));
+            }
+        }
+        return out;
+    }
+
+    /** F8b: the {@code <tag>} argument (written without {@code '#'}) as a {@code '#'}-prefixed target ID. */
+    private static String tagArg(CommandContext<CommandSourceStack> ctx) {
+        return MilestoneService.tagKeyId(IdentifierArgument.getId(ctx, "tag").toString());
+    }
+
+    /** F8b: the {@code <tag>} argument type ({@code IdentifierArgument} / {@code ResourceLocationArgument}). */
+    private static ArgumentType<?> tagArgumentType() {
+        return IdentifierArgument.id();
+    }
+
+    @Nullable
+    private static MilestoneData.PlayerData sourcePlayerData(CommandContext<CommandSourceStack> ctx) {
+        ServerPlayer sp = ctx.getSource().getPlayer();
+        MinecraftServer server = ctx.getSource().getServer();
+        if (sp == null || server == null) {
+            return null;
+        }
+        return MilestoneData.get(server).playerOrNull(sp.getUUID());
+    }
+
+    @Nullable
+    private static MilestoneData.PlayerData adminTargetData(CommandContext<CommandSourceStack> ctx) {
+        MinecraftServer server = ctx.getSource().getServer();
+        if (server == null) {
+            return null;
+        }
+        ResolvedPlayer resolved = resolvePlayerData(server, StringArgumentType.getString(ctx, "player"));
+        return resolved.entry != null ? resolved.entry.getValue() : null;
     }
 
     private static Set<String> countsForItem(Set<TargetKey> keys, String itemId) {
@@ -273,8 +340,8 @@ public final class MilestoneCommands {
             if (server == null || !canUseRankings(source)) {
                 return builder.buildFuture();
             }
-            return SharedSuggestionProvider.suggest(
-                    MilestoneRankings.recordedItemIds(MilestoneData.get(server).allPlayers(), rankingViewer(source)), builder);
+            return SharedSuggestionProvider.suggest(nonTagIds(
+                    MilestoneRankings.recordedItemIds(MilestoneData.get(server).allPlayers(), rankingViewer(source))), builder);
         };
         SuggestionProvider<CommandSourceStack> topItemCountSuggestions = (ctx, builder) -> {
             CommandSourceStack source = ctx.getSource();
@@ -294,6 +361,69 @@ public final class MilestoneCommands {
                     .toList();
             return SharedSuggestionProvider.suggest(names, builder);
         };
+        // F8b: <tag> is written without '#'; suggestions are tag IDs without '#'.
+        SuggestionProvider<CommandSourceStack> allTagSuggestions = (ctx, builder) ->
+                SharedSuggestionProvider.suggest(TagTargets.suggestableTagIds(), builder);
+        SuggestionProvider<CommandSourceStack> personalTagTargetSuggestions = (ctx, builder) -> {
+            MilestoneData.PlayerData pd = sourcePlayerData(ctx);
+            return SharedSuggestionProvider.suggest(pd != null ? tagIdsOf(pd.targets) : Set.of(), builder);
+        };
+        SuggestionProvider<CommandSourceStack> personalTagTargetCountSuggestions = (ctx, builder) -> {
+            MilestoneData.PlayerData pd = sourcePlayerData(ctx);
+            return SharedSuggestionProvider.suggest(pd != null ? countsForItem(pd.targets, tagArg(ctx)) : Set.of(), builder);
+        };
+        SuggestionProvider<CommandSourceStack> recordedTagSuggestions = (ctx, builder) -> {
+            MilestoneData.PlayerData pd = sourcePlayerData(ctx);
+            return SharedSuggestionProvider.suggest(pd != null ? tagIdsOf(pd.records.keySet()) : Set.of(), builder);
+        };
+        SuggestionProvider<CommandSourceStack> recordedTagCountSuggestions = (ctx, builder) -> {
+            MilestoneData.PlayerData pd = sourcePlayerData(ctx);
+            return SharedSuggestionProvider.suggest(
+                    pd != null ? countsForItem(pd.records.keySet(), tagArg(ctx)) : Set.of(), builder);
+        };
+        SuggestionProvider<CommandSourceStack> worldFirstTagSuggestions = (ctx, builder) -> {
+            MinecraftServer server = ctx.getSource().getServer();
+            if (server == null) {
+                return builder.buildFuture();
+            }
+            return SharedSuggestionProvider.suggest(tagIdsOf(MilestoneData.get(server).worldFirsts().keySet()), builder);
+        };
+        SuggestionProvider<CommandSourceStack> worldFirstTagCountSuggestions = (ctx, builder) -> {
+            MinecraftServer server = ctx.getSource().getServer();
+            if (server == null) {
+                return builder.buildFuture();
+            }
+            return SharedSuggestionProvider.suggest(
+                    countsForItem(MilestoneData.get(server).worldFirsts().keySet(), tagArg(ctx)), builder);
+        };
+        SuggestionProvider<CommandSourceStack> adminRecordedTagSuggestions = (ctx, builder) -> {
+            MilestoneData.PlayerData pd = adminTargetData(ctx);
+            return SharedSuggestionProvider.suggest(pd != null ? tagIdsOf(pd.records.keySet()) : Set.of(), builder);
+        };
+        SuggestionProvider<CommandSourceStack> adminRecordedTagCountSuggestions = (ctx, builder) -> {
+            MilestoneData.PlayerData pd = adminTargetData(ctx);
+            return SharedSuggestionProvider.suggest(
+                    pd != null ? countsForItem(pd.records.keySet(), tagArg(ctx)) : Set.of(), builder);
+        };
+        SuggestionProvider<CommandSourceStack> topTagSuggestions = (ctx, builder) -> {
+            CommandSourceStack source = ctx.getSource();
+            MinecraftServer server = source.getServer();
+            if (server == null || !canUseRankings(source)) {
+                return builder.buildFuture();
+            }
+            return SharedSuggestionProvider.suggest(tagIdsAmong(
+                    MilestoneRankings.recordedItemIds(MilestoneData.get(server).allPlayers(), rankingViewer(source))), builder);
+        };
+        SuggestionProvider<CommandSourceStack> topTagCountSuggestions = (ctx, builder) -> {
+            CommandSourceStack source = ctx.getSource();
+            MinecraftServer server = source.getServer();
+            if (server == null || !canUseRankings(source)) {
+                return builder.buildFuture();
+            }
+            List<String> counts = MilestoneRankings.recordedCounts(MilestoneData.get(server).allPlayers(), rankingViewer(source), tagArg(ctx))
+                    .stream().map(String::valueOf).toList();
+            return SharedSuggestionProvider.suggest(counts, builder);
+        };
 
         return literal("milestonelog")
                 .executes(MilestoneCommands::summary)
@@ -307,6 +437,33 @@ public final class MilestoneCommands {
                         .executes(ctx -> addHand(ctx, TargetKey.MIN_COUNT))
                         .then(argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
                                 .executes(ctx -> addHand(ctx, IntegerArgumentType.getInteger(ctx, "count")))))
+                .then(literal("addtag")
+                        .then(argument("tag", tagArgumentType())
+                                .suggests(allTagSuggestions)
+                                .executes(ctx -> add(ctx, tagArg(ctx), TargetKey.MIN_COUNT))
+                                .then(argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                        .executes(ctx -> add(ctx, tagArg(ctx), IntegerArgumentType.getInteger(ctx, "count"))))))
+                .then(literal("removetag")
+                        .then(argument("tag", tagArgumentType())
+                                .suggests(personalTagTargetSuggestions)
+                                .executes(ctx -> remove(ctx, tagArg(ctx), TargetKey.MIN_COUNT))
+                                .then(argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                        .suggests(personalTagTargetCountSuggestions)
+                                        .executes(ctx -> remove(ctx, tagArg(ctx), IntegerArgumentType.getInteger(ctx, "count"))))))
+                .then(literal("resettag")
+                        .then(argument("tag", tagArgumentType())
+                                .suggests(recordedTagSuggestions)
+                                .executes(ctx -> reset(ctx, tagArg(ctx), TargetKey.MIN_COUNT))
+                                .then(argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                        .suggests(recordedTagCountSuggestions)
+                                        .executes(ctx -> reset(ctx, tagArg(ctx), IntegerArgumentType.getInteger(ctx, "count"))))))
+                .then(literal("toptag")
+                        .then(argument("tag", tagArgumentType())
+                                .suggests(topTagSuggestions)
+                                .executes(ctx -> topItem(ctx, tagArg(ctx), TargetKey.MIN_COUNT))
+                                .then(argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                        .suggests(topTagCountSuggestions)
+                                        .executes(ctx -> topItem(ctx, tagArg(ctx), IntegerArgumentType.getInteger(ctx, "count"))))))
                 .then(literal("remove")
                         .then(argument("item", IdentifierArgument.id())
                                 .suggests(personalTargetSuggestions)
@@ -381,6 +538,15 @@ public final class MilestoneCommands {
                                         .then(argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
                                                 .suggests(worldFirstCountSuggestions)
                                                 .executes(ctx -> firstsReset(ctx, IdentifierArgument.getId(ctx, "item").toString(),
+                                                        IntegerArgumentType.getInteger(ctx, "count"))))))
+                        .then(literal("resettag")
+                                .requires(adminRequirement)
+                                .then(argument("tag", tagArgumentType())
+                                        .suggests(worldFirstTagSuggestions)
+                                        .executes(ctx -> firstsReset(ctx, tagArg(ctx), TargetKey.MIN_COUNT))
+                                        .then(argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                                .suggests(worldFirstTagCountSuggestions)
+                                                .executes(ctx -> firstsReset(ctx, tagArg(ctx),
                                                         IntegerArgumentType.getInteger(ctx, "count"))))))
                         .then(literal("resetall")
                                 .requires(adminRequirement)
@@ -498,6 +664,15 @@ public final class MilestoneCommands {
                                                         .executes(ctx -> adminReset(ctx, StringArgumentType.getString(ctx, "player"),
                                                                 IdentifierArgument.getId(ctx, "item").toString(),
                                                                 IntegerArgumentType.getInteger(ctx, "count"))))))
+                                .then(literal("resettag")
+                                        .then(argument("tag", tagArgumentType())
+                                                .suggests(adminRecordedTagSuggestions)
+                                                .executes(ctx -> adminReset(ctx, StringArgumentType.getString(ctx, "player"),
+                                                        tagArg(ctx), TargetKey.MIN_COUNT))
+                                                .then(argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                                        .suggests(adminRecordedTagCountSuggestions)
+                                                        .executes(ctx -> adminReset(ctx, StringArgumentType.getString(ctx, "player"),
+                                                                tagArg(ctx), IntegerArgumentType.getInteger(ctx, "count"))))))
                                 .then(literal("resetall").executes(ctx -> adminResetAll(ctx, StringArgumentType.getString(ctx, "player"))))
                                 .then(literal("purge").executes(ctx -> adminPurge(ctx, StringArgumentType.getString(ctx, "player"))))))
                 .then(literal("help")
@@ -654,9 +829,12 @@ public final class MilestoneCommands {
         }
 
         Set<String> carried = Tracker.carriedFromCreative(pd);
+        TagIndex tagIndex = TagTargets.index();
         Set<String> progressItemIds = new LinkedHashSet<>();
         for (TargetKey key : displayed) {
-            if (key.count() > TargetKey.MIN_COUNT && !records.containsKey(key) && !carried.contains(key.itemId())) {
+            // Tag totals already exclude creative-carried members (F8b), so tags are always counted.
+            if (key.count() > TargetKey.MIN_COUNT && !records.containsKey(key)
+                    && (key.isTag() || !carried.contains(key.itemId()))) {
                 progressItemIds.add(key.itemId());
             }
         }
@@ -677,10 +855,11 @@ public final class MilestoneCommands {
                 line = ServerLang.tr(player, "message.itemmilestonelog.target_done",
                         MilestoneService.targetDisplayName(key), Playtime.format(rec.playTicks()));
             } else {
-                boolean isCarried = carried.contains(key.itemId());
+                // F50: a tag target gets the note when any of its members is carried out of creative.
+                boolean isCarried = Tracker.isCreativeCarriedTarget(key, carried, tagIndex);
                 Component label = MilestoneService.targetDisplayName(key);
                 if (key.count() > TargetKey.MIN_COUNT) {
-                    int current = isCarried ? 0 : possessionCounts.getOrDefault(key.itemId(), 0);
+                    int current = (isCarried && !key.isTag()) ? 0 : possessionCounts.getOrDefault(key.itemId(), 0);
                     label = ServerLang.tr(player, "message.itemmilestonelog.target_progress", label, current);
                 }
                 MutableComponent pendingLine = ServerLang.tr(player, "message.itemmilestonelog.target_pending", label);
@@ -947,13 +1126,13 @@ public final class MilestoneCommands {
         MilestoneData data = MilestoneData.get(source.getServer());
         TargetKey key = TargetKey.normalize(itemId, count);
         if (key == null) {
-            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.invalid_item", String.valueOf(itemId)));
+            return fail(ctx, ServerLang.tr(source, MilestoneService.invalidTargetKey(itemId), String.valueOf(itemId)));
         }
         if (data.removeWorldFirst(key)) {
             return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.firsts_reset_done", MilestoneService.targetDisplayName(key)));
         }
         if (!MilestoneService.isValidItemId(key.itemId())) {
-            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.invalid_item", itemId));
+            return fail(ctx, ServerLang.tr(source, MilestoneService.invalidTargetKey(itemId), itemId));
         }
         return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.firsts_not_recorded", MilestoneService.targetDisplayName(key)));
     }
@@ -1456,7 +1635,7 @@ public final class MilestoneCommands {
         }
         TargetKey key = TargetKey.normalize(itemId, count);
         if (key == null) {
-            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.invalid_item", String.valueOf(itemId)));
+            return fail(ctx, ServerLang.tr(source, MilestoneService.invalidTargetKey(itemId), String.valueOf(itemId)));
         }
         MilestoneRankings.Viewer viewer = rankingViewer(source);
         MilestoneRankings.Ranking<MilestoneRankings.ItemEntry> ranking =
@@ -1701,7 +1880,7 @@ public final class MilestoneCommands {
         MilestoneData data = MilestoneData.get(source.getServer());
         TargetKey key = TargetKey.normalize(itemId, count);
         if (key == null) {
-            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.invalid_item", String.valueOf(itemId)));
+            return fail(ctx, ServerLang.tr(source, MilestoneService.invalidTargetKey(itemId), String.valueOf(itemId)));
         }
         if (target.getValue().records.remove(key) != null) {
             target.getValue().progressNotified.remove(key);
@@ -1713,7 +1892,7 @@ public final class MilestoneCommands {
             return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.admin_reset_done", name, MilestoneService.targetDisplayName(key)));
         }
         if (!MilestoneService.isValidItemId(key.itemId())) {
-            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.invalid_item", itemId));
+            return fail(ctx, ServerLang.tr(source, MilestoneService.invalidTargetKey(itemId), itemId));
         }
         return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.admin_not_recorded", name, MilestoneService.targetDisplayName(key)));
     }

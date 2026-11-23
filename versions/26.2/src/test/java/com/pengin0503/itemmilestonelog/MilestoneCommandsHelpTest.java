@@ -64,6 +64,30 @@ class MilestoneCommandsHelpTest {
     }
 
     @Test
+    void tagCommandsAreRegisteredIncludingNestedResettag() {
+        CommandDispatcher<CommandSourceStack> dispatcher = buildDispatcher(src -> true);
+        CommandNode<CommandSourceStack> root = dispatcher.getRoot().getChild("milestonelog");
+        assertNotNull(root);
+        for (String name : List.of("addtag", "removetag", "resettag", "toptag")) {
+            CommandNode<CommandSourceStack> node = root.getChild(name);
+            assertNotNull(node, name + " must be registered");
+            assertNotNull(node.getChild("tag"), name + " must take a <tag> argument");
+        }
+        assertNotNull(root.getChild("firsts").getChild("resettag"), "firsts resettag must be registered");
+        CommandNode<CommandSourceStack> adminPlayer = root.getChild("admin").getChild("player");
+        assertNotNull(adminPlayer);
+        assertNotNull(adminPlayer.getChild("resettag"), "admin <player> resettag must be registered");
+    }
+
+    @Test
+    void tagIdsOfReturnsOnlyTagKeysWithoutHash() {
+        assertEquals(Set.of("c:ingots/iron"), MilestoneCommands.tagIdsOf(List.of(
+                com.pengin0503.itemmilestonelog.api.TargetKey.of("#c:ingots/iron"),
+                com.pengin0503.itemmilestonelog.api.TargetKey.of("#c:ingots/iron", 10),
+                com.pengin0503.itemmilestonelog.api.TargetKey.of("minecraft:diamond"))));
+    }
+
+    @Test
     void everyRegisteredSubcommandAppearsInHelpTableAndViceVersa() {
         CommandDispatcher<CommandSourceStack> dispatcher = buildDispatcher(src -> true);
         CommandNode<CommandSourceStack> root = dispatcher.getRoot().getChild("milestonelog");

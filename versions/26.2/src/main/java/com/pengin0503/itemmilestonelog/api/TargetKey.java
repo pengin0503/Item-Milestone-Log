@@ -3,12 +3,18 @@ package com.pengin0503.itemmilestonelog.api;
 import javax.annotation.Nullable;
 
 /**
- * Identifies a milestone target as an {@code (itemId, count)} pair.
+ * Identifies a milestone target as an {@code (itemId, count)} pair, where {@code itemId} is either
+ * an item ID ({@code namespace:path}, e.g. {@code minecraft:diamond}) or an item tag ID prefixed
+ * with {@code '#'} ({@code #namespace:path}, e.g. {@code #c:ingots/iron}).
+ *
+ * <p>Callers should check {@link #isTag()} before treating {@link #itemId()} as an item
+ * {@code Identifier} / {@code ResourceLocation}, and use {@link #tagId()} to obtain the tag
+ * identifier without the leading {@code '#'}.
  *
  * <p>Encoded form used in NBT target lists and config entries:
  * <ul>
- *   <li>{@code count == 1}: {@code itemId} (e.g. {@code minecraft:diamond})</li>
- *   <li>{@code count > 1}: {@code itemId#count} (e.g. {@code minecraft:diamond#100})</li>
+ *   <li>{@code count == 1}: {@code itemId} (e.g. {@code minecraft:diamond}, {@code #c:ingots/iron})</li>
+ *   <li>{@code count > 1}: {@code itemId#count} (e.g. {@code minecraft:diamond#100}, {@code #c:ingots/iron#100})</li>
  * </ul>
  */
 public record TargetKey(String itemId, int count) implements Comparable<TargetKey> {
@@ -24,9 +30,35 @@ public record TargetKey(String itemId, int count) implements Comparable<TargetKe
         }
     }
 
+    /** Returns {@code true} if {@code itemId} starts with the tag prefix {@code '#'}. */
+    public static boolean isTagId(@Nullable String itemId) {
+        return itemId != null && !itemId.isEmpty() && itemId.charAt(0) == '#';
+    }
+
+    /** Returns {@code true} if this target refers to an item tag ({@link #itemId()} starts with {@code '#'}). */
+    public boolean isTag() {
+        return isTagId(itemId);
+    }
+
+    /**
+     * Returns the tag identifier without the leading {@code '#'} (e.g. {@code "c:ingots/iron"} for
+     * {@code "#c:ingots/iron"}), or {@code null} if {@link #isTag()} is {@code false}.
+     */
+    @Nullable
+    public String tagId() {
+        return isTag() ? itemId.substring(1) : null;
+    }
+
+    /**
+     * Returns {@code true} if {@code itemId} is a valid target ID: either an item ID or a tag ID
+     * ({@code '#' + valid namespace:path identifier}).
+     */
     public static boolean isValidItemId(@Nullable String itemId) {
         if (itemId == null || itemId.isEmpty()) {
             return false;
+        }
+        if (itemId.charAt(0) == '#') {
+            return normalizeItemId(itemId, true) != null;
         }
         for (int i = 0; i < itemId.length(); i++) {
             char c = itemId.charAt(i);
@@ -46,38 +78,43 @@ public record TargetKey(String itemId, int count) implements Comparable<TargetKe
     }
 
     /**
-     * Validates and normalizes a target item ID according to Minecraft's resource location rules.
+     * Validates and normalizes a target item or tag ID according to Minecraft's resource location rules.
      *
-     * <p>In 1.1.0, only item IDs are accepted ({@code #}-prefixed tag IDs return {@code null}).
-     * When {@code requireNamespace} is {@code false}, an ID without {@code ':'} is normalized to
-     * the {@code minecraft:} namespace. Returns {@code null} if {@code raw} is null, empty,
-     * contains invalid characters, or lacks a required namespace.
+     * <p>Tag IDs start with {@code '#'} and must have an explicit {@code namespace:path} identifier
+     * after the leading {@code '#'}. For item IDs, when {@code requireNamespace} is {@code false},
+     * an ID without {@code ':'} is normalized to the {@code minecraft:} namespace. Returns {@code null}
+     * if {@code raw} is null, empty, contains invalid characters, or lacks a required namespace.
      */
     @Nullable
     public static String normalizeItemId(@Nullable String raw, boolean requireNamespace) {
         if (raw == null || raw.isEmpty()) {
             return null;
         }
-        int colon = raw.indexOf(':');
+        boolean tag = raw.charAt(0) == '#';
+        String body = tag ? raw.substring(1) : raw;
+        if (body.isEmpty()) {
+            return null;
+        }
+        int colon = body.indexOf(':');
         String namespace;
         String path;
         if (colon < 0) {
-            if (requireNamespace) {
+            if (tag || requireNamespace) {
                 return null;
             }
             namespace = "minecraft";
-            path = raw;
+            path = body;
         } else {
-            if (colon == 0 || colon == raw.length() - 1) {
+            if (colon == 0 || colon == body.length() - 1) {
                 return null;
             }
-            namespace = raw.substring(0, colon);
-            path = raw.substring(colon + 1);
+            namespace = body.substring(0, colon);
+            path = body.substring(colon + 1);
         }
         if (!isValidNamespace(namespace) || !isValidPath(path)) {
             return null;
         }
-        return namespace + ":" + path;
+        return (tag ? "#" : "") + namespace + ":" + path;
     }
 
     /** Convenience overload allowing the implicit {@code minecraft:} namespace. */
@@ -186,7 +223,14 @@ public record TargetKey(String itemId, int count) implements Comparable<TargetKe
     }
 
     /**
-     * Parses {@code itemId} (count = 1) or {@code itemId#count} (count in 1..1,000,000).
+     * Parses an encoded target string:
+     * <ul>
+     *   <li>Item target: {@code itemId} (count = 1) or {@code itemId#count} (count in 1..1,000,000)</li>
+     *   <li>Tag target: {@code #namespace:path} (count = 1) or {@code #namespace:path#count} (count in 1..1,000,000)</li>
+     * </ul>
+     *
+     * <p>A leading {@code '#'} marks a tag target. The count separator is the last {@code '#'} at
+     * index {@code >= 1}; the suffix after it must satisfy {@link #tryParseCount(String)}.
      * Returns {@code null} if the string is blank or malformed.
      */
     @Nullable
@@ -198,15 +242,15 @@ public record TargetKey(String itemId, int count) implements Comparable<TargetKe
         if (trimmed.isEmpty()) {
             return null;
         }
-        int hash = trimmed.indexOf('#');
-        if (hash < 0) {
+        int lastHash = trimmed.lastIndexOf('#');
+        if (lastHash < 1) {
             return isValidItemId(trimmed) ? new TargetKey(trimmed, MIN_COUNT) : null;
         }
-        String id = trimmed.substring(0, hash);
+        String id = trimmed.substring(0, lastHash);
         if (!isValidItemId(id)) {
             return null;
         }
-        int parsedCount = tryParseCount(trimmed.substring(hash + 1));
+        int parsedCount = tryParseCount(trimmed.substring(lastHash + 1));
         if (parsedCount < MIN_COUNT) {
             return null;
         }

@@ -42,20 +42,29 @@ class TrackerTest {
     private static final UUID PLAYER_B = UUID.fromString("22222222-2222-2222-2222-222222222222");
 
     @Test
-    void parseDefaultTargetsAcceptsValidEntriesAndIgnoresInvalidOrAir() {
+    void parseDefaultTargetsAcceptsValidItemAndTagEntriesAndIgnoresInvalidOrAir() {
         List<String> raw = Arrays.asList(
                 "minecraft:diamond",
                 "minecraft:diamond#100",
                 "minecraft:diamond", // duplicate
                 "othermod:custom_ingot#16",
+                "#c:ingots/iron",
+                "#c:ingots/iron#10",
+                "#nonexistent:future_tag",
                 "minecraft:air",
                 "minecraft:air#5",
                 "diamond", // missing namespace
                 "minecraft:stone#0",
                 "minecraft:stone#1000001",
                 "minecraft:bad id",
-                "#c:ingots/iron",
-                "#c:ingots/iron#10",
+                "#",
+                "##c:x",
+                "#c:x#",
+                "#c:x#0",
+                "#c:x#abc",
+                "#:x",
+                "#c:",
+                "c:x#1#2",
                 "",
                 null
         );
@@ -64,7 +73,10 @@ class TrackerTest {
         assertEquals(List.of(
                 TargetKey.of("minecraft:diamond"),
                 TargetKey.of("minecraft:diamond", 100),
-                TargetKey.of("othermod:custom_ingot", 16)
+                TargetKey.of("othermod:custom_ingot", 16),
+                TargetKey.of("#c:ingots/iron"),
+                TargetKey.of("#c:ingots/iron", 10),
+                TargetKey.of("#nonexistent:future_tag")
         ), List.copyOf(parsed));
     }
 
@@ -1540,5 +1552,126 @@ class TrackerTest {
         assertTrue(data.purgePlayer(PLAYER_A));
         Tracker.processPlayerLogout(data, PLAYER_A, logoutTime + 10_000L);
         assertNull(data.playerOrNull(PLAYER_A));
+    }
+
+    // ------------------------------------------------------------------ F8b tag targets
+
+    private static final TagIndex IRON_TAGS = TagIndex.of(Map.of(
+            "c:ingots/iron", List.of("minecraft:iron_ingot", "othermod:iron_ingot"),
+            "c:ingots", List.of("minecraft:iron_ingot", "minecraft:gold_ingot")));
+
+    @Test
+    void countPendingPossessionSumsTagMembersAndExcludesCreativeCarried() {
+        TargetKey ironTag = TargetKey.of("#c:ingots/iron", 10);
+        TargetKey diamond = TargetKey.of("minecraft:diamond", 5);
+        List<Tracker.StackCount> stacks = List.of(
+                new Tracker.StackCount("minecraft:iron_ingot", 4),
+                new Tracker.StackCount("othermod:iron_ingot", 3),
+                new Tracker.StackCount("minecraft:iron_ingot", 2),
+                new Tracker.StackCount("minecraft:diamond", 5),
+                new Tracker.StackCount("minecraft:dirt", 64));
+
+        Set<String> stillCarried = new HashSet<>();
+        Map<String, Integer> counts = Tracker.countPendingPossession(
+                stacks, Set.of(ironTag, diamond), Set.of(), stillCarried, IRON_TAGS);
+        assertEquals(9, counts.get("#c:ingots/iron"));
+        assertEquals(5, counts.get("minecraft:diamond"));
+        assertNull(counts.get("minecraft:dirt"));
+        assertTrue(stillCarried.isEmpty());
+
+        // A creative-carried member counts neither for itself nor toward the tag.
+        Set<String> stillCarried2 = new HashSet<>();
+        Map<String, Integer> carriedCounts = Tracker.countPendingPossession(
+                stacks, Set.of(ironTag), Set.of("othermod:iron_ingot"), stillCarried2, IRON_TAGS);
+        assertEquals(6, carriedCounts.get("#c:ingots/iron"));
+        assertEquals(Set.of("othermod:iron_ingot"), stillCarried2);
+
+        // Unknown / empty tags count as 0 (absent from the map).
+        Map<String, Integer> unknown = Tracker.countPendingPossession(
+                stacks, Set.of(TargetKey.of("#c:gems/ruby")), Set.of(), new HashSet<>(), IRON_TAGS);
+        assertEquals(0, unknown.getOrDefault("#c:gems/ruby", 0));
+    }
+
+    @Test
+    void countRequestedPossessionExpandsTagsAndKeepsItemIds() {
+        List<Tracker.StackCount> stacks = List.of(
+                new Tracker.StackCount("minecraft:iron_ingot", 4),
+                new Tracker.StackCount("minecraft:gold_ingot", 7));
+        Map<String, Integer> counts = Tracker.countRequestedPossession(
+                stacks, Set.of("#c:ingots", "minecraft:gold_ingot"), Set.of("minecraft:iron_ingot"), IRON_TAGS);
+        // iron is creative-carried: excluded from the tag total; requested item IDs are counted as-is.
+        assertEquals(7, counts.get("#c:ingots"));
+        assertEquals(7, counts.get("minecraft:gold_ingot"));
+        assertEquals(Map.of(), Tracker.countRequestedPossession(stacks, Set.of(), Set.of(), IRON_TAGS));
+    }
+
+    @Test
+    void evaluateTagAcquisitionChecksOnlyUnrecordedTagsContainingTheItem() {
+        TargetKey iron1 = TargetKey.of("#c:ingots/iron");
+        TargetKey iron10 = TargetKey.of("#c:ingots/iron", 10);
+        TargetKey ingots = TargetKey.of("#c:ingots");
+        TargetKey unrelated = TargetKey.of("#c:gems");
+        MilestoneData.PlayerData pd = new MilestoneData.PlayerData();
+        pd.targets.add(iron10);
+        pd.targets.add(unrelated);
+        pd.targets.add(ingots);
+        pd.records.put(ingots, new MilestoneRecord(100, 0L, 0L));
+
+        List<TargetKey> pending = Tracker.collectUnrecordedTagTargetsForItem(
+                "minecraft:iron_ingot", Set.of(iron1), pd, IRON_TAGS);
+        assertEquals(List.of(iron1, iron10), pending);
+
+        List<Set<String>> requested = new ArrayList<>();
+        Tracker.TagAcquisitionOutcome outcome = Tracker.evaluateTagAcquisition(
+                "minecraft:iron_ingot", Set.of(iron1), pd, IRON_TAGS, ids -> {
+                    requested.add(ids);
+                    return Map.of("#c:ingots/iron", 3);
+                });
+        assertEquals(List.of(Set.of("#c:ingots/iron")), requested);
+        assertEquals(List.of(iron1), outcome.achieved());
+        assertEquals(List.of(iron1, iron10), outcome.pending());
+
+        // An item that belongs to no pending tag never triggers a possession scan.
+        Tracker.TagAcquisitionOutcome none = Tracker.evaluateTagAcquisition(
+                "minecraft:dirt", Set.of(iron1), pd, IRON_TAGS, ids -> {
+                    throw new AssertionError("should not count");
+                });
+        assertEquals(Tracker.TagAcquisitionOutcome.EMPTY, none);
+    }
+
+    @Test
+    void missingOrEmptyDefaultTagsListsEachUnknownTagOnce() {
+        Set<TargetKey> defaults = new LinkedHashSet<>(List.of(
+                TargetKey.of("#c:ingots/iron"),
+                TargetKey.of("#nonexistent:future_tag"),
+                TargetKey.of("#nonexistent:future_tag", 10),
+                TargetKey.of("minecraft:diamond")));
+        assertEquals(List.of("#nonexistent:future_tag"), Tracker.missingOrEmptyDefaultTags(defaults, IRON_TAGS));
+        assertEquals(List.of("#c:ingots/iron", "#nonexistent:future_tag"),
+                Tracker.missingOrEmptyDefaultTags(defaults, TagIndex.EMPTY));
+    }
+
+    @Test
+    void creativeCarriedNotesAndCountsIncludeTagTargets() {
+        TargetKey ironTag = TargetKey.of("#c:ingots/iron", 10);
+        TargetKey diamond = TargetKey.of("minecraft:diamond");
+        Set<String> carried = Set.of("othermod:iron_ingot");
+
+        // F50 (2): targets row note for a tag with a carried member.
+        assertTrue(Tracker.isCreativeCarriedTarget(ironTag, carried, IRON_TAGS));
+        assertFalse(Tracker.isCreativeCarriedTarget(TargetKey.of("#c:ingots"), carried, IRON_TAGS));
+        assertFalse(Tracker.isCreativeCarriedTarget(diamond, carried, IRON_TAGS));
+        assertTrue(Tracker.isCreativeCarriedTarget(diamond, Set.of("minecraft:diamond"), IRON_TAGS));
+        assertFalse(Tracker.isCreativeCarriedTarget(ironTag, Set.of(), IRON_TAGS));
+
+        // F50 (1): marked items in unrecorded tag targets are counted once per item ID.
+        Set<TargetKey> effective = Set.of(ironTag, TargetKey.of("#c:ingots"), diamond);
+        assertEquals(2, Tracker.countCreativeCarriedTargetItems(
+                Set.of("minecraft:iron_ingot", "othermod:iron_ingot"), effective, Set.of(), IRON_TAGS));
+        assertEquals(1, Tracker.countCreativeCarriedTargetItems(
+                Set.of("minecraft:iron_ingot", "othermod:iron_ingot"), effective,
+                Set.of(ironTag), IRON_TAGS));
+        assertEquals(0, Tracker.countCreativeCarriedTargetItems(
+                Set.of("othermod:iron_ingot"), effective, Set.of(ironTag), IRON_TAGS));
     }
 }

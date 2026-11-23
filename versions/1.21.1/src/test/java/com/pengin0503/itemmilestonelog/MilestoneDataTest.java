@@ -616,4 +616,64 @@ class MilestoneDataTest {
         assertTrue(loadedA.records.isEmpty());
         assertEquals(1795800000000L, loadedA.lastSeen);
     }
+
+    @Test
+    void roundTripsTagKeysAcrossTargetsRecordsWorldFirstsAndProgressNotified() {
+        UUID playerA = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        TargetKey ironTag1 = TargetKey.of("#c:ingots/iron");
+        TargetKey ironTag100 = TargetKey.of("#c:ingots/iron", 100);
+        TargetKey logsTag64 = TargetKey.of("#minecraft:logs", 64);
+        MilestoneRecord rec1 = new MilestoneRecord(1200, 2L, 1795600000000L);
+        MilestoneRecord rec100 = new MilestoneRecord(48000, 15L, 1795700000000L);
+
+        MilestoneData original = new MilestoneData();
+        MilestoneData.PlayerData pd = original.player(playerA);
+        pd.lastKnownName = "Alice";
+        pd.targets.add(ironTag1);
+        pd.targets.add(ironTag100);
+        pd.targets.add(logsTag64);
+        pd.records.put(ironTag1, rec1);
+        pd.records.put(ironTag100, rec100);
+        pd.progressNotified.put(logsTag64, 50);
+        assertTrue(original.recordWorldFirstIfAbsent(ironTag1, playerA, "Alice", rec1));
+        assertTrue(original.recordWorldFirstIfAbsent(ironTag100, playerA, "Alice", rec100));
+
+        CompoundTag saved = original.save(new CompoundTag(), null);
+        // Verify on-disk NBT format matches F8a storage spec
+        CompoundTag savedPlayer = saved.getCompound("players").getCompound(playerA.toString());
+        ListTag savedTargets = savedPlayer.getList("targets", 8);
+        assertEquals(List.of("#c:ingots/iron", "#c:ingots/iron#100", "#minecraft:logs#64"),
+                List.of(savedTargets.getString(0), savedTargets.getString(1), savedTargets.getString(2)));
+        assertTrue(savedPlayer.getCompound("records").contains("#c:ingots/iron"));
+        assertEquals(50, savedPlayer.getCompound("progressNotified").getInt("#minecraft:logs#64"));
+        assertTrue(saved.getCompound("worldFirsts").contains("#c:ingots/iron"));
+
+        // Inject malformed tag entries to confirm lenient per-entry skipping
+        savedTargets.add(StringTag.valueOf("#"));
+        savedTargets.add(StringTag.valueOf("##c:x"));
+        savedTargets.add(StringTag.valueOf("#c:x#0"));
+        savedTargets.add(StringTag.valueOf("#:x"));
+        savedTargets.add(StringTag.valueOf("#c:"));
+        savedPlayer.getCompound("progressNotified").putInt("#c:x#abc", 50);
+
+        MilestoneData loaded = MilestoneData.load(saved, null);
+        MilestoneData.PlayerData loadedPd = loaded.playerOrNull(playerA);
+        assertNotNull(loadedPd);
+        assertEquals(List.of(ironTag1, ironTag100, logsTag64), List.copyOf(loadedPd.targets));
+        assertEquals(Map.of(ironTag1, rec1, ironTag100, rec100), loadedPd.records);
+        assertEquals(Map.of(logsTag64, 50), loadedPd.progressNotified);
+
+        WorldFirstRecord wf1 = loaded.worldFirstOrNull(ironTag1);
+        assertNotNull(wf1);
+        assertEquals(ironTag1, wf1.targetKey());
+        assertTrue(wf1.targetKey().isTag());
+        assertEquals("c:ingots/iron", wf1.targetKey().tagId());
+        assertEquals(1200, wf1.playTicks());
+
+        WorldFirstRecord wf100 = loaded.worldFirstOrNull(ironTag100);
+        assertNotNull(wf100);
+        assertEquals(ironTag100, wf100.targetKey());
+        assertEquals(100, wf100.count());
+        assertEquals(48000, wf100.playTicks());
+    }
 }

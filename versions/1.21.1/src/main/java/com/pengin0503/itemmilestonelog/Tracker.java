@@ -24,8 +24,10 @@ import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.common.util.FakePlayer;
+import net.neoforged.neoforge.event.TagsUpdatedEvent;
 import net.neoforged.neoforge.event.entity.player.ItemEntityPickupEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
+import net.neoforged.neoforge.event.server.ServerStartedEvent;
 import net.neoforged.neoforge.event.tick.PlayerTickEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
 
@@ -132,6 +134,78 @@ public final class Tracker {
             all.addAll(pd.targets);
         }
         return all;
+    }
+
+    /** F8b: defaultTargets tags already warned about since the last tag (re)load. */
+    private static final Set<String> WARNED_DEFAULT_TAGS = ConcurrentHashMap.newKeySet();
+
+    /**
+     * F8b: rebuilds the {@link TagTargets} cache whenever tags are (re)loaded (server start,
+     * {@code /reload}, and the client receiving tags on login), and on the server warns once per
+     * missing or empty tag in {@code defaultTargets}.
+     */
+    @SubscribeEvent
+    public static void onTagsUpdated(TagsUpdatedEvent event) {
+        TagIndex index = TagTargets.rebuild();
+        if (event.getUpdateCause() == TagsUpdatedEvent.UpdateCause.SERVER_DATA_LOAD) {
+            WARNED_DEFAULT_TAGS.clear();
+            warnMissingDefaultTagTargets(index);
+        }
+    }
+
+    /** F8b: makes sure the tag cache and the defaultTargets tag warning are in place at server start. */
+    @SubscribeEvent
+    public static void onServerStartedTags(ServerStartedEvent event) {
+        warnMissingDefaultTagTargets(TagTargets.index());
+    }
+
+    private static void warnMissingDefaultTagTargets(TagIndex index) {
+        Set<TargetKey> defaults;
+        try {
+            defaults = defaultTargets();
+        } catch (IllegalStateException e) {
+            // Config not loaded yet; the ServerStartedEvent pass warns instead.
+            return;
+        }
+        for (String tag : missingOrEmptyDefaultTags(defaults, index)) {
+            if (WARNED_DEFAULT_TAGS.add(tag)) {
+                ItemMilestoneLog.LOGGER.warn(
+                        "[ItemMilestoneLog] defaultTargets tag '{}' does not exist or is empty; it counts as 0 items", tag);
+            }
+        }
+    }
+
+    /** F8b: distinct tag IDs in {@code defaults} that do not exist or are empty in {@code index} (in target order). */
+    static List<String> missingOrEmptyDefaultTags(Set<TargetKey> defaults, TagIndex index) {
+        Set<String> missing = new LinkedHashSet<>();
+        for (TargetKey key : defaults) {
+            if (key.isTag() && !index.isNonEmptyTag(key.itemId())) {
+                missing.add(key.itemId());
+            }
+        }
+        return List.copyOf(missing);
+    }
+
+    /** IDs of the tag targets ({@code '#'}-prefixed) among {@code keys}. */
+    static Set<String> tagIdsOf(Collection<TargetKey> keys) {
+        Set<String> ids = new LinkedHashSet<>();
+        for (TargetKey key : keys) {
+            if (key.isTag()) {
+                ids.add(key.itemId());
+            }
+        }
+        return ids;
+    }
+
+    /**
+     * F50: whether a target row gets the {@code target_creative_carried} note: an item target whose
+     * item is carried out of creative, or a tag target with at least one carried member.
+     */
+    public static boolean isCreativeCarriedTarget(TargetKey key, Set<String> carried, TagIndex index) {
+        if (carried.isEmpty()) {
+            return false;
+        }
+        return key.isTag() ? index.anyMemberIn(key.itemId(), carried) : carried.contains(key.itemId());
     }
 
     @SubscribeEvent
@@ -286,21 +360,11 @@ public final class Tracker {
             return;
         }
 
-        // Only sum counts for item IDs that actually appear in this player's pending targets.
-        Set<String> neededItemIds = pendingItemIdsToCount(pending, carried);
-
-        Map<String, Integer> counts = new HashMap<>();
+        // Only sum counts for item IDs that actually appear in this player's pending targets
+        // (tag targets are expanded to their member items).
         Set<String> stillCarried = new HashSet<>();
-        var inventory = player.getInventory();
-        for (int i = 0; i < inventory.getContainerSize(); i++) {
-            accumulateStack(inventory.getItem(i), carried, stillCarried, neededItemIds, counts);
-        }
-        if (player.containerMenu != null) {
-            accumulateStack(player.containerMenu.getCarried(), carried, stillCarried, neededItemIds, counts);
-        }
-        for (ItemStack craftStack : player.inventoryMenu.getCraftSlots().getItems()) {
-            accumulateStack(craftStack, carried, stillCarried, neededItemIds, counts);
-        }
+        Map<String, Integer> counts = countPendingPossession(
+                possessedStacks(player), pending, carried, stillCarried, TagTargets.index());
 
         List<TargetKey> achieved = findAchievedTargets(pending, carried, counts);
         if (!achieved.isEmpty()) {
@@ -365,12 +429,48 @@ public final class Tracker {
         return achieved;
     }
 
-    private static void accumulateStack(ItemStack stack, Set<String> carried, Set<String> stillCarried,
-                                        Set<String> neededItemIds, Map<String, Integer> counts) {
-        if (stack.isEmpty()) {
-            return;
+    /** One non-empty stack in a player's possession (item ID and stack size). */
+    record StackCount(String itemId, int count) {
+    }
+
+    /** Non-empty stacks in inventory (incl. armor/offhand), cursor, and 2x2 craft grid. */
+    private static List<StackCount> possessedStacks(ServerPlayer player) {
+        List<StackCount> stacks = new ArrayList<>();
+        var inventory = player.getInventory();
+        for (int i = 0; i < inventory.getContainerSize(); i++) {
+            addStack(stacks, inventory.getItem(i));
         }
-        accumulateItem(itemId(stack), stack.getCount(), carried, stillCarried, neededItemIds, counts);
+        if (player.containerMenu != null) {
+            addStack(stacks, player.containerMenu.getCarried());
+        }
+        for (ItemStack craftStack : player.inventoryMenu.getCraftSlots().getItems()) {
+            addStack(stacks, craftStack);
+        }
+        return stacks;
+    }
+
+    private static void addStack(List<StackCount> stacks, ItemStack stack) {
+        if (!stack.isEmpty()) {
+            stacks.add(new StackCount(itemId(stack), stack.getCount()));
+        }
+    }
+
+    /**
+     * One scan pass over {@code stacks}: sums possession of the pending targets' items (tag targets
+     * are expanded to their members, F8b) while recording which creative-carried items are still held
+     * in {@code stillCarried}. Creative-carried items count neither for themselves nor toward any tag.
+     * Returns item counts plus one total per pending tag ID.
+     */
+    static Map<String, Integer> countPendingPossession(List<StackCount> stacks, Set<TargetKey> pending,
+                                                       Set<String> carried, Set<String> stillCarried,
+                                                       TagIndex tagIndex) {
+        Set<String> neededItemIds = tagIndex.expandForCounting(pendingItemIdsToCount(pending, carried), carried);
+        Map<String, Integer> counts = new HashMap<>();
+        for (StackCount stack : stacks) {
+            accumulateItem(stack.itemId(), stack.count(), carried, stillCarried, neededItemIds, counts);
+        }
+        Set<String> tagIds = tagIdsOf(pending);
+        return tagIds.isEmpty() ? counts : tagIndex.withTagTotals(counts, tagIds, carried);
     }
 
     static void accumulateItem(String id, int stackCount, Set<String> carried, Set<String> stillCarried,
@@ -426,7 +526,8 @@ public final class Tracker {
         if (!newlyMarked.isEmpty()) {
             data.setDirty();
             if (Config.NOTIFY_PLAYER.get()) {
-                int affected = countCreativeCarriedTargetItems(newlyMarked, effectiveTargets(pd), pd.records.keySet());
+                int affected = countCreativeCarriedTargetItems(
+                        newlyMarked, effectiveTargets(pd), pd.records.keySet(), TagTargets.index());
                 if (affected > 0) {
                     player.sendSystemMessage(ServerLang.tr(
                             player, "message.itemmilestonelog.creative_carried_notice", affected));
@@ -443,15 +544,34 @@ public final class Tracker {
             Set<String> markedItemIds,
             Set<TargetKey> effectiveTargets,
             Set<TargetKey> recordedKeys) {
+        return countCreativeCarriedTargetItems(markedItemIds, effectiveTargets, recordedKeys, TagIndex.EMPTY);
+    }
+
+    /**
+     * F50 (1.2.0): like {@link #countCreativeCarriedTargetItems(Set, Set, Set)}, also counting marked
+     * items that belong to an unrecorded tag target (each item ID counted once).
+     */
+    static int countCreativeCarriedTargetItems(
+            Set<String> markedItemIds,
+            Set<TargetKey> effectiveTargets,
+            Set<TargetKey> recordedKeys,
+            TagIndex tagIndex) {
         if (markedItemIds == null || markedItemIds.isEmpty()
                 || effectiveTargets == null || effectiveTargets.isEmpty()) {
             return 0;
         }
         Set<String> affectedItemIds = new HashSet<>();
         for (TargetKey key : effectiveTargets) {
-            if (key != null
-                    && markedItemIds.contains(key.itemId())
-                    && (recordedKeys == null || !recordedKeys.contains(key))) {
+            if (key == null || (recordedKeys != null && recordedKeys.contains(key))) {
+                continue;
+            }
+            if (key.isTag()) {
+                for (String member : tagIndex.members(key.itemId())) {
+                    if (markedItemIds.contains(member)) {
+                        affectedItemIds.add(member);
+                    }
+                }
+            } else if (markedItemIds.contains(key.itemId())) {
                 affectedItemIds.add(key.itemId());
             }
         }
@@ -548,41 +668,38 @@ public final class Tracker {
 
     /**
      * Counts total simultaneous possession (main inventory + armor + offhand + cursor stack + 2x2 craft grid)
-     * for only the requested {@code itemIds}.
+     * for only the requested {@code itemIds}. Tag IDs ({@code '#'}-prefixed, F8b) are expanded to their
+     * member items and summed; the player's creative-carried items are not counted toward a tag (item
+     * IDs are counted as-is; callers apply the per-item creative-carry rule).
      */
     public static Map<String, Integer> countItemsInPossession(ServerPlayer player, Set<String> itemIds) {
         if (itemIds.isEmpty()) {
             return Map.of();
         }
+        MilestoneData.PlayerData pd = MilestoneData.get(player.server).playerOrNull(player.getUUID());
+        return countRequestedPossession(possessedStacks(player), itemIds, carriedFromCreative(pd), TagTargets.index());
+    }
+
+    /** Pure counterpart of {@link #countItemsInPossession(ServerPlayer, Set)}. */
+    static Map<String, Integer> countRequestedPossession(List<StackCount> stacks, Set<String> requestedIds,
+                                                         Set<String> carried, TagIndex tagIndex) {
+        if (requestedIds.isEmpty()) {
+            return Map.of();
+        }
+        Set<String> concrete = tagIndex.expandForCounting(requestedIds, carried);
         Map<String, Integer> counts = new HashMap<>();
-        var inventory = player.getInventory();
-        for (int i = 0; i < inventory.getContainerSize(); i++) {
-            ItemStack stack = inventory.getItem(i);
-            if (!stack.isEmpty()) {
-                String id = itemId(stack);
-                if (itemIds.contains(id)) {
-                    counts.merge(id, stack.getCount(), Integer::sum);
-                }
+        for (StackCount stack : stacks) {
+            if (concrete.contains(stack.itemId())) {
+                counts.merge(stack.itemId(), stack.count(), Integer::sum);
             }
         }
-        if (player.containerMenu != null) {
-            ItemStack cursor = player.containerMenu.getCarried();
-            if (!cursor.isEmpty()) {
-                String id = itemId(cursor);
-                if (itemIds.contains(id)) {
-                    counts.merge(id, cursor.getCount(), Integer::sum);
-                }
+        Set<String> tagIds = new LinkedHashSet<>();
+        for (String id : requestedIds) {
+            if (TargetKey.isTagId(id)) {
+                tagIds.add(id);
             }
         }
-        for (ItemStack craftStack : player.inventoryMenu.getCraftSlots().getItems()) {
-            if (!craftStack.isEmpty()) {
-                String id = itemId(craftStack);
-                if (itemIds.contains(id)) {
-                    counts.merge(id, craftStack.getCount(), Integer::sum);
-                }
-            }
-        }
-        return counts;
+        return tagIds.isEmpty() ? counts : tagIndex.withTagTotals(counts, tagIds, carried);
     }
 
     record ItemAcquisitionOutcome(
@@ -674,6 +791,66 @@ public final class Tracker {
         return new ItemAcquisitionOutcome(clearedCreativeCarry, achieved, pendingForItem, totalInPossession);
     }
 
+    /**
+     * F8b / F36: unrecorded tag targets (defaults first, then personal targets not in defaults)
+     * whose tag contains {@code itemId}.
+     */
+    static List<TargetKey> collectUnrecordedTagTargetsForItem(
+            String itemId,
+            Set<TargetKey> defaultTargets,
+            @Nullable MilestoneData.PlayerData pd,
+            TagIndex tagIndex) {
+        Set<String> tags = tagIndex.tagsContaining(itemId);
+        if (tags.isEmpty()) {
+            return List.of();
+        }
+        List<TargetKey> pending = new ArrayList<>();
+        for (TargetKey key : defaultTargets) {
+            if (key.isTag() && tags.contains(key.itemId()) && (pd == null || !pd.records.containsKey(key))) {
+                pending.add(key);
+            }
+        }
+        if (pd != null) {
+            for (TargetKey key : pd.targets) {
+                if (key.isTag() && tags.contains(key.itemId())
+                        && !pd.records.containsKey(key) && !defaultTargets.contains(key)) {
+                    pending.add(key);
+                }
+            }
+        }
+        return pending;
+    }
+
+    record TagAcquisitionOutcome(List<TargetKey> achieved, List<TargetKey> pending, Map<String, Integer> totals) {
+        static final TagAcquisitionOutcome EMPTY = new TagAcquisitionOutcome(List.of(), List.of(), Map.of());
+    }
+
+    /**
+     * F8b: evaluates the tag targets containing a just-acquired item. {@code possessionCounter}
+     * returns per-tag totals (creative-carried members excluded) and is only called when at least one
+     * unrecorded tag target contains the item.
+     */
+    static TagAcquisitionOutcome evaluateTagAcquisition(
+            String itemId,
+            Set<TargetKey> defaultTargets,
+            @Nullable MilestoneData.PlayerData pd,
+            TagIndex tagIndex,
+            Function<Set<String>, Map<String, Integer>> possessionCounter) {
+        List<TargetKey> pending = collectUnrecordedTagTargetsForItem(itemId, defaultTargets, pd, tagIndex);
+        if (pending.isEmpty()) {
+            return TagAcquisitionOutcome.EMPTY;
+        }
+        Map<String, Integer> totals = possessionCounter.apply(tagIdsOf(pending));
+        List<TargetKey> achieved = new ArrayList<>();
+        for (TargetKey key : pending) {
+            if (totals.getOrDefault(key.itemId(), 0) >= key.count()) {
+                achieved.add(key);
+            }
+        }
+        achieved.sort(TargetKey::compareTo);
+        return new TagAcquisitionOutcome(achieved, pending, totals);
+    }
+
     private static void tryRecordForItem(ServerPlayer player, String itemId, int minCountFromEvent,
                                          boolean alreadyAddedToInventory) {
         if (recordingPaused(player)) {
@@ -682,17 +859,59 @@ public final class Tracker {
         MilestoneData data = MilestoneData.get(player.server);
         MilestoneData.PlayerData pd = data.playerOrNull(player.getUUID());
         Set<String> carried = carriedFromCreative(pd);
+        Set<TargetKey> defaults = defaultTargets();
         ItemAcquisitionOutcome outcome = evaluateItemAcquisition(
                 itemId,
                 () -> countItemInPossession(player, itemId),
                 minCountFromEvent,
                 alreadyAddedToInventory,
-                defaultTargets(),
+                defaults,
                 pd,
                 carried);
-        if (outcome == ItemAcquisitionOutcome.EMPTY) {
-            return;
+        if (outcome != ItemAcquisitionOutcome.EMPTY) {
+            applyItemAcquisition(player, data, pd, itemId, minCountFromEvent, alreadyAddedToInventory, outcome);
         }
+        // Runs after the item pass so a just-cleared creative carry lets this pickup count toward tags.
+        TagAcquisitionOutcome tagOutcome = evaluateTagAcquisition(
+                itemId, defaults, data.playerOrNull(player.getUUID()), TagTargets.index(),
+                ids -> countItemsInPossession(player, ids));
+        if (tagOutcome != TagAcquisitionOutcome.EMPTY) {
+            applyTagAcquisition(player, data, tagOutcome);
+        }
+    }
+
+    private static void applyTagAcquisition(ServerPlayer player, MilestoneData data, TagAcquisitionOutcome outcome) {
+        if (!outcome.achieved().isEmpty()) {
+            boolean anyRecorded = false;
+            for (TargetKey key : outcome.achieved()) {
+                if (record(player, data, key, false)) {
+                    anyRecorded = true;
+                }
+            }
+            if (anyRecorded) {
+                MilestoneService.syncPlayerIfOpen(player);
+            }
+        }
+        if (Config.PROGRESS_ALERTS.get()) {
+            List<ProgressAlertNotification> alerts = evaluateProgressAlerts(
+                    data,
+                    player.getUUID(),
+                    outcome.pending(),
+                    Set.of(),
+                    outcome.totals(),
+                    true,
+                    Config.progressAlertThresholds(),
+                    Config.PROGRESS_ALERT_MIN_COUNT.get());
+            if (!alerts.isEmpty()) {
+                sendProgressAlerts(player, alerts);
+            }
+        }
+    }
+
+    private static void applyItemAcquisition(ServerPlayer player, MilestoneData data,
+                                             @Nullable MilestoneData.PlayerData pd, String itemId,
+                                             int minCountFromEvent, boolean alreadyAddedToInventory,
+                                             ItemAcquisitionOutcome outcome) {
         if (outcome.clearedCreativeCarry()) {
             if (pd != null) {
                 pd.carriedFromCreative.remove(itemId);
