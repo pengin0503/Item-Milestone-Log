@@ -69,17 +69,26 @@ class ServerLangTest {
 
     @Test
     void everyGuiKeyUsedByClientScreensHasAnEnglishEntry() throws IOException {
-        Path sources = resolveMainSourceDir().resolve("com/pengin0503/itemmilestonelog/client");
-        assertTrue(Files.isDirectory(sources), "client sources not found at " + sources.toAbsolutePath());
+        Path sources = resolveMainSourceDir();
+        assertTrue(Files.isDirectory(sources), "sources not found at " + sources.toAbsolutePath());
 
         Pattern literal = Pattern.compile("\"(gui\\.itemmilestonelog\\.[a-z0-9_.]+)\"");
+        Pattern dynamicPrefix = Pattern.compile("\"(gui\\.itemmilestonelog\\.[a-z0-9_.]*)\"\\s*\\+");
+        Set<String> allowedDynamicPrefixes = Set.of("gui.itemmilestonelog.preset.");
         Set<String> used = new TreeSet<>();
         try (Stream<Path> files = Files.walk(sources)) {
             for (Path file : files.filter(p -> p.toString().endsWith(".java")).toList()) {
-                Matcher matcher = literal.matcher(Files.readString(file));
+                String content = Files.readString(file);
+                Matcher dyn = dynamicPrefix.matcher(content);
+                while (dyn.find()) {
+                    String prefix = dyn.group(1);
+                    assertTrue(allowedDynamicPrefixes.contains(prefix),
+                            "Unexpected dynamic gui key concatenation '" + prefix + "' in " + file.getFileName());
+                }
+                Matcher matcher = literal.matcher(content);
                 while (matcher.find()) {
                     String key = matcher.group(1);
-                    // Keys ending in '.' are prefixes completed at runtime (e.g. per-preset names) and checked separately.
+                    // Known dynamic prefix (gui.itemmilestonelog.preset.) is checked per built-in preset below.
                     if (!key.endsWith(".")) {
                         used.add(key);
                     }
@@ -87,9 +96,22 @@ class ServerLangTest {
             }
         }
         assertTrue(used.size() >= 10, "expected to find the client GUI keys, found " + used);
+        for (String builtinPresetId : Presets.PRESETS.keySet()) {
+            used.add("gui.itemmilestonelog.preset." + builtinPresetId);
+        }
+        used.add("gui.itemmilestonelog.preset.generic");
+
         Set<String> missing = new TreeSet<>(used);
         missing.removeAll(ServerLang.fallbacks().keySet());
         assertTrue(missing.isEmpty(), "gui keys without an en_us.json entry: " + missing);
+    }
+
+    @Test
+    void keybindKeysHaveEnglishEntries() {
+        Map<String, String> fallbacks = ServerLang.fallbacks();
+        assertTrue(fallbacks.containsKey("key.itemmilestonelog.open_gui"), "missing key.itemmilestonelog.open_gui");
+        assertTrue(fallbacks.containsKey("key.categories.itemmilestonelog"), "missing key.categories.itemmilestonelog");
+        assertTrue(fallbacks.containsKey("key.category.itemmilestonelog.general"), "missing key.category.itemmilestonelog.general");
     }
 
     @Test
