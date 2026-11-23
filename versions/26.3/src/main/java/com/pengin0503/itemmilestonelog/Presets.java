@@ -191,7 +191,16 @@ public final class Presets {
             String rawName = root.get("name").getAsString().trim();
             if (!rawName.isEmpty()) {
                 // Cap to the 256-char sync limit so a hand-written preset cannot break the sync payload for clients.
-                displayName = rawName.length() > 256 ? rawName.substring(0, 256) : rawName;
+                // Never split a UTF-16 surrogate pair at the cut (would leave a malformed string).
+                int limit = 256;
+                if (rawName.length() > limit) {
+                    if (Character.isHighSurrogate(rawName.charAt(limit - 1))) {
+                        limit--;
+                    }
+                    displayName = rawName.substring(0, limit);
+                } else {
+                    displayName = rawName;
+                }
             }
         }
 
