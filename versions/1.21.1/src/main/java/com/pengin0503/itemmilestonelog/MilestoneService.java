@@ -20,7 +20,9 @@ import javax.annotation.Nullable;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -36,8 +38,21 @@ import java.util.function.Supplier;
 public final class MilestoneService {
     public static final int MAX_PERSONAL_TARGETS = 1024;
 
-    public record ActionResult(boolean success, Component message) {
+    /**
+     * @param undoable whether the operation stored an F23 undo snapshot (chat commands then append
+     *                 {@code undo_hint}; GUI feedback ignores it)
+     */
+    public record ActionResult(boolean success, Component message, boolean undoable) {
+        public ActionResult(boolean success, Component message) {
+            this(success, message, false);
+        }
     }
+
+    /**
+     * F23: per-player undo snapshots for the player's own resets (and F28 bulk removals).
+     * In memory only; cleared on server stop. Admin operations on other players are not captured.
+     */
+    public static final UndoLogic.Store<TargetKey, MilestoneRecord> UNDO_SNAPSHOTS = new UndoLogic.Store<>();
 
     private MilestoneService() {
     }
@@ -134,6 +149,43 @@ public final class MilestoneService {
         return rl != null && BuiltInRegistries.ITEM.containsKey(rl) && BuiltInRegistries.ITEM.get(rl) != Items.AIR;
     }
 
+    private enum AddTargetStatus {
+        INVALID_COUNT,
+        INVALID_ITEM,
+        ALREADY_TARGET,
+        LIMIT_REACHED,
+        ADDED
+    }
+
+    private record AddTargetOutcome(AddTargetStatus status, @Nullable TargetKey key) {
+    }
+
+    private static AddTargetOutcome performAddTarget(
+            MilestoneData data,
+            UUID playerId,
+            String itemId,
+            int count,
+            Predicate<String> isKnownNonAirItem) {
+        if (!TargetKey.isValidCount(count)) {
+            return new AddTargetOutcome(AddTargetStatus.INVALID_COUNT, null);
+        }
+        String normalizedId = TargetKey.normalizeItemId(itemId);
+        if (normalizedId == null || !isKnownNonAirItem.test(normalizedId)) {
+            return new AddTargetOutcome(AddTargetStatus.INVALID_ITEM, null);
+        }
+        TargetKey key = new TargetKey(normalizedId, count);
+        MilestoneData.PlayerData pd = data.player(playerId);
+        if (pd.targets.contains(key)) {
+            return new AddTargetOutcome(AddTargetStatus.ALREADY_TARGET, key);
+        }
+        if (pd.targets.size() >= MAX_PERSONAL_TARGETS) {
+            return new AddTargetOutcome(AddTargetStatus.LIMIT_REACHED, key);
+        }
+        pd.targets.add(key);
+        data.setDirty();
+        return new AddTargetOutcome(AddTargetStatus.ADDED, key);
+    }
+
     public static ActionResult addTarget(ServerPlayer player, String itemId) {
         return addTarget(player, itemId, TargetKey.MIN_COUNT);
     }
@@ -147,25 +199,72 @@ public final class MilestoneService {
                                   String itemId, int count,
                                   Predicate<String> isKnownNonAirItem,
                                   Function<TargetKey, Component> displayName) {
-        if (!TargetKey.isValidCount(count)) {
-            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_count",
+        AddTargetOutcome outcome = performAddTarget(data, playerId, itemId, count, isKnownNonAirItem);
+        return switch (outcome.status()) {
+            case INVALID_COUNT -> new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_count",
                     TargetKey.MIN_COUNT, TargetKey.MAX_COUNT));
+            case INVALID_ITEM -> new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_item",
+                    String.valueOf(itemId)));
+            case ALREADY_TARGET -> new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.already_target",
+                    displayName.apply(outcome.key())));
+            case LIMIT_REACHED -> new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.targets_limit_reached",
+                    MAX_PERSONAL_TARGETS));
+            case ADDED -> new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.added",
+                    displayName.apply(outcome.key())));
+        };
+    }
+
+    /**
+     * F33 {@code /milestonelog admin <player> add <item> [<count>]}: adds a personal target for
+     * {@code targetId} (online or offline) using the same validation and cap as {@link #addTarget},
+     * re-syncs the target's GUI if online, and is not captured for F23 undo.
+     */
+    public static ActionResult adminAddTarget(MinecraftServer server, CommandSourceStack source,
+                                              UUID targetId, String targetName,
+                                              String itemId, int count) {
+        MilestoneData data = MilestoneData.get(server);
+        ActionResult result = adminAddTarget(data, targetId, targetName, source.getPlayer(), itemId, count,
+                MilestoneService::isKnownNonAirItem, MilestoneService::targetDisplayName);
+        if (result.success()) {
+            ServerPlayer online = server.getPlayerList().getPlayer(targetId);
+            if (online != null) {
+                ensureLastKnownName(data, targetId, online.getGameProfile().getName());
+                syncPlayerIfOpen(online);
+            }
         }
-        String normalizedId = TargetKey.normalizeItemId(itemId);
-        if (normalizedId == null || !isKnownNonAirItem.test(normalizedId)) {
-            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_item", String.valueOf(itemId)));
+        return result;
+    }
+
+    static ActionResult adminAddTarget(MilestoneData data, UUID targetId, String targetName,
+                                       @Nullable ServerPlayer executor,
+                                       String itemId, int count,
+                                       Predicate<String> isKnownNonAirItem,
+                                       Function<TargetKey, Component> displayName) {
+        AddTargetOutcome outcome = performAddTarget(data, targetId, itemId, count, isKnownNonAirItem);
+        Component literalName = Component.literal(targetName);
+        return switch (outcome.status()) {
+            case INVALID_COUNT -> new ActionResult(false, ServerLang.tr(executor, "message.itemmilestonelog.invalid_count",
+                    TargetKey.MIN_COUNT, TargetKey.MAX_COUNT));
+            case INVALID_ITEM -> new ActionResult(false, ServerLang.tr(executor, "message.itemmilestonelog.invalid_item",
+                    String.valueOf(itemId)));
+            case ALREADY_TARGET -> new ActionResult(false, ServerLang.tr(executor, "message.itemmilestonelog.admin_already_target",
+                    literalName, displayName.apply(outcome.key())));
+            case LIMIT_REACHED -> new ActionResult(false, ServerLang.tr(executor, "message.itemmilestonelog.targets_limit_reached",
+                    MAX_PERSONAL_TARGETS));
+            case ADDED -> new ActionResult(true, ServerLang.tr(executor, "message.itemmilestonelog.admin_added",
+                    literalName, displayName.apply(outcome.key())));
+        };
+    }
+
+    private static void ensureLastKnownName(MilestoneData data, UUID playerId, @Nullable String profileName) {
+        if (profileName == null || profileName.isBlank()) {
+            return;
         }
-        TargetKey key = new TargetKey(normalizedId, count);
-        MilestoneData.PlayerData pd = data.player(playerId);
-        if (pd.targets.contains(key)) {
-            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.already_target", displayName.apply(key)));
+        MilestoneData.PlayerData pd = data.playerOrNull(playerId);
+        if (pd != null && (pd.lastKnownName == null || pd.lastKnownName.isEmpty())) {
+            pd.lastKnownName = profileName;
+            data.setDirty();
         }
-        if (pd.targets.size() >= MAX_PERSONAL_TARGETS) {
-            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.targets_limit_reached", MAX_PERSONAL_TARGETS));
-        }
-        pd.targets.add(key);
-        data.setDirty();
-        return new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.added", displayName.apply(key)));
     }
 
     public static ActionResult addHandTarget(ServerPlayer player) {
@@ -181,25 +280,27 @@ public final class MilestoneService {
         return addTarget(player, id, count);
     }
 
-    public static ActionResult removeTarget(ServerPlayer player, String itemId) {
-        return removeTarget(player, itemId, TargetKey.MIN_COUNT);
+    private enum RemoveTargetStatus {
+        INVALID_COUNT,
+        INVALID_ITEM,
+        NOT_TARGET,
+        REMOVED
     }
 
-    public static ActionResult removeTarget(ServerPlayer player, String itemId, int count) {
-        return removeTarget(MilestoneData.get(player.server), player.getUUID(), player, itemId, count,
-                MilestoneService::isValidItemId, MilestoneService::targetDisplayName);
+    private record RemoveTargetOutcome(RemoveTargetStatus status, @Nullable TargetKey key) {
     }
 
-    static ActionResult removeTarget(MilestoneData data, UUID playerId, @Nullable ServerPlayer player,
-                                     String itemId, int count,
-                                     Predicate<String> isKnownItem,
-                                     Function<TargetKey, Component> displayName) {
+    private static RemoveTargetOutcome performRemoveTarget(
+            MilestoneData data,
+            UUID playerId,
+            String itemId,
+            int count,
+            Predicate<String> isKnownItem) {
         if (!TargetKey.isValidCount(count)) {
-            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_count",
-                    TargetKey.MIN_COUNT, TargetKey.MAX_COUNT));
+            return new RemoveTargetOutcome(RemoveTargetStatus.INVALID_COUNT, null);
         }
         if (!TargetKey.isValidItemId(itemId)) {
-            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_item", String.valueOf(itemId)));
+            return new RemoveTargetOutcome(RemoveTargetStatus.INVALID_ITEM, null);
         }
         String normalized = TargetKey.normalizeItemId(itemId);
         String normalizedId = normalized != null ? normalized : itemId;
@@ -213,13 +314,74 @@ public final class MilestoneService {
                     pd.progressNotified.remove(rawKey);
                 }
                 data.setDirty();
-                return new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.removed", displayName.apply(key)));
+                return new RemoveTargetOutcome(RemoveTargetStatus.REMOVED, key);
             }
         }
         if (!isKnownItem.test(normalizedId)) {
-            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_item", itemId));
+            return new RemoveTargetOutcome(RemoveTargetStatus.INVALID_ITEM, key);
         }
-        return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.not_target", displayName.apply(key)));
+        return new RemoveTargetOutcome(RemoveTargetStatus.NOT_TARGET, key);
+    }
+
+    public static ActionResult removeTarget(ServerPlayer player, String itemId) {
+        return removeTarget(player, itemId, TargetKey.MIN_COUNT);
+    }
+
+    public static ActionResult removeTarget(ServerPlayer player, String itemId, int count) {
+        return removeTarget(MilestoneData.get(player.server), player.getUUID(), player, itemId, count,
+                MilestoneService::isValidItemId, MilestoneService::targetDisplayName);
+    }
+
+    static ActionResult removeTarget(MilestoneData data, UUID playerId, @Nullable ServerPlayer player,
+                                     String itemId, int count,
+                                     Predicate<String> isKnownItem,
+                                     Function<TargetKey, Component> displayName) {
+        RemoveTargetOutcome outcome = performRemoveTarget(data, playerId, itemId, count, isKnownItem);
+        return switch (outcome.status()) {
+            case INVALID_COUNT -> new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_count",
+                    TargetKey.MIN_COUNT, TargetKey.MAX_COUNT));
+            case INVALID_ITEM -> new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_item",
+                    String.valueOf(itemId)));
+            case NOT_TARGET -> new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.not_target",
+                    displayName.apply(outcome.key())));
+            case REMOVED -> new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.removed",
+                    displayName.apply(outcome.key())));
+        };
+    }
+
+    /**
+     * F33 {@code /milestonelog admin <player> remove <item> [<count>]}: removes a personal target for
+     * {@code targetId} (online or offline) with the same validation and §1.1 {@code progressNotified}
+     * cleanup as {@link #removeTarget}, re-syncs the target's GUI if online, and is not an F23 undo target.
+     */
+    public static ActionResult adminRemoveTarget(MinecraftServer server, CommandSourceStack source,
+                                                 UUID targetId, String targetName,
+                                                 String itemId, int count) {
+        ActionResult result = adminRemoveTarget(MilestoneData.get(server), targetId, targetName, source.getPlayer(),
+                itemId, count, MilestoneService::isValidItemId, MilestoneService::targetDisplayName);
+        if (result.success()) {
+            syncOnlinePlayerIfOpen(server, targetId);
+        }
+        return result;
+    }
+
+    static ActionResult adminRemoveTarget(MilestoneData data, UUID targetId, String targetName,
+                                          @Nullable ServerPlayer executor,
+                                          String itemId, int count,
+                                          Predicate<String> isKnownItem,
+                                          Function<TargetKey, Component> displayName) {
+        RemoveTargetOutcome outcome = performRemoveTarget(data, targetId, itemId, count, isKnownItem);
+        Component literalName = Component.literal(targetName);
+        return switch (outcome.status()) {
+            case INVALID_COUNT -> new ActionResult(false, ServerLang.tr(executor, "message.itemmilestonelog.invalid_count",
+                    TargetKey.MIN_COUNT, TargetKey.MAX_COUNT));
+            case INVALID_ITEM -> new ActionResult(false, ServerLang.tr(executor, "message.itemmilestonelog.invalid_item",
+                    String.valueOf(itemId)));
+            case NOT_TARGET -> new ActionResult(false, ServerLang.tr(executor, "message.itemmilestonelog.admin_not_target",
+                    literalName, displayName.apply(outcome.key())));
+            case REMOVED -> new ActionResult(true, ServerLang.tr(executor, "message.itemmilestonelog.admin_removed",
+                    literalName, displayName.apply(outcome.key())));
+        };
     }
 
     /** Display names are not shown for API calls; avoid registry lookups for the unused feedback message. */
@@ -282,26 +444,14 @@ public final class MilestoneService {
         }
     }
 
-    public static ActionResult applyPreset(ServerPlayer player, String name) {
-        return applyPreset(MilestoneData.get(player.server), player.getUUID(), player, name,
-                MilestoneService::isKnownNonAirItem, Config.PRESETS_ENABLED.get());
+    private record PresetApplyCounts(int added, int addedWithCount, int skippedMissing, int skippedLimit) {
     }
 
-    static ActionResult applyPreset(MilestoneData data, UUID playerId, @Nullable ServerPlayer player,
-                                    String name, Predicate<String> isKnownNonAirItem) {
-        return applyPreset(data, playerId, player, name, isKnownNonAirItem, true);
-    }
-
-    static ActionResult applyPreset(MilestoneData data, UUID playerId, @Nullable ServerPlayer player,
-                                    String name, Predicate<String> isKnownNonAirItem, boolean presetsEnabled) {
-        if (!presetsEnabled) {
-            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.feature_disabled"));
-        }
-        Presets.PresetDefinition preset = Presets.get(name);
-        if (preset == null) {
-            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.preset_unknown", name,
-                    String.join(", ", Presets.names())));
-        }
+    private static PresetApplyCounts applyPresetTargets(
+            MilestoneData data,
+            UUID playerId,
+            Presets.PresetDefinition preset,
+            Predicate<String> isKnownNonAirItem) {
         MilestoneData.PlayerData pd = data.player(playerId);
         int added = 0;
         int addedWithCount = 0;
@@ -330,18 +480,295 @@ public final class MilestoneService {
         if (added > 0) {
             data.setDirty();
         }
-        Component result;
-        if (addedWithCount > 0) {
-            result = ServerLang.tr(player, "message.itemmilestonelog.preset_applied_with_counts",
-                    name, added, addedWithCount, skippedMissing);
-        } else {
-            result = ServerLang.tr(player, "message.itemmilestonelog.preset_applied", name, added, skippedMissing);
+        return new PresetApplyCounts(added, addedWithCount, skippedMissing, skippedLimit);
+    }
+
+    public static ActionResult applyPreset(ServerPlayer player, String name) {
+        return applyPreset(MilestoneData.get(player.server), player.getUUID(), player, name,
+                MilestoneService::isKnownNonAirItem, Config.PRESETS_ENABLED.get());
+    }
+
+    static ActionResult applyPreset(MilestoneData data, UUID playerId, @Nullable ServerPlayer player,
+                                    String name, Predicate<String> isKnownNonAirItem) {
+        return applyPreset(data, playerId, player, name, isKnownNonAirItem, true);
+    }
+
+    static ActionResult applyPreset(MilestoneData data, UUID playerId, @Nullable ServerPlayer player,
+                                    String name, Predicate<String> isKnownNonAirItem, boolean presetsEnabled) {
+        if (!presetsEnabled) {
+            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.feature_disabled"));
         }
-        if (skippedLimit > 0) {
+        Presets.PresetDefinition preset = Presets.get(name);
+        if (preset == null) {
+            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.preset_unknown", name,
+                    String.join(", ", Presets.names())));
+        }
+        PresetApplyCounts counts = applyPresetTargets(data, playerId, preset, isKnownNonAirItem);
+        Component result;
+        if (counts.addedWithCount() > 0) {
+            result = ServerLang.tr(player, "message.itemmilestonelog.preset_applied_with_counts",
+                    name, counts.added(), counts.addedWithCount(), counts.skippedMissing());
+        } else {
+            result = ServerLang.tr(player, "message.itemmilestonelog.preset_applied",
+                    name, counts.added(), counts.skippedMissing());
+        }
+        if (counts.skippedLimit() > 0) {
             result = result.copy().append(Component.literal("\n"))
-                    .append(ServerLang.tr(player, "message.itemmilestonelog.preset_applied_limit", skippedLimit));
+                    .append(ServerLang.tr(player, "message.itemmilestonelog.preset_applied_limit", counts.skippedLimit()));
         }
         return new ActionResult(true, result);
+    }
+
+    /**
+     * F33 {@code /milestonelog admin <player> preset <name>}: applies a preset to {@code targetId}
+     * (online or offline) with the same validation and cap as {@link #applyPreset}, re-syncs the
+     * target's GUI if online, and is not captured for F23 undo.
+     */
+    public static ActionResult adminApplyPreset(MinecraftServer server, CommandSourceStack source,
+                                                UUID targetId, String targetName, String name) {
+        MilestoneData data = MilestoneData.get(server);
+        ActionResult result = adminApplyPreset(data, targetId, targetName, source.getPlayer(), name,
+                MilestoneService::isKnownNonAirItem, Config.PRESETS_ENABLED.get());
+        if (result.success()) {
+            ServerPlayer online = server.getPlayerList().getPlayer(targetId);
+            if (online != null) {
+                ensureLastKnownName(data, targetId, online.getGameProfile().getName());
+                syncPlayerIfOpen(online);
+            }
+        }
+        return result;
+    }
+
+    static ActionResult adminApplyPreset(MilestoneData data, UUID targetId, String targetName,
+                                         @Nullable ServerPlayer executor, String name,
+                                         Predicate<String> isKnownNonAirItem, boolean presetsEnabled) {
+        if (!presetsEnabled) {
+            return new ActionResult(false, ServerLang.tr(executor, "message.itemmilestonelog.feature_disabled"));
+        }
+        Presets.PresetDefinition preset = Presets.get(name);
+        if (preset == null) {
+            return new ActionResult(false, ServerLang.tr(executor, "message.itemmilestonelog.preset_unknown", name,
+                    String.join(", ", Presets.names())));
+        }
+        PresetApplyCounts counts = applyPresetTargets(data, targetId, preset, isKnownNonAirItem);
+        Component result = ServerLang.tr(executor, "message.itemmilestonelog.admin_preset_applied",
+                preset.id(), Component.literal(targetName), counts.added(), counts.skippedMissing());
+        if (counts.skippedLimit() > 0) {
+            result = result.copy().append(Component.literal("\n"))
+                    .append(ServerLang.tr(executor, "message.itemmilestonelog.preset_applied_limit", counts.skippedLimit()));
+        }
+        return new ActionResult(true, result);
+    }
+
+    /**
+     * F40: applies {@link Config#FIRST_JOIN_PRESETS} as personal targets if {@code playerId} has
+     * no {@link MilestoneData.PlayerData} yet, using the same target-addition logic as
+     * {@link #applyPreset}. Unknown preset IDs are skipped silently (warned once at server startup
+     * via {@link #warnUnknownFirstJoinPresets()}). Not an F23 undo target.
+     *
+     * @return total number of personal targets added across all listed presets
+     */
+    public static int applyFirstJoinPresets(MilestoneData data, UUID playerId) {
+        return applyFirstJoinPresets(
+                data,
+                playerId,
+                Config.FIRST_JOIN_PRESETS.get(),
+                MilestoneService::isKnownNonAirItem,
+                Config.PRESETS_ENABLED.get());
+    }
+
+    static int applyFirstJoinPresets(
+            MilestoneData data,
+            UUID playerId,
+            @Nullable List<? extends String> presetIds,
+            Predicate<String> isKnownNonAirItem,
+            boolean presetsEnabled) {
+        if (!presetsEnabled || presetIds == null || presetIds.isEmpty()) {
+            return 0;
+        }
+        if (data.playerOrNull(playerId) != null) {
+            return 0;
+        }
+        int totalAdded = 0;
+        for (String id : presetIds) {
+            if (id == null) {
+                continue;
+            }
+            Presets.PresetDefinition preset = Presets.get(id);
+            if (preset == null) {
+                continue;
+            }
+            PresetApplyCounts counts = applyPresetTargets(data, playerId, preset, isKnownNonAirItem);
+            totalAdded += counts.added();
+        }
+        return totalAdded;
+    }
+
+    /**
+     * F40: logs a single warning at server startup if {@link Config#FIRST_JOIN_PRESETS} references
+     * any preset ID that is not currently loaded. Does nothing when {@link Config#PRESETS_ENABLED}
+     * is false or all configured IDs exist.
+     */
+    public static void warnUnknownFirstJoinPresets() {
+        if (!Config.PRESETS_ENABLED.get()) {
+            return;
+        }
+        List<String> unknown = findUnknownFirstJoinPresets(Config.FIRST_JOIN_PRESETS.get());
+        if (!unknown.isEmpty()) {
+            ItemMilestoneLog.LOGGER.warn(
+                    "[ItemMilestoneLog] Unknown preset ID(s) in firstJoinPresets will be skipped: {}",
+                    String.join(", ", unknown));
+        }
+    }
+
+    static List<String> findUnknownFirstJoinPresets(@Nullable List<? extends String> presetIds) {
+        return findUnknownFirstJoinPresets(presetIds, id -> Presets.get(id) != null);
+    }
+
+    static List<String> findUnknownFirstJoinPresets(
+            @Nullable List<? extends String> presetIds,
+            Predicate<String> presetExists) {
+        if (presetIds == null || presetIds.isEmpty()) {
+            return List.of();
+        }
+        Set<String> unknown = new LinkedHashSet<>();
+        for (String id : presetIds) {
+            if (id != null && !presetExists.test(id)) {
+                unknown.add(id);
+            }
+        }
+        return unknown.isEmpty() ? List.of() : List.copyOf(unknown);
+    }
+
+    /**
+     * F28 {@code /milestonelog presetremove <name>}: removes all keys of the given preset from the
+     * player's personal targets (after the same normalization as {@link #applyPreset}, including
+     * keys whose item is not currently in the registry). Keeps records, default targets, and world
+     * firsts, cleans {@code progressNotified} for removed keys (§1.1), and registers an F23 undo
+     * snapshot when at least one target was removed.
+     */
+    public static ActionResult removePresetTargets(ServerPlayer player, String name) {
+        ActionResult result = removePresetTargets(
+                MilestoneData.get(player.server), player.getUUID(), player, name,
+                Config.PRESETS_ENABLED.get(), UNDO_SNAPSHOTS, System.nanoTime());
+        if (result.success() && result.undoable()) {
+            syncPlayerIfOpen(player);
+        }
+        return result;
+    }
+
+    static ActionResult removePresetTargets(MilestoneData data, UUID playerId, @Nullable ServerPlayer player,
+                                            String name, boolean presetsEnabled,
+                                            @Nullable UndoLogic.Store<TargetKey, MilestoneRecord> undoStore,
+                                            long nowNanos) {
+        if (!presetsEnabled) {
+            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.feature_disabled"));
+        }
+        Presets.PresetDefinition preset = Presets.get(name);
+        if (preset == null) {
+            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.preset_unknown", name,
+                    String.join(", ", Presets.names())));
+        }
+        return removePresetTargets(data, playerId, player, preset, undoStore, nowNanos);
+    }
+
+    static ActionResult removePresetTargets(MilestoneData data, UUID playerId, @Nullable ServerPlayer player,
+                                            Presets.PresetDefinition preset,
+                                            @Nullable UndoLogic.Store<TargetKey, MilestoneRecord> undoStore,
+                                            long nowNanos) {
+        MilestoneData.PlayerData pd = data.playerOrNull(playerId);
+        if (pd == null || pd.targets.isEmpty()) {
+            return new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.presetremove_done",
+                    preset.id(), 0), false);
+        }
+        Set<TargetKey> presetKeys = new LinkedHashSet<>();
+        for (TargetKey entry : preset.items()) {
+            if (entry == null) {
+                continue;
+            }
+            TargetKey normalized = TargetKey.normalize(entry.itemId(), entry.count(), false, true);
+            if (normalized != null) {
+                presetKeys.add(normalized);
+            }
+        }
+        List<TargetKey> removedTargets = new ArrayList<>();
+        Map<TargetKey, Integer> removedProgress = new LinkedHashMap<>();
+        if (!presetKeys.isEmpty()) {
+            Iterator<TargetKey> it = pd.targets.iterator();
+            while (it.hasNext()) {
+                TargetKey existing = it.next();
+                TargetKey normExisting = TargetKey.normalize(existing.itemId(), existing.count(), false, true);
+                if (presetKeys.contains(existing) || (normExisting != null && presetKeys.contains(normExisting))) {
+                    it.remove();
+                    removedTargets.add(existing);
+                    Integer prev = pd.progressNotified.remove(existing);
+                    if (prev != null) {
+                        removedProgress.put(existing, prev);
+                    }
+                    if (normExisting != null && !normExisting.equals(existing)) {
+                        Integer normPrev = pd.progressNotified.remove(normExisting);
+                        if (normPrev != null) {
+                            removedProgress.put(normExisting, normPrev);
+                        }
+                    }
+                }
+            }
+        }
+        boolean undoable = false;
+        if (!removedTargets.isEmpty()) {
+            data.setDirty();
+            if (undoStore != null) {
+                undoable = undoStore.offer(playerId,
+                        UndoLogic.Snapshot.bulkRemoval(removedTargets, removedProgress, nowNanos));
+            }
+        }
+        return new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.presetremove_done",
+                preset.id(), removedTargets.size()), undoable);
+    }
+
+    /**
+     * F28 {@code /milestonelog removeall}: removes all of the player's personal targets while
+     * keeping records, default targets, and world firsts, cleaning {@code progressNotified} for
+     * removed keys (§1.1), and registering an F23 undo snapshot when at least one target was removed.
+     */
+    public static ActionResult removeAllTargets(ServerPlayer player) {
+        ActionResult result = removeAllTargets(
+                MilestoneData.get(player.server), player.getUUID(), player,
+                UNDO_SNAPSHOTS, System.nanoTime());
+        if (result.success() && result.undoable()) {
+            syncPlayerIfOpen(player);
+        }
+        return result;
+    }
+
+    static ActionResult removeAllTargets(MilestoneData data, UUID playerId, @Nullable ServerPlayer player,
+                                         @Nullable UndoLogic.Store<TargetKey, MilestoneRecord> undoStore,
+                                         long nowNanos) {
+        MilestoneData.PlayerData pd = data.playerOrNull(playerId);
+        if (pd == null || pd.targets.isEmpty()) {
+            return new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.removeall_done", 0), false);
+        }
+        List<TargetKey> removedTargets = new ArrayList<>(pd.targets);
+        pd.targets.clear();
+        Map<TargetKey, Integer> removedProgress = new LinkedHashMap<>();
+        for (TargetKey removed : removedTargets) {
+            Integer prev = pd.progressNotified.remove(removed);
+            if (prev != null) {
+                removedProgress.put(removed, prev);
+            }
+            TargetKey normRemoved = TargetKey.normalize(removed.itemId(), removed.count(), false, true);
+            if (normRemoved != null && !normRemoved.equals(removed)) {
+                Integer normPrev = pd.progressNotified.remove(normRemoved);
+                if (normPrev != null) {
+                    removedProgress.put(normRemoved, normPrev);
+                }
+            }
+        }
+        data.setDirty();
+        boolean undoable = undoStore != null && undoStore.offer(playerId,
+                UndoLogic.Snapshot.bulkRemoval(removedTargets, removedProgress, nowNanos));
+        return new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.removeall_done",
+                removedTargets.size()), undoable);
     }
 
     public static ActionResult savePreset(ServerPlayer player, String rawName) {
@@ -430,13 +857,27 @@ public final class MilestoneService {
 
     public static ActionResult resetRecord(ServerPlayer player, String itemId, int count) {
         return resetRecord(MilestoneData.get(player.server), player.getUUID(), player, itemId, count,
-                MilestoneService::isValidItemId, MilestoneService::targetDisplayName);
+                MilestoneService::isValidItemId, MilestoneService::targetDisplayName,
+                UNDO_SNAPSHOTS, System.nanoTime());
     }
 
     static ActionResult resetRecord(MilestoneData data, UUID playerId, @Nullable ServerPlayer player,
                                     String itemId, int count,
                                     Predicate<String> isKnownItem,
                                     Function<TargetKey, Component> displayName) {
+        return resetRecord(data, playerId, player, itemId, count, isKnownItem, displayName, null, 0L);
+    }
+
+    /**
+     * @param undoStore where to store the F23 snapshot of what was removed ({@code null}: not captured)
+     * @param nowNanos  {@code System.nanoTime()} used as the snapshot's capture time
+     */
+    static ActionResult resetRecord(MilestoneData data, UUID playerId, @Nullable ServerPlayer player,
+                                    String itemId, int count,
+                                    Predicate<String> isKnownItem,
+                                    Function<TargetKey, Component> displayName,
+                                    @Nullable UndoLogic.Store<TargetKey, MilestoneRecord> undoStore,
+                                    long nowNanos) {
         if (!TargetKey.isValidCount(count)) {
             return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_count",
                     TargetKey.MIN_COUNT, TargetKey.MAX_COUNT));
@@ -450,13 +891,27 @@ public final class MilestoneService {
         MilestoneData.PlayerData pd = data.playerOrNull(playerId);
         if (pd != null) {
             TargetKey rawKey = !normalizedId.equals(itemId) ? new TargetKey(itemId, count) : null;
-            if (pd.records.remove(key) != null || (rawKey != null && pd.records.remove(rawKey) != null)) {
-                pd.progressNotified.remove(key);
-                if (rawKey != null) {
-                    pd.progressNotified.remove(rawKey);
+            Map<TargetKey, MilestoneRecord> removedRecords = new LinkedHashMap<>();
+            MilestoneRecord removed = pd.records.remove(key);
+            if (removed != null) {
+                removedRecords.put(key, removed);
+            } else if (rawKey != null && (removed = pd.records.remove(rawKey)) != null) {
+                removedRecords.put(rawKey, removed);
+            }
+            if (removed != null) {
+                Map<TargetKey, Integer> removedProgress = new LinkedHashMap<>();
+                Integer progress = pd.progressNotified.remove(key);
+                if (progress != null) {
+                    removedProgress.put(key, progress);
+                }
+                if (rawKey != null && (progress = pd.progressNotified.remove(rawKey)) != null) {
+                    removedProgress.put(rawKey, progress);
                 }
                 data.setDirty();
-                return new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.reset_done", displayName.apply(key)));
+                boolean undoable = undoStore != null && undoStore.offer(playerId,
+                        UndoLogic.Snapshot.reset(removedRecords, Set.of(), removedProgress, nowNanos));
+                return new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.reset_done", displayName.apply(key)),
+                        undoable);
             }
         }
         if (!isKnownItem.test(normalizedId)) {
@@ -466,14 +921,31 @@ public final class MilestoneService {
     }
 
     public static ActionResult resetAllRecords(ServerPlayer player) {
-        return resetAllRecords(MilestoneData.get(player.server), player.getUUID(), player);
+        return resetAllRecords(MilestoneData.get(player.server), player.getUUID(), player,
+                UNDO_SNAPSHOTS, System.nanoTime());
     }
 
     static ActionResult resetAllRecords(MilestoneData data, UUID playerId, @Nullable ServerPlayer player) {
+        return resetAllRecords(data, playerId, player, null, 0L);
+    }
+
+    /**
+     * @param undoStore where to store the F23 snapshot of what was removed ({@code null}: not captured).
+     *                  A 0-record resetall stores nothing and keeps the previous snapshot.
+     * @param nowNanos  {@code System.nanoTime()} used as the snapshot's capture time
+     */
+    static ActionResult resetAllRecords(MilestoneData data, UUID playerId, @Nullable ServerPlayer player,
+                                        @Nullable UndoLogic.Store<TargetKey, MilestoneRecord> undoStore,
+                                        long nowNanos) {
         MilestoneData.PlayerData pd = data.playerOrNull(playerId);
         int count = pd != null ? pd.records.size() : 0;
         boolean changed = false;
+        boolean undoable = false;
         if (pd != null) {
+            if (undoStore != null) {
+                undoable = undoStore.offer(playerId, UndoLogic.Snapshot.reset(
+                        pd.records, pd.completedPresets, pd.progressNotified, nowNanos));
+            }
             if (count > 0) {
                 pd.records.clear();
                 changed = true;
@@ -490,7 +962,54 @@ public final class MilestoneService {
         if (changed) {
             data.setDirty();
         }
-        return new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.resetall_done", count));
+        return new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.resetall_done", count), undoable);
+    }
+
+    /**
+     * F23 {@code /milestonelog undo}: restores the player's last reset (or F28 bulk removal) from
+     * the past 10 minutes. Fires no events, notifications, Discord posts, or F5 judgments; only
+     * re-syncs the player's GUI.
+     */
+    public static ActionResult undo(ServerPlayer player) {
+        ActionResult result = undo(MilestoneData.get(player.server), player.getUUID(), player,
+                UNDO_SNAPSHOTS, System.nanoTime());
+        if (result.success()) {
+            syncPlayerIfOpen(player);
+        }
+        return result;
+    }
+
+    static ActionResult undo(MilestoneData data, UUID playerId, @Nullable ServerPlayer player,
+                             UndoLogic.Store<TargetKey, MilestoneRecord> undoStore, long nowNanos) {
+        UndoLogic.Snapshot<TargetKey, MilestoneRecord> snapshot = undoStore.peekValid(playerId, nowNanos);
+        if (snapshot == null) {
+            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.undo_nothing"));
+        }
+        MilestoneData.PlayerData pd = data.player(playerId);
+        UndoLogic.Result<TargetKey, MilestoneRecord> restored = UndoLogic.restore(snapshot,
+                pd.records, pd.completedPresets, pd.progressNotified, pd.targets,
+                MAX_PERSONAL_TARGETS, MilestoneRecord::playTicks);
+        pd.records.clear();
+        pd.records.putAll(restored.records());
+        pd.completedPresets.clear();
+        pd.completedPresets.addAll(restored.completedPresets());
+        pd.progressNotified.clear();
+        pd.progressNotified.putAll(restored.progressNotified());
+        pd.targets.clear();
+        pd.targets.addAll(restored.targets());
+        data.setDirty();
+        undoStore.consume(playerId, snapshot);
+
+        if (snapshot.kind() == UndoLogic.Kind.BULK_REMOVAL) {
+            Component message = ServerLang.tr(player, "message.itemmilestonelog.undo_done_targets", restored.restoredTargets());
+            if (restored.skippedTargetsLimit() > 0) {
+                message = message.copy().append(Component.literal("\n"))
+                        .append(ServerLang.tr(player, "message.itemmilestonelog.preset_applied_limit",
+                                restored.skippedTargetsLimit()));
+            }
+            return new ActionResult(true, message);
+        }
+        return new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.undo_done", restored.restoredRecords()));
     }
 
     public static ActionResult toggleDiscordOptOut(ServerPlayer player) {

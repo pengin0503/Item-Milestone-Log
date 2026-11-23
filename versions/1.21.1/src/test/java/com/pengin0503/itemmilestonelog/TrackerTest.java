@@ -1183,4 +1183,334 @@ class TrackerTest {
         assertEquals(RecordCause.ADMIN_GRANT,
                 new MilestoneRecordedEvent(null, "minecraft:diamond", 1, 10, 1L, 2L, false, RecordCause.ADMIN_GRANT).getCause());
     }
+
+    // ---- F33: admin grant ----
+
+    @Test
+    void grantMilestoneEnforcesOfflineAlreadyRecordedAutoAddAndCapPreconditions() {
+        Function<TargetKey, Component> literalName = key -> Component.literal(key.formatDisplayId());
+        Set<String> knownItems = Set.of("minecraft:diamond", "minecraft:iron_ingot", "minecraft:emerald");
+        TargetKey diamond = TargetKey.of("minecraft:diamond");
+        TargetKey defaultIron = TargetKey.of("minecraft:iron_ingot");
+        TargetKey emerald = TargetKey.of("minecraft:emerald", 64);
+        MilestoneRecord rec = new MilestoneRecord(72_000, 5L, 1_700_000_000_000L);
+
+        // 1. Offline target -> admin_grant_offline; no data mutation, no record supplier call, no messages/events/logs
+        MilestoneData data = new MilestoneData();
+        AtomicInteger supplierCalls = new AtomicInteger();
+        List<Component> targetMessages = new ArrayList<>();
+        List<Event> postedEvents = new ArrayList<>();
+        AtomicInteger logCalls = new AtomicInteger();
+
+        Tracker.GrantResult offline = Tracker.grantMilestone(
+                data, PLAYER_A, "Alice%s", false, null, null,
+                "minecraft:diamond", 1, Set.of(),
+                () -> {
+                    supplierCalls.incrementAndGet();
+                    return rec;
+                },
+                List.of(), knownItems::contains, literalName, true, true,
+                (k, r) -> logCalls.incrementAndGet(),
+                targetMessages::add, postedEvents::add);
+        assertFalse(offline.success());
+        assertEquals(Tracker.GrantStatus.OFFLINE, offline.status());
+        assertEquals("Alice%s must be online to be granted a milestone.", offline.executorMessage().getString());
+        assertNull(data.playerOrNull(PLAYER_A));
+        assertEquals(0, supplierCalls.get());
+        assertTrue(targetMessages.isEmpty());
+        assertTrue(postedEvents.isEmpty());
+        assertEquals(0, logCalls.get());
+
+        // 2. Invalid count and unknown/air item rejected without mutating PlayerData
+        Tracker.GrantResult badCount = Tracker.grantMilestone(
+                data, PLAYER_A, "Alice", true, null, null,
+                "minecraft:diamond", 0, Set.of(), () -> rec,
+                List.of(), knownItems::contains, literalName, true, true,
+                (k, r) -> logCalls.incrementAndGet(), targetMessages::add, postedEvents::add);
+        assertEquals(Tracker.GrantStatus.INVALID_COUNT, badCount.status());
+        Tracker.GrantResult badAir = Tracker.grantMilestone(
+                data, PLAYER_A, "Alice", true, null, null,
+                "minecraft:air", 1, Set.of(), () -> rec,
+                List.of(), knownItems::contains, literalName, true, true,
+                (k, r) -> logCalls.incrementAndGet(), targetMessages::add, postedEvents::add);
+        assertEquals(Tracker.GrantStatus.INVALID_ITEM, badAir.status());
+        assertNull(data.playerOrNull(PLAYER_A));
+
+        // 3. Auto-add personal target when missing from effective targets (un-namespaced input normalized)
+        Tracker.GrantResult autoAdded = Tracker.grantMilestone(
+                data, PLAYER_A, "Alice", true, null, null,
+                "diamond", 1, Set.of(), () -> rec,
+                List.of(), knownItems::contains, literalName, true, true,
+                (k, r) -> logCalls.incrementAndGet(), targetMessages::add, postedEvents::add);
+        assertTrue(autoAdded.success());
+        assertEquals(Tracker.GrantStatus.GRANTED, autoAdded.status());
+        assertTrue(autoAdded.autoAddedTarget());
+        assertEquals("Granted to Alice: minecraft:diamond", autoAdded.executorMessage().getString());
+        MilestoneData.PlayerData pd = data.playerOrNull(PLAYER_A);
+        assertNotNull(pd);
+        assertTrue(pd.targets.contains(diamond), "missing target must be auto-added to personal targets");
+        assertEquals(rec, pd.records.get(diamond));
+        assertNull(data.worldFirstOrNull(diamond), "grant must never register world-first");
+        assertEquals(1, logCalls.get());
+
+        // 4. Already recorded -> admin_grant_already even if target was removed from personal targets and cap is full
+        pd.targets.remove(diamond);
+        for (int i = 0; i < MilestoneService.MAX_PERSONAL_TARGETS; i++) {
+            pd.targets.add(TargetKey.of("minecraft:filler_" + i));
+        }
+        targetMessages.clear();
+        postedEvents.clear();
+        Tracker.GrantResult already = Tracker.grantMilestone(
+                data, PLAYER_A, "Alice", true, null, null,
+                "minecraft:diamond", 1, Set.of(), () -> rec,
+                List.of(), knownItems::contains, literalName, true, true,
+                (k, r) -> logCalls.incrementAndGet(), targetMessages::add, postedEvents::add);
+        assertFalse(already.success());
+        assertEquals(Tracker.GrantStatus.ALREADY_RECORDED, already.status());
+        assertEquals("Alice has already recorded minecraft:diamond.", already.executorMessage().getString());
+        assertFalse(pd.targets.contains(diamond), "already-recorded grant must not mutate targets");
+        assertTrue(targetMessages.isEmpty());
+        assertTrue(postedEvents.isEmpty());
+
+        // 5. Personal target cap failure when key is NOT in effective targets
+        Tracker.GrantResult capFailed = Tracker.grantMilestone(
+                data, PLAYER_A, "Alice", true, null, null,
+                "minecraft:emerald", 64, Set.of(defaultIron), () -> rec,
+                List.of(), knownItems::contains, literalName, true, true,
+                (k, r) -> logCalls.incrementAndGet(), targetMessages::add, postedEvents::add);
+        assertFalse(capFailed.success());
+        assertEquals(Tracker.GrantStatus.TARGETS_LIMIT_REACHED, capFailed.status());
+        assertEquals("Personal target limit reached (1024).", capFailed.executorMessage().getString());
+        assertFalse(pd.targets.contains(emerald));
+        assertFalse(pd.records.containsKey(emerald));
+        assertTrue(targetMessages.isEmpty());
+        assertTrue(postedEvents.isEmpty());
+
+        // 6. Key already in defaultTargets succeeds even when personal targets are at cap (does not add personal target)
+        Tracker.GrantResult defaultTargetGrant = Tracker.grantMilestone(
+                data, PLAYER_A, "Alice", true, null, null,
+                "minecraft:iron_ingot", 1, Set.of(defaultIron), () -> rec,
+                List.of(), knownItems::contains, literalName, true, true,
+                (k, r) -> logCalls.incrementAndGet(), targetMessages::add, postedEvents::add);
+        assertTrue(defaultTargetGrant.success());
+        assertFalse(defaultTargetGrant.autoAddedTarget());
+        assertFalse(pd.targets.contains(defaultIron));
+        assertEquals(rec, pd.records.get(defaultIron));
+        assertNull(data.worldFirstOrNull(defaultIron));
+    }
+
+    @Test
+    void grantMilestonePostsAdminGrantCauseWithoutWorldFirstCleansProgressHandlesF5AndSkipsBroadcastQueue() {
+        Function<TargetKey, Component> literalName = key -> Component.literal(key.formatDisplayId());
+        Set<String> knownItems = Set.of("minecraft:diamond", "minecraft:emerald", "minecraft:gold_ingot");
+        TargetKey diamond100 = TargetKey.of("minecraft:diamond", 100);
+        TargetKey emerald = TargetKey.of("minecraft:emerald");
+        TargetKey gold = TargetKey.of("minecraft:gold_ingot");
+        MilestoneRecord rec = new MilestoneRecord(72_000, 3L, 1_700_000_000_000L); // 1h 00m 00s
+
+        Presets.PresetDefinition diamondPreset = new Presets.PresetDefinition(
+                "diamond_pack", "Diamond Pack", List.of(diamond100), false);
+        Presets.PresetDefinition emeraldPreset = new Presets.PresetDefinition(
+                "emerald_pack", "Emerald Pack", List.of(emerald), true);
+        Presets.PresetDefinition goldPreset = new Presets.PresetDefinition(
+                "gold_pack", "Gold Pack", List.of(gold), false);
+        List<Presets.PresetDefinition> presets = List.of(diamondPreset, emeraldPreset, goldPreset);
+
+        MilestoneData data = new MilestoneData();
+        MilestoneData.PlayerData pd = data.player(PLAYER_A);
+        pd.targets.add(diamond100);
+        pd.targets.add(emerald);
+        pd.targets.add(gold);
+        pd.progressNotified.put(diamond100, 90);
+        pd.progressNotified.put(gold, 50);
+
+        Tracker.clearPendingNotifications();
+        try {
+            // 1. notifyPlayer = true, presetsEnabled = true:
+            //    cleans F1 progressNotified, updates completedPresets before PresetCompletedEvent,
+            //    sends granted_notice + preset_completed to target, posts ADMIN_GRANT with worldFirst=false,
+            //    never registers world-first, never queues to PENDING_NOTIFICATIONS.
+            List<Component> messages1 = new ArrayList<>();
+            List<Event> events1 = new ArrayList<>();
+            List<String> logged1 = new ArrayList<>();
+            Tracker.GrantResult res1 = Tracker.grantMilestone(
+                    data, PLAYER_A, "Alice", true, null, null,
+                    "minecraft:diamond", 100, Set.of(), () -> rec,
+                    presets, knownItems::contains, literalName, true, true,
+                    (k, r) -> logged1.add(k.formatDisplayId() + "@" + r.playTicks()),
+                    messages1::add,
+                    event -> {
+                        if (event instanceof PresetCompletedEvent pce) {
+                            assertTrue(pd.completedPresets.contains(pce.getPresetId()),
+                                    "completedPresets must be persisted before PresetCompletedEvent fires");
+                        }
+                        events1.add(event);
+                    });
+            assertTrue(res1.success());
+            assertEquals(List.of("minecraft:diamond ×100@72000"), logged1);
+            assertFalse(pd.progressNotified.containsKey(diamond100), "F1 progressNotified must be cleaned");
+            assertEquals(50, pd.progressNotified.get(gold), "other progressNotified entries stay intact");
+            assertNull(data.worldFirstOrNull(diamond100), "grant must never register world-first");
+            assertTrue(pd.completedPresets.contains("diamond_pack"));
+
+            assertEquals(2, messages1.size());
+            assertEquals("An administrator recorded minecraft:diamond ×100 for you at playtime 1h 00m 00s.",
+                    messages1.get(0).getString());
+            assertEquals("★ All targets of Diamond Pack are complete!", messages1.get(1).getString());
+
+            assertEquals(2, events1.size());
+            MilestoneRecordedEvent recorded1 = assertInstanceOf(MilestoneRecordedEvent.class, events1.get(0));
+            assertEquals(RecordCause.ADMIN_GRANT, recorded1.getCause());
+            assertFalse(recorded1.isWorldFirst());
+            assertEquals(diamond100, recorded1.getTargetKey());
+            assertEquals(72_000, recorded1.getPlayTicks());
+            assertEquals(3L, recorded1.getDay());
+            assertEquals(1_700_000_000_000L, recorded1.getEpochMillis());
+            PresetCompletedEvent presetEvt1 = assertInstanceOf(PresetCompletedEvent.class, events1.get(1));
+            assertEquals("diamond_pack", presetEvt1.getPresetId());
+            assertFalse(presetEvt1.isBuiltin());
+            assertTrue(Tracker.drainPendingNotifications().isEmpty(),
+                    "grant must not enqueue broadcast/sound/Discord/F19 notifications");
+
+            // 2. notifyPlayer = false, presetsEnabled = true:
+            //    granted_notice is STILL sent to target; preset_completed chat is suppressed;
+            //    completedPresets and PresetCompletedEvent still fire.
+            List<Component> messages2 = new ArrayList<>();
+            List<Event> events2 = new ArrayList<>();
+            Tracker.GrantResult res2 = Tracker.grantMilestone(
+                    data, PLAYER_A, "Alice", true, null, null,
+                    "minecraft:emerald", 1, Set.of(), () -> rec,
+                    presets, knownItems::contains, literalName, true, false,
+                    (k, r) -> {}, messages2::add, events2::add);
+            assertTrue(res2.success());
+            assertTrue(pd.completedPresets.contains("emerald_pack"));
+            assertEquals(1, messages2.size(), "granted_notice sent even when notifyPlayer=false, preset_completed omitted");
+            assertEquals("An administrator recorded minecraft:emerald for you at playtime 1h 00m 00s.",
+                    messages2.get(0).getString());
+            assertEquals(2, events2.size());
+            assertEquals(RecordCause.ADMIN_GRANT, assertInstanceOf(MilestoneRecordedEvent.class, events2.get(0)).getCause());
+            assertFalse(assertInstanceOf(MilestoneRecordedEvent.class, events2.get(0)).isWorldFirst());
+            PresetCompletedEvent presetEvt2 = assertInstanceOf(PresetCompletedEvent.class, events2.get(1));
+            assertEquals("emerald_pack", presetEvt2.getPresetId());
+            assertTrue(presetEvt2.isBuiltin());
+
+            // 3. presetsEnabled = false: no F5 completion update, no preset_completed notice, no PresetCompletedEvent
+            List<Component> messages3 = new ArrayList<>();
+            List<Event> events3 = new ArrayList<>();
+            Tracker.GrantResult res3 = Tracker.grantMilestone(
+                    data, PLAYER_A, "Alice", true, null, null,
+                    "minecraft:gold_ingot", 1, Set.of(), () -> rec,
+                    presets, knownItems::contains, literalName, false, true,
+                    (k, r) -> {}, messages3::add, events3::add);
+            assertTrue(res3.success());
+            assertFalse(pd.completedPresets.contains("gold_pack"));
+            assertEquals(1, messages3.size());
+            assertEquals(1, events3.size());
+            assertEquals(RecordCause.ADMIN_GRANT, assertInstanceOf(MilestoneRecordedEvent.class, events3.get(0)).getCause());
+            assertTrue(Tracker.drainPendingNotifications().isEmpty());
+        } finally {
+            Tracker.clearPendingNotifications();
+        }
+
+        // Verify Japanese translations for all F33 grant messages match spec verbatim
+        assertEquals("Alice に記録を付与しました: Diamond",
+                ServerLang.trForLang("ja_jp", "message.itemmilestonelog.admin_granted",
+                        Component.literal("Alice"), Component.literal("Diamond")).getString());
+        assertEquals("Alice はすでに Diamond を記録しています。",
+                ServerLang.trForLang("ja_jp", "message.itemmilestonelog.admin_grant_already",
+                        Component.literal("Alice"), Component.literal("Diamond")).getString());
+        assertEquals("記録を付与するには Alice がオンラインである必要があります。",
+                ServerLang.trForLang("ja_jp", "message.itemmilestonelog.admin_grant_offline",
+                        Component.literal("Alice")).getString());
+        assertEquals("管理者があなたに Diamond の記録を付与しました（累計プレイ時間 1h 00m 00s）。",
+                ServerLang.trForLang("ja_jp", "message.itemmilestonelog.granted_notice",
+                        Component.literal("Diamond"), "1h 00m 00s").getString());
+    }
+
+    @Test
+    void processPlayerLoginAppliesFirstJoinPresetsOnceBeforeJoinHintAndRespectsExistingDataAndSwitches() {
+        Set<String> knownItems = Set.of(
+                "minecraft:diamond",
+                "minecraft:netherite_ingot",
+                "minecraft:elytra");
+
+        // 1. First join: applies presets (skipping unknown IDs & missing items) and sends notice BEFORE join hint
+        MilestoneData data = new MilestoneData();
+        List<Component> firstJoinMsgs = Tracker.processPlayerLogin(
+                data, PLAYER_A, "Alice", Set.of(),
+                List.of("unknown_preset", "vanilla_endgame"), true,
+                knownItems::contains, true, false, null);
+        assertEquals(2, firstJoinMsgs.size());
+        assertEquals(
+                "This server added 3 starter targets to your list. Use /milestonelog remove to drop any you don't want.",
+                firstJoinMsgs.get(0).getString());
+        assertTrue(firstJoinMsgs.get(1).getString().startsWith("Tip: Use /milestonelog"),
+                () -> "expected join hint second, got: " + firstJoinMsgs.get(1).getString());
+        MilestoneData.PlayerData pdA = data.playerOrNull(PLAYER_A);
+        assertNotNull(pdA);
+        assertEquals("Alice", pdA.lastKnownName);
+        assertTrue(pdA.firstJoinHintShown);
+        assertEquals(Set.of(
+                TargetKey.of("minecraft:diamond"),
+                TargetKey.of("minecraft:netherite_ingot"),
+                TargetKey.of("minecraft:elytra")
+        ), pdA.targets);
+
+        // 2. Returning player who removed a target does NOT receive starter targets again
+        pdA.targets.remove(TargetKey.of("minecraft:elytra"));
+        List<Component> rejoinMsgs = Tracker.processPlayerLogin(
+                data, PLAYER_A, "Alice", Set.of(),
+                List.of("vanilla_endgame"), true,
+                knownItems::contains, true, false, null);
+        assertTrue(rejoinMsgs.isEmpty());
+        assertFalse(pdA.targets.contains(TargetKey.of("minecraft:elytra")));
+
+        // 3. Existing PlayerData (e.g. created by importall before first login, firstJoinHintShown=false):
+        //    no starter presets applied, no first_join_presets notice, only join hint shown
+        MilestoneData.PlayerData pdB = data.player(PLAYER_B);
+        pdB.lastKnownName = "Bob";
+        List<Component> existingMsgs = Tracker.processPlayerLogin(
+                data, PLAYER_B, "Bob", Set.of(),
+                List.of("vanilla_endgame"), true,
+                knownItems::contains, true, true, null);
+        assertEquals(1, existingMsgs.size());
+        assertTrue(existingMsgs.get(0).getString().startsWith("Tip: Bind a key"),
+                () -> "expected mod join hint only, got: " + existingMsgs.get(0).getString());
+        assertTrue(pdB.targets.isEmpty());
+
+        // 4. Purged player rejoining with showFirstJoinHint=false: treated as first join again, notice still sent
+        assertTrue(data.purgePlayer(PLAYER_A));
+        List<Component> afterPurgeMsgs = Tracker.processPlayerLogin(
+                data, PLAYER_A, "Alice", Set.of(),
+                List.of("vanilla_endgame"), true,
+                knownItems::contains, false, false, null);
+        assertEquals(1, afterPurgeMsgs.size());
+        assertEquals(
+                "This server added 3 starter targets to your list. Use /milestonelog remove to drop any you don't want.",
+                afterPurgeMsgs.get(0).getString());
+        assertEquals(3, data.playerOrNull(PLAYER_A).targets.size());
+
+        // 5. First join with 0 added (presetsEnabled=false, unknown IDs, or no known items): no first_join_presets notice
+        UUID playerC = UUID.fromString("33333333-3333-3333-3333-333333333333");
+        List<Component> disabledMsgs = Tracker.processPlayerLogin(
+                data, playerC, "Charlie", Set.of(),
+                List.of("vanilla_endgame"), false,
+                knownItems::contains, true, false, null);
+        assertEquals(1, disabledMsgs.size());
+        assertTrue(disabledMsgs.get(0).getString().startsWith("Tip:"));
+        assertTrue(data.playerOrNull(playerC).targets.isEmpty());
+
+        UUID playerD = UUID.fromString("44444444-4444-4444-4444-444444444444");
+        List<Component> zeroAddedMsgs = Tracker.processPlayerLogin(
+                data, playerD, "Dave", Set.of(),
+                List.of("unknown_only", "vanilla_endgame"), true,
+                id -> false, false, false, null);
+        assertTrue(zeroAddedMsgs.isEmpty());
+        assertTrue(data.playerOrNull(playerD).targets.isEmpty());
+
+        // 6. Verify Japanese translation matches spec verbatim
+        assertEquals(
+                "このサーバーが用意した目標を 3 件、あなたの目標に追加しました。要らないものは /milestonelog remove で外せます。",
+                ServerLang.trForLang("ja_jp", "message.itemmilestonelog.first_join_presets", 3).getString());
+    }
 }

@@ -129,5 +129,23 @@ class TargetKeyTest {
         assertFalse(Config.validateDisplayTimeZone("Invalid/Zone"));
         assertFalse(Config.validateDisplayTimeZone(123));
         assertFalse(Config.validateDisplayTimeZone(null));
+
+        assertTrue(Config.validateFirstJoinPreset("vanilla_endgame"));
+        assertTrue(Config.validateFirstJoinPreset("atm_star"));
+        assertTrue(Config.validateFirstJoinPreset("my_pack-1"));
+        assertTrue(Config.validateFirstJoinPreset("a".repeat(32)));
+        assertFalse(Config.validateFirstJoinPreset(""));
+        assertFalse(Config.validateFirstJoinPreset(" "));
+        assertFalse(Config.validateFirstJoinPreset("Vanilla_Endgame"));
+        assertFalse(Config.validateFirstJoinPreset("bad name"));
+        assertFalse(Config.validateFirstJoinPreset("bad.id"));
+        assertFalse(Config.validateFirstJoinPreset("ns:preset"));
+        assertFalse(Config.validateFirstJoinPreset("a".repeat(33)));
+        assertFalse(Config.validateFirstJoinPreset("list"));
+        assertFalse(Config.validateFirstJoinPreset("save"));
+        assertFalse(Config.validateFirstJoinPreset("delete"));
+        assertFalse(Config.validateFirstJoinPreset("reload"));
+        assertFalse(Config.validateFirstJoinPreset(123));
+        assertFalse(Config.validateFirstJoinPreset(null));
     }
 }

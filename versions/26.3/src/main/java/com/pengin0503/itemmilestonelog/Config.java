@@ -126,6 +126,12 @@ public final class Config {
                     "Independent of announcePresetCompletion and discordNotifyScope.")
             .define("discordNotifyPresetCompletion", false);
 
+    public static final ModConfigSpec.ConfigValue<List<? extends String>> FIRST_JOIN_PRESETS = BUILDER
+            .comment("Preset IDs to apply automatically as personal targets the first time a player joins this world.",
+                    "Leave empty to disable. Unlike defaultTargets, players can remove these targets with /milestonelog remove.",
+                    "Example: [\"vanilla_endgame\"]")
+            .defineListAllowEmpty("firstJoinPresets", List.of(), () -> "vanilla_endgame", Config::validateFirstJoinPreset);
+
     static final ModConfigSpec SPEC = BUILDER.build();
 
     private record ThresholdsCache(List<? extends Integer> source, List<Integer> normalized) {
@@ -175,5 +181,9 @@ public final class Config {
 
     static boolean validateDiscordLanguage(Object obj) {
         return obj instanceof String s && ServerLang.BUNDLED_LANGUAGES.contains(s);
+    }
+
+    static boolean validateFirstJoinPreset(Object obj) {
+        return obj instanceof String s && Presets.isValidId(s);
     }
 }

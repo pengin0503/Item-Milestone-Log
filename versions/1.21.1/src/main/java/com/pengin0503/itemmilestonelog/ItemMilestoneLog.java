@@ -46,6 +46,7 @@ public class ItemMilestoneLog {
     private static void onServerStarting(ServerStartingEvent event) {
         int custom = Presets.reload();
         LOGGER.info("[ItemMilestoneLog] Loaded {} preset(s) ({} custom)", Presets.names().size(), custom);
+        MilestoneService.warnUnknownFirstJoinPresets();
     }
 
     private static void onServerStarted(ServerStartedEvent event) {
@@ -56,6 +57,7 @@ public class ItemMilestoneLog {
 
     private static void onServerStopping(ServerStoppingEvent event) {
         Tracker.clearPendingNotifications();
+        MilestoneService.UNDO_SNAPSHOTS.clear();
         DiscordNotifier.shutdown();
     }
 }
