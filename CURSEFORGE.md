@@ -42,10 +42,10 @@ version, so tag each file with exactly one game version.
 
 | File | Display name | Game version | Mod loader | Java | Environment |
 |---|---|---|---|---|---|
-| `itemmilestonelog-neoforge-1.21.1-1.0.1.jar` | Item Milestone Log 1.0.1 (1.21.1) | 1.21.1 | NeoForge | Java 21 | Client, Server |
-| `itemmilestonelog-neoforge-26.1.2-1.0.1.jar` | Item Milestone Log 1.0.1 (26.1.2) | 26.1.2 | NeoForge | Java 25 | Client, Server |
-| `itemmilestonelog-neoforge-26.2-1.0.1.jar` | Item Milestone Log 1.0.1 (26.2) | 26.2 | NeoForge | Java 25 | Client, Server |
-| `itemmilestonelog-neoforge-26.3-1.0.1.jar` | Item Milestone Log 1.0.1 (26.3) | 26.3 | NeoForge | Java 25 | Client, Server |
+| `itemmilestonelog-neoforge-1.21.1-1.1.0.jar` | Item Milestone Log 1.1.0 (1.21.1) | 1.21.1 | NeoForge | Java 21 | Client, Server |
+| `itemmilestonelog-neoforge-26.1.2-1.1.0.jar` | Item Milestone Log 1.1.0 (26.1.2) | 26.1.2 | NeoForge | Java 25 | Client, Server |
+| `itemmilestonelog-neoforge-26.2-1.1.0.jar` | Item Milestone Log 1.1.0 (26.2) | 26.2 | NeoForge | Java 25 | Client, Server |
+| `itemmilestonelog-neoforge-26.3-1.1.0.jar` | Item Milestone Log 1.1.0 (26.3) | 26.3 | NeoForge | Java 25 | Client, Server |
 
 - Release type: **Release**.
 - Related projects: none (the mod only needs NeoForge).
@@ -96,43 +96,50 @@ Detection is possession-based. Items produced by machines, automation, AE2 autoc
 (Note: items placed directly into an Ender Chest, inside a Shulker Box, or into another mod's storage are recorded once you take them out into your player inventory.)
 
 #### Features
-- **Per-player targets with optional quantities (1–1,000,000)** — track e.g. `Diamond` ×1 and `Diamond ×100` as separate milestones based on simultaneous inventory possession
-- **Cumulative playtime, Day & date records**, stored per world, shown as e.g. `27h 15m 30s (Day 12, 2026-11-22)`
-- **World-first records** — tracks the first player to obtain each item (and quantity) in the world (`/milestonelog firsts`, with optional server-wide announcements)
-- **In-game GUI** — view progress, search and add targets (with quantity input), browse/apply/save custom presets, and manage records without typing commands. Assign a key to *Open Milestone Log* under Options → Controls → Key Binds first: there is no default key, because `M` already opens the FTB Chunks map in ATM10. (Requires the mod on the client; vanilla clients can still join and use commands.)
-- **Chat notification & sound effect** the moment a goal item is first obtained (configurable sound, optional server-wide broadcast with `/milestonelog mutebroadcast` opt-out)
-- **Discord Webhook notifications** (optional, asynchronous)
-- **JSON Export / Import** — back up or transfer records with `/milestonelog export` and `import`
-- **Custom presets** — create JSON presets in `config/itemmilestonelog/presets/` or save your current targets in-game
-- **OP Admin tools** — inspect, reset, or purge online and offline players' data
-- **Creative mode doesn't count** — nothing is recorded in creative or spectator mode, including items you bring back to survival (configurable)
+- **Per-player targets with optional quantities (1–1,000,000)** — track e.g. `Diamond` ×1 and `Diamond ×100` as separate milestones based on simultaneous inventory possession, with configurable progress alerts (default 50% / 90% for quantities ≥ 10; opt out with `/milestonelog muteprogress`)
+- **Cumulative playtime, Day & date records**, stored per world, shown as e.g. `27h 15m 30s (Day 12, 2026-11-22)`, with configurable server display timezone (`displayTimeZone`)
+- **World-first records** — tracks the first player to obtain each item (and quantity) in the world (`/milestonelog firsts`, showing current usernames with `(was <old name>)` after renames, with optional server-wide announcements)
+- **Lookup, rankings & server stats** — browse other players' records (`/milestonelog lookup`), leaderboards (`/milestonelog top`, `/milestonelog recent`), and server statistics (`/milestonelog stats`), with personal privacy opt-out (`/milestonelog privacy`)
+- **In-game GUI** — view progress, search and add targets (with quantity input), browse/apply/save custom presets (with overwrite warning), and manage records without typing commands. Assign a key to *Open Milestone Log* under Options → Controls → Key Binds first: there is no default key, because `M` already opens the FTB Chunks map in ATM10. (Requires the mod on the client; vanilla clients can still join and use commands.)
+- **Chat notification, grouping & sound effect** — instant notifications with configurable sound, automatic grouping when 3+ milestones trigger in the same tick (`groupSimultaneousRecords`), optional server-wide & preset-completion broadcasts, and `/milestonelog mutebroadcast` opt-out
+- **Discord Webhook notifications** — optional, asynchronous, supporting plain text or rich embeds (`discordUseEmbeds`), English or Japanese (`discordLanguage`), preset-completion posts, `env:VAR_NAME` URLs, `Retry-After` retry, 401/404 auto-pause, per-player `/milestonelog discordoptout`, and OP `/milestonelog discordtest`
+- **JSON, HTML & CSV Export / Import** — export your milestones as JSON, standalone HTML, or CSV (`export`, `exporthtml`, `exportcsv`), import JSON (`import`), plus OP `exportall` (including world-firsts), `exporthtmlall`, `exportcsvall`, and `importall`
+- **Custom presets, progress & starter presets** — create JSON presets in `config/itemmilestonelog/presets/`, save your current targets in-game, check preset progress (`/milestonelog presetprogress`), bulk-remove targets (`/milestonelog presetremove`, `removeall`), and distribute removable starter targets on first join (`firstJoinPresets`)
+- **Undo, pagination & in-game help** — 10-minute `/milestonelog undo` for personal resets and bulk removals, optional `[<page>]` pagination with clickable navigation, and `/milestonelog help [<subcommand>]`
+- **OP Admin & maintenance tools** — inspect, add/remove targets, apply presets, grant milestones (`grant`), reset, purge, or clean up empty long-absent player data (`prunedata`)
+- **Creative mode doesn't count** — nothing is recorded in creative or spectator mode, including items you bring back to survival (configurable), with in-chat notices explaining skipped creative-carried items
 - **Built-in presets**: `atm_star` (ATM Star + its 9 components) and `vanilla_endgame`
-- **Server-wide default targets** via the config file
+- **Server-wide default targets & feature switches** via the config file (`defaultTargets`, `presetsEnabled`, `exportImportEnabled`, `worldFirstEnabled`)
 - **Optional client installation** — on a dedicated server, vanilla clients can join without installing anything and use all commands, with fallback messages matching their client language (English / Japanese)
-- **Mod & KubeJS API** — subscribe to `MilestoneRecordedEvent` or query `ItemMilestoneLogApi`
+- **Mod & KubeJS API** — subscribe to `MilestoneRecordedEvent` (with `isWorldFirst()` and `RecordCause`) and `PresetCompletedEvent`, or read/write via `ItemMilestoneLogApi`
 - Languages: **English** and **Japanese**
 
 #### Commands (no OP required, `/iml` works as an alias)
 - `/milestonelog` — summary: your playtime and progress
+- `/milestonelog help [<subcommand>]` — list commands available to you or show command usage
 - `/milestonelog playtime` — your current cumulative playtime
 - `/milestonelog add <item> [<count>]` / `addhand [<count>]` — add a goal item (with optional quantity 1–1,000,000)
-- `/milestonelog remove <item> [<count>]` — remove a personal goal
-- `/milestonelog targets` — goals with their recorded times, or "not yet obtained"
-- `/milestonelog list` — recorded milestones, earliest first, with Day and date
-- `/milestonelog preset list` / `preset <name>` — list or apply built-in and custom presets
-- `/milestonelog firsts` — list server-wide world-first milestones
-- `/milestonelog export` / `import <fileName>` — export or merge JSON records
-- `/milestonelog mutebroadcast` — toggle muting other players' milestone broadcasts
-- `/milestonelog reset <item> [<count>]` / `resetall` — clear records (goals are kept)
-- OP commands: `/milestonelog preset save|delete|reload`, `firsts reset|resetall`, `exportall`, `admin players|<player> list|targets|reset|resetall|purge`
+- `/milestonelog remove <item> [<count>]` / `removeall` — remove a personal goal or all personal goals
+- `/milestonelog targets [pending|done] [<page>]` — goals with recorded times, possession progress, or "not yet obtained"
+- `/milestonelog list [<page>]` — recorded milestones, earliest first, with Day and date
+- `/milestonelog preset list` / `preset <name>` / `presetprogress <name>` / `presetremove <name>` — list, apply, check progress on, or bulk-remove presets
+- `/milestonelog firsts [<page>]` — list server-wide world-first milestones
+- `/milestonelog lookup <player> [<page>]` / `top [<item> [<count>]]` / `recent [<n>]` / `stats` — view other players, leaderboards, recent activity, and server stats
+- `/milestonelog privacy` / `mutebroadcast` / `muteprogress` / `discordoptout` — personal privacy and notification controls
+- `/milestonelog export` / `exporthtml` / `exportcsv` / `import <fileName>` — export (JSON, HTML, CSV) or merge JSON records
+- `/milestonelog reset <item> [<count>]` / `resetall` / `undo` — clear records (goals are kept) and undo your last reset or bulk removal within 10 minutes
+- OP commands: `/milestonelog preset save|delete|reload`, `firsts reset|resetall`, `exportall`, `exporthtmlall`, `exportcsvall`, `importall <fileName>`, `prunedata <days> [confirm]`, `discordtest`, `admin players [<page>]`, `admin <player> list|targets|add|remove|preset|grant|reset|resetall|purge`
 
 #### Configuration
 `config/itemmilestonelog-common.toml` (1.21.1, 26.1.2, 26.2) or `config/itemmilestonelog-local.toml` (26.3):
-- `defaultTargets` — items everyone tracks by default (supports `item#count`)
+- `defaultTargets`, `firstJoinPresets` — server-wide fixed defaults (`item#count`) and removable starter presets for first-time players
 - `scanIntervalTicks` — inventory scan interval (default 20 = 1 second)
-- `notifyPlayer`, `broadcastMilestones`, `announceWorldFirst` — notification behaviour
+- `presetsEnabled`, `exportImportEnabled`, `worldFirstEnabled`, `allowLookup` — top-level feature switches
+- `notifyPlayer`, `broadcastMilestones`, `announceWorldFirst`, `announcePresetCompletion`, `groupSimultaneousRecords` — notification & grouping behaviour
+- `progressAlerts`, `progressAlertThresholds`, `progressAlertMinCount` — quantity-target progress alerts
 - `milestoneSoundEnabled`, `milestoneSound` — obtainment sound effect
-- `discordWebhookUrl`, `discordNotifyScope` — optional Discord webhook notifications
+- `displayTimeZone` — server-side timezone for chat, logs, Discord, and exports (GUI uses the player's local timezone)
+- `discordWebhookUrl` (supports `env:VAR_NAME`), `discordNotifyScope`, `discordUseEmbeds`, `discordLanguage`, `discordNotifyPresetCompletion`, `allowDiscordOptOut` — optional Discord webhook notifications
 - `showFirstJoinHint` — one-time join tip
 - `ignoreCreativeAndSpectator` — record nothing in creative or spectator mode (default true)
 
@@ -147,7 +154,7 @@ Detection is possession-based. Items produced by machines, automation, AE2 autoc
 Download the file that matches your Minecraft version.
 
 #### 日本語
-累計プレイ時間（バニラ統計の「プレイ時間」）・ゲーム内経過日数（Day）・現実の日付で、目標アイテムを初めて手に入れた瞬間を記録するModです。プレイヤーごとに目標を自由に設定でき、個数つき目標（1〜1,000,000個、同時所持数で判定。例：ダイヤ ×1 と ×100 を別々に登録可能）にも対応しています。ATM Star用プリセットの内蔵に加え、JSONファイルやゲーム内操作でのカスタムプリセット作成にも対応しています。機械生産・自動クラフトで作ったアイテムも、インベントリに入った時点で記録されます（※エンダーチェスト・シュルカーボックスの中身・他Modのストレージ内に直接入ったアイテムは、プレイヤーのインベントリに取り出すまでカウント・記録されません）。達成時の効果音、ワールド内「世界初」記録、Discord Webhook通知、JSONエクスポート／インポート、OP向け管理コマンド、他Mod/KubeJS向けAPIも備えています。クリエイティブ／スペクテイターモードで手に入れたアイテムは記録しません（設定で変更できます）。コマンドだけでなく、専用GUI（操作設定の「Item Milestone Log」でキーを割り当てて開きます。初期状態ではキーは割り当てられていません）からも目標の検索・個数指定での追加・削除や記録確認などの全機能を利用できます（専用サーバーではMOD未導入のクライアントもコマンドで利用でき、クライアントの言語設定に応じた英語または日本語で表示されます）。
+累計プレイ時間（バニラ統計の「プレイ時間」）・ゲーム内経過日数（Day）・現実の日付（表示タイムゾーン設定可）で、目標アイテムを初めて手に入れた瞬間を記録するModです。プレイヤーごとに目標を自由に設定でき、個数つき目標（1〜1,000,000個、同時所持数で判定。例：ダイヤ ×1 と ×100 を別々に登録可能）や途中経過アラートにも対応しています。ATM Star用プリセットの内蔵に加え、JSONファイルやゲーム内操作でのカスタムプリセット作成、プリセット進捗確認・制覇アナウンス、初回参加プレイヤー向けの目標配布（`firstJoinPresets`）、一括削除、10分以内の取り消し（`undo`）も備えています。機械生産・自動クラフトで作ったアイテムも、インベントリに入った時点で記録されます（※エンダーチェスト・シュルカーボックスの中身・他Modのストレージ内に直接入ったアイテムは、プレイヤーのインベントリに取り出すまでカウント・記録されません）。達成時の効果音、同時記録通知のまとめ、ワールド内「世界初」記録（改名後の現在名表示対応）、他プレイヤー閲覧・ランキング・サーバー統計（`lookup` / `top` / `recent` / `stats`）と非公開設定（`privacy`）、Discord Webhook通知（Embed・日本語・環境変数URL・制覇通知・個人除外・テスト送信対応）、JSON／HTML／CSVエクスポートおよびインポート（全員分・世界初含む）、ページ分け・`help`コマンド、OP向け管理・整理コマンド（`grant`・`prunedata`等）、他Mod/KubeJS向け読み書きAPI・イベントも備えています。クリエイティブ／スペクテイターモードで手に入れたアイテムは記録しません（設定で変更可能・持ち出し時の案内表示あり）。コマンドだけでなく、専用GUI（操作設定の「Item Milestone Log」でキーを割り当てて開きます。初期状態ではキーは割り当てられていません）からも目標の検索・個数指定での追加・削除や記録確認などの全機能を利用できます（専用サーバーではMOD未導入のクライアントもコマンドで利用でき、クライアントの言語設定に応じた英語または日本語で表示されます）。
 
 ## Screenshots to add after the first in-game test
 CurseForge does not require screenshots for a utility mod, but 2–3 images help the page a lot:

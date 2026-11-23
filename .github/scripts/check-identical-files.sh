@@ -32,8 +32,9 @@ IDENTICAL_ALL_4=(
   "src/main/java/com/pengin0503/itemmilestonelog/gametest/MilestoneGameTests.java"
   "src/main/java/com/pengin0503/itemmilestonelog/network/TargetEntry.java"
 
-  # src/test/java (14 files)
+  # src/test/java (15 files)
   "src/test/java/com/pengin0503/itemmilestonelog/DiscordNotifierTest.java"
+  "src/test/java/com/pengin0503/itemmilestonelog/MilestoneCommandsHelpTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/MilestoneRankingsTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/WorldFirstNamesTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/api/ItemMilestoneLogApiTest.java"

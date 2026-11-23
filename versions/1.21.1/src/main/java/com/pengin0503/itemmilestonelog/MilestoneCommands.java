@@ -1,21 +1,25 @@
 package com.pengin0503.itemmilestonelog;
 
+import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.ArgumentType;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
+import com.mojang.brigadier.builder.RequiredArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
+import com.mojang.brigadier.tree.CommandNode;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
 import com.pengin0503.itemmilestonelog.api.WorldFirstRecord;
 import net.minecraft.commands.CommandBuildContext;
 import net.minecraft.commands.CommandSourceStack;
-import net.minecraft.commands.Commands;
 import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.commands.arguments.ResourceLocationArgument;
 import net.minecraft.commands.arguments.item.ItemArgument;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.server.MinecraftServer;
@@ -37,6 +41,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Predicate;
+import java.util.function.Supplier;
 
 /**
  * /milestonelog (alias /iml) - manage personal target items, view records, presets,
@@ -49,12 +55,21 @@ public final class MilestoneCommands {
     @SubscribeEvent
     public static void onRegisterCommands(RegisterCommandsEvent event) {
         CommandBuildContext buildContext = event.getBuildContext();
-        event.getDispatcher().register(root(buildContext));
+        CommandDispatcher<CommandSourceStack> dispatcher = event.getDispatcher();
+        dispatcher.register(root(buildContext, dispatcher));
         // A redirect only forwards what follows "/iml", so the alias needs its own
         // executes() for "/iml" alone to show the summary like "/milestonelog".
-        event.getDispatcher().register(LiteralArgumentBuilder.<CommandSourceStack>literal("iml")
+        dispatcher.register(LiteralArgumentBuilder.<CommandSourceStack>literal("iml")
                 .executes(MilestoneCommands::summary)
-                .redirect(event.getDispatcher().getRoot().getChild("milestonelog")));
+                .redirect(dispatcher.getRoot().getChild("milestonelog")));
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> literal(String name) {
+        return LiteralArgumentBuilder.literal(name);
+    }
+
+    private static <T> RequiredArgumentBuilder<CommandSourceStack, T> argument(String name, ArgumentType<T> type) {
+        return RequiredArgumentBuilder.argument(name, type);
     }
 
     private static Set<String> itemIdsOf(Set<TargetKey> keys) {
@@ -75,7 +90,17 @@ public final class MilestoneCommands {
         return counts;
     }
 
-    private static LiteralArgumentBuilder<CommandSourceStack> root(CommandBuildContext buildContext) {
+    private static LiteralArgumentBuilder<CommandSourceStack> root(
+            CommandBuildContext buildContext,
+            CommandDispatcher<CommandSourceStack> dispatcher) {
+        return buildCommandTree(() -> ItemArgument.item(buildContext), src -> src.hasPermission(2), dispatcher);
+    }
+
+    /** Package-private so unit tests can inspect the real registered Brigadier command tree without a registry. */
+    static LiteralArgumentBuilder<CommandSourceStack> buildCommandTree(
+            Supplier<ArgumentType<?>> itemArg,
+            Predicate<CommandSourceStack> adminRequirement,
+            CommandDispatcher<CommandSourceStack> dispatcher) {
         SuggestionProvider<CommandSourceStack> presetSuggestions = (ctx, builder) -> {
             if (!Config.PRESETS_ENABLED.get()) {
                 return builder.buildFuture();
@@ -260,179 +285,224 @@ public final class MilestoneCommands {
                     .stream().map(String::valueOf).toList();
             return SharedSuggestionProvider.suggest(counts, builder);
         };
+        SuggestionProvider<CommandSourceStack> helpSubcommandSuggestions = (ctx, builder) -> {
+            List<String> names = visibleHelpEntries(ctx.getSource(), dispatcher)
+                    .stream()
+                    .map(CommandHelp.Entry::name)
+                    .toList();
+            return SharedSuggestionProvider.suggest(names, builder);
+        };
 
-        return Commands.literal("milestonelog")
+        return literal("milestonelog")
                 .executes(MilestoneCommands::summary)
-                .then(Commands.literal("playtime").executes(MilestoneCommands::playtime))
-                .then(Commands.literal("add")
-                        .then(Commands.argument("item", ItemArgument.item(buildContext))
+                .then(literal("playtime").executes(MilestoneCommands::playtime))
+                .then(literal("add")
+                        .then(argument("item", itemArg.get())
                                 .executes(ctx -> add(ctx, itemId(ctx), TargetKey.MIN_COUNT))
-                                .then(Commands.argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                .then(argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
                                         .executes(ctx -> add(ctx, itemId(ctx), IntegerArgumentType.getInteger(ctx, "count"))))))
-                .then(Commands.literal("addhand")
+                .then(literal("addhand")
                         .executes(ctx -> addHand(ctx, TargetKey.MIN_COUNT))
-                        .then(Commands.argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                        .then(argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
                                 .executes(ctx -> addHand(ctx, IntegerArgumentType.getInteger(ctx, "count")))))
-                .then(Commands.literal("remove")
-                        .then(Commands.argument("item", ResourceLocationArgument.id())
+                .then(literal("remove")
+                        .then(argument("item", ResourceLocationArgument.id())
                                 .suggests(personalTargetSuggestions)
                                 .executes(ctx -> remove(ctx, ResourceLocationArgument.getId(ctx, "item").toString(), TargetKey.MIN_COUNT))
-                                .then(Commands.argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                .then(argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
                                         .suggests(personalTargetCountSuggestions)
                                         .executes(ctx -> remove(ctx, ResourceLocationArgument.getId(ctx, "item").toString(),
                                                 IntegerArgumentType.getInteger(ctx, "count"))))))
-                .then(Commands.literal("removeall").executes(MilestoneCommands::removeAll))
-                .then(Commands.literal("targets").executes(MilestoneCommands::targets))
-                .then(Commands.literal("list").executes(MilestoneCommands::list))
-                .then(Commands.literal("preset")
-                        .then(Commands.literal("list").executes(MilestoneCommands::presetList))
-                        .then(Commands.literal("save")
+                .then(literal("removeall").executes(MilestoneCommands::removeAll))
+                .then(literal("targets")
+                        .executes(ctx -> targets(ctx, Pagination.TargetFilter.ALL, null))
+                        .then(literal("pending")
+                                .executes(ctx -> targets(ctx, Pagination.TargetFilter.PENDING, null))
+                                .then(argument("page", IntegerArgumentType.integer(1))
+                                        .executes(ctx -> targets(ctx, Pagination.TargetFilter.PENDING,
+                                                IntegerArgumentType.getInteger(ctx, "page")))))
+                        .then(literal("done")
+                                .executes(ctx -> targets(ctx, Pagination.TargetFilter.DONE, null))
+                                .then(argument("page", IntegerArgumentType.integer(1))
+                                        .executes(ctx -> targets(ctx, Pagination.TargetFilter.DONE,
+                                                IntegerArgumentType.getInteger(ctx, "page")))))
+                        .then(argument("page", IntegerArgumentType.integer(1))
+                                .executes(ctx -> targets(ctx, Pagination.TargetFilter.ALL,
+                                        IntegerArgumentType.getInteger(ctx, "page")))))
+                .then(literal("list")
+                        .executes(ctx -> list(ctx, null))
+                        .then(argument("page", IntegerArgumentType.integer(1))
+                                .executes(ctx -> list(ctx, IntegerArgumentType.getInteger(ctx, "page")))))
+                .then(literal("preset")
+                        .then(literal("list").executes(MilestoneCommands::presetList))
+                        .then(literal("save")
                                 .executes(MilestoneCommands::presetSaveMissingName)
-                                .then(Commands.argument("name", StringArgumentType.word())
+                                .then(argument("name", StringArgumentType.word())
                                         .executes(ctx -> presetSave(ctx, StringArgumentType.getString(ctx, "name")))))
-                        .then(Commands.literal("delete")
+                        .then(literal("delete")
                                 .executes(MilestoneCommands::presetDeleteMissingName)
-                                .then(Commands.argument("name", StringArgumentType.word())
+                                .then(argument("name", StringArgumentType.word())
                                         .suggests(customPresetSuggestions)
                                         .executes(ctx -> presetDelete(ctx, StringArgumentType.getString(ctx, "name")))))
-                        .then(Commands.literal("reload")
+                        .then(literal("reload")
                                 .executes(MilestoneCommands::presetReload))
-                        .then(Commands.argument("name", StringArgumentType.word())
+                        .then(argument("name", StringArgumentType.word())
                                 .suggests(presetSuggestions)
                                 .executes(ctx -> preset(ctx, StringArgumentType.getString(ctx, "name")))))
-                .then(Commands.literal("presetprogress")
-                        .then(Commands.argument("name", StringArgumentType.word())
+                .then(literal("presetprogress")
+                        .then(argument("name", StringArgumentType.word())
                                 .suggests(presetSuggestions)
                                 .executes(ctx -> presetProgress(ctx, StringArgumentType.getString(ctx, "name")))))
-                .then(Commands.literal("presetremove")
-                        .then(Commands.argument("name", StringArgumentType.word())
+                .then(literal("presetremove")
+                        .then(argument("name", StringArgumentType.word())
                                 .suggests(presetSuggestions)
                                 .executes(ctx -> presetRemove(ctx, StringArgumentType.getString(ctx, "name")))))
-                .then(Commands.literal("reset")
-                        .then(Commands.argument("item", ResourceLocationArgument.id())
+                .then(literal("reset")
+                        .then(argument("item", ResourceLocationArgument.id())
                                 .suggests(recordedSuggestions)
                                 .executes(ctx -> reset(ctx, ResourceLocationArgument.getId(ctx, "item").toString(), TargetKey.MIN_COUNT))
-                                .then(Commands.argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                .then(argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
                                         .suggests(recordedCountSuggestions)
                                         .executes(ctx -> reset(ctx, ResourceLocationArgument.getId(ctx, "item").toString(),
                                                 IntegerArgumentType.getInteger(ctx, "count"))))))
-                .then(Commands.literal("resetall").executes(MilestoneCommands::resetAll))
-                .then(Commands.literal("undo").executes(MilestoneCommands::undo))
-                .then(Commands.literal("firsts")
-                        .executes(MilestoneCommands::firstsList)
-                        .then(Commands.literal("reset")
-                                .requires(src -> src.hasPermission(2))
-                                .then(Commands.argument("item", ResourceLocationArgument.id())
+                .then(literal("resetall").executes(MilestoneCommands::resetAll))
+                .then(literal("undo").executes(MilestoneCommands::undo))
+                .then(literal("firsts")
+                        .executes(ctx -> firstsList(ctx, null))
+                        .then(argument("page", IntegerArgumentType.integer(1))
+                                .executes(ctx -> firstsList(ctx, IntegerArgumentType.getInteger(ctx, "page"))))
+                        .then(literal("reset")
+                                .requires(adminRequirement)
+                                .then(argument("item", ResourceLocationArgument.id())
                                         .suggests(worldFirstSuggestions)
                                         .executes(ctx -> firstsReset(ctx, ResourceLocationArgument.getId(ctx, "item").toString(), TargetKey.MIN_COUNT))
-                                        .then(Commands.argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                        .then(argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
                                                 .suggests(worldFirstCountSuggestions)
                                                 .executes(ctx -> firstsReset(ctx, ResourceLocationArgument.getId(ctx, "item").toString(),
                                                         IntegerArgumentType.getInteger(ctx, "count"))))))
-                        .then(Commands.literal("resetall")
-                                .requires(src -> src.hasPermission(2))
+                        .then(literal("resetall")
+                                .requires(adminRequirement)
                                 .executes(MilestoneCommands::firstsResetAll)))
-                .then(Commands.literal("export").executes(MilestoneCommands::exportSelf))
-                .then(Commands.literal("exporthtml").executes(MilestoneCommands::exportHtmlSelf))
-                .then(Commands.literal("exportcsv").executes(MilestoneCommands::exportCsvSelf))
-                .then(Commands.literal("import")
-                        .then(Commands.argument("fileName", StringArgumentType.word())
+                .then(literal("export").executes(MilestoneCommands::exportSelf))
+                .then(literal("exporthtml").executes(MilestoneCommands::exportHtmlSelf))
+                .then(literal("exportcsv").executes(MilestoneCommands::exportCsvSelf))
+                .then(literal("import")
+                        .then(argument("fileName", StringArgumentType.word())
                                 .suggests(exportFileSuggestions)
                                 .executes(ctx -> importSelf(ctx, StringArgumentType.getString(ctx, "fileName")))))
-                .then(Commands.literal("exportall")
-                        .requires(src -> src.hasPermission(2))
+                .then(literal("exportall")
+                        .requires(adminRequirement)
                         .executes(MilestoneCommands::exportAll))
-                .then(Commands.literal("exporthtmlall")
-                        .requires(src -> src.hasPermission(2))
+                .then(literal("exporthtmlall")
+                        .requires(adminRequirement)
                         .executes(MilestoneCommands::exportHtmlAll))
-                .then(Commands.literal("exportcsvall")
-                        .requires(src -> src.hasPermission(2))
+                .then(literal("exportcsvall")
+                        .requires(adminRequirement)
                         .executes(MilestoneCommands::exportCsvAll))
-                .then(Commands.literal("importall")
-                        .requires(src -> src.hasPermission(2))
-                        .then(Commands.argument("fileName", StringArgumentType.word())
+                .then(literal("importall")
+                        .requires(adminRequirement)
+                        .then(argument("fileName", StringArgumentType.word())
                                 .suggests(exportFileSuggestions)
                                 .executes(ctx -> importAll(ctx, StringArgumentType.getString(ctx, "fileName")))))
-                .then(Commands.literal("mutebroadcast").executes(MilestoneCommands::muteBroadcast))
-                .then(Commands.literal("muteprogress").executes(MilestoneCommands::muteProgress))
-                .then(Commands.literal("discordoptout").executes(MilestoneCommands::discordOptOut))
-                .then(Commands.literal("privacy").executes(MilestoneCommands::privacy))
-                .then(Commands.literal("discordtest")
-                        .requires(src -> src.hasPermission(2))
+                .then(literal("mutebroadcast").executes(MilestoneCommands::muteBroadcast))
+                .then(literal("muteprogress").executes(MilestoneCommands::muteProgress))
+                .then(literal("discordoptout").executes(MilestoneCommands::discordOptOut))
+                .then(literal("privacy").executes(MilestoneCommands::privacy))
+                .then(literal("discordtest")
+                        .requires(adminRequirement)
                         .executes(MilestoneCommands::discordTest))
-                .then(Commands.literal("lookup")
-                        .then(Commands.argument("player", StringArgumentType.word())
+                .then(literal("lookup")
+                        .then(argument("player", StringArgumentType.word())
                                 .suggests(lookupPlayerSuggestions)
-                                .executes(ctx -> lookup(ctx, StringArgumentType.getString(ctx, "player")))))
-                .then(Commands.literal("top")
+                                .executes(ctx -> lookup(ctx, StringArgumentType.getString(ctx, "player"), null))
+                                .then(argument("page", IntegerArgumentType.integer(1))
+                                        .executes(ctx -> lookup(ctx, StringArgumentType.getString(ctx, "player"),
+                                                IntegerArgumentType.getInteger(ctx, "page"))))))
+                .then(literal("top")
                         .executes(MilestoneCommands::top)
-                        .then(Commands.argument("item", ResourceLocationArgument.id())
+                        .then(argument("item", ResourceLocationArgument.id())
                                 .suggests(topItemSuggestions)
                                 .executes(ctx -> topItem(ctx, ResourceLocationArgument.getId(ctx, "item").toString(), TargetKey.MIN_COUNT))
-                                .then(Commands.argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                .then(argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
                                         .suggests(topItemCountSuggestions)
                                         .executes(ctx -> topItem(ctx, ResourceLocationArgument.getId(ctx, "item").toString(),
                                                 IntegerArgumentType.getInteger(ctx, "count"))))))
-                .then(Commands.literal("recent")
+                .then(literal("recent")
                         .executes(ctx -> recent(ctx, MilestoneRankings.RECENT_DEFAULT))
-                        .then(Commands.argument("n", IntegerArgumentType.integer(MilestoneRankings.RECENT_MIN, MilestoneRankings.RECENT_MAX))
+                        .then(argument("n", IntegerArgumentType.integer(MilestoneRankings.RECENT_MIN, MilestoneRankings.RECENT_MAX))
                                 .executes(ctx -> recent(ctx, IntegerArgumentType.getInteger(ctx, "n")))))
-                .then(Commands.literal("stats")
+                .then(literal("stats")
                         .executes(MilestoneCommands::stats))
-                .then(Commands.literal("prunedata")
-                        .requires(src -> src.hasPermission(2))
-                        .then(Commands.argument("days", IntegerArgumentType.integer(PruneDataLogic.MIN_DAYS, PruneDataLogic.MAX_DAYS))
+                .then(literal("prunedata")
+                        .requires(adminRequirement)
+                        .then(argument("days", IntegerArgumentType.integer(PruneDataLogic.MIN_DAYS, PruneDataLogic.MAX_DAYS))
                                 .executes(ctx -> pruneData(ctx, IntegerArgumentType.getInteger(ctx, "days"), false))
-                                .then(Commands.literal("confirm")
+                                .then(literal("confirm")
                                         .executes(ctx -> pruneData(ctx, IntegerArgumentType.getInteger(ctx, "days"), true)))))
-                .then(Commands.literal("admin")
-                        .requires(src -> src.hasPermission(2))
-                        .then(Commands.literal("players").executes(MilestoneCommands::adminPlayers))
-                        .then(Commands.argument("player", StringArgumentType.word())
+                .then(literal("admin")
+                        .requires(adminRequirement)
+                        .then(literal("players")
+                                .executes(ctx -> adminPlayers(ctx, null))
+                                .then(argument("page", IntegerArgumentType.integer(1))
+                                        .executes(ctx -> adminPlayers(ctx, IntegerArgumentType.getInteger(ctx, "page")))))
+                        .then(argument("player", StringArgumentType.word())
                                 .suggests(adminPlayerSuggestions)
-                                .then(Commands.literal("list").executes(ctx -> adminList(ctx, StringArgumentType.getString(ctx, "player"))))
-                                .then(Commands.literal("targets").executes(ctx -> adminTargets(ctx, StringArgumentType.getString(ctx, "player"))))
-                                .then(Commands.literal("add")
-                                        .then(Commands.argument("item", ItemArgument.item(buildContext))
+                                .then(literal("list")
+                                        .executes(ctx -> adminList(ctx, StringArgumentType.getString(ctx, "player"), null))
+                                        .then(argument("page", IntegerArgumentType.integer(1))
+                                                .executes(ctx -> adminList(ctx, StringArgumentType.getString(ctx, "player"),
+                                                        IntegerArgumentType.getInteger(ctx, "page")))))
+                                .then(literal("targets")
+                                        .executes(ctx -> adminTargets(ctx, StringArgumentType.getString(ctx, "player"), null))
+                                        .then(argument("page", IntegerArgumentType.integer(1))
+                                                .executes(ctx -> adminTargets(ctx, StringArgumentType.getString(ctx, "player"),
+                                                        IntegerArgumentType.getInteger(ctx, "page")))))
+                                .then(literal("add")
+                                        .then(argument("item", itemArg.get())
                                                 .executes(ctx -> adminAdd(ctx, StringArgumentType.getString(ctx, "player"),
                                                         itemId(ctx), TargetKey.MIN_COUNT))
-                                                .then(Commands.argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                                .then(argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
                                                         .executes(ctx -> adminAdd(ctx, StringArgumentType.getString(ctx, "player"),
                                                                 itemId(ctx), IntegerArgumentType.getInteger(ctx, "count"))))))
-                                .then(Commands.literal("remove")
-                                        .then(Commands.argument("item", ResourceLocationArgument.id())
+                                .then(literal("remove")
+                                        .then(argument("item", ResourceLocationArgument.id())
                                                 .suggests(adminPersonalTargetSuggestions)
                                                 .executes(ctx -> adminRemove(ctx, StringArgumentType.getString(ctx, "player"),
                                                         ResourceLocationArgument.getId(ctx, "item").toString(), TargetKey.MIN_COUNT))
-                                                .then(Commands.argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                                .then(argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
                                                         .suggests(adminPersonalTargetCountSuggestions)
                                                         .executes(ctx -> adminRemove(ctx, StringArgumentType.getString(ctx, "player"),
                                                                 ResourceLocationArgument.getId(ctx, "item").toString(),
                                                                 IntegerArgumentType.getInteger(ctx, "count"))))))
-                                .then(Commands.literal("preset")
-                                        .then(Commands.argument("name", StringArgumentType.word())
+                                .then(literal("preset")
+                                        .then(argument("name", StringArgumentType.word())
                                                 .suggests(presetSuggestions)
                                                 .executes(ctx -> adminPreset(ctx, StringArgumentType.getString(ctx, "player"),
                                                         StringArgumentType.getString(ctx, "name")))))
-                                .then(Commands.literal("grant")
-                                        .then(Commands.argument("item", ItemArgument.item(buildContext))
+                                .then(literal("grant")
+                                        .then(argument("item", itemArg.get())
                                                 .executes(ctx -> adminGrant(ctx, StringArgumentType.getString(ctx, "player"),
                                                         itemId(ctx), TargetKey.MIN_COUNT))
-                                                .then(Commands.argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                                .then(argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
                                                         .executes(ctx -> adminGrant(ctx, StringArgumentType.getString(ctx, "player"),
                                                                 itemId(ctx), IntegerArgumentType.getInteger(ctx, "count"))))))
-                                .then(Commands.literal("reset")
-                                        .then(Commands.argument("item", ResourceLocationArgument.id())
+                                .then(literal("reset")
+                                        .then(argument("item", ResourceLocationArgument.id())
                                                 .suggests(adminRecordedSuggestions)
                                                 .executes(ctx -> adminReset(ctx, StringArgumentType.getString(ctx, "player"),
                                                         ResourceLocationArgument.getId(ctx, "item").toString(), TargetKey.MIN_COUNT))
-                                                .then(Commands.argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                                .then(argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
                                                         .suggests(adminRecordedCountSuggestions)
                                                         .executes(ctx -> adminReset(ctx, StringArgumentType.getString(ctx, "player"),
                                                                 ResourceLocationArgument.getId(ctx, "item").toString(),
                                                                 IntegerArgumentType.getInteger(ctx, "count"))))))
-                                .then(Commands.literal("resetall").executes(ctx -> adminResetAll(ctx, StringArgumentType.getString(ctx, "player"))))
-                                .then(Commands.literal("purge").executes(ctx -> adminPurge(ctx, StringArgumentType.getString(ctx, "player"))))));
+                                .then(literal("resetall").executes(ctx -> adminResetAll(ctx, StringArgumentType.getString(ctx, "player"))))
+                                .then(literal("purge").executes(ctx -> adminPurge(ctx, StringArgumentType.getString(ctx, "player"))))))
+                .then(literal("help")
+                        .executes(ctx -> helpList(ctx, dispatcher))
+                        .then(argument("subcommand", StringArgumentType.word())
+                                .suggests(helpSubcommandSuggestions)
+                                .executes(ctx -> helpCommand(ctx, dispatcher, StringArgumentType.getString(ctx, "subcommand")))));
     }
 
     // ------------------------------------------------------------- helpers
@@ -463,6 +533,44 @@ public final class MilestoneCommands {
 
     private static int respond(CommandContext<CommandSourceStack> ctx, MilestoneService.ActionResult result) {
         return result.success() ? send(ctx, result.message()) : fail(ctx, result.message());
+    }
+
+    private static void sendPageFooter(CommandSourceStack source, Pagination.PageSlice<?> slice, String commandPrefix) {
+        MutableComponent footer = ServerLang.tr(source, "message.itemmilestonelog.page_footer",
+                slice.page(), slice.totalPages());
+        if (slice.hasPrevious()) {
+            footer.append(Component.literal(" "));
+            footer.append(clickablePageButton(source, "message.itemmilestonelog.page_prev",
+                    Pagination.pageCommand(commandPrefix, slice.page() - 1)));
+        }
+        if (slice.hasNext()) {
+            footer.append(Component.literal(" "));
+            footer.append(clickablePageButton(source, "message.itemmilestonelog.page_next",
+                    Pagination.pageCommand(commandPrefix, slice.page() + 1)));
+        }
+        source.sendSuccess(() -> footer, false);
+    }
+
+    private static MutableComponent clickablePageButton(CommandSourceStack source, String langKey, String command) {
+        return ServerLang.tr(source, langKey)
+                .withStyle(style -> style
+                        .withUnderlined(true)
+                        .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, command)));
+    }
+
+    private static ClickEvent suggestCommandEvent(String command) {
+        return new ClickEvent(ClickEvent.Action.SUGGEST_COMMAND, command);
+    }
+
+    /** Package-private test helper for inspecting the SUGGEST_COMMAND payload across MC versions. */
+    @Nullable
+    static String suggestCommandValue(@Nullable ClickEvent event) {
+        return event != null && event.getAction() == ClickEvent.Action.SUGGEST_COMMAND ? event.getValue() : null;
+    }
+
+    static MutableComponent clickableHelpCommand(CommandHelp.Entry entry) {
+        return Component.literal(entry.displayCommand())
+                .withStyle(style -> style.withClickEvent(suggestCommandEvent(entry.suggestCommand())));
     }
 
     // ------------------------------------------------------------ commands
@@ -503,7 +611,9 @@ public final class MilestoneCommands {
         return respondWithUndoHint(ctx, MilestoneService.removeAllTargets(player(ctx)));
     }
 
-    private static int targets(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+    private static int targets(CommandContext<CommandSourceStack> ctx,
+                               Pagination.TargetFilter filter,
+                               @Nullable Integer page) throws CommandSyntaxException {
         ServerPlayer player = player(ctx);
         MilestoneData.PlayerData pd = dataOrNull(player);
         Set<TargetKey> targets = Tracker.effectiveTargets(pd);
@@ -511,20 +621,54 @@ public final class MilestoneCommands {
             return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.no_targets"));
         }
         Map<TargetKey, MilestoneRecord> records = pd != null ? pd.records : Map.of();
-        List<TargetKey> sorted = new ArrayList<>(targets);
+        List<TargetKey> sorted = new ArrayList<>();
+        for (TargetKey key : targets) {
+            boolean recorded = records.containsKey(key);
+            if (filter == Pagination.TargetFilter.ALL
+                    || (filter == Pagination.TargetFilter.PENDING && !recorded)
+                    || (filter == Pagination.TargetFilter.DONE && recorded)) {
+                sorted.add(key);
+            }
+        }
+        if (sorted.isEmpty()) {
+            String emptyKey = filter == Pagination.TargetFilter.PENDING
+                    ? "message.itemmilestonelog.targets_pending_none"
+                    : "message.itemmilestonelog.targets_done_none";
+            return send(ctx, ServerLang.tr(player, emptyKey));
+        }
         sorted.sort(TargetKey::compareTo);
+
+        Pagination.PageSlice<TargetKey> slice = null;
+        List<TargetKey> displayed;
+        if (page != null) {
+            slice = Pagination.slice(sorted, page);
+            if (slice.isOutOfRange()) {
+                return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.page_out_of_range",
+                        page, slice.totalPages()));
+            }
+            displayed = slice.items();
+        } else {
+            displayed = sorted;
+        }
 
         Set<String> carried = Tracker.carriedFromCreative(pd);
         Set<String> progressItemIds = new LinkedHashSet<>();
-        for (TargetKey key : sorted) {
+        for (TargetKey key : displayed) {
             if (key.count() > TargetKey.MIN_COUNT && !records.containsKey(key) && !carried.contains(key.itemId())) {
                 progressItemIds.add(key.itemId());
             }
         }
-        Map<String, Integer> possessionCounts = Tracker.countItemsInPossession(player, progressItemIds);
+        Map<String, Integer> possessionCounts = progressItemIds.isEmpty()
+                ? Map.of()
+                : Tracker.countItemsInPossession(player, progressItemIds);
 
-        ctx.getSource().sendSuccess(() -> ServerLang.tr(player, "message.itemmilestonelog.targets_header", sorted.size()), false);
-        for (TargetKey key : sorted) {
+        String headerKey = switch (filter) {
+            case ALL -> "message.itemmilestonelog.targets_header";
+            case PENDING -> "message.itemmilestonelog.targets_pending_header";
+            case DONE -> "message.itemmilestonelog.targets_done_header";
+        };
+        ctx.getSource().sendSuccess(() -> ServerLang.tr(player, headerKey, sorted.size()), false);
+        for (TargetKey key : displayed) {
             MilestoneRecord rec = records.get(key);
             Component line;
             if (rec != null) {
@@ -545,10 +689,13 @@ public final class MilestoneCommands {
             }
             ctx.getSource().sendSuccess(() -> line, false);
         }
-        return sorted.size();
+        if (slice != null) {
+            sendPageFooter(ctx.getSource(), slice, Pagination.targetsCommandPrefix(filter));
+        }
+        return displayed.size();
     }
 
-    private static int list(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+    private static int list(CommandContext<CommandSourceStack> ctx, @Nullable Integer page) throws CommandSyntaxException {
         ServerPlayer player = player(ctx);
         MilestoneData.PlayerData pd = dataOrNull(player);
         if (pd == null || pd.records.isEmpty()) {
@@ -557,14 +704,31 @@ public final class MilestoneCommands {
         List<Map.Entry<TargetKey, MilestoneRecord>> entries = new ArrayList<>(pd.records.entrySet());
         entries.sort(Comparator.comparingInt((Map.Entry<TargetKey, MilestoneRecord> e) -> e.getValue().playTicks())
                 .thenComparing(Map.Entry::getKey));
+
+        Pagination.PageSlice<Map.Entry<TargetKey, MilestoneRecord>> slice = null;
+        List<Map.Entry<TargetKey, MilestoneRecord>> displayed;
+        if (page != null) {
+            slice = Pagination.slice(entries, page);
+            if (slice.isOutOfRange()) {
+                return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.page_out_of_range",
+                        page, slice.totalPages()));
+            }
+            displayed = slice.items();
+        } else {
+            displayed = entries;
+        }
+
         ctx.getSource().sendSuccess(() -> ServerLang.tr(player, "message.itemmilestonelog.records_header", entries.size()), false);
         ZoneId zone = Config.displayTimeZone();
-        for (var e : entries) {
+        for (var e : displayed) {
             Component line = ServerLang.tr(player, "message.itemmilestonelog.target_done",
                     MilestoneService.targetDisplayName(e.getKey()), Playtime.formatRecord(e.getValue(), zone));
             ctx.getSource().sendSuccess(() -> line, false);
         }
-        return entries.size();
+        if (slice != null) {
+            sendPageFooter(ctx.getSource(), slice, Pagination.listCommandPrefix());
+        }
+        return displayed.size();
     }
 
     private static int preset(CommandContext<CommandSourceStack> ctx, String name) throws CommandSyntaxException {
@@ -729,7 +893,7 @@ public final class MilestoneCommands {
 
     // --------------------------------------------------------- F4 world firsts
 
-    private static int firstsList(CommandContext<CommandSourceStack> ctx) {
+    private static int firstsList(CommandContext<CommandSourceStack> ctx, @Nullable Integer page) {
         CommandSourceStack source = ctx.getSource();
         MilestoneData data = MilestoneData.get(source.getServer());
         Map<TargetKey, WorldFirstRecord> map = data.worldFirsts();
@@ -740,9 +904,23 @@ public final class MilestoneCommands {
         sorted.sort(Comparator.comparingLong(WorldFirstRecord::epochMillis)
                 .thenComparingInt(WorldFirstRecord::playTicks)
                 .thenComparing(WorldFirstRecord::targetKey));
+
+        Pagination.PageSlice<WorldFirstRecord> slice = null;
+        List<WorldFirstRecord> displayed;
+        if (page != null) {
+            slice = Pagination.slice(sorted, page);
+            if (slice.isOutOfRange()) {
+                return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.page_out_of_range",
+                        page, slice.totalPages()));
+            }
+            displayed = slice.items();
+        } else {
+            displayed = sorted;
+        }
+
         source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.firsts_header", sorted.size()), false);
         ZoneId zone = Config.displayTimeZone();
-        for (WorldFirstRecord wf : sorted) {
+        for (WorldFirstRecord wf : displayed) {
             // F47: prefer the holder's current (last known) name; stored data is unchanged.
             MilestoneData.PlayerData holder = data.playerOrNull(wf.playerUuid());
             WorldFirstNames.Choice choice = WorldFirstNames.choose(wf.playerUuid(), wf.playerName(),
@@ -756,7 +934,10 @@ public final class MilestoneCommands {
                     playerName,
                     Playtime.formatRecord(wf.toMilestoneRecord(), zone)), false);
         }
-        return sorted.size();
+        if (slice != null) {
+            sendPageFooter(source, slice, Pagination.firstsCommandPrefix());
+        }
+        return displayed.size();
     }
 
     private static int firstsReset(CommandContext<CommandSourceStack> ctx, String itemId, int count) {
@@ -1121,7 +1302,7 @@ public final class MilestoneCommands {
         return MilestoneRankings.displayName(uuid, pd);
     }
 
-    private static int adminPlayers(CommandContext<CommandSourceStack> ctx) {
+    private static int adminPlayers(CommandContext<CommandSourceStack> ctx, @Nullable Integer page) {
         CommandSourceStack source = ctx.getSource();
         Map<UUID, MilestoneData.PlayerData> all = MilestoneData.get(source.getServer()).allPlayers();
         if (all.isEmpty()) {
@@ -1129,15 +1310,32 @@ public final class MilestoneCommands {
         }
         List<Map.Entry<UUID, MilestoneData.PlayerData>> sorted = new ArrayList<>(all.entrySet());
         sorted.sort(Comparator.comparing(e -> displayNameFor(e.getKey(), e.getValue()), String.CASE_INSENSITIVE_ORDER));
+
+        Pagination.PageSlice<Map.Entry<UUID, MilestoneData.PlayerData>> slice = null;
+        List<Map.Entry<UUID, MilestoneData.PlayerData>> displayed;
+        if (page != null) {
+            slice = Pagination.slice(sorted, page);
+            if (slice.isOutOfRange()) {
+                return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.page_out_of_range",
+                        page, slice.totalPages()));
+            }
+            displayed = slice.items();
+        } else {
+            displayed = sorted;
+        }
+
         source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.admin_players_header", sorted.size()), false);
-        for (Map.Entry<UUID, MilestoneData.PlayerData> e : sorted) {
+        for (Map.Entry<UUID, MilestoneData.PlayerData> e : displayed) {
             String name = displayNameFor(e.getKey(), e.getValue());
             int targetCount = Tracker.effectiveTargets(e.getValue()).size();
             int recordCount = e.getValue().records.size();
             source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.admin_players_entry",
                     name, e.getKey().toString(), targetCount, recordCount), false);
         }
-        return sorted.size();
+        if (slice != null) {
+            sendPageFooter(source, slice, Pagination.adminPlayersCommandPrefix());
+        }
+        return displayed.size();
     }
 
     @Nullable
@@ -1154,13 +1352,13 @@ public final class MilestoneCommands {
         return resolved.entry();
     }
 
-    private static int adminList(CommandContext<CommandSourceStack> ctx, String query) {
+    private static int adminList(CommandContext<CommandSourceStack> ctx, String query, @Nullable Integer page) {
         CommandSourceStack source = ctx.getSource();
         Map.Entry<UUID, MilestoneData.PlayerData> target = resolveOrReport(source, query);
         if (target == null) {
             return 0;
         }
-        return sendRecordList(ctx, target);
+        return sendRecordList(ctx, target, page, Pagination.adminListCommandPrefix(query));
     }
 
     // --------------------------------------------------------- F6 lookup
@@ -1181,7 +1379,7 @@ public final class MilestoneCommands {
         return names;
     }
 
-    private static int lookup(CommandContext<CommandSourceStack> ctx, String query) {
+    private static int lookup(CommandContext<CommandSourceStack> ctx, String query, @Nullable Integer page) {
         CommandSourceStack source = ctx.getSource();
         boolean allowLookup = Config.ALLOW_LOOKUP.get();
         boolean privileged = MilestoneService.isPrivileged(source);
@@ -1206,7 +1404,7 @@ public final class MilestoneCommands {
             case DISABLED -> fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.feature_disabled"));
             case HIDDEN -> fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.lookup_hidden",
                     displayNameFor(target.getKey(), target.getValue())));
-            case ALLOWED -> sendRecordList(ctx, target);
+            case ALLOWED -> sendRecordList(ctx, target, page, Pagination.lookupCommandPrefix(query));
         };
     }
 
@@ -1332,7 +1530,10 @@ public final class MilestoneCommands {
     }
 
     /** Shared record listing for {@code admin <player> list} and {@code lookup <player>} (same format). */
-    private static int sendRecordList(CommandContext<CommandSourceStack> ctx, Map.Entry<UUID, MilestoneData.PlayerData> target) {
+    private static int sendRecordList(CommandContext<CommandSourceStack> ctx,
+                                      Map.Entry<UUID, MilestoneData.PlayerData> target,
+                                      @Nullable Integer page,
+                                      String commandPrefix) {
         CommandSourceStack source = ctx.getSource();
         String name = displayNameFor(target.getKey(), target.getValue());
         MilestoneData.PlayerData pd = target.getValue();
@@ -1342,16 +1543,33 @@ public final class MilestoneCommands {
         List<Map.Entry<TargetKey, MilestoneRecord>> entries = new ArrayList<>(pd.records.entrySet());
         entries.sort(Comparator.comparingInt((Map.Entry<TargetKey, MilestoneRecord> e) -> e.getValue().playTicks())
                 .thenComparing(Map.Entry::getKey));
+
+        Pagination.PageSlice<Map.Entry<TargetKey, MilestoneRecord>> slice = null;
+        List<Map.Entry<TargetKey, MilestoneRecord>> displayed;
+        if (page != null) {
+            slice = Pagination.slice(entries, page);
+            if (slice.isOutOfRange()) {
+                return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.page_out_of_range",
+                        page, slice.totalPages()));
+            }
+            displayed = slice.items();
+        } else {
+            displayed = entries;
+        }
+
         source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.admin_records_header", name, entries.size()), false);
         ZoneId zone = Config.displayTimeZone();
-        for (var e : entries) {
+        for (var e : displayed) {
             source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.target_done",
                     MilestoneService.targetDisplayName(e.getKey()), Playtime.formatRecord(e.getValue(), zone)), false);
         }
-        return entries.size();
+        if (slice != null) {
+            sendPageFooter(source, slice, commandPrefix);
+        }
+        return displayed.size();
     }
 
-    private static int adminTargets(CommandContext<CommandSourceStack> ctx, String query) {
+    private static int adminTargets(CommandContext<CommandSourceStack> ctx, String query, @Nullable Integer page) {
         CommandSourceStack source = ctx.getSource();
         Map.Entry<UUID, MilestoneData.PlayerData> target = resolveOrReport(source, query);
         if (target == null) {
@@ -1365,15 +1583,32 @@ public final class MilestoneCommands {
         }
         List<TargetKey> sorted = new ArrayList<>(targets);
         sorted.sort(TargetKey::compareTo);
+
+        Pagination.PageSlice<TargetKey> slice = null;
+        List<TargetKey> displayed;
+        if (page != null) {
+            slice = Pagination.slice(sorted, page);
+            if (slice.isOutOfRange()) {
+                return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.page_out_of_range",
+                        page, slice.totalPages()));
+            }
+            displayed = slice.items();
+        } else {
+            displayed = sorted;
+        }
+
         source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.admin_targets_header", name, sorted.size()), false);
-        for (TargetKey key : sorted) {
+        for (TargetKey key : displayed) {
             MilestoneRecord rec = pd.records.get(key);
             Component line = rec != null
                     ? ServerLang.tr(source, "message.itemmilestonelog.target_done", MilestoneService.targetDisplayName(key), Playtime.format(rec.playTicks()))
                     : ServerLang.tr(source, "message.itemmilestonelog.target_pending", MilestoneService.targetDisplayName(key));
             source.sendSuccess(() -> line, false);
         }
-        return sorted.size();
+        if (slice != null) {
+            sendPageFooter(source, slice, Pagination.adminTargetsCommandPrefix(query));
+        }
+        return displayed.size();
     }
 
     private record TargetIdentity(UUID uuid, String name) {
@@ -1546,5 +1781,94 @@ public final class MilestoneCommands {
         ItemMilestoneLog.LOGGER.info("[ItemMilestoneLog] Admin {} pruned data for {} player(s) (days={})",
                 source.getTextName(), count, days);
         return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.prunedata_done", count));
+    }
+
+    // --------------------------------------------------------- F29 help
+
+    private static CommandHelp.Context helpContext(CommandSourceStack source) {
+        return new CommandHelp.Context(
+                source.getPlayer() != null,
+                MilestoneService.isPrivileged(source),
+                Config.PRESETS_ENABLED.get(),
+                Config.EXPORT_IMPORT_ENABLED.get(),
+                Config.ALLOW_LOOKUP.get(),
+                Config.ALLOW_DISCORD_OPT_OUT.get());
+    }
+
+    static boolean canUseHelpEntry(
+            CommandDispatcher<CommandSourceStack> dispatcher,
+            @Nullable CommandSourceStack source,
+            CommandHelp.Entry entry) {
+        CommandNode<CommandSourceStack> rootNode = dispatcher.getRoot().getChild("milestonelog");
+        if (rootNode == null || !rootNode.canUse(source)) {
+            return false;
+        }
+        if (entry.isRoot()) {
+            return rootNode.getCommand() != null;
+        }
+        CommandNode<CommandSourceStack> child = rootNode.getChild(entry.name());
+        return child != null && child.canUse(source);
+    }
+
+    private static List<CommandHelp.Entry> visibleHelpEntries(
+            CommandSourceStack source,
+            CommandDispatcher<CommandSourceStack> dispatcher) {
+        CommandHelp.Context helpCtx = helpContext(source);
+        return CommandHelp.visibleEntries(helpCtx, entry -> canUseHelpEntry(dispatcher, source, entry));
+    }
+
+    static List<String> helpUsages(
+            CommandDispatcher<CommandSourceStack> dispatcher,
+            @Nullable CommandSourceStack source,
+            CommandHelp.Entry entry) {
+        if (entry.isRoot()) {
+            return CommandHelp.formatUsageLines(entry, List.of());
+        }
+        CommandNode<CommandSourceStack> rootNode = dispatcher.getRoot().getChild("milestonelog");
+        CommandNode<CommandSourceStack> target = rootNode != null ? rootNode.getChild(entry.name()) : null;
+        if (target == null) {
+            return CommandHelp.formatUsageLines(entry, List.of());
+        }
+        Map<CommandNode<CommandSourceStack>, String> smart = dispatcher.getSmartUsage(target, source);
+        return CommandHelp.formatUsageLines(entry, smart.values());
+    }
+
+    private static int helpList(
+            CommandContext<CommandSourceStack> ctx,
+            CommandDispatcher<CommandSourceStack> dispatcher) {
+        CommandSourceStack source = ctx.getSource();
+        List<CommandHelp.Entry> entries = visibleHelpEntries(source, dispatcher);
+        source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.help_header"), false);
+        for (CommandHelp.Entry entry : entries) {
+            Component line = ServerLang.tr(source, "message.itemmilestonelog.help_entry",
+                    clickableHelpCommand(entry),
+                    ServerLang.tr(source, entry.descriptionKey()));
+            source.sendSuccess(() -> line, false);
+        }
+        return entries.size();
+    }
+
+    private static int helpCommand(
+            CommandContext<CommandSourceStack> ctx,
+            CommandDispatcher<CommandSourceStack> dispatcher,
+            String subcommand) {
+        CommandSourceStack source = ctx.getSource();
+        CommandHelp.Context helpCtx = helpContext(source);
+        CommandHelp.Entry entry = CommandHelp.findVisible(subcommand, helpCtx,
+                e -> canUseHelpEntry(dispatcher, source, e));
+        if (entry == null) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.help_unknown",
+                    Component.literal(subcommand)));
+        }
+        Component entryLine = ServerLang.tr(source, "message.itemmilestonelog.help_entry",
+                clickableHelpCommand(entry),
+                ServerLang.tr(source, entry.descriptionKey()));
+        source.sendSuccess(() -> entryLine, false);
+        List<String> usages = helpUsages(dispatcher, source, entry);
+        for (String usage : usages) {
+            source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.help_usage",
+                    Component.literal(usage)), false);
+        }
+        return usages.size();
     }
 }
