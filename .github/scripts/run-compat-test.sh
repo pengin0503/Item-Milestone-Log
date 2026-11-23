@@ -78,32 +78,6 @@ find_client_script() {
   printf '%s\n' "$found"
 }
 
-write_server_log4j_config() {
-  local config_path="$1"
-  # NeoForge merges this with its own log4j2 config (composite configuration).
-  # Appender names must not collide with the built-in ones ("Console",
-  # "DebugFile", ...): a collision on "DebugFile" (both pointing at
-  # logs/debug.log) made the composite config drop the mod logger's debug
-  # level in the first CI run, so the debug lines never reached the log.
-  # Use one uniquely named console appender and no <Root> (the built-in
-  # root stays in charge of everything else).
-  cat > "$config_path" <<'XEOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<Configuration status="warn">
-  <Appenders>
-    <Console name="CompatConsole" target="SYSTEM_OUT">
-      <PatternLayout pattern="[%d{HH:mm:ss}] [%t/%level] [%logger]: %msg%n%xEx"/>
-    </Console>
-  </Appenders>
-  <Loggers>
-    <Logger name="com.pengin0503.itemmilestonelog" level="debug" additivity="false">
-      <AppenderRef ref="CompatConsole"/>
-    </Logger>
-  </Loggers>
-</Configuration>
-XEOF
-}
-
 # The version line matters: without it the client treats options.txt as a
 # pre-1.13 file and the data fixer tries to parse key binding values as
 # legacy LWJGL2 numeric codes, which fails on "key.keyboard.m" and wedges
@@ -363,9 +337,14 @@ OLD_PROJECT="$BASELINE_DIR/versions/$MC"
 DEV_JAR="$(find_mod_jar "$DEV_PROJECT/build/libs")"
 OLD_JAR="$(find_mod_jar "$OLD_PROJECT/build/libs")"
 
-LOG4J_CONFIG="$COMPAT_LOG_DIR/log4j2-compat.xml"
-write_server_log4j_config "$LOG4J_CONFIG"
-SERVER_JVM_OPTS=("-Dlog4j2.configurationFile=$LOG4J_CONFIG" "-Dlog4j.configurationFile=$LOG4J_CONFIG")
+# FML unconditionally replaces the log4j configuration with its own
+# log4j2.xml at launch (CommonLaunchHandler.overwriteLoggingConfiguration),
+# so a custom configurationFile is ignored. In that built-in config the
+# console appender's level is the forge.logging.console.level system
+# property (default info) while the debug file appender already takes
+# debug. Raising the console/file levels to debug is the supported way to
+# get the mod's debug lines into the captured server log.
+SERVER_JVM_OPTS=("-Dforge.logging.console.level=debug" "-Dforge.logging.file.level=debug")
 
 install_server
 start_xvfb
