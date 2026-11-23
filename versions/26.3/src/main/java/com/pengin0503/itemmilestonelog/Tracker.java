@@ -320,7 +320,7 @@ public final class Tracker {
         if (carried.contains(itemId)) {
             int priorCount = alreadyAddedToInventory ? totalInPossession - minCountFromEvent : totalInPossession;
             if (priorCount <= 0) {
-                carried.remove(itemId);
+                pd.carriedFromCreative.remove(itemId);
                 data.setDirty();
             } else {
                 return;

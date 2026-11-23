@@ -264,7 +264,7 @@ public final class ItemPickerScreen extends Screen {
         if (feedbackMessage != null) {
             int maxWidth = this.width - 20;
             String trimmedFeedback = this.font.plainSubstrByWidth(feedbackMessage.getString(), maxWidth);
-            guiGraphics.drawCenteredString(this.font, trimmedFeedback, this.width / 2, this.height - 34, 0xFFE88A);
+            guiGraphics.drawCenteredString(this.font, trimmedFeedback, this.width / 2, this.height - 34, 0xFFFFE88A);
         }
 
         if (matchedCount == 0 && listWidget != null) {
