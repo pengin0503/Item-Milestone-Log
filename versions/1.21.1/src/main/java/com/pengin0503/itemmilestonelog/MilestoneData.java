@@ -58,6 +58,8 @@ public class MilestoneData extends SavedData {
         public boolean excludeFromDiscord = false;
         /** Whether this player hides their records from non-privileged players' lookups (F14). */
         public boolean hideFromLookup = false;
+        /** Epoch millis when this player last logged in or out (0 = unknown, F37). */
+        public long lastSeen = 0L;
         /** Target (item + quantity) -> highest progress alert threshold already notified (0 possible as baseline). */
         public final Map<TargetKey, Integer> progressNotified = new LinkedHashMap<>();
         /** Preset IDs that this player has already completed (announced at most once unless resetall). */
@@ -141,6 +143,16 @@ public class MilestoneData extends SavedData {
             setDirty();
         }
         return count;
+    }
+
+    /**
+     * Replaces the stored world-first map with {@code updated} and marks the data dirty
+     * (used when merging imported world firsts in F31).
+     */
+    void replaceWorldFirsts(Map<TargetKey, WorldFirstRecord> updated) {
+        worldFirsts.clear();
+        worldFirsts.putAll(updated);
+        setDirty();
     }
 
     // ------------------------------------------------------------------ NBT
@@ -289,6 +301,16 @@ public class MilestoneData extends SavedData {
             } else if (entry.contains("hideFromLookup")) {
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed hideFromLookup tag in SavedData");
             }
+            if (entry.contains("lastSeen", Tag.TAG_ANY_NUMERIC)) {
+                long lastSeen = entry.getLong("lastSeen");
+                if (lastSeen > 0L) {
+                    pd.lastSeen = lastSeen;
+                } else if (lastSeen < 0L) {
+                    ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping negative lastSeen value {} in SavedData", lastSeen);
+                }
+            } else if (entry.contains("lastSeen")) {
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed lastSeen tag in SavedData");
+            }
             if (entry.contains("progressNotified", Tag.TAG_COMPOUND)) {
                 CompoundTag progressTag = entry.getCompound("progressNotified");
                 for (String rawKey : progressTag.getAllKeys()) {
@@ -408,6 +430,9 @@ public class MilestoneData extends SavedData {
             }
             if (pd.hideFromLookup) {
                 entry.putBoolean("hideFromLookup", true);
+            }
+            if (pd.lastSeen > 0L) {
+                entry.putLong("lastSeen", pd.lastSeen);
             }
             if (!pd.progressNotified.isEmpty()) {
                 CompoundTag progressTag = new CompoundTag();

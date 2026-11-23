@@ -15,6 +15,7 @@ import net.minecraft.server.permissions.Permissions;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.level.storage.LevelResource;
 import net.neoforged.neoforge.network.PacketDistributor;
 
 import javax.annotation.Nullable;
@@ -1041,6 +1042,63 @@ public final class MilestoneService {
                 ? "message.itemmilestonelog.privacy_on"
                 : "message.itemmilestonelog.privacy_off";
         return new ActionResult(true, ServerLang.tr(player, key));
+    }
+
+    /** Builds the pure-Java snapshot inspected by {@link PruneDataLogic#isPruneTarget} (F37). */
+    static PruneDataLogic.PlayerState pruneStateOf(MilestoneData.PlayerData pd) {
+        return new PruneDataLogic.PlayerState(
+                pd.records.size(),
+                pd.targets.size(),
+                pd.carriedFromCreative.isEmpty(),
+                pd.muteBroadcasts,
+                pd.hideFromLookup,
+                pd.muteProgressAlerts,
+                pd.excludeFromDiscord
+        );
+    }
+
+    /**
+     * F37: counts inactive empty players eligible for {@code /milestonelog prunedata}, deleting their
+     * {@link MilestoneData.PlayerData} when {@code confirm} is true. World-first records are kept.
+     */
+    public static int pruneInactivePlayers(MinecraftServer server, int days, boolean confirm) {
+        MilestoneData data = MilestoneData.get(server);
+        Path playerDataDir = server.getWorldPath(LevelResource.PLAYER_DATA_DIR);
+        return pruneInactivePlayers(
+                data,
+                uuid -> server.getPlayerList().getPlayer(uuid) != null,
+                playerDataDir,
+                System.currentTimeMillis(),
+                days,
+                confirm);
+    }
+
+    static int pruneInactivePlayers(
+            MilestoneData data,
+            Predicate<UUID> isOnline,
+            @Nullable Path playerDataDir,
+            long nowMillis,
+            int days,
+            boolean confirm) {
+        List<UUID> targets = new ArrayList<>();
+        for (Map.Entry<UUID, MilestoneData.PlayerData> entry : data.allPlayers().entrySet()) {
+            UUID uuid = entry.getKey();
+            MilestoneData.PlayerData pd = entry.getValue();
+            PruneDataLogic.PlayerState state = pruneStateOf(pd);
+            boolean online = isOnline.test(uuid);
+            long lastSeenMillis = (online || !PruneDataLogic.isEmptyWithDefaultSettings(state))
+                    ? PruneDataLogic.UNKNOWN_LAST_SEEN
+                    : PruneDataLogic.resolveLastSeen(pd.lastSeen, playerDataDir, uuid);
+            if (PruneDataLogic.isPruneTarget(state, online, lastSeenMillis, nowMillis, days)) {
+                targets.add(uuid);
+            }
+        }
+        if (confirm) {
+            for (UUID uuid : targets) {
+                data.purgePlayer(uuid);
+            }
+        }
+        return targets.size();
     }
 
     public static void syncPlayerIfOpen(ServerPlayer player) {

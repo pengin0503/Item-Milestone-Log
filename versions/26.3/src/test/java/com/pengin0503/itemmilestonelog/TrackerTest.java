@@ -1513,4 +1513,32 @@ class TrackerTest {
                 "このサーバーが用意した目標を 3 件、あなたの目標に追加しました。要らないものは /milestonelog remove で外せます。",
                 ServerLang.trForLang("ja_jp", "message.itemmilestonelog.first_join_presets", 3).getString());
     }
+
+    @Test
+    void processPlayerLoginAndLogoutUpdateLastSeenWithoutRecreatingPurgedPlayer() {
+        MilestoneData data = new MilestoneData();
+        long firstLogin = 1_795_000_000_000L;
+        long secondLogin = 1_795_100_000_000L;
+        long logoutTime = 1_795_200_000_000L;
+
+        Tracker.processPlayerLogin(
+                data, PLAYER_A, "Alice", Set.of(), List.of(), true,
+                id -> true, false, false, null, firstLogin);
+        MilestoneData.PlayerData pdA = data.playerOrNull(PLAYER_A);
+        assertNotNull(pdA);
+        assertEquals(firstLogin, pdA.lastSeen);
+
+        Tracker.processPlayerLogin(
+                data, PLAYER_A, "Alice", Set.of(), List.of(), true,
+                id -> true, false, false, null, secondLogin);
+        assertEquals(secondLogin, pdA.lastSeen);
+
+        Tracker.processPlayerLogout(data, PLAYER_A, logoutTime);
+        assertEquals(logoutTime, pdA.lastSeen);
+
+        // Purged / absent player logging out must not resurrect PlayerData
+        assertTrue(data.purgePlayer(PLAYER_A));
+        Tracker.processPlayerLogout(data, PLAYER_A, logoutTime + 10_000L);
+        assertNull(data.playerOrNull(PLAYER_A));
+    }
 }

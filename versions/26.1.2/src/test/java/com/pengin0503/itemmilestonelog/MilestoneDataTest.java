@@ -56,6 +56,7 @@ class MilestoneDataTest {
         pdA.muteBroadcasts = true;
         pdA.muteProgressAlerts = true;
         pdA.excludeFromDiscord = true;
+        pdA.lastSeen = 1795800000000L;
         pdA.progressNotified.put(TargetKey.of("minecraft:iron_ingot", 100), 0);
         pdA.progressNotified.put(TargetKey.of("minecraft:gold_ingot", 500), 50);
         pdA.completedPresets.add("vanilla_endgame");
@@ -85,6 +86,7 @@ class MilestoneDataTest {
         assertTrue(loadedA.muteBroadcasts);
         assertTrue(loadedA.muteProgressAlerts);
         assertTrue(loadedA.excludeFromDiscord);
+        assertEquals(1795800000000L, loadedA.lastSeen);
         assertEquals(Map.of(
                 TargetKey.of("minecraft:iron_ingot", 100), 0,
                 TargetKey.of("minecraft:gold_ingot", 500), 50
@@ -101,6 +103,7 @@ class MilestoneDataTest {
         assertFalse(loadedB.muteBroadcasts);
         assertFalse(loadedB.muteProgressAlerts);
         assertFalse(loadedB.excludeFromDiscord);
+        assertEquals(0L, loadedB.lastSeen);
         assertTrue(loadedB.progressNotified.isEmpty());
         assertTrue(loadedB.completedPresets.isEmpty());
 
@@ -200,6 +203,7 @@ class MilestoneDataTest {
         assertTrue(pd.carriedFromCreative.isEmpty());
         assertFalse(pd.muteProgressAlerts);
         assertFalse(pd.excludeFromDiscord);
+        assertEquals(0L, pd.lastSeen);
         assertTrue(pd.progressNotified.isEmpty());
         assertTrue(pd.completedPresets.isEmpty());
         assertTrue(loaded.worldFirsts().isEmpty());
@@ -450,6 +454,7 @@ class MilestoneDataTest {
         assertFalse(player.contains("muteBroadcasts"), player::toString);
         assertFalse(player.contains("muteProgressAlerts"), player::toString);
         assertFalse(player.contains("excludeFromDiscord"), player::toString);
+        assertFalse(player.contains("lastSeen"), player::toString);
         assertFalse(player.contains("progressNotified"), player::toString);
         assertFalse(player.contains("completedPresets"), player::toString);
         assertFalse(saved.contains("worldFirsts"), saved::toString);
@@ -824,5 +829,87 @@ class MilestoneDataTest {
 
         assertTrue(MilestoneService.resetAllRecords(loaded, PLAYER_A, null).success());
         assertTrue(loadedA.completedPresets.isEmpty());
+    }
+
+    @Test
+    void persistsLastSeenLenientlyRoundTripsMigratesFromLegacyAndSurvivesResetAll(@TempDir Path dir) throws IOException {
+        UUID playerB = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        UUID playerC = UUID.fromString("33333333-3333-3333-3333-333333333333");
+        UUID playerD = UUID.fromString("44444444-4444-4444-4444-444444444444");
+
+        CompoundTag playerATag = new CompoundTag();
+        playerATag.putString("lastKnownName", "Alice");
+        playerATag.putLong("lastSeen", 1795800000000L);
+
+        CompoundTag playerBTag = new CompoundTag();
+        playerBTag.putString("lastKnownName", "Bob");
+        // lastSeen absent (1.0.1 / pre-F37 data) -> defaults to 0
+
+        CompoundTag playerCTag = new CompoundTag();
+        playerCTag.putString("lastKnownName", "Charlie");
+        playerCTag.put("lastSeen", StringTag.valueOf("garbage")); // malformed -> leniently defaults to 0
+
+        CompoundTag playerDTag = new CompoundTag();
+        playerDTag.putString("lastKnownName", "Dana");
+        playerDTag.putLong("lastSeen", -100L); // negative -> skipped, defaults to 0
+
+        CompoundTag players = new CompoundTag();
+        players.put(PLAYER_A.toString(), playerATag);
+        players.put(playerB.toString(), playerBTag);
+        players.put(playerC.toString(), playerCTag);
+        players.put(playerD.toString(), playerDTag);
+        CompoundTag dataTag = new CompoundTag();
+        dataTag.put("players", players);
+
+        MilestoneData loaded = MilestoneData.CODEC.parse(NbtOps.INSTANCE, dataTag).getOrThrow();
+        MilestoneData.PlayerData loadedA = loaded.playerOrNull(PLAYER_A);
+        MilestoneData.PlayerData loadedB = loaded.playerOrNull(playerB);
+        MilestoneData.PlayerData loadedC = loaded.playerOrNull(playerC);
+        MilestoneData.PlayerData loadedD = loaded.playerOrNull(playerD);
+        assertNotNull(loadedA);
+        assertNotNull(loadedB);
+        assertNotNull(loadedC);
+        assertNotNull(loadedD);
+        assertEquals(1795800000000L, loadedA.lastSeen);
+        assertEquals(0L, loadedB.lastSeen);
+        assertEquals(0L, loadedC.lastSeen);
+        assertEquals("Charlie", loadedC.lastKnownName);
+        assertEquals(0L, loadedD.lastSeen);
+        assertEquals("Dana", loadedD.lastKnownName);
+
+        // Encode back: write only when > 0
+        CompoundTag encoded = (CompoundTag) MilestoneData.CODEC.encodeStart(NbtOps.INSTANCE, loaded).getOrThrow();
+        CompoundTag encodedPlayers = encoded.getCompoundOrEmpty("players");
+        assertEquals(1795800000000L, encodedPlayers.getCompoundOrEmpty(PLAYER_A.toString()).getLongOr("lastSeen", 0L));
+        assertFalse(encodedPlayers.getCompoundOrEmpty(playerB.toString()).contains("lastSeen"));
+        assertFalse(encodedPlayers.getCompoundOrEmpty(playerC.toString()).contains("lastSeen"));
+        assertFalse(encodedPlayers.getCompoundOrEmpty(playerD.toString()).contains("lastSeen"));
+
+        // Round trip: encode -> decode preserves lastSeen
+        MilestoneData reloaded = MilestoneData.CODEC.parse(NbtOps.INSTANCE, encoded).getOrThrow();
+        assertEquals(1795800000000L, reloaded.playerOrNull(PLAYER_A).lastSeen);
+        assertEquals(0L, reloaded.playerOrNull(playerB).lastSeen);
+
+        // 1.21.1 legacy file carrying lastSeen (same key/type) migrates via readLegacy
+        CompoundTag legacyRoot = new CompoundTag();
+        legacyRoot.put("data", dataTag);
+        legacyRoot.putInt("DataVersion", 3955);
+        Path legacyFile = dir.resolve(MilestoneData.LEGACY_FILE);
+        Files.createDirectories(legacyFile.getParent());
+        NbtIo.writeCompressed(legacyRoot, legacyFile);
+
+        MilestoneData migrated = MilestoneData.readLegacy(legacyFile);
+        assertNotNull(migrated);
+        assertEquals(1795800000000L, migrated.playerOrNull(PLAYER_A).lastSeen);
+        assertEquals(0L, migrated.playerOrNull(playerB).lastSeen);
+        assertEquals(0L, migrated.playerOrNull(playerC).lastSeen);
+        assertEquals(0L, migrated.playerOrNull(playerD).lastSeen);
+
+        // ResetAll must NOT modify lastSeen
+        TargetKey diamond = TargetKey.of("minecraft:diamond");
+        loadedA.records.put(diamond, new MilestoneRecord(100, 1L, 1000L));
+        assertTrue(MilestoneService.resetAllRecords(loaded, PLAYER_A, null).success());
+        assertTrue(loadedA.records.isEmpty());
+        assertEquals(1795800000000L, loadedA.lastSeen);
     }
 }
