@@ -574,4 +574,38 @@ class MilestoneServiceTest {
         assertEquals("あなたの記録を Discord に投稿するようにしました。",
                 ServerLang.trForLang("ja_jp", "message.itemmilestonelog.discordoptout_off").getString());
     }
+
+    @Test
+    void togglePrivacyTogglesHideFromLookupAndRepliesWithNewState() {
+        MilestoneData data = new MilestoneData();
+        assertNull(data.playerOrNull(PLAYER_A));
+
+        // First run: false -> true, creates PlayerData and marks dirty
+        MilestoneService.ActionResult on = MilestoneService.togglePrivacy(data, PLAYER_A, null);
+        assertTrue(on.success());
+        assertEquals("Your milestones are now hidden from other players (lookup, top, recent and stats).",
+                on.message().getString());
+        assertNotNull(data.playerOrNull(PLAYER_A));
+        assertTrue(data.playerOrNull(PLAYER_A).hideFromLookup);
+        assertTrue(data.isDirty());
+
+        // Second run: true -> false
+        MilestoneService.ActionResult off = MilestoneService.togglePrivacy(data, PLAYER_A, null);
+        assertTrue(off.success());
+        assertEquals("Your milestones are now visible to other players.", off.message().getString());
+        assertFalse(data.playerOrNull(PLAYER_A).hideFromLookup);
+
+        // Only the executing player's hideFromLookup changes; other personal settings and players untouched
+        MilestoneService.togglePrivacy(data, PLAYER_A, null);
+        assertTrue(data.playerOrNull(PLAYER_A).hideFromLookup);
+        assertFalse(data.playerOrNull(PLAYER_A).muteBroadcasts);
+        assertFalse(data.playerOrNull(PLAYER_A).excludeFromDiscord);
+        assertNull(data.playerOrNull(UUID.fromString("22222222-2222-2222-2222-222222222222")));
+
+        // Japanese translations render as specified
+        assertEquals("あなたの記録を他のプレイヤーから隠しました（lookup・top・recent・stats）。",
+                ServerLang.trForLang("ja_jp", "message.itemmilestonelog.privacy_on").getString());
+        assertEquals("あなたの記録を他のプレイヤーに公開しました。",
+                ServerLang.trForLang("ja_jp", "message.itemmilestonelog.privacy_off").getString());
+    }
 }

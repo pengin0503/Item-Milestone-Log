@@ -282,4 +282,80 @@ class PresetsTest {
         assertTrue(Presets.findNewlyCompletedPresetIds(
                 emerald50, records, presets, knownItems::contains, Set.of(), false).isEmpty());
     }
+
+    @Test
+    void presetProgressCountsLikeF5AndListsUnrecordedInTargetKeyOrder() {
+        TargetKey diamond1 = TargetKey.of("minecraft:diamond", 1);
+        TargetKey diamond64 = TargetKey.of("minecraft:diamond", 64);
+        TargetKey emerald50 = TargetKey.of("minecraft:emerald", 50);
+        TargetKey iron1 = TargetKey.of("minecraft:iron_ingot", 1);
+        TargetKey missingA = TargetKey.of("missingmod:absent_star", 1);
+        TargetKey missingB = TargetKey.of("missingmod:absent_gem", 5);
+        Set<String> knownItems = Set.of("minecraft:diamond", "minecraft:emerald", "minecraft:iron_ingot");
+
+        Presets.PresetDefinition preset = new Presets.PresetDefinition("mixed", "Mixed",
+                List.of(iron1, emerald50, missingA, diamond64, diamond1, missingB, iron1), false);
+
+        // diamond#64 recorded only as diamond#1 -> exact match, so diamond#64 stays unrecorded
+        Set<TargetKey> recorded = Set.of(diamond1, TargetKey.of("minecraft:emerald", 1), missingA);
+        Presets.PresetProgress progress = Presets.presetProgress(preset, recorded, knownItems::contains, Presets.PROGRESS_MAX_ROWS);
+        assertEquals(1, progress.recorded());
+        assertEquals(Presets.resolvableTargets(preset, knownItems::contains).size(), progress.total());
+        assertEquals(4, progress.total());
+        assertEquals(List.of(diamond64, emerald50, iron1), progress.unrecordedShown());
+        assertEquals(0, progress.unrecordedHidden());
+        assertEquals(2, progress.skipped());
+        assertFalse(progress.complete());
+
+        // All of R(S) recorded -> complete (missing items do not block), skipped still reported
+        Set<TargetKey> all = Set.of(diamond1, diamond64, emerald50, iron1);
+        Presets.PresetProgress done = Presets.presetProgress(preset, all, knownItems::contains, Presets.PROGRESS_MAX_ROWS);
+        assertTrue(done.complete());
+        assertEquals(4, done.recorded());
+        assertTrue(done.unrecordedShown().isEmpty());
+        assertEquals(2, done.skipped());
+        // Consistent with F5: recording the last key of R(S) completes the preset
+        assertEquals(List.of("mixed"), Presets.findNewlyCompletedPresetIds(
+                iron1, Map.of(diamond1, new MilestoneRecord(1, 1L, 1L), diamond64, new MilestoneRecord(1, 1L, 1L),
+                        emerald50, new MilestoneRecord(1, 1L, 1L), iron1, new MilestoneRecord(1, 1L, 1L)),
+                List.of(preset), knownItems::contains, Set.of(), true));
+
+        // Empty R(S) is never "complete" (0 / 0), and every key counts as skipped
+        Presets.PresetDefinition allMissing = new Presets.PresetDefinition("gone", "Gone", List.of(missingA, missingB), false);
+        Presets.PresetProgress empty = Presets.presetProgress(allMissing, Set.of(), knownItems::contains, Presets.PROGRESS_MAX_ROWS);
+        assertEquals(0, empty.total());
+        assertFalse(empty.complete());
+        assertEquals(2, empty.skipped());
+
+        // Null preset / null records are tolerated
+        assertEquals(0, Presets.presetProgress(null, recorded, knownItems::contains, 50).total());
+        assertEquals(0, Presets.presetProgress(preset, null, knownItems::contains, 50).recorded());
+    }
+
+    @Test
+    void presetProgressCapsListAtFiftyRowsAndReportsRemainder() {
+        List<TargetKey> items = new java.util.ArrayList<>();
+        for (int i = 1; i <= 60; i++) {
+            items.add(TargetKey.of("minecraft:diamond", i));
+        }
+        Presets.PresetDefinition big = new Presets.PresetDefinition("big", "Big", items, false);
+        Set<String> knownItems = Set.of("minecraft:diamond");
+
+        Presets.PresetProgress progress = Presets.presetProgress(
+                big, Set.of(TargetKey.of("minecraft:diamond", 1)), knownItems::contains, Presets.PROGRESS_MAX_ROWS);
+        assertEquals(50, Presets.PROGRESS_MAX_ROWS);
+        assertEquals(1, progress.recorded());
+        assertEquals(60, progress.total());
+        assertEquals(50, progress.unrecordedShown().size());
+        assertEquals(9, progress.unrecordedHidden());
+        assertEquals(TargetKey.of("minecraft:diamond", 2), progress.unrecordedShown().get(0));
+        assertEquals(TargetKey.of("minecraft:diamond", 51), progress.unrecordedShown().get(49));
+        assertEquals(0, progress.skipped());
+
+        // Exactly 50 unrecorded -> no "more" line
+        Presets.PresetProgress exact = Presets.presetProgress(
+                big, Set.copyOf(items.subList(0, 10)), knownItems::contains, Presets.PROGRESS_MAX_ROWS);
+        assertEquals(50, exact.unrecordedShown().size());
+        assertEquals(0, exact.unrecordedHidden());
+    }
 }

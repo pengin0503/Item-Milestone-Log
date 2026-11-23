@@ -49,8 +49,14 @@ public class MilestoneData extends SavedData {
         public boolean muteBroadcasts = false;
         public boolean muteProgressAlerts = false;
         public boolean excludeFromDiscord = false;
+        public boolean hideFromLookup = false;
         public final Map<TargetKey, Integer> progressNotified = new LinkedHashMap<>();
         public final Set<String> completedPresets = new LinkedHashSet<>();
+
+        /** Whether this player hides their records from lookups by non-privileged other players (F14). */
+        public boolean isHiddenFromLookup() {
+            return hideFromLookup;
+        }
     }
 
     private record WorldFirstEntry(String uuid, String name, int ticks, long day, long epoch) {
@@ -177,13 +183,15 @@ public class MilestoneData extends SavedData {
                     .forGetter(pd -> pd.muteProgressAlerts),
             Codec.BOOL.lenientOptionalFieldOf("excludeFromDiscord", false)
                     .forGetter(pd -> pd.excludeFromDiscord),
+            Codec.BOOL.lenientOptionalFieldOf("hideFromLookup", false)
+                    .forGetter(pd -> pd.hideFromLookup),
             Codec.unboundedMap(Codec.STRING, LENIENT_PROGRESS_THRESHOLD_CODEC)
                     .lenientOptionalFieldOf("progressNotified", Map.of())
                     .forGetter(MilestoneData::encodeProgressNotified),
             Codec.list(LENIENT_COMPLETED_PRESET_CODEC)
                     .lenientOptionalFieldOf("completedPresets", List.of())
                     .forGetter(pd -> pd.completedPresets.isEmpty() ? List.of() : new ArrayList<>(pd.completedPresets))
-    ).apply(instance, (targets, records, carriedFromCreative, lastKnownName, firstJoinHintShown, muteBroadcasts, muteProgressAlerts, excludeFromDiscord, progressNotified, completedPresets) -> {
+    ).apply(instance, (targets, records, carriedFromCreative, lastKnownName, firstJoinHintShown, muteBroadcasts, muteProgressAlerts, excludeFromDiscord, hideFromLookup, progressNotified, completedPresets) -> {
         PlayerData pd = new PlayerData();
         for (String raw : targets) {
             TargetKey parsed = TargetKey.tryParseEncoded(raw);
@@ -226,6 +234,7 @@ public class MilestoneData extends SavedData {
         pd.muteBroadcasts = muteBroadcasts;
         pd.muteProgressAlerts = muteProgressAlerts;
         pd.excludeFromDiscord = excludeFromDiscord;
+        pd.hideFromLookup = hideFromLookup;
         for (Map.Entry<String, Integer> progEntry : progressNotified.entrySet()) {
             String rawKey = progEntry.getKey();
             TargetKey parsed = TargetKey.tryParseEncoded(rawKey);

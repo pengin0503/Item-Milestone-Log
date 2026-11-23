@@ -512,6 +512,24 @@ public final class MilestoneService {
         return new ActionResult(true, ServerLang.tr(player, key));
     }
 
+    /**
+     * F14: toggles {@code hideFromLookup} for the executing player. Only affects what other,
+     * non-privileged players can see (lookup, top, recent, stats); no Config switch.
+     */
+    public static ActionResult togglePrivacy(ServerPlayer player) {
+        return togglePrivacy(MilestoneData.get(player.server), player.getUUID(), player);
+    }
+
+    static ActionResult togglePrivacy(MilestoneData data, UUID playerId, @Nullable ServerPlayer player) {
+        MilestoneData.PlayerData pd = data.player(playerId);
+        pd.hideFromLookup = !pd.hideFromLookup;
+        data.setDirty();
+        String key = pd.hideFromLookup
+                ? "message.itemmilestonelog.privacy_on"
+                : "message.itemmilestonelog.privacy_off";
+        return new ActionResult(true, ServerLang.tr(player, key));
+    }
+
     public static void syncPlayerIfOpen(ServerPlayer player) {
         if (player.connection != null && player.connection.hasChannel(SyncMilestonesPayload.TYPE)) {
             PacketDistributor.sendToPlayer(player, createSyncPayload(player, false, null));
