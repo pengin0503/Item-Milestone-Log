@@ -8,8 +8,8 @@ Minecraft NeoForge Mod「Item Milestone Log」(mod_id: `itemmilestonelog`)。
 
 - `versions/<mc>/` が Minecraft バージョンごとの独立した Gradle プロジェクト: `1.21.1` / `26.1.2` / `26.2` / `26.3`
   - Java は 1.21.1 が **21**、26.x が **25**
-  - ソースはバージョンごとにフルコピーされている。大半のファイルは全バージョン同一だが、一部（エントリポイント、クライアント側、MilestoneData 等）はバージョンごとに異なる
-- `docs/` に仕様書がある: `FEATURE_SPEC_1.0.1.md` / `CUSTOM_PRESET_SPEC_1.0.1.md` / `QUANTITY_SPEC_1.0.1.md` / `VERSION_NOTES.md`
+  - Minecraft/NeoForge に依存しない純粋ロジックと共通テストは `common/src/main/java`・`common/src/test/java`（Java 21 互換）に置き、4バージョンで共有する。各バージョン配下のファイルは一部（エントリポイント、クライアント側、MilestoneData 等）を除き同一に保ち、CI（`check-identical-files.sh`）で検査している
+- `docs/` に仕様書がある: `FEATURE_SPEC_1.0.1.md` / `CUSTOM_PRESET_SPEC_1.0.1.md` / `QUANTITY_SPEC_1.0.1.md` / `FEATURE_SPEC_1.1.0.md` / `FEATURE_SPEC_1.2.0.md` / `VERSION_NOTES.md`
 - CI は `.github/workflows/main.yml`（全バージョン × NeoForge 最小/最新のビルド＋単体テスト、実サーバーでのボットテスト、1.21.1→26.1.2 の移行テスト）
 
 ## ビルドとテスト
@@ -29,4 +29,4 @@ Minecraft NeoForge Mod「Item Milestone Log」(mod_id: `itemmilestonelog`)。
 - SavedData の保存形式は **1.0.0 のデータと後方互換** を保つ（読めなくなる変更をしない）
 - GUI のデザイン・レイアウトは確定済み。変更しない（文言の追加は可）
 - 言語ファイル `en_us.json` と `ja_jp.json` は常に対で更新する
-- 現在の開発バージョンは **1.0.1**（未リリース）。バージョン番号は指示があるまで上げない
+- 現在の開発バージョンは **1.1.0**（未リリース）。バージョン番号は指示があるまで上げない

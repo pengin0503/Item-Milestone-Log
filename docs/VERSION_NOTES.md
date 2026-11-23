@@ -31,9 +31,24 @@ Item Milestone Log の複数バージョン対応（`1.21.1` / `26.1.2` / `26.2`
 26.x の `MilestoneData.get` は、新しい場所にデータがまだないとき `<world>/data/itemmilestonelog_data.dat`（1.21.1 の形式: 圧縮NBTの `"data"` タグに同じ構造）を読み込みます（issue #13）。旧ファイルは変更・削除しません。CI の移行テスト（下記）で、1.21.1 のサーバーで作ったワールドを 26.1.2 のサーバーで開き、記録が引き継がれることを確認しています。
 
 ### 保存データの構造（全バージョン共通）
-`"players" -> "<uuid>" -> { "targets": [...], "records": { "<itemId>": <ticks> }, "carriedFromCreative": [...] }`
+- ルート: `"players"`（UUID → PlayerData）および `"worldFirsts"`（アイテムID → 数量 → `{ "uuid", "name", "ticks", "day", "epoch" }`。空なら省略）
+- PlayerData（1.0.0 / 1.0.1）:
+  - `"targets"`: エンコード済み TargetKey（`itemId` または `itemId#count`）の文字列リスト
+  - `"records"`: `itemId -> { "<count>": { "ticks", "day", "epoch" } }`（1.0.0 の整数形式・初期 1.0.1 の単一コンパウンド形式も読み込み互換あり）
+  - `"carriedFromCreative"`: クリエイティブ／スペクテイターから戻ったときに持っていたアイテムIDのリスト（空なら省略。issue #16、下記）
+  - `"lastKnownName"`（文字列、空なら省略）、`"firstJoinHintShown"`（boolean、true のみ書き出し）、`"muteBroadcasts"`（boolean、true のみ書き出し）
+- PlayerData（**1.1.0 で追加**、1.21.1 NBT と 26.x Codec で同一のキー名・型、欠落時は既定値として読み込み、壊れた要素は要素単位でスキップ）:
 
-`carriedFromCreative` は、クリエイティブ／スペクテイターから戻ったときに持っていたアイテムのIDで、空のときは書き出しません（issue #16、下記）。
+| NBT キー | 型 | 欠落時の値 | 書き出し条件 | 用途 |
+|---|---|---|---|---|
+| `progressNotified` | compound（`TargetKey#toEncodedString()` → int） | 空 | 空なら省略 | 数量目標の進捗アラート通知済み最大しきい値（F1） |
+| `completedPresets` | 文字列リスト（プリセットID） | 空 | 空なら省略 | 制覇済みプリセットID（F5） |
+| `hideFromLookup` | boolean | `false` | `true` のみ | `lookup` / `top` / `recent` / `stats` からの非公開設定（F14） |
+| `muteProgressAlerts` | boolean | `false` | `true` のみ | 進捗アラートの個人ミュート（F15） |
+| `lastSeen` | long（epochMillis） | `0`（不明） | `0` なら省略 | 最終ログイン／ログアウト時刻（F37 `prunedata`） |
+| `excludeFromDiscord` | boolean | `false` | `true` のみ | Discord 投稿からの個人除外設定（F45） |
+
+> **ダウングレード時の注意（1.1.0 → 1.0.1）**: 1.0.1 は 1.1.0 で追加された上記 6 フィールドを読み捨て、次の保存で削除します。非公開・ミュート・Discord 除外設定が失われ、再び 1.1.0 に戻した際に進捗アラートやプリセット制覇通知が再発火し得ます。
 
 ### クリエイティブ／スペクテイター（`ignoreCreativeAndSpectator`、既定 true）
 - この2つのモードでは、スキャン・拾得・クラフト・精錬のどれでも記録しません。
