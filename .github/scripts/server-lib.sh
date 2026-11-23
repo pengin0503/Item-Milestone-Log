@@ -13,6 +13,7 @@ TEST_JS="$ROOT/.github/integration/server-test.mjs"
 # the inventory scan, short enough that waiting for a scan does not dominate the run.
 SCAN_INTERVAL_TICKS=240
 JAVA="${JAVA:-java}"
+SERVER_JVM_OPTS=()
 SERVER_PGID=""
 SERVER_LOG=""
 
@@ -69,20 +70,27 @@ install_server() {
 }
 
 install_mod() {
-  shopt -s nullglob
-  local jars=()
-  for f in "$LIBS"/itemmilestonelog-neoforge-"$MC"-*.jar; do
-    case "$f" in *-sources.jar|*-javadoc.jar) ;; *) jars+=("$f") ;; esac
-  done
-  shopt -u nullglob
-  if [ "${#jars[@]}" -ne 1 ]; then
-    echo "Expected exactly one mod jar in ${LIBS#$ROOT/}, found: ${jars[*]:-none}"
+  local jar="${1:-}"
+  if [ -z "$jar" ]; then
+    shopt -s nullglob
+    local jars=()
+    for f in "$LIBS"/itemmilestonelog-neoforge-"$MC"-*.jar; do
+      case "$f" in *-sources.jar|*-javadoc.jar) ;; *) jars+=("$f") ;; esac
+    done
+    shopt -u nullglob
+    if [ "${#jars[@]}" -ne 1 ]; then
+      echo "Expected exactly one mod jar in ${LIBS#$ROOT/}, found: ${jars[*]:-none}"
+      return 1
+    fi
+    jar="${jars[0]}"
+  elif [ ! -f "$jar" ]; then
+    echo "Specified mod jar does not exist: $jar"
     return 1
   fi
   rm -rf "$SERVER_DIR/mods"
   mkdir -p "$SERVER_DIR/mods"
-  cp "${jars[0]}" "$SERVER_DIR/mods/"
-  echo "Mod under test: ${jars[0]#$ROOT/}"
+  cp "$jar" "$SERVER_DIR/mods/"
+  echo "Mod under test: ${jar#$ROOT/}"
 }
 
 # Fresh world and config, and settings that make the server fast and scriptable.
@@ -144,7 +152,11 @@ start_server() {
   SERVER_LOG="$log"
   echo "::group::Start server (MC $MC, NeoForge $NEO) -> ${log#$ROOT/}"
   # setsid: own process group, so everything the server starts can be stopped together.
-  setsid bash -c "cd '$SERVER_DIR' && exec '$JAVA' -Xmx2G @'$ARGS_FILE' nogui" \
+  local jvm_opts=""
+  if [ "${#SERVER_JVM_OPTS[@]}" -gt 0 ]; then
+    printf -v jvm_opts ' %q' "${SERVER_JVM_OPTS[@]}"
+  fi
+  setsid bash -c "cd '$SERVER_DIR' && exec '$JAVA' -Xmx2G${jvm_opts} @'$ARGS_FILE' nogui" \
     > "$log" 2>&1 < /dev/null &
   SERVER_PGID=$!
   local waited=0

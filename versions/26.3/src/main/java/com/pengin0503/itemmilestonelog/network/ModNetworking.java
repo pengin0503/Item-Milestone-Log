@@ -1,5 +1,6 @@
 package com.pengin0503.itemmilestonelog.network;
 
+import com.pengin0503.itemmilestonelog.ItemMilestoneLog;
 import com.pengin0503.itemmilestonelog.MilestoneService;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.neoforge.network.PacketDistributor;
@@ -112,6 +113,8 @@ public final class ModNetworking {
             return;
         }
         context.enqueueWork(() -> {
+            ItemMilestoneLog.LOGGER.debug("[ItemMilestoneLog] Received RequestSyncPayload from {}",
+                    player.getGameProfile().name());
             SyncMilestonesPayload sync = MilestoneService.createSyncPayload(player, true, null);
             PacketDistributor.sendToPlayer(player, sync);
         });
@@ -142,6 +145,11 @@ public final class ModNetworking {
     }
 
     private static void handleSyncClient(SyncMilestonesPayload payload, IPayloadContext context) {
-        context.enqueueWork(() -> clientSyncHandler.accept(payload));
+        context.enqueueWork(() -> {
+            ItemMilestoneLog.LOGGER.debug(
+                    "[ItemMilestoneLog] Received SyncMilestonesPayload (targets={}, records={}, presets={}, openScreen={})",
+                    payload.targets().size(), payload.records().size(), payload.presets().size(), payload.openScreen());
+            clientSyncHandler.accept(payload);
+        });
     }
 }
