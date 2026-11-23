@@ -2,16 +2,23 @@ package com.pengin0503.itemmilestonelog;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.pengin0503.itemmilestonelog.api.ItemMilestoneLogApi;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
+import com.pengin0503.itemmilestonelog.api.MilestoneRecordedEvent;
+import com.pengin0503.itemmilestonelog.api.PresetCompletedEvent;
+import com.pengin0503.itemmilestonelog.api.RecordCause;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
 import com.pengin0503.itemmilestonelog.api.WorldFirstRecord;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.level.GameType;
+import net.neoforged.bus.api.Event;
+import net.neoforged.bus.api.ICancellableEvent;
 import org.junit.jupiter.api.Test;
 
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -24,8 +31,10 @@ import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TrackerTest {
@@ -539,8 +548,10 @@ class TrackerTest {
             assertEquals(2, drained.size());
             assertEquals(a, drained.get(0).playerId);
             assertEquals(2, drained.get(0).records.size());
+            assertEquals(2, drained.get(0).discordRecords.size());
             assertEquals(b, drained.get(1).playerId);
             assertEquals(1, drained.get(1).records.size());
+            assertEquals(1, drained.get(1).discordRecords.size());
             assertTrue(Tracker.drainPendingNotifications().isEmpty(), "drain must empty the queue");
 
             // clearPendingNotifications (called on ServerStoppingEvent) discards queued entries
@@ -548,6 +559,99 @@ class TrackerTest {
                     TargetKey.of("minecraft:iron_ingot"), rec, false);
             Tracker.clearPendingNotifications();
             assertTrue(Tracker.drainPendingNotifications().isEmpty());
+        } finally {
+            Tracker.clearPendingNotifications();
+        }
+    }
+
+    @Test
+    void pendingNotificationsExcludeOptedOutPlayersFromDiscordQueueWhilePreservingInGameChannelsAndWorldFirsts() {
+        MilestoneData data = new MilestoneData();
+        MilestoneData.PlayerData optedOutPd = data.player(PLAYER_A);
+        optedOutPd.excludeFromDiscord = true;
+        MilestoneData.PlayerData optedInPd = data.player(PLAYER_B);
+
+        MilestoneRecord rec = new MilestoneRecord(1200, 1L, 1_700_000_000_000L);
+        List<TargetKey> keys = List.of(
+                TargetKey.of("minecraft:emerald"),
+                TargetKey.of("minecraft:coal"),
+                TargetKey.of("minecraft:diamond"));
+
+        Tracker.clearPendingNotifications();
+        try {
+            // Opted-out player (allowDiscordOptOut = true): world-firsts still recorded, in-game queued, Discord NOT queued
+            for (TargetKey key : keys) {
+                Tracker.RecordOutcome outcome = Tracker.applyRecord(data, PLAYER_A, "Alice", key, rec, true);
+                assertEquals(Tracker.RecordOutcome.RECORDED_WORLD_FIRST, outcome);
+                Tracker.queuePendingNotification(
+                        PLAYER_A, "Alice", Component.literal("Alice"), key, rec, true,
+                        DiscordNotifier.shouldPostToDiscord(true, optedOutPd));
+            }
+            // Opted-in player in the same tick: queued for both in-game and Discord
+            for (TargetKey key : keys) {
+                Tracker.queuePendingNotification(
+                        PLAYER_B, "Bob", Component.literal("Bob"), key, rec, false,
+                        DiscordNotifier.shouldPostToDiscord(true, optedInPd));
+            }
+
+            List<Tracker.PendingNotifications> drained = Tracker.drainPendingNotifications();
+            assertEquals(2, drained.size());
+
+            Tracker.PendingNotifications pendingA = drained.get(0);
+            assertEquals(PLAYER_A, pendingA.playerId);
+            assertEquals(3, pendingA.records.size());
+            assertTrue(pendingA.discordRecords.isEmpty(), "opted-out player must not be queued for Discord");
+
+            NotificationGrouping.FlushPlan<Tracker.QueuedRecord> planA = NotificationGrouping.planFlush(
+                    pendingA.records,
+                    pendingA.discordRecords,
+                    Tracker.QueuedRecord::worldFirst,
+                    Comparator.comparing(Tracker.QueuedRecord::key),
+                    true, true, true, true,
+                    DiscordNotifier.shouldPostToDiscord(true, data, PLAYER_A),
+                    "all");
+            assertEquals(NotificationGrouping.SendMode.GROUPED, planA.playerChat().mode());
+            assertEquals(NotificationGrouping.SendMode.GROUPED, planA.broadcastChat().mode());
+            assertEquals(NotificationGrouping.SendMode.GROUPED, planA.worldFirstChat().mode());
+            assertTrue(planA.playSound());
+            assertEquals(NotificationGrouping.SendMode.NONE, planA.discord().mode());
+            assertTrue(planA.discord().items().isEmpty());
+
+            Tracker.PendingNotifications pendingB = drained.get(1);
+            assertEquals(PLAYER_B, pendingB.playerId);
+            assertEquals(3, pendingB.records.size());
+            assertEquals(3, pendingB.discordRecords.size());
+
+            NotificationGrouping.FlushPlan<Tracker.QueuedRecord> planB = NotificationGrouping.planFlush(
+                    pendingB.records,
+                    pendingB.discordRecords,
+                    Tracker.QueuedRecord::worldFirst,
+                    Comparator.comparing(Tracker.QueuedRecord::key),
+                    true, true, true, true,
+                    DiscordNotifier.shouldPostToDiscord(true, data, PLAYER_B),
+                    "all");
+            assertEquals(NotificationGrouping.SendMode.GROUPED, planB.discord().mode());
+            assertEquals(3, planB.discord().items().size());
+
+            // When allowDiscordOptOut = false, saved excludeFromDiscord is ignored so Discord IS queued and planned
+            for (TargetKey key : keys) {
+                Tracker.queuePendingNotification(
+                        PLAYER_A, "Alice", Component.literal("Alice"), key, rec, true,
+                        DiscordNotifier.shouldPostToDiscord(false, optedOutPd));
+            }
+            List<Tracker.PendingNotifications> drainedOverride = Tracker.drainPendingNotifications();
+            assertEquals(1, drainedOverride.size());
+            assertEquals(3, drainedOverride.get(0).discordRecords.size());
+            NotificationGrouping.FlushPlan<Tracker.QueuedRecord> planOverride = NotificationGrouping.planFlush(
+                    drainedOverride.get(0).records,
+                    drainedOverride.get(0).discordRecords,
+                    Tracker.QueuedRecord::worldFirst,
+                    Comparator.comparing(Tracker.QueuedRecord::key),
+                    true, true, true, true,
+                    DiscordNotifier.shouldPostToDiscord(false, data, PLAYER_A),
+                    "world_first");
+            assertEquals(NotificationGrouping.SendMode.GROUPED, planOverride.discord().mode());
+            assertEquals(3, planOverride.discord().items().size());
         } finally {
             Tracker.clearPendingNotifications();
         }
@@ -620,8 +724,8 @@ class TrackerTest {
         String manyContent = DiscordNotifier.buildGroupedPlainTextContent("Alice", many, ZoneOffset.UTC, "en_us");
         String[] lines = manyContent.split("\n");
         assertEquals(22, lines.length);
-        assertEquals("- ★ [World First] minecraft:item_1", lines[1]);
-        assertEquals("- minecraft:item_20", lines[20]);
+        assertEquals("- ★ [World First] minecraft:item\\_1", lines[1]);
+        assertEquals("- minecraft:item\\_20", lines[20]);
         assertEquals("...and 5 more", lines[21]);
         assertTrue(manyContent.length() <= NotificationGrouping.DISCORD_PLAIN_MAX_CHARS);
     }
@@ -697,5 +801,386 @@ class TrackerTest {
         assertEquals(
                 "クリエイティブ・スペクテイターの間は記録されません。",
                 ServerLang.trForLang("ja_jp", "message.itemmilestonelog.summary_creative_paused").getString());
+    }
+
+    @Test
+    void evaluatePresetCompletionsUpdatesCompletedPresetsOnceAndHonorsJudgmentRules() {
+        MilestoneData data = new MilestoneData();
+        TargetKey diamond1 = TargetKey.of("minecraft:diamond", 1);
+        TargetKey diamond64 = TargetKey.of("minecraft:diamond", 64);
+        TargetKey netherite1 = TargetKey.of("minecraft:netherite_ingot", 1);
+        TargetKey missingStar = TargetKey.of("allthetweaks:atm_star", 1);
+        TargetKey coal1 = TargetKey.of("minecraft:coal", 1);
+        MilestoneRecord rec = new MilestoneRecord(1200, 2L, 1_700_000_000_000L);
+
+        Presets.PresetDefinition allMissing = new Presets.PresetDefinition(
+                "atm_star", "atm_star", List.of(missingStar), true);
+        Presets.PresetDefinition mixedCustom = new Presets.PresetDefinition(
+                "mixed_endgame", "Mixed Endgame", List.of(diamond1, netherite1, missingStar), false);
+        Presets.PresetDefinition exactQtyCustom = new Presets.PresetDefinition(
+                "stack_diamond", "Stack Diamond", List.of(diamond64), false);
+        List<Presets.PresetDefinition> allPresets = List.of(allMissing, mixedCustom, exactQtyCustom);
+        Set<String> knownItems = Set.of("minecraft:diamond", "minecraft:netherite_ingot", "minecraft:coal");
+
+        // Record diamond#1 (also world-first) -> mixed_endgame still needs netherite#1, stack_diamond needs diamond#64, atm_star has empty R(S)
+        assertEquals(Tracker.RecordOutcome.RECORDED_WORLD_FIRST,
+                Tracker.applyRecord(data, PLAYER_A, "Alice", diamond1, rec, true));
+        assertTrue(Tracker.evaluatePresetCompletions(
+                data, PLAYER_A, diamond1, allPresets, knownItems::contains, true).isEmpty());
+        assertTrue(data.playerOrNull(PLAYER_A).completedPresets.isEmpty());
+
+        // Count mismatch: recording diamond#1 did not complete stack_diamond; recording diamond#64 completes stack_diamond
+        Tracker.applyRecord(data, PLAYER_A, "Alice", diamond64, rec, true);
+        // When presetsEnabled == false, no judgment occurs and completedPresets stays empty
+        assertTrue(Tracker.evaluatePresetCompletions(
+                data, PLAYER_A, diamond64, allPresets, knownItems::contains, false).isEmpty());
+        assertTrue(data.playerOrNull(PLAYER_A).completedPresets.isEmpty());
+
+        // With presetsEnabled == true, stack_diamond completes and is persisted in completedPresets
+        List<Presets.PresetDefinition> completedStack = Tracker.evaluatePresetCompletions(
+                data, PLAYER_A, diamond64, allPresets, knownItems::contains, true);
+        assertEquals(List.of(exactQtyCustom), completedStack);
+        assertEquals(Set.of("stack_diamond"), data.playerOrNull(PLAYER_A).completedPresets);
+
+        // Already completed: re-evaluating diamond#64 does not fire stack_diamond again
+        assertTrue(Tracker.evaluatePresetCompletions(
+                data, PLAYER_A, diamond64, allPresets, knownItems::contains, true).isEmpty());
+
+        // K not in preset: even if netherite#1 is already in records (e.g. from pre-1.1.0 or import),
+        // recording an unrelated item coal#1 must NOT complete mixed_endgame
+        MilestoneData.PlayerData pd = data.player(PLAYER_A);
+        pd.records.put(netherite1, rec);
+        Tracker.applyRecord(data, PLAYER_A, "Alice", coal1, rec, true);
+        assertTrue(Tracker.evaluatePresetCompletions(
+                data, PLAYER_A, coal1, allPresets, knownItems::contains, true).isEmpty());
+        assertFalse(pd.completedPresets.contains("mixed_endgame"));
+
+        // Completing the final key in R(mixed_endgame) (with missingStar excluded from R(S) and even with pd.targets empty)
+        // completes mixed_endgame and coexists with world-first on the same record
+        pd.records.remove(netherite1);
+        assertEquals(Tracker.RecordOutcome.RECORDED_WORLD_FIRST,
+                Tracker.applyRecord(data, PLAYER_A, "Alice", netherite1, rec, true));
+        List<Presets.PresetDefinition> completedMixed = Tracker.evaluatePresetCompletions(
+                data, PLAYER_A, netherite1, allPresets, knownItems::contains, true);
+        assertEquals(List.of(mixedCustom), completedMixed);
+        assertEquals(Set.of("stack_diamond", "mixed_endgame"), pd.completedPresets);
+    }
+
+    @Test
+    void presetCompletionRecipientRoutingQueueingAndLocalizedMessages() {
+        // 1. announcePresetCompletion = true: completing player always receives broadcast regardless of
+        //    muteBroadcasts or notifyPlayer; other players respect muteBroadcasts
+        assertTrue(Tracker.shouldReceivePresetCompletionChat(PLAYER_A, PLAYER_A, false, true, false));
+        assertTrue(Tracker.shouldReceivePresetCompletionChat(PLAYER_A, PLAYER_A, true, true, false));
+        assertTrue(Tracker.shouldReceivePresetCompletionChat(PLAYER_A, PLAYER_A, true, true, true));
+        assertTrue(Tracker.shouldReceivePresetCompletionChat(PLAYER_A, PLAYER_B, false, true, false));
+        assertFalse(Tracker.shouldReceivePresetCompletionChat(PLAYER_A, PLAYER_B, true, true, true));
+
+        // 2. announcePresetCompletion = false: only completing player receives personal message when notifyPlayer = true
+        assertTrue(Tracker.shouldReceivePresetCompletionChat(PLAYER_A, PLAYER_A, false, false, true));
+        assertTrue(Tracker.shouldReceivePresetCompletionChat(PLAYER_A, PLAYER_A, true, false, true));
+        assertFalse(Tracker.shouldReceivePresetCompletionChat(PLAYER_A, PLAYER_A, false, false, false));
+        assertFalse(Tracker.shouldReceivePresetCompletionChat(PLAYER_A, PLAYER_B, false, false, true));
+        assertFalse(Tracker.shouldReceivePresetCompletionChat(PLAYER_A, PLAYER_B, false, false, false));
+
+        // 3. F27 queuePendingPresetCompletions queues chat completions and respects Discord opt-out
+        Presets.PresetDefinition builtin = Presets.get("vanilla_endgame");
+        Presets.PresetDefinition custom = new Presets.PresetDefinition(
+                "my_pack", "My %s Pack", List.of(TargetKey.of("minecraft:diamond")), false);
+        assertNotNull(builtin);
+        Tracker.clearPendingNotifications();
+        try {
+            Tracker.queuePendingPresetCompletions(
+                    PLAYER_A, "Alice", Component.literal("Alice"), List.of(builtin), 1_700_000_000_000L, true);
+            Tracker.queuePendingPresetCompletions(
+                    PLAYER_B, "Bob", Component.literal("Bob"), List.of(custom), 1_700_000_000_000L, false);
+
+            List<Tracker.PendingNotifications> drained = Tracker.drainPendingNotifications();
+            assertEquals(2, drained.size());
+            assertEquals(1, drained.get(0).presetCompletions.size());
+            assertEquals(1, drained.get(0).discordPresetCompletions.size());
+            assertEquals("vanilla_endgame", drained.get(0).presetCompletions.get(0).preset().id());
+
+            assertEquals(1, drained.get(1).presetCompletions.size());
+            assertTrue(drained.get(1).discordPresetCompletions.isEmpty());
+        } finally {
+            Tracker.clearPendingNotifications();
+        }
+
+        // 4. Localized message rendering for builtin and custom presets (with literal %s safety)
+        Component enBuiltinName = MilestoneService.presetDisplayNameForLang("en_us", builtin);
+        Component jaBuiltinName = MilestoneService.presetDisplayNameForLang("ja_jp", builtin);
+        assertEquals("★ All targets of Preset: Vanilla Endgame are complete!",
+                ServerLang.trForLang("en_us", "message.itemmilestonelog.preset_completed", enBuiltinName).getString());
+        assertEquals("★ プリセット: Vanilla Endgame の目標をすべて達成しました！",
+                ServerLang.trForLang("ja_jp", "message.itemmilestonelog.preset_completed", jaBuiltinName).getString());
+        assertEquals("★ Alice completed all targets of Preset: Vanilla Endgame!",
+                ServerLang.trForLang("en_us", "message.itemmilestonelog.preset_completed_broadcast",
+                        Component.literal("Alice"), enBuiltinName).getString());
+        assertEquals("★ Alice が プリセット: Vanilla Endgame の目標をすべて達成しました！",
+                ServerLang.trForLang("ja_jp", "message.itemmilestonelog.preset_completed_broadcast",
+                        Component.literal("Alice"), jaBuiltinName).getString());
+
+        Component customName = MilestoneService.presetDisplayNameForLang("en_us", custom);
+        assertEquals("★ Player%s completed all targets of My %s Pack!",
+                ServerLang.trForLang("en_us", "message.itemmilestonelog.preset_completed_broadcast",
+                        Component.literal("Player%s"), customName).getString());
+        assertEquals("★ Player%s が My %s Pack の目標をすべて達成しました！",
+                ServerLang.trForLang("ja_jp", "message.itemmilestonelog.preset_completed_broadcast",
+                        Component.literal("Player%s"), customName).getString());
+    }
+
+    @Test
+    void milestoneRecordedEventConstructorsPreserveCompatibilityAndCarryWorldFirstFlag() {
+        MilestoneRecordedEvent legacySingle = new MilestoneRecordedEvent(
+                null, "minecraft:diamond", 1200, 3L, 1_700_000_000_000L);
+        assertNull(legacySingle.getPlayer());
+        assertEquals("minecraft:diamond", legacySingle.getItemId());
+        assertEquals(TargetKey.MIN_COUNT, legacySingle.getCount());
+        assertEquals(TargetKey.of("minecraft:diamond"), legacySingle.getTargetKey());
+        assertEquals(1200, legacySingle.getPlayTicks());
+        assertEquals(3L, legacySingle.getDay());
+        assertEquals(1_700_000_000_000L, legacySingle.getEpochMillis());
+        assertFalse(legacySingle.isWorldFirst());
+        assertFalse(legacySingle instanceof ICancellableEvent);
+
+        MilestoneRecordedEvent legacyCount = new MilestoneRecordedEvent(
+                null, "minecraft:diamond", 64, 2400, 5L, 1_700_000_100_000L);
+        assertEquals("minecraft:diamond", legacyCount.getItemId());
+        assertEquals(64, legacyCount.getCount());
+        assertEquals(TargetKey.of("minecraft:diamond", 64), legacyCount.getTargetKey());
+        assertEquals(2400, legacyCount.getPlayTicks());
+        assertEquals(5L, legacyCount.getDay());
+        assertEquals(1_700_000_100_000L, legacyCount.getEpochMillis());
+        assertFalse(legacyCount.isWorldFirst());
+
+        MilestoneRecordedEvent worldFirstTrue = new MilestoneRecordedEvent(
+                null, "minecraft:nether_star", 2, 3600, 7L, 1_700_000_200_000L, true);
+        assertEquals("minecraft:nether_star", worldFirstTrue.getItemId());
+        assertEquals(2, worldFirstTrue.getCount());
+        assertEquals(TargetKey.of("minecraft:nether_star", 2), worldFirstTrue.getTargetKey());
+        assertEquals(3600, worldFirstTrue.getPlayTicks());
+        assertEquals(7L, worldFirstTrue.getDay());
+        assertEquals(1_700_000_200_000L, worldFirstTrue.getEpochMillis());
+        assertTrue(worldFirstTrue.isWorldFirst());
+
+        MilestoneRecordedEvent worldFirstFalse = new MilestoneRecordedEvent(
+                null, "minecraft:nether_star", 2, 3600, 7L, 1_700_000_200_000L, false);
+        assertFalse(worldFirstFalse.isWorldFirst());
+    }
+
+    @Test
+    void presetCompletedEventExposesFieldsAndIsNotCancellable() {
+        PresetCompletedEvent builtinEvent = new PresetCompletedEvent(null, "vanilla_endgame", true);
+        assertNull(builtinEvent.getPlayer());
+        assertEquals("vanilla_endgame", builtinEvent.getPresetId());
+        assertTrue(builtinEvent.isBuiltin());
+        assertFalse(builtinEvent instanceof ICancellableEvent);
+
+        PresetCompletedEvent customEvent = new PresetCompletedEvent(null, "my_pack", false);
+        assertNull(customEvent.getPlayer());
+        assertEquals("my_pack", customEvent.getPresetId());
+        assertFalse(customEvent.isBuiltin());
+        assertFalse(customEvent instanceof ICancellableEvent);
+    }
+
+    @Test
+    void postRecordEventsWiresWorldFirstFlagAndOrdersEventsAfterCompletedPresetsUpdate() {
+        MilestoneData data = new MilestoneData();
+        TargetKey diamond = TargetKey.of("minecraft:diamond");
+        TargetKey emerald = TargetKey.of("minecraft:emerald", 8);
+        TargetKey gold = TargetKey.of("minecraft:gold_ingot");
+        MilestoneRecord recA = new MilestoneRecord(1200, 4L, 1_700_000_000_000L);
+        MilestoneRecord recB = new MilestoneRecord(2400, 6L, 1_700_000_050_000L);
+
+        Presets.PresetDefinition builtinPreset = new Presets.PresetDefinition(
+                "builtin_pack", "builtin_pack", List.of(diamond), true);
+        Presets.PresetDefinition customPreset = new Presets.PresetDefinition(
+                "custom_pack", "Custom Pack", List.of(diamond), false);
+        Presets.PresetDefinition emeraldPreset = new Presets.PresetDefinition(
+                "emerald_pack", "Emerald Pack", List.of(emerald), false);
+        List<Presets.PresetDefinition> presets = List.of(builtinPreset, customPreset, emeraldPreset);
+        Set<String> knownItems = Set.of("minecraft:diamond", "minecraft:emerald", "minecraft:gold_ingot");
+
+        // 1. World-first record that also completes built-in + custom presets:
+        //    MilestoneRecordedEvent(worldFirst=true) fires first, followed by PresetCompletedEvents
+        //    with completedPresets already persisted.
+        Tracker.RecordOutcome outcomeA = Tracker.applyRecord(data, PLAYER_A, "Alice", diamond, recA, true);
+        assertEquals(Tracker.RecordOutcome.RECORDED_WORLD_FIRST, outcomeA);
+        List<Presets.PresetDefinition> completedA = Tracker.evaluatePresetCompletions(
+                data, PLAYER_A, diamond, presets, knownItems::contains, true);
+        List<Event> eventsA = new ArrayList<>();
+        Tracker.postRecordEvents(null, diamond, recA, outcomeA, completedA, event -> {
+            if (event instanceof PresetCompletedEvent presetEvent) {
+                assertTrue(data.playerOrNull(PLAYER_A).completedPresets.contains(presetEvent.getPresetId()),
+                        "completedPresets must be updated before PresetCompletedEvent is posted");
+            }
+            eventsA.add(event);
+        });
+        assertEquals(3, eventsA.size());
+        MilestoneRecordedEvent recordedA = assertInstanceOf(MilestoneRecordedEvent.class, eventsA.get(0));
+        assertEquals("minecraft:diamond", recordedA.getItemId());
+        assertEquals(1, recordedA.getCount());
+        assertEquals(1200, recordedA.getPlayTicks());
+        assertEquals(4L, recordedA.getDay());
+        assertEquals(1_700_000_000_000L, recordedA.getEpochMillis());
+        assertTrue(recordedA.isWorldFirst());
+
+        PresetCompletedEvent presetEvent1 = assertInstanceOf(PresetCompletedEvent.class, eventsA.get(1));
+        assertEquals("builtin_pack", presetEvent1.getPresetId());
+        assertTrue(presetEvent1.isBuiltin());
+
+        PresetCompletedEvent presetEvent2 = assertInstanceOf(PresetCompletedEvent.class, eventsA.get(2));
+        assertEquals("custom_pack", presetEvent2.getPresetId());
+        assertFalse(presetEvent2.isBuiltin());
+
+        // 2. Second player recording the same key is not world-first -> isWorldFirst() == false
+        Tracker.RecordOutcome outcomeB = Tracker.applyRecord(data, PLAYER_B, "Bob", diamond, recB, true);
+        assertEquals(Tracker.RecordOutcome.RECORDED, outcomeB);
+        List<Event> eventsB = new ArrayList<>();
+        Tracker.postRecordEvents(null, diamond, recB, outcomeB, List.of(), eventsB::add);
+        assertEquals(1, eventsB.size());
+        assertFalse(assertInstanceOf(MilestoneRecordedEvent.class, eventsB.get(0)).isWorldFirst());
+
+        // 3. When worldFirstEnabled == false, a brand-new key produces isWorldFirst() == false
+        Tracker.RecordOutcome outcomeDisabledWf = Tracker.applyRecord(data, PLAYER_A, "Alice", gold, recA, false);
+        assertEquals(Tracker.RecordOutcome.RECORDED, outcomeDisabledWf);
+        List<Event> eventsDisabledWf = new ArrayList<>();
+        Tracker.postRecordEvents(null, gold, recA, outcomeDisabledWf, List.of(), eventsDisabledWf::add);
+        assertEquals(1, eventsDisabledWf.size());
+        assertFalse(assertInstanceOf(MilestoneRecordedEvent.class, eventsDisabledWf.get(0)).isWorldFirst());
+
+        // 4. When presetsEnabled == false, no PresetCompletedEvent is posted even if all preset targets are met
+        Tracker.RecordOutcome outcomeDisabledPresets = Tracker.applyRecord(data, PLAYER_A, "Alice", emerald, recA, true);
+        assertEquals(Tracker.RecordOutcome.RECORDED_WORLD_FIRST, outcomeDisabledPresets);
+        List<Presets.PresetDefinition> completedDisabled = Tracker.evaluatePresetCompletions(
+                data, PLAYER_A, emerald, presets, knownItems::contains, false);
+        assertTrue(completedDisabled.isEmpty());
+        List<Event> eventsDisabledPresets = new ArrayList<>();
+        Tracker.postRecordEvents(null, emerald, recA, outcomeDisabledPresets, completedDisabled, eventsDisabledPresets::add);
+        assertEquals(1, eventsDisabledPresets.size());
+        MilestoneRecordedEvent emeraldEvent = assertInstanceOf(MilestoneRecordedEvent.class, eventsDisabledPresets.get(0));
+        assertEquals(TargetKey.of("minecraft:emerald", 8), emeraldEvent.getTargetKey());
+        assertTrue(emeraldEvent.isWorldFirst());
+
+        // 5. Duplicate record (ALREADY_RECORDED) posts no events
+        Tracker.RecordOutcome duplicate = Tracker.applyRecord(data, PLAYER_A, "Alice", diamond, recB, true);
+        assertEquals(Tracker.RecordOutcome.ALREADY_RECORDED, duplicate);
+        List<Event> eventsDup = new ArrayList<>();
+        Tracker.postRecordEvents(null, diamond, recB, duplicate, List.of(builtinPreset), eventsDup::add);
+        assertTrue(eventsDup.isEmpty());
+    }
+
+    // ---- F32: write API (recordNow) ----
+
+    @Test
+    void canRecordNowRejectsFakePlayerPausedNonTargetAndAlreadyRecorded() {
+        MilestoneData data = new MilestoneData();
+        TargetKey diamond = TargetKey.of("minecraft:diamond");
+        TargetKey defaultKey = TargetKey.of("minecraft:iron_ingot", 64);
+        TargetKey other = TargetKey.of("minecraft:emerald");
+        Set<TargetKey> defaults = Set.of(defaultKey);
+
+        // No PlayerData yet: default targets are still effective, personal ones are not
+        assertTrue(Tracker.canRecordNow(false, false, defaults, null, defaultKey));
+        assertFalse(Tracker.canRecordNow(false, false, defaults, null, diamond));
+
+        MilestoneData.PlayerData pd = data.player(PLAYER_A);
+        pd.targets.add(diamond);
+        assertTrue(Tracker.canRecordNow(false, false, defaults, pd, diamond), "personal target");
+        assertTrue(Tracker.canRecordNow(false, false, defaults, pd, defaultKey), "default target");
+        assertFalse(Tracker.canRecordNow(false, false, defaults, pd, other), "not an effective target");
+        assertFalse(Tracker.canRecordNow(false, false, defaults, pd, TargetKey.of("minecraft:diamond", 2)),
+                "quantity is part of the key");
+
+        assertFalse(Tracker.canRecordNow(true, false, defaults, pd, diamond), "FakePlayer");
+        assertFalse(Tracker.canRecordNow(false, true, defaults, pd, diamond), "recordingPaused");
+
+        pd.records.put(diamond, new MilestoneRecord(100, 1L, 1_700_000_000_000L));
+        assertFalse(Tracker.canRecordNow(false, false, defaults, pd, diamond), "already recorded");
+        assertTrue(Tracker.canRecordNow(false, false, defaults, pd, defaultKey));
+    }
+
+    @Test
+    void recordNowNestingDepthIsCappedAtSixteen() {
+        assertEquals(16, Tracker.MAX_RECORD_NOW_DEPTH);
+        assertEquals(16, ItemMilestoneLogApi.MAX_RECORD_NOW_DEPTH);
+
+        Tracker.NestingGuard guard = new Tracker.NestingGuard(Tracker.MAX_RECORD_NOW_DEPTH);
+        AtomicInteger deepest = new AtomicInteger();
+        AtomicInteger overflows = new AtomicInteger();
+        AtomicInteger attempts = new AtomicInteger();
+
+        // Endless chain: every level tries to nest one more call (like recordNow from a listener).
+        class Chain {
+            boolean call() {
+                attempts.incrementAndGet();
+                return guard.run(() -> {
+                    deepest.set(Math.max(deepest.get(), guard.depth()));
+                    call();
+                    return true;
+                }, overflows::incrementAndGet);
+            }
+        }
+        assertTrue(new Chain().call(), "the outermost call succeeds");
+        assertEquals(16, deepest.get(), "16 nested levels run");
+        assertEquals(17, attempts.get(), "the 17th nested call is attempted");
+        assertEquals(1, overflows.get(), "the 17th call returns false and warns once");
+        assertEquals(0, guard.depth(), "depth unwinds after the chain");
+
+        // The guard is reusable after an overflow, and the depth is restored even when the action throws.
+        assertTrue(guard.run(() -> true, overflows::incrementAndGet));
+        assertThrows(IllegalStateException.class, () -> guard.run(() -> {
+            throw new IllegalStateException("boom");
+        }, overflows::incrementAndGet));
+        assertEquals(0, guard.depth());
+        assertEquals(1, overflows.get());
+    }
+
+    @Test
+    void postRecordEventsPropagatesRecordCause() {
+        TargetKey diamond = TargetKey.of("minecraft:diamond");
+        MilestoneRecord rec = new MilestoneRecord(1200, 4L, 1_700_000_000_000L);
+        Presets.PresetDefinition preset = new Presets.PresetDefinition(
+                "pack", "Pack", List.of(diamond), false);
+
+        for (RecordCause cause : RecordCause.values()) {
+            List<Event> events = new ArrayList<>();
+            Tracker.postRecordEvents(null, diamond, rec, Tracker.RecordOutcome.RECORDED_WORLD_FIRST,
+                    List.of(preset), cause, events::add);
+            assertEquals(2, events.size());
+            MilestoneRecordedEvent recorded = assertInstanceOf(MilestoneRecordedEvent.class, events.get(0));
+            assertEquals(cause, recorded.getCause());
+            assertTrue(recorded.isWorldFirst());
+            assertInstanceOf(PresetCompletedEvent.class, events.get(1));
+        }
+
+        // The overload without a cause is the gameplay path
+        List<Event> gameplay = new ArrayList<>();
+        Tracker.postRecordEvents(null, diamond, rec, Tracker.RecordOutcome.RECORDED, List.of(), gameplay::add);
+        assertEquals(RecordCause.GAMEPLAY, assertInstanceOf(MilestoneRecordedEvent.class, gameplay.get(0)).getCause());
+
+        // ALREADY_RECORDED posts nothing regardless of cause
+        List<Event> none = new ArrayList<>();
+        Tracker.postRecordEvents(null, diamond, rec, Tracker.RecordOutcome.ALREADY_RECORDED, List.of(),
+                RecordCause.API, none::add);
+        assertTrue(none.isEmpty());
+    }
+
+    @Test
+    void milestoneRecordedEventConstructorsDefaultCauseToGameplay() {
+        assertEquals(RecordCause.GAMEPLAY,
+                new MilestoneRecordedEvent(null, "minecraft:diamond", 10, 1L, 2L).getCause());
+        assertEquals(RecordCause.GAMEPLAY,
+                new MilestoneRecordedEvent(null, "minecraft:diamond", 5, 10, 1L, 2L).getCause());
+        assertEquals(RecordCause.GAMEPLAY,
+                new MilestoneRecordedEvent(null, "minecraft:diamond", 5, 10, 1L, 2L, true).getCause());
+        assertEquals(RecordCause.GAMEPLAY,
+                new MilestoneRecordedEvent(null, "minecraft:diamond", 5, 10, 1L, 2L, true, null).getCause());
+        MilestoneRecordedEvent api = new MilestoneRecordedEvent(null, "minecraft:diamond", 5, 10, 1L, 2L, false, RecordCause.API);
+        assertEquals(RecordCause.API, api.getCause());
+        assertFalse(api.isWorldFirst());
+        assertEquals(RecordCause.ADMIN_GRANT,
+                new MilestoneRecordedEvent(null, "minecraft:diamond", 1, 10, 1L, 2L, false, RecordCause.ADMIN_GRANT).getCause());
     }
 }

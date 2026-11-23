@@ -278,6 +278,10 @@ public final class MilestoneCommands {
                         .executes(MilestoneCommands::exportAll))
                 .then(Commands.literal("mutebroadcast").executes(MilestoneCommands::muteBroadcast))
                 .then(Commands.literal("muteprogress").executes(MilestoneCommands::muteProgress))
+                .then(Commands.literal("discordoptout").executes(MilestoneCommands::discordOptOut))
+                .then(Commands.literal("discordtest")
+                        .requires(src -> src.hasPermission(2))
+                        .executes(MilestoneCommands::discordTest))
                 .then(Commands.literal("admin")
                         .requires(src -> src.hasPermission(2))
                         .then(Commands.literal("players").executes(MilestoneCommands::adminPlayers))
@@ -666,6 +670,78 @@ public final class MilestoneCommands {
         return send(ctx, ServerLang.tr(player, key));
     }
 
+    // --------------------------------------------------------- F45 Discord opt-out
+
+    private static int discordOptOut(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+        return respond(ctx, MilestoneService.toggleDiscordOptOut(player(ctx)));
+    }
+
+    // --------------------------------------------------------- F49 Discord test
+
+    private static int discordTest(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+        MinecraftServer server = source.getServer();
+        ServerPlayer executorPlayer = source.getPlayer();
+        UUID executorUuid = executorPlayer != null ? executorPlayer.getUUID() : null;
+
+        DiscordTestResult immediateError = DiscordNotifier.sendTestMessage(result -> {
+            if (server == null) {
+                return;
+            }
+            server.execute(() -> deliverDiscordTestResult(server, source, executorPlayer, executorUuid, result));
+        });
+        if (immediateError != null) {
+            return fail(ctx, formatDiscordTestResult(source.getPlayer(), immediateError));
+        }
+        return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.discordtest_sending"));
+    }
+
+    private static void deliverDiscordTestResult(
+            MinecraftServer server,
+            CommandSourceStack source,
+            @Nullable ServerPlayer executorPlayer,
+            @Nullable UUID executorUuid,
+            DiscordTestResult result) {
+        if (executorUuid != null) {
+            ServerPlayer online = server.getPlayerList().getPlayer(executorUuid);
+            if (online == null) {
+                return;
+            }
+            Component msg = formatDiscordTestResult(online, result);
+            if (online == executorPlayer) {
+                if (result.isSuccess()) {
+                    source.sendSuccess(() -> msg, false);
+                } else {
+                    source.sendFailure(msg);
+                }
+            } else {
+                online.sendSystemMessage(msg);
+            }
+            return;
+        }
+        Component msg = formatDiscordTestResult(null, result);
+        if (result.isSuccess()) {
+            source.sendSuccess(() -> msg, false);
+        } else {
+            source.sendFailure(msg);
+        }
+    }
+
+    private static Component formatDiscordTestResult(@Nullable ServerPlayer player, DiscordTestResult result) {
+        return switch (result.kind()) {
+            case NOT_CONFIGURED -> ServerLang.tr(player, "message.itemmilestonelog.discordtest_not_configured");
+            case ENV_MISSING -> ServerLang.tr(player, "message.itemmilestonelog.discordtest_env_missing",
+                    Component.literal(result.detail() != null ? result.detail() : ""));
+            case INVALID_URL -> ServerLang.tr(player, "message.itemmilestonelog.discordtest_invalid_url");
+            case IN_PROGRESS -> ServerLang.tr(player, "message.itemmilestonelog.discordtest_in_progress");
+            case SUCCESS -> ServerLang.tr(player, "message.itemmilestonelog.discordtest_success", result.detail());
+            case INVALID_WEBHOOK -> ServerLang.tr(player, "message.itemmilestonelog.discordtest_invalid_webhook", result.detail());
+            case RATE_LIMITED -> ServerLang.tr(player, "message.itemmilestonelog.discordtest_rate_limited");
+            case HTTP_ERROR -> ServerLang.tr(player, "message.itemmilestonelog.discordtest_http_error", result.detail());
+            case NETWORK_ERROR -> ServerLang.tr(player, "message.itemmilestonelog.discordtest_network_error", result.detail());
+        };
+    }
+
     // --------------------------------------------------------- F9 admin
 
     private record ResolvedPlayer(@Nullable Map.Entry<UUID, MilestoneData.PlayerData> entry, boolean ambiguous) {
@@ -838,13 +914,17 @@ public final class MilestoneCommands {
         MilestoneData.PlayerData pd = target.getValue();
         int count = pd.records.size();
         boolean clearedProgress = !pd.progressNotified.isEmpty();
+        boolean clearedCompletedPresets = !pd.completedPresets.isEmpty();
         if (count > 0) {
             pd.records.clear();
         }
         if (clearedProgress) {
             pd.progressNotified.clear();
         }
-        if (count > 0 || clearedProgress) {
+        if (clearedCompletedPresets) {
+            pd.completedPresets.clear();
+        }
+        if (count > 0 || clearedProgress || clearedCompletedPresets) {
             data.setDirty();
             if (count > 0) {
                 ServerPlayer online = source.getServer().getPlayerList().getPlayer(target.getKey());

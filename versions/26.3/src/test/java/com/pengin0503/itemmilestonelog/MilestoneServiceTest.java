@@ -143,6 +143,75 @@ class MilestoneServiceTest {
         assertTrue(pd.targets.isEmpty());
     }
 
+    // ---- F32: write API (addTarget / removeTarget) ----
+
+    @Test
+    void addTargetFromApiValidatesLikeAddCommandAndCreatesPlayerData() {
+        MilestoneData data = new MilestoneData();
+        Set<String> knownItems = Set.of("minecraft:diamond", "minecraft:iron_ingot");
+
+        // null target -> false, no PlayerData
+        assertFalse(MilestoneService.addTargetFromApi(data, PLAYER_A, null, knownItems::contains));
+        // unknown item / air -> false, no PlayerData
+        assertFalse(MilestoneService.addTargetFromApi(data, PLAYER_A, TargetKey.of("minecraft:unknown"), knownItems::contains));
+        assertFalse(MilestoneService.addTargetFromApi(data, PLAYER_A, TargetKey.of("minecraft:air"), knownItems::contains));
+        assertNull(data.playerOrNull(PLAYER_A));
+
+        // Success creates PlayerData (F22); un-namespaced key is normalized
+        assertTrue(MilestoneService.addTargetFromApi(data, PLAYER_A, TargetKey.of("diamond", 64), knownItems::contains));
+        assertNotNull(data.playerOrNull(PLAYER_A));
+        assertTrue(data.playerOrNull(PLAYER_A).targets.contains(TargetKey.of("minecraft:diamond", 64)));
+        assertTrue(data.isDirty());
+
+        // Duplicate -> false
+        assertFalse(MilestoneService.addTargetFromApi(data, PLAYER_A, TargetKey.of("minecraft:diamond", 64), knownItems::contains));
+
+        // 1024 cap
+        MilestoneData.PlayerData pd = data.player(PLAYER_A);
+        for (int i = pd.targets.size(); i < MilestoneService.MAX_PERSONAL_TARGETS; i++) {
+            pd.targets.add(TargetKey.of("minecraft:filler_" + i));
+        }
+        assertFalse(MilestoneService.addTargetFromApi(data, PLAYER_A, TargetKey.of("minecraft:iron_ingot"), knownItems::contains));
+        assertFalse(pd.targets.contains(TargetKey.of("minecraft:iron_ingot")));
+        assertEquals(MilestoneService.MAX_PERSONAL_TARGETS, pd.targets.size());
+    }
+
+    @Test
+    void removeTargetFromApiCleansUpProgressAndProtectsDefaultTargets() {
+        MilestoneData data = new MilestoneData();
+        TargetKey diamond = TargetKey.of("minecraft:diamond", 100);
+        TargetKey defaultKey = TargetKey.of("minecraft:iron_ingot");
+        Set<TargetKey> defaults = Set.of(defaultKey);
+
+        // null target / no PlayerData -> false, never creates PlayerData
+        assertFalse(MilestoneService.removeTargetFromApi(data, PLAYER_A, null, defaults));
+        assertFalse(MilestoneService.removeTargetFromApi(data, PLAYER_A, diamond, defaults));
+        assertNull(data.playerOrNull(PLAYER_A));
+
+        MilestoneData.PlayerData pd = data.player(PLAYER_A);
+        pd.targets.add(diamond);
+        pd.targets.add(defaultKey);
+        pd.progressNotified.put(diamond, 50);
+        pd.progressNotified.put(defaultKey, 50);
+        MilestoneRecord rec = new MilestoneRecord(10, 1L, 2L);
+        pd.records.put(diamond, rec);
+
+        // defaultTargets keys cannot be removed (also when given un-namespaced)
+        assertFalse(MilestoneService.removeTargetFromApi(data, PLAYER_A, defaultKey, defaults));
+        assertFalse(MilestoneService.removeTargetFromApi(data, PLAYER_A, TargetKey.of("iron_ingot"), defaults));
+        assertTrue(pd.targets.contains(defaultKey));
+        assertEquals(50, pd.progressNotified.get(defaultKey));
+
+        // Personal target removed with §1.1 cleanup: progressNotified dropped, record kept
+        assertTrue(MilestoneService.removeTargetFromApi(data, PLAYER_A, diamond, defaults));
+        assertFalse(pd.targets.contains(diamond));
+        assertFalse(pd.progressNotified.containsKey(diamond));
+        assertEquals(rec, pd.records.get(diamond));
+
+        // Not a personal target any more -> false
+        assertFalse(MilestoneService.removeTargetFromApi(data, PLAYER_A, diamond, defaults));
+    }
+
     @Test
     void applyPresetSkipsMissingItemsDuplicatesAndRespectsTargetLimit(@TempDir Path dir) throws Exception {
         Files.writeString(dir.resolve("mixed_pack.json"), """
@@ -414,27 +483,95 @@ class MilestoneServiceTest {
         pd.progressNotified.put(diamond100, 50);
         pd.progressNotified.put(iron100, 90);
         pd.progressNotified.put(emerald100, 50);
+        pd.completedPresets.add("vanilla_endgame");
+        pd.completedPresets.add("my_custom");
         pd.muteProgressAlerts = true;
+        pd.excludeFromDiscord = true;
 
-        // removeTarget deletes progressNotified for the removed key only
+        // removeTarget deletes progressNotified for the removed key only and keeps completedPresets
         assertTrue(MilestoneService.removeTarget(
                 data, PLAYER_A, null, "minecraft:diamond", 100, knownItems::contains, LITERAL_NAME).success());
         assertFalse(pd.progressNotified.containsKey(diamond100));
         assertEquals(90, pd.progressNotified.get(iron100));
         assertEquals(50, pd.progressNotified.get(emerald100));
+        assertEquals(Set.of("vanilla_endgame", "my_custom"), pd.completedPresets);
         assertTrue(pd.muteProgressAlerts);
+        assertTrue(pd.excludeFromDiscord);
 
-        // resetRecord deletes progressNotified for the reset key only
+        // resetRecord deletes progressNotified for the reset key only and keeps completedPresets
         assertTrue(MilestoneService.resetRecord(
                 data, PLAYER_A, null, "minecraft:iron_ingot", 100, knownItems::contains, LITERAL_NAME).success());
         assertFalse(pd.progressNotified.containsKey(iron100));
         assertEquals(50, pd.progressNotified.get(emerald100));
+        assertEquals(Set.of("vanilla_endgame", "my_custom"), pd.completedPresets);
         assertTrue(pd.muteProgressAlerts);
+        assertTrue(pd.excludeFromDiscord);
 
-        // resetAllRecords clears all remaining progressNotified even when records map is already empty
+        // resetAllRecords clears all remaining progressNotified and completedPresets even when records map is already empty
         assertTrue(pd.records.isEmpty());
         assertTrue(MilestoneService.resetAllRecords(data, PLAYER_A, null).success());
         assertTrue(pd.progressNotified.isEmpty());
+        assertTrue(pd.completedPresets.isEmpty());
         assertTrue(pd.muteProgressAlerts);
+        assertTrue(pd.excludeFromDiscord);
+    }
+
+    @Test
+    void presetDisplayNameResolvesBuiltinsPerRecipientLanguageAndEmbedsCustomsLiterally() {
+        Presets.PresetDefinition builtin = Presets.get("atm_star");
+        assertNotNull(builtin);
+        assertEquals("Preset: ATM Star",
+                MilestoneService.presetDisplayNameForLang("en_us", builtin).getString());
+        assertEquals("プリセット: ATM Star",
+                MilestoneService.presetDisplayNameForLang("ja_jp", builtin).getString());
+
+        Presets.PresetDefinition customWithName = new Presets.PresetDefinition(
+                "my_goals", "100% Pack %s Goals", List.of(TargetKey.of("minecraft:diamond")), false);
+        assertEquals("100% Pack %s Goals",
+                MilestoneService.presetDisplayNameForLang("en_us", customWithName).getString());
+        assertEquals("100% Pack %s Goals",
+                MilestoneService.presetDisplayNameForLang("ja_jp", customWithName).getString());
+
+        // Custom preset without name falls back to preset ID
+        Presets.PresetDefinition customFallback = new Presets.PresetDefinition(
+                "my_goals", "", List.of(TargetKey.of("minecraft:diamond")), false);
+        assertEquals("my_goals",
+                MilestoneService.presetDisplayNameForLang("en_us", customFallback).getString());
+    }
+
+    @Test
+    void toggleDiscordOptOutTogglesFlagAndRespectsConfigSwitch() {
+        MilestoneData data = new MilestoneData();
+
+        // Disabled by config: returns feature_disabled and does NOT create PlayerData
+        MilestoneService.ActionResult disabledMissing = MilestoneService.toggleDiscordOptOut(data, PLAYER_A, null, false);
+        assertFalse(disabledMissing.success());
+        assertEquals("This feature is disabled on this server.", disabledMissing.message().getString());
+        assertNull(data.playerOrNull(PLAYER_A));
+
+        // Enabled: toggles false -> true
+        MilestoneService.ActionResult enabledOn = MilestoneService.toggleDiscordOptOut(data, PLAYER_A, null, true);
+        assertTrue(enabledOn.success());
+        assertEquals("Your milestones will no longer be posted to Discord.", enabledOn.message().getString());
+        assertNotNull(data.playerOrNull(PLAYER_A));
+        assertTrue(data.playerOrNull(PLAYER_A).excludeFromDiscord);
+
+        // Disabled after opting out: returns feature_disabled and preserves existing excludeFromDiscord = true
+        MilestoneService.ActionResult disabledExisting = MilestoneService.toggleDiscordOptOut(data, PLAYER_A, null, false);
+        assertFalse(disabledExisting.success());
+        assertEquals("This feature is disabled on this server.", disabledExisting.message().getString());
+        assertTrue(data.playerOrNull(PLAYER_A).excludeFromDiscord);
+
+        // Enabled again: toggles true -> false
+        MilestoneService.ActionResult enabledOff = MilestoneService.toggleDiscordOptOut(data, PLAYER_A, null, true);
+        assertTrue(enabledOff.success());
+        assertEquals("Your milestones will be posted to Discord again.", enabledOff.message().getString());
+        assertFalse(data.playerOrNull(PLAYER_A).excludeFromDiscord);
+
+        // Verify Japanese translations render as specified
+        assertEquals("あなたの記録を Discord に投稿しないようにしました。",
+                ServerLang.trForLang("ja_jp", "message.itemmilestonelog.discordoptout_on").getString());
+        assertEquals("あなたの記録を Discord に投稿するようにしました。",
+                ServerLang.trForLang("ja_jp", "message.itemmilestonelog.discordoptout_off").getString());
     }
 }

@@ -17,18 +17,22 @@ VERSIONS_26=(26.1.2 26.2 26.3)
 # Files that must be byte-identical across ALL four Minecraft versions
 # (1.21.1, 26.1.2, 26.2, 26.3).
 IDENTICAL_ALL_4=(
-  # src/main/java (9 files)
+  # src/main/java (11 files)
   "src/main/java/com/pengin0503/itemmilestonelog/DiscordNotifier.java"
   "src/main/java/com/pengin0503/itemmilestonelog/api/ItemMilestoneLogApi.java"
   "src/main/java/com/pengin0503/itemmilestonelog/api/MilestoneRecord.java"
   "src/main/java/com/pengin0503/itemmilestonelog/api/MilestoneRecordedEvent.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/api/PresetCompletedEvent.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/api/RecordCause.java"
   "src/main/java/com/pengin0503/itemmilestonelog/api/TargetKey.java"
   "src/main/java/com/pengin0503/itemmilestonelog/api/WorldFirstRecord.java"
   "src/main/java/com/pengin0503/itemmilestonelog/client/ActionRowLayout.java"
   "src/main/java/com/pengin0503/itemmilestonelog/gametest/MilestoneGameTests.java"
   "src/main/java/com/pengin0503/itemmilestonelog/network/TargetEntry.java"
 
-  # src/test/java (10 files)
+  # src/test/java (12 files)
+  "src/test/java/com/pengin0503/itemmilestonelog/DiscordNotifierTest.java"
+  "src/test/java/com/pengin0503/itemmilestonelog/api/ItemMilestoneLogApiTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/LangFilesTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/MilestoneExportTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/MilestoneServiceTest.java"
@@ -46,7 +50,7 @@ IDENTICAL_ALL_4=(
 # and 26.3. Together with the 8 src/main/java files in IDENTICAL_ALL_4, this
 # covers all 22 src/main/java files that are identical across 26.x.
 IDENTICAL_26_X=(
-  # src/main/java (15 files; +9 from IDENTICAL_ALL_4 = 24 src/main/java files)
+  # src/main/java (15 files; +11 from IDENTICAL_ALL_4 = 26 src/main/java files)
   "src/main/java/com/pengin0503/itemmilestonelog/Config.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestoneCommands.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestoneData.java"

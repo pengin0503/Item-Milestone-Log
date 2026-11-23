@@ -44,6 +44,15 @@ class TextEscapingTest {
         assertEquals("A", TextEscaping.truncateUtf16(withEmoji, 2));
         assertEquals("A\uD83D\uDC8E", TextEscaping.truncateUtf16(withEmoji, 3));
         assertEquals(withEmoji, TextEscaping.truncateUtf16(withEmoji, 4));
+        assertEquals("", TextEscaping.truncateUtf16("\uD83D\uDC8E", 1));
+
+        // Discord cap boundaries (256, 1024, 2000, 4096) with a surrogate pair straddling the cut.
+        for (int cap : new int[]{256, 1024, 2000, 4096}) {
+            String straddling = "a".repeat(cap - 1) + "\uD83D\uDC8E" + "z";
+            String truncated = TextEscaping.truncateUtf16(straddling, cap);
+            assertEquals(cap - 1, truncated.length());
+            assertEquals("a".repeat(cap - 1), truncated);
+        }
     }
 
     @Test
