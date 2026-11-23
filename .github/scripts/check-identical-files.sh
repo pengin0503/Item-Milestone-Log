@@ -17,8 +17,10 @@ VERSIONS_26=(26.1.2 26.2 26.3)
 # Files that must be byte-identical across ALL four Minecraft versions
 # (1.21.1, 26.1.2, 26.2, 26.3).
 IDENTICAL_ALL_4=(
-  # src/main/java (11 files)
+  # src/main/java (13 files)
   "src/main/java/com/pengin0503/itemmilestonelog/DiscordNotifier.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/MilestoneRankings.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/WorldFirstNames.java"
   "src/main/java/com/pengin0503/itemmilestonelog/api/ItemMilestoneLogApi.java"
   "src/main/java/com/pengin0503/itemmilestonelog/api/MilestoneRecord.java"
   "src/main/java/com/pengin0503/itemmilestonelog/api/MilestoneRecordedEvent.java"
@@ -30,8 +32,10 @@ IDENTICAL_ALL_4=(
   "src/main/java/com/pengin0503/itemmilestonelog/gametest/MilestoneGameTests.java"
   "src/main/java/com/pengin0503/itemmilestonelog/network/TargetEntry.java"
 
-  # src/test/java (12 files)
+  # src/test/java (14 files)
   "src/test/java/com/pengin0503/itemmilestonelog/DiscordNotifierTest.java"
+  "src/test/java/com/pengin0503/itemmilestonelog/MilestoneRankingsTest.java"
+  "src/test/java/com/pengin0503/itemmilestonelog/WorldFirstNamesTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/api/ItemMilestoneLogApiTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/LangFilesTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/MilestoneExportTest.java"
