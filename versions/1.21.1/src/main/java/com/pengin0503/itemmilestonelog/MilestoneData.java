@@ -52,6 +52,10 @@ public class MilestoneData extends SavedData {
         public boolean firstJoinHintShown = false;
         /** Whether this player has opted out of other players' milestone broadcasts. */
         public boolean muteBroadcasts = false;
+        /** Whether this player has opted out of quantity-target progress alerts. */
+        public boolean muteProgressAlerts = false;
+        /** Target (item + quantity) -> highest progress alert threshold already notified (0 possible as baseline). */
+        public final Map<TargetKey, Integer> progressNotified = new LinkedHashMap<>();
     }
 
     private final Map<UUID, PlayerData> players = new LinkedHashMap<>();
@@ -259,6 +263,34 @@ public class MilestoneData extends SavedData {
             if (entry.contains("muteBroadcasts")) {
                 pd.muteBroadcasts = entry.getBoolean("muteBroadcasts");
             }
+            if (entry.contains("muteProgressAlerts", Tag.TAG_ANY_NUMERIC)) {
+                pd.muteProgressAlerts = entry.getBoolean("muteProgressAlerts");
+            } else if (entry.contains("muteProgressAlerts")) {
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed muteProgressAlerts tag in SavedData");
+            }
+            if (entry.contains("progressNotified", Tag.TAG_COMPOUND)) {
+                CompoundTag progressTag = entry.getCompound("progressNotified");
+                for (String rawKey : progressTag.getAllKeys()) {
+                    TargetKey parsed = TargetKey.tryParseEncoded(rawKey);
+                    if (parsed == null) {
+                        ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid progressNotified key '{}' in SavedData", rawKey);
+                        continue;
+                    }
+                    if (!progressTag.contains(rawKey, Tag.TAG_ANY_NUMERIC)) {
+                        ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping non-numeric progressNotified value for '{}' in SavedData", rawKey);
+                        continue;
+                    }
+                    int threshold = progressTag.getInt(rawKey);
+                    if (!ProgressAlertLogic.isValidStoredThreshold(threshold)) {
+                        ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping out-of-range progressNotified value {} for '{}' in SavedData",
+                                threshold, rawKey);
+                        continue;
+                    }
+                    pd.progressNotified.put(parsed, threshold);
+                }
+            } else if (entry.contains("progressNotified")) {
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed progressNotified tag in SavedData");
+            }
             data.players.put(uuid, pd);
         }
 
@@ -329,6 +361,16 @@ public class MilestoneData extends SavedData {
             }
             if (pd.muteBroadcasts) {
                 entry.putBoolean("muteBroadcasts", true);
+            }
+            if (pd.muteProgressAlerts) {
+                entry.putBoolean("muteProgressAlerts", true);
+            }
+            if (!pd.progressNotified.isEmpty()) {
+                CompoundTag progressTag = new CompoundTag();
+                for (Map.Entry<TargetKey, Integer> p : pd.progressNotified.entrySet()) {
+                    progressTag.putInt(p.getKey().toEncodedString(), p.getValue());
+                }
+                entry.put("progressNotified", progressTag);
             }
             all.put(e.getKey().toString(), entry);
         }

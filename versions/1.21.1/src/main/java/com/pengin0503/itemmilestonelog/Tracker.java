@@ -7,7 +7,9 @@ import com.pengin0503.itemmilestonelog.network.ModNetworking;
 import com.pengin0503.itemmilestonelog.network.SyncMilestonesPayload;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundSource;
@@ -20,12 +22,17 @@ import net.neoforged.neoforge.common.util.FakePlayer;
 import net.neoforged.neoforge.event.entity.player.ItemEntityPickupEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.tick.PlayerTickEvent;
+import net.neoforged.neoforge.event.tick.ServerTickEvent;
 
 import javax.annotation.Nullable;
+import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -33,6 +40,8 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
+import java.util.function.IntSupplier;
 
 /**
  * Watches tracked items entering a player's possession and records the
@@ -48,6 +57,25 @@ public final class Tracker {
     private static volatile DefaultTargetsCache defaultTargetsCache = new DefaultTargetsCache(null, Set.of());
     /** Craft/smelt results awaiting verification next tick: player -> itemId -> max event count. Server thread only. */
     private static final Map<UUID, Map<String, Integer>> PENDING_CRAFT_CHECKS = new HashMap<>();
+
+    record QueuedRecord(TargetKey key, MilestoneRecord record, boolean worldFirst) {
+    }
+
+    static final class PendingNotifications {
+        final UUID playerId;
+        String playerName;
+        Component actorDisplayName;
+        final List<QueuedRecord> records = new ArrayList<>();
+
+        PendingNotifications(UUID playerId, String playerName, Component actorDisplayName) {
+            this.playerId = playerId;
+            this.playerName = playerName;
+            this.actorDisplayName = actorDisplayName;
+        }
+    }
+
+    /** Queued human-facing notifications to flush on ServerTickEvent.Post (insertion order). Server thread only. */
+    private static final Map<UUID, PendingNotifications> PENDING_NOTIFICATIONS = new LinkedHashMap<>();
 
     private Tracker() {
     }
@@ -105,6 +133,9 @@ public final class Tracker {
             pd.lastKnownName = name;
             data.setDirty();
         }
+        if (cleanupProgressNotified(pd, effectiveTargets(pd))) {
+            data.setDirty();
+        }
         if (Config.SHOW_FIRST_JOIN_HINT.get() && !pd.firstJoinHintShown) {
             pd.firstJoinHintShown = true;
             data.setDirty();
@@ -148,6 +179,16 @@ public final class Tracker {
         if (recordingPaused(player)) {
             return;
         }
+        scanInventory(player);
+    }
+
+    /**
+     * Runs one inventory scan pass for {@code player}, recording any newly achieved targets
+     * and updating progress-alert and creative-carry state. Extracted from {@link #onPlayerTick}
+     * so GameTests in {@code com.pengin0503.itemmilestonelog.gametest} can invoke the scan path
+     * deterministically on mock players.
+     */
+    public static void scanInventory(ServerPlayer player) {
         MilestoneData data = MilestoneData.get(player.server);
         MilestoneData.PlayerData pd = data.playerOrNull(player.getUUID());
         Set<TargetKey> pending = new HashSet<>(effectiveTargets(pd));
@@ -185,6 +226,21 @@ public final class Tracker {
             }
             if (anyRecorded) {
                 MilestoneService.syncPlayerIfOpen(player);
+            }
+        }
+
+        if (!pending.isEmpty()) {
+            List<ProgressAlertNotification> alerts = evaluateProgressAlerts(
+                    data,
+                    player.getUUID(),
+                    pending,
+                    carried,
+                    counts,
+                    Config.PROGRESS_ALERTS.get(),
+                    Config.progressAlertThresholds(),
+                    Config.PROGRESS_ALERT_MIN_COUNT.get());
+            if (!alerts.isEmpty()) {
+                sendProgressAlerts(player, alerts);
             }
         }
 
@@ -274,9 +330,46 @@ public final class Tracker {
             return;
         }
         MilestoneData data = MilestoneData.get(player.server);
-        if (data.player(player.getUUID()).carriedFromCreative.addAll(carried)) {
-            data.setDirty();
+        MilestoneData.PlayerData pd = data.player(player.getUUID());
+        Set<String> newlyMarked = new LinkedHashSet<>();
+        for (String id : carried) {
+            if (pd.carriedFromCreative.add(id)) {
+                newlyMarked.add(id);
+            }
         }
+        if (!newlyMarked.isEmpty()) {
+            data.setDirty();
+            if (Config.NOTIFY_PLAYER.get()) {
+                int affected = countCreativeCarriedTargetItems(newlyMarked, effectiveTargets(pd), pd.records.keySet());
+                if (affected > 0) {
+                    player.sendSystemMessage(ServerLang.tr(
+                            player, "message.itemmilestonelog.creative_carried_notice", affected));
+                }
+            }
+        }
+    }
+
+    /**
+     * Counts distinct item IDs among {@code markedItemIds} that match at least one unrecorded
+     * target in {@code effectiveTargets} (deduplicating multiple quantity targets for the same item).
+     */
+    static int countCreativeCarriedTargetItems(
+            Set<String> markedItemIds,
+            Set<TargetKey> effectiveTargets,
+            Set<TargetKey> recordedKeys) {
+        if (markedItemIds == null || markedItemIds.isEmpty()
+                || effectiveTargets == null || effectiveTargets.isEmpty()) {
+            return 0;
+        }
+        Set<String> affectedItemIds = new HashSet<>();
+        for (TargetKey key : effectiveTargets) {
+            if (key != null
+                    && markedItemIds.contains(key.itemId())
+                    && (recordedKeys == null || !recordedKeys.contains(key))) {
+                affectedItemIds.add(key.itemId());
+            }
+        }
+        return affectedItemIds.size();
     }
 
     @SubscribeEvent
@@ -406,7 +499,40 @@ public final class Tracker {
         return counts;
     }
 
-    record ItemAcquisitionOutcome(boolean clearedCreativeCarry, List<TargetKey> achieved) {
+    record ItemAcquisitionOutcome(
+            boolean clearedCreativeCarry,
+            List<TargetKey> achieved,
+            List<TargetKey> pendingForItem,
+            int totalInPossession) {
+        static final ItemAcquisitionOutcome EMPTY = new ItemAcquisitionOutcome(false, List.of(), List.of(), 0);
+    }
+
+    static List<TargetKey> collectUnrecordedTargetsForItem(
+            String itemId,
+            Set<TargetKey> defaultTargets,
+            @Nullable MilestoneData.PlayerData pd) {
+        List<TargetKey> pending = null;
+        for (TargetKey key : defaultTargets) {
+            if (key.itemId().equals(itemId) && (pd == null || !pd.records.containsKey(key))) {
+                if (pending == null) {
+                    pending = new ArrayList<>();
+                }
+                pending.add(key);
+            }
+        }
+        if (pd != null && !pd.targets.isEmpty()) {
+            for (TargetKey key : pd.targets) {
+                if (key.itemId().equals(itemId)
+                        && !pd.records.containsKey(key)
+                        && !defaultTargets.contains(key)) {
+                    if (pending == null) {
+                        pending = new ArrayList<>();
+                    }
+                    pending.add(key);
+                }
+            }
+        }
+        return pending == null ? List.of() : pending;
     }
 
     static ItemAcquisitionOutcome evaluateItemAcquisition(
@@ -414,39 +540,52 @@ public final class Tracker {
             int totalInPossession,
             int minCountFromEvent,
             boolean alreadyAddedToInventory,
-            Set<TargetKey> effectiveTargets,
+            Set<TargetKey> defaultTargets,
             @Nullable MilestoneData.PlayerData pd,
             Set<String> carried) {
+        return evaluateItemAcquisition(
+                itemId, () -> totalInPossession, minCountFromEvent, alreadyAddedToInventory,
+                defaultTargets, pd, carried);
+    }
+
+    static ItemAcquisitionOutcome evaluateItemAcquisition(
+            String itemId,
+            IntSupplier possessionCounter,
+            int minCountFromEvent,
+            boolean alreadyAddedToInventory,
+            Set<TargetKey> defaultTargets,
+            @Nullable MilestoneData.PlayerData pd,
+            Set<String> carried) {
+        List<TargetKey> pendingForItem = collectUnrecordedTargetsForItem(itemId, defaultTargets, pd);
+        boolean isCarried = carried.contains(itemId);
+        if (!isCarried && pendingForItem.isEmpty()) {
+            return ItemAcquisitionOutcome.EMPTY;
+        }
+        int totalInPossession = possessionCounter.getAsInt();
         boolean clearedCreativeCarry = false;
-        if (carried.contains(itemId)) {
+        if (isCarried) {
             int priorCount = alreadyAddedToInventory ? totalInPossession - minCountFromEvent : totalInPossession;
             if (priorCount <= 0) {
                 clearedCreativeCarry = true;
             } else {
-                return new ItemAcquisitionOutcome(false, List.of());
-            }
-        }
-        List<TargetKey> pendingForItem = new ArrayList<>();
-        for (TargetKey key : effectiveTargets) {
-            if (key.itemId().equals(itemId) && (pd == null || !pd.records.containsKey(key))) {
-                pendingForItem.add(key);
+                return new ItemAcquisitionOutcome(false, List.of(), pendingForItem, totalInPossession);
             }
         }
         if (pendingForItem.isEmpty()) {
-            return new ItemAcquisitionOutcome(clearedCreativeCarry, List.of());
+            return new ItemAcquisitionOutcome(clearedCreativeCarry, List.of(), List.of(), totalInPossession);
         }
         // When the event amount is already reflected in possession (pickup, or the deferred craft/smelt
         // check one tick later when the crafted stack sits in the inventory or cursor), possession is the
         // ground truth: a Q-dropped result stack is on the ground by then and is correctly not counted.
         int total = alreadyAddedToInventory ? totalInPossession : Math.max(totalInPossession, minCountFromEvent);
-        pendingForItem.sort(TargetKey::compareTo);
         List<TargetKey> achieved = new ArrayList<>();
         for (TargetKey key : pendingForItem) {
             if (total >= key.count()) {
                 achieved.add(key);
             }
         }
-        return new ItemAcquisitionOutcome(clearedCreativeCarry, achieved);
+        achieved.sort(TargetKey::compareTo);
+        return new ItemAcquisitionOutcome(clearedCreativeCarry, achieved, pendingForItem, totalInPossession);
     }
 
     private static void tryRecordForItem(ServerPlayer player, String itemId, int minCountFromEvent,
@@ -456,28 +595,125 @@ public final class Tracker {
         }
         MilestoneData data = MilestoneData.get(player.server);
         MilestoneData.PlayerData pd = data.playerOrNull(player.getUUID());
-        int totalInPossession = countItemInPossession(player, itemId);
         Set<String> carried = carriedFromCreative(pd);
         ItemAcquisitionOutcome outcome = evaluateItemAcquisition(
-                itemId, totalInPossession, minCountFromEvent, alreadyAddedToInventory,
-                effectiveTargets(pd), pd, carried);
+                itemId,
+                () -> countItemInPossession(player, itemId),
+                minCountFromEvent,
+                alreadyAddedToInventory,
+                defaultTargets(),
+                pd,
+                carried);
+        if (outcome == ItemAcquisitionOutcome.EMPTY) {
+            return;
+        }
         if (outcome.clearedCreativeCarry()) {
             if (pd != null) {
                 pd.carriedFromCreative.remove(itemId);
             }
             data.setDirty();
         }
-        if (outcome.achieved().isEmpty()) {
-            return;
-        }
-        boolean anyRecorded = false;
-        for (TargetKey key : outcome.achieved()) {
-            if (record(player, data, key, false)) {
-                anyRecorded = true;
+        if (!outcome.achieved().isEmpty()) {
+            boolean anyRecorded = false;
+            for (TargetKey key : outcome.achieved()) {
+                if (record(player, data, key, false)) {
+                    anyRecorded = true;
+                }
+            }
+            if (anyRecorded) {
+                MilestoneService.syncPlayerIfOpen(player);
             }
         }
-        if (anyRecorded) {
-            MilestoneService.syncPlayerIfOpen(player);
+        if (!outcome.pendingForItem().isEmpty() && Config.PROGRESS_ALERTS.get()) {
+            int effectiveCount = alreadyAddedToInventory
+                    ? outcome.totalInPossession()
+                    : Math.max(outcome.totalInPossession(), minCountFromEvent);
+            Set<String> activeCarried = carriedFromCreative(data.playerOrNull(player.getUUID()));
+            List<ProgressAlertNotification> alerts = evaluateProgressAlerts(
+                    data,
+                    player.getUUID(),
+                    outcome.pendingForItem(),
+                    activeCarried,
+                    Map.of(itemId, effectiveCount),
+                    true,
+                    Config.progressAlertThresholds(),
+                    Config.PROGRESS_ALERT_MIN_COUNT.get());
+            if (!alerts.isEmpty()) {
+                sendProgressAlerts(player, alerts);
+            }
+        }
+    }
+
+    record ProgressAlertNotification(TargetKey key, int currentCount, int targetCount, int percent) {
+    }
+
+    /** Removes stale {@code progressNotified} entries for keys already recorded or no longer in effective targets. */
+    static boolean cleanupProgressNotified(@Nullable MilestoneData.PlayerData pd, Set<TargetKey> effectiveTargets) {
+        if (pd == null || pd.progressNotified.isEmpty()) {
+            return false;
+        }
+        return pd.progressNotified.keySet().removeIf(
+                key -> pd.records.containsKey(key) || !effectiveTargets.contains(key));
+    }
+
+    static List<ProgressAlertNotification> evaluateProgressAlerts(
+            MilestoneData data,
+            UUID playerId,
+            Collection<TargetKey> candidateTargets,
+            Set<String> carried,
+            Map<String, Integer> counts,
+            boolean progressAlertsEnabled,
+            List<Integer> thresholds,
+            int minCount) {
+        if (!progressAlertsEnabled || candidateTargets.isEmpty() || thresholds.isEmpty()) {
+            return List.of();
+        }
+        MilestoneData.PlayerData existingPd = data.playerOrNull(playerId);
+        int effectiveMinCount = Math.max(ProgressAlertLogic.MIN_ALERT_COUNT_LOWER, minCount);
+        List<TargetKey> sorted = new ArrayList<>();
+        for (TargetKey key : candidateTargets) {
+            if (key.count() >= effectiveMinCount && (existingPd == null || !existingPd.records.containsKey(key))) {
+                sorted.add(key);
+            }
+        }
+        if (sorted.isEmpty()) {
+            return List.of();
+        }
+        sorted.sort(TargetKey::compareTo);
+        List<ProgressAlertNotification> notifications = new ArrayList<>();
+        boolean dirty = false;
+        MilestoneData.PlayerData pd = existingPd;
+        boolean muted = existingPd != null && existingPd.muteProgressAlerts;
+        for (TargetKey key : sorted) {
+            int currentCount = carried.contains(key.itemId()) ? 0 : counts.getOrDefault(key.itemId(), 0);
+            Integer alreadyNotified = pd != null ? pd.progressNotified.get(key) : null;
+            ProgressAlertLogic.Evaluation eval = ProgressAlertLogic.evaluate(
+                    currentCount, key.count(), thresholds, alreadyNotified, effectiveMinCount);
+            if (eval.shouldStore()) {
+                if (pd == null) {
+                    pd = data.player(playerId);
+                }
+                pd.progressNotified.put(key, eval.newStoredThreshold());
+                dirty = true;
+            }
+            if (!muted && eval.shouldNotify()) {
+                notifications.add(new ProgressAlertNotification(key, currentCount, key.count(), eval.percent()));
+            }
+        }
+        if (dirty) {
+            data.setDirty();
+        }
+        return notifications;
+    }
+
+    private static void sendProgressAlerts(ServerPlayer player, List<ProgressAlertNotification> notifications) {
+        for (ProgressAlertNotification n : notifications) {
+            Component msg = ServerLang.tr(player, "message.itemmilestonelog.progress_alert",
+                    MilestoneService.targetDisplayName(n.key()),
+                    n.currentCount(),
+                    n.targetCount(),
+                    n.percent());
+            player.sendSystemMessage(msg);
         }
     }
 
@@ -502,9 +738,52 @@ public final class Tracker {
             pd.lastKnownName = playerName;
         }
         pd.records.put(key, rec);
+        pd.progressNotified.remove(key);
         boolean worldFirst = worldFirstEnabled && data.recordWorldFirstIfAbsent(key, playerId, playerName, rec);
         data.setDirty();
         return worldFirst ? RecordOutcome.RECORDED_WORLD_FIRST : RecordOutcome.RECORDED;
+    }
+
+    @SubscribeEvent
+    public static void onServerTick(ServerTickEvent.Post event) {
+        if (PENDING_NOTIFICATIONS.isEmpty()) {
+            return;
+        }
+        flushPendingNotifications(event.getServer(), drainPendingNotifications());
+    }
+
+    static void queuePendingNotification(
+            UUID playerId,
+            @Nullable String playerName,
+            @Nullable Component actorDisplayName,
+            TargetKey key,
+            MilestoneRecord record,
+            boolean worldFirst) {
+        String safeName = playerName != null ? playerName : "";
+        Component safeDisplayName = actorDisplayName != null ? actorDisplayName : Component.literal(safeName);
+        PendingNotifications pending = PENDING_NOTIFICATIONS.computeIfAbsent(
+                playerId, id -> new PendingNotifications(id, safeName, safeDisplayName));
+        if (!safeName.isEmpty()) {
+            pending.playerName = safeName;
+        }
+        if (actorDisplayName != null) {
+            pending.actorDisplayName = actorDisplayName;
+        }
+        pending.records.add(new QueuedRecord(key, record, worldFirst));
+    }
+
+    static List<PendingNotifications> drainPendingNotifications() {
+        if (PENDING_NOTIFICATIONS.isEmpty()) {
+            return List.of();
+        }
+        List<PendingNotifications> drained = new ArrayList<>(PENDING_NOTIFICATIONS.values());
+        PENDING_NOTIFICATIONS.clear();
+        return drained;
+    }
+
+    /** Discards queued notifications without sending (called on ServerStoppingEvent). */
+    public static void clearPendingNotifications() {
+        PENDING_NOTIFICATIONS.clear();
     }
 
     private static boolean record(ServerPlayer player, MilestoneData data, TargetKey key, boolean syncImmediately) {
@@ -512,23 +791,49 @@ public final class Tracker {
         if (pd.records.containsKey(key)) {
             return false;
         }
+        MinecraftServer server = player.server;
         int ticks = Playtime.currentTicks(player);
-        long day = Playtime.currentDay(player.server);
+        long day = Playtime.currentDay(server);
         long epochMillis = System.currentTimeMillis();
         MilestoneRecord rec = new MilestoneRecord(ticks, day, epochMillis);
 
         String playerName = player.getGameProfile().getName();
+        String safePlayerName = playerName != null ? playerName : "";
         RecordOutcome outcome = applyRecord(data, player.getUUID(), playerName, key, rec,
                 Config.WORLD_FIRST_ENABLED.get());
         if (outcome == RecordOutcome.ALREADY_RECORDED) {
             return false;
         }
         boolean worldFirst = outcome == RecordOutcome.RECORDED_WORLD_FIRST;
-        String formattedRecord = Playtime.formatRecord(rec, Config.displayTimeZone());
+        ZoneId zone = Config.displayTimeZone();
+        String formattedRecord = Playtime.formatRecord(rec, zone);
 
         ItemMilestoneLog.LOGGER.info("[ItemMilestoneLog] {} first obtained {} at playtime {} ({} ticks)",
                 playerName, key.formatDisplayId(), formattedRecord, ticks);
 
+        if (Config.GROUP_SIMULTANEOUS_RECORDS.get()) {
+            queuePendingNotification(player.getUUID(), safePlayerName, player.getDisplayName(), key, rec, worldFirst);
+            NeoForge.EVENT_BUS.post(new MilestoneRecordedEvent(player, key.itemId(), key.count(), ticks, day, epochMillis));
+        } else {
+            sendImmediateNotifications(server, data, player, key, ticks, worldFirst, formattedRecord);
+            NeoForge.EVENT_BUS.post(new MilestoneRecordedEvent(player, key.itemId(), key.count(), ticks, day, epochMillis));
+            DiscordNotifier.notifyMilestone(safePlayerName, key, rec, worldFirst);
+        }
+
+        if (syncImmediately) {
+            MilestoneService.syncPlayerIfOpen(player);
+        }
+        return true;
+    }
+
+    private static void sendImmediateNotifications(
+            MinecraftServer server,
+            MilestoneData data,
+            ServerPlayer player,
+            TargetKey key,
+            int ticks,
+            boolean worldFirst,
+            String formattedRecord) {
         Component displayName = MilestoneService.targetDisplayName(key);
 
         if (Config.NOTIFY_PLAYER.get()) {
@@ -538,7 +843,7 @@ public final class Tracker {
         }
         if (Config.BROADCAST.get()) {
             String formattedTicks = Playtime.format(ticks);
-            for (ServerPlayer other : player.server.getPlayerList().getPlayers()) {
+            for (ServerPlayer other : server.getPlayerList().getPlayers()) {
                 if (other == player) {
                     continue;
                 }
@@ -551,7 +856,7 @@ public final class Tracker {
             }
         }
         if (worldFirst && Config.ANNOUNCE_WORLD_FIRST.get()) {
-            for (ServerPlayer recipient : player.server.getPlayerList().getPlayers()) {
+            for (ServerPlayer recipient : server.getPlayerList().getPlayers()) {
                 MilestoneData.PlayerData recPd = data.playerOrNull(recipient.getUUID());
                 if (recipient != player && recPd != null && recPd.muteBroadcasts) {
                     continue;
@@ -563,13 +868,227 @@ public final class Tracker {
         if (Config.MILESTONE_SOUND_ENABLED.get()) {
             playMilestoneSound(player);
         }
+    }
 
-        NeoForge.EVENT_BUS.post(new MilestoneRecordedEvent(player, key.itemId(), key.count(), ticks, day, epochMillis));
-        DiscordNotifier.notifyMilestone(playerName != null ? playerName : "", key, rec, worldFirst);
-        if (syncImmediately) {
-            MilestoneService.syncPlayerIfOpen(player);
+    private static void flushPendingNotifications(MinecraftServer server, List<PendingNotifications> batch) {
+        if (batch.isEmpty()) {
+            return;
         }
-        return true;
+        MilestoneData data = MilestoneData.get(server);
+        boolean notifyPlayer = Config.NOTIFY_PLAYER.get();
+        boolean broadcastMilestones = Config.BROADCAST.get();
+        boolean announceWorldFirst = Config.ANNOUNCE_WORLD_FIRST.get();
+        boolean milestoneSoundEnabled = Config.MILESTONE_SOUND_ENABLED.get();
+        String discordScope = Config.DISCORD_NOTIFY_SCOPE.get();
+        ZoneId zone = Config.displayTimeZone();
+
+        for (PendingNotifications pending : batch) {
+            flushPlayerNotifications(
+                    server, data, pending,
+                    notifyPlayer, broadcastMilestones, announceWorldFirst,
+                    milestoneSoundEnabled, discordScope, zone);
+        }
+    }
+
+    private static void flushPlayerNotifications(
+            MinecraftServer server,
+            MilestoneData data,
+            PendingNotifications pending,
+            boolean notifyPlayer,
+            boolean broadcastMilestones,
+            boolean announceWorldFirst,
+            boolean milestoneSoundEnabled,
+            String discordScope,
+            ZoneId zone) {
+        NotificationGrouping.FlushPlan<QueuedRecord> plan = NotificationGrouping.planFlush(
+                pending.records,
+                QueuedRecord::worldFirst,
+                Comparator.comparing(QueuedRecord::key),
+                notifyPlayer,
+                broadcastMilestones,
+                announceWorldFirst,
+                milestoneSoundEnabled,
+                discordScope);
+
+        ServerPlayer onlineActor = server.getPlayerList().getPlayer(pending.playerId);
+        Component actorDisplayName = onlineActor != null
+                ? onlineActor.getDisplayName()
+                : (pending.actorDisplayName != null ? pending.actorDisplayName : Component.literal(pending.playerName));
+
+        // 1. Player chat notification (skip if offline)
+        if (onlineActor != null) {
+            sendPlayerChannel(onlineActor, plan.playerChat());
+        }
+
+        // 2. Broadcast to other online players
+        sendBroadcastChannel(server, data, pending.playerId, actorDisplayName, plan.broadcastChat());
+
+        // 3. World-first announcement to online players
+        sendWorldFirstChannel(server, data, pending.playerId, actorDisplayName, plan.worldFirstChat(), zone);
+
+        // Sound: at most once per player per tick (skip if offline)
+        if (onlineActor != null && plan.playSound()) {
+            playMilestoneSound(onlineActor);
+        }
+
+        // 4. F5 preset completion chat notifications will be flushed here when F5 is implemented.
+
+        // 5. Discord record notifications (still sent even if player went offline)
+        sendDiscordChannel(pending.playerName, plan.discord());
+
+        // 6. F19 Discord preset completion notifications will be sent here when F19 is implemented.
+    }
+
+    private static void sendPlayerChannel(
+            ServerPlayer player,
+            NotificationGrouping.ChannelPlan<QueuedRecord> channel) {
+        if (channel.mode() == NotificationGrouping.SendMode.NONE) {
+            return;
+        }
+        if (channel.mode() == NotificationGrouping.SendMode.INDIVIDUAL) {
+            for (QueuedRecord q : channel.items()) {
+                Component displayName = MilestoneService.targetDisplayName(q.key());
+                player.sendSystemMessage(ServerLang.tr(player, "message.itemmilestonelog.recorded",
+                        displayName, Playtime.format(q.record().playTicks())));
+            }
+            return;
+        }
+        List<QueuedRecord> items = channel.items();
+        String formattedPlaytime = Playtime.format(items.get(0).record().playTicks());
+        Component targetList = buildTargetListComponent(player, items);
+        player.sendSystemMessage(ServerLang.tr(player, "message.itemmilestonelog.recorded_group",
+                items.size(), formattedPlaytime, targetList));
+    }
+
+    private static void sendBroadcastChannel(
+            MinecraftServer server,
+            MilestoneData data,
+            UUID actorId,
+            Component actorDisplayName,
+            NotificationGrouping.ChannelPlan<QueuedRecord> channel) {
+        if (channel.mode() == NotificationGrouping.SendMode.NONE) {
+            return;
+        }
+        if (channel.mode() == NotificationGrouping.SendMode.INDIVIDUAL) {
+            for (QueuedRecord q : channel.items()) {
+                Component displayName = MilestoneService.targetDisplayName(q.key());
+                String formattedTicks = Playtime.format(q.record().playTicks());
+                for (ServerPlayer other : server.getPlayerList().getPlayers()) {
+                    if (other.getUUID().equals(actorId)) {
+                        continue;
+                    }
+                    MilestoneData.PlayerData otherPd = data.playerOrNull(other.getUUID());
+                    if (otherPd != null && otherPd.muteBroadcasts) {
+                        continue;
+                    }
+                    other.sendSystemMessage(ServerLang.tr(other, "message.itemmilestonelog.recorded_broadcast",
+                            actorDisplayName, displayName, formattedTicks));
+                }
+            }
+            return;
+        }
+        List<QueuedRecord> items = channel.items();
+        String formattedPlaytime = Playtime.format(items.get(0).record().playTicks());
+        for (ServerPlayer other : server.getPlayerList().getPlayers()) {
+            if (other.getUUID().equals(actorId)) {
+                continue;
+            }
+            MilestoneData.PlayerData otherPd = data.playerOrNull(other.getUUID());
+            if (otherPd != null && otherPd.muteBroadcasts) {
+                continue;
+            }
+            Component targetList = buildTargetListComponent(other, items);
+            other.sendSystemMessage(ServerLang.tr(other, "message.itemmilestonelog.recorded_group_broadcast",
+                    actorDisplayName, items.size(), formattedPlaytime, targetList));
+        }
+    }
+
+    private static void sendWorldFirstChannel(
+            MinecraftServer server,
+            MilestoneData data,
+            UUID actorId,
+            Component actorDisplayName,
+            NotificationGrouping.ChannelPlan<QueuedRecord> channel,
+            ZoneId zone) {
+        if (channel.mode() == NotificationGrouping.SendMode.NONE) {
+            return;
+        }
+        if (channel.mode() == NotificationGrouping.SendMode.INDIVIDUAL) {
+            for (QueuedRecord q : channel.items()) {
+                Component displayName = MilestoneService.targetDisplayName(q.key());
+                String formattedRecord = Playtime.formatRecord(q.record(), zone);
+                for (ServerPlayer recipient : server.getPlayerList().getPlayers()) {
+                    MilestoneData.PlayerData recPd = data.playerOrNull(recipient.getUUID());
+                    if (!recipient.getUUID().equals(actorId) && recPd != null && recPd.muteBroadcasts) {
+                        continue;
+                    }
+                    recipient.sendSystemMessage(ServerLang.tr(recipient, "message.itemmilestonelog.world_first_recorded",
+                            actorDisplayName, displayName, formattedRecord));
+                }
+            }
+            return;
+        }
+        List<QueuedRecord> items = channel.items();
+        String formattedRecord = Playtime.formatRecord(items.get(0).record(), zone);
+        for (ServerPlayer recipient : server.getPlayerList().getPlayers()) {
+            MilestoneData.PlayerData recPd = data.playerOrNull(recipient.getUUID());
+            if (!recipient.getUUID().equals(actorId) && recPd != null && recPd.muteBroadcasts) {
+                continue;
+            }
+            Component targetList = buildTargetListComponent(recipient, items);
+            recipient.sendSystemMessage(ServerLang.tr(recipient, "message.itemmilestonelog.world_first_group",
+                    actorDisplayName, items.size(), formattedRecord, targetList));
+        }
+    }
+
+    private static void sendDiscordChannel(
+            String playerName,
+            NotificationGrouping.ChannelPlan<QueuedRecord> channel) {
+        if (channel.mode() == NotificationGrouping.SendMode.NONE) {
+            return;
+        }
+        if (channel.mode() == NotificationGrouping.SendMode.INDIVIDUAL) {
+            for (QueuedRecord q : channel.items()) {
+                DiscordNotifier.notifyMilestone(playerName, q.key(), q.record(), q.worldFirst());
+            }
+            return;
+        }
+        List<DiscordNotifier.MilestoneEntry> entries = new ArrayList<>(channel.items().size());
+        for (QueuedRecord q : channel.items()) {
+            entries.add(new DiscordNotifier.MilestoneEntry(q.key(), q.record(), q.worldFirst()));
+        }
+        DiscordNotifier.notifyMilestonesGrouped(playerName, entries);
+    }
+
+    private static MutableComponent buildTargetListComponent(
+            @Nullable ServerPlayer recipient, List<QueuedRecord> sortedRecords) {
+        String lang = recipient != null && recipient.clientInformation() != null
+                ? recipient.clientInformation().language()
+                : null;
+        List<TargetKey> keys = new ArrayList<>(sortedRecords.size());
+        for (QueuedRecord q : sortedRecords) {
+            keys.add(q.key());
+        }
+        return buildTargetListComponent(lang, keys, MilestoneService::targetDisplayName);
+    }
+
+    static MutableComponent buildTargetListComponent(
+            @Nullable String language,
+            List<TargetKey> sortedKeys,
+            Function<TargetKey, Component> displayName) {
+        NotificationGrouping.ListSummary<TargetKey> summary = NotificationGrouping.summarizeChatList(sortedKeys);
+        MutableComponent list = Component.empty();
+        List<TargetKey> shown = summary.shown();
+        for (int i = 0; i < shown.size(); i++) {
+            if (i > 0) {
+                list.append(ServerLang.trForLang(language, "message.itemmilestonelog.list_separator"));
+            }
+            list.append(displayName.apply(shown.get(i)));
+        }
+        if (summary.hasMore()) {
+            list.append(ServerLang.trForLang(language, "message.itemmilestonelog.list_more", summary.remainingCount()));
+        }
+        return list;
     }
 
     private static void playMilestoneSound(ServerPlayer player) {

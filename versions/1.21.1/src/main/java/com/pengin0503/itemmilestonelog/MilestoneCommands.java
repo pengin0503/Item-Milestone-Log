@@ -17,6 +17,7 @@ import net.minecraft.commands.arguments.ResourceLocationArgument;
 import net.minecraft.commands.arguments.item.ItemArgument;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.Item;
@@ -276,6 +277,7 @@ public final class MilestoneCommands {
                         .requires(src -> src.hasPermission(2))
                         .executes(MilestoneCommands::exportAll))
                 .then(Commands.literal("mutebroadcast").executes(MilestoneCommands::muteBroadcast))
+                .then(Commands.literal("muteprogress").executes(MilestoneCommands::muteProgress))
                 .then(Commands.literal("admin")
                         .requires(src -> src.hasPermission(2))
                         .then(Commands.literal("players").executes(MilestoneCommands::adminPlayers))
@@ -335,8 +337,12 @@ public final class MilestoneCommands {
         Set<TargetKey> targets = Tracker.effectiveTargets(pd);
         Map<TargetKey, MilestoneRecord> records = pd != null ? pd.records : Map.of();
         int done = (int) targets.stream().filter(records::containsKey).count();
-        return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.summary",
+        send(ctx, ServerLang.tr(player, "message.itemmilestonelog.summary",
                 Playtime.format(Playtime.currentTicks(player)), done, targets.size()));
+        if (Tracker.recordingPaused(player)) {
+            send(ctx, ServerLang.tr(player, "message.itemmilestonelog.summary_creative_paused"));
+        }
+        return 1;
     }
 
     private static int playtime(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
@@ -385,12 +391,17 @@ public final class MilestoneCommands {
                 line = ServerLang.tr(player, "message.itemmilestonelog.target_done",
                         MilestoneService.targetDisplayName(key), Playtime.format(rec.playTicks()));
             } else {
+                boolean isCarried = carried.contains(key.itemId());
                 Component label = MilestoneService.targetDisplayName(key);
                 if (key.count() > TargetKey.MIN_COUNT) {
-                    int current = carried.contains(key.itemId()) ? 0 : possessionCounts.getOrDefault(key.itemId(), 0);
+                    int current = isCarried ? 0 : possessionCounts.getOrDefault(key.itemId(), 0);
                     label = ServerLang.tr(player, "message.itemmilestonelog.target_progress", label, current);
                 }
-                line = ServerLang.tr(player, "message.itemmilestonelog.target_pending", label);
+                MutableComponent pendingLine = ServerLang.tr(player, "message.itemmilestonelog.target_pending", label);
+                if (isCarried) {
+                    pendingLine.append(ServerLang.tr(player, "message.itemmilestonelog.target_creative_carried"));
+                }
+                line = pendingLine;
             }
             ctx.getSource().sendSuccess(() -> line, false);
         }
@@ -641,6 +652,20 @@ public final class MilestoneCommands {
         return send(ctx, ServerLang.tr(player, key));
     }
 
+    // --------------------------------------------------------- F15 mute progress alerts
+
+    private static int muteProgress(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+        ServerPlayer player = player(ctx);
+        MilestoneData data = MilestoneData.get(player.server);
+        MilestoneData.PlayerData pd = data.player(player.getUUID());
+        pd.muteProgressAlerts = !pd.muteProgressAlerts;
+        data.setDirty();
+        String key = pd.muteProgressAlerts
+                ? "message.itemmilestonelog.muteprogress_on"
+                : "message.itemmilestonelog.muteprogress_off";
+        return send(ctx, ServerLang.tr(player, key));
+    }
+
     // --------------------------------------------------------- F9 admin
 
     private record ResolvedPlayer(@Nullable Map.Entry<UUID, MilestoneData.PlayerData> entry, boolean ambiguous) {
@@ -788,6 +813,7 @@ public final class MilestoneCommands {
             return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.invalid_item", String.valueOf(itemId)));
         }
         if (target.getValue().records.remove(key) != null) {
+            target.getValue().progressNotified.remove(key);
             data.setDirty();
             ServerPlayer online = source.getServer().getPlayerList().getPlayer(target.getKey());
             if (online != null) {
@@ -809,13 +835,22 @@ public final class MilestoneCommands {
         }
         String name = displayNameFor(target.getKey(), target.getValue());
         MilestoneData data = MilestoneData.get(source.getServer());
-        int count = target.getValue().records.size();
+        MilestoneData.PlayerData pd = target.getValue();
+        int count = pd.records.size();
+        boolean clearedProgress = !pd.progressNotified.isEmpty();
         if (count > 0) {
-            target.getValue().records.clear();
+            pd.records.clear();
+        }
+        if (clearedProgress) {
+            pd.progressNotified.clear();
+        }
+        if (count > 0 || clearedProgress) {
             data.setDirty();
-            ServerPlayer online = source.getServer().getPlayerList().getPlayer(target.getKey());
-            if (online != null) {
-                MilestoneService.syncPlayerIfOpen(online);
+            if (count > 0) {
+                ServerPlayer online = source.getServer().getPlayerList().getPlayer(target.getKey());
+                if (online != null) {
+                    MilestoneService.syncPlayerIfOpen(online);
+                }
             }
         }
         return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.admin_resetall_done", count, name));

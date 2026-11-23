@@ -1,0 +1,311 @@
+package com.pengin0503.itemmilestonelog;
+
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.IllegalFormatException;
+import java.util.List;
+import java.util.Locale;
+import java.util.function.Predicate;
+
+/**
+ * Pure-Java grouping and formatting logic for simultaneous milestone record notifications (F27).
+ *
+ * <p>Must remain Java 21 compatible and free of Minecraft/NeoForge dependencies.
+ */
+public final class NotificationGrouping {
+    /** Minimum number of queued notifications in the same channel in a tick to send a grouped message. */
+    public static final int GROUP_THRESHOLD = 3;
+    /** Maximum number of target names listed explicitly in a grouped chat message. */
+    public static final int CHAT_LIST_MAX_ITEMS = 5;
+    /** Maximum number of item lines shown in a grouped Discord message before collapsing the remainder. */
+    public static final int DISCORD_MAX_LINES = 20;
+    /** Maximum plain-text character count for a Discord webhook {@code content} payload. */
+    public static final int DISCORD_PLAIN_MAX_CHARS = 2000;
+    /** Maximum character count for a Discord embed {@code description} (for F4 reuse). */
+    public static final int DISCORD_EMBED_DESCRIPTION_MAX_CHARS = 4096;
+
+    public enum SendMode {
+        NONE,
+        INDIVIDUAL,
+        GROUPED
+    }
+
+    /** Per-channel dispatch decision for one player's queued records in a single tick. */
+    public record ChannelPlan<T>(SendMode mode, List<T> items) {
+        public static <T> ChannelPlan<T> none() {
+            return new ChannelPlan<>(SendMode.NONE, List.of());
+        }
+    }
+
+    /** Full per-channel dispatch plan for one player's queued records in a single tick. */
+    public record FlushPlan<T>(
+            ChannelPlan<T> playerChat,
+            ChannelPlan<T> broadcastChat,
+            ChannelPlan<T> worldFirstChat,
+            boolean playSound,
+            ChannelPlan<T> discord
+    ) {
+    }
+
+    /** Slice of explicitly listed items plus the count of omitted trailing items. */
+    public record ListSummary<T>(List<T> shown, int remainingCount) {
+        public boolean hasMore() {
+            return remainingCount > 0;
+        }
+    }
+
+    /** Single item entry for building a grouped Discord notification payload. */
+    public record DiscordItem(String label, boolean worldFirst) {
+    }
+
+    /** Language templates used when formatting a grouped Discord notification. */
+    public record DiscordTemplates(
+            String groupHeader,
+            String groupLine,
+            String groupLineWorldFirst,
+            String moreLine
+    ) {
+        public static final DiscordTemplates ENGLISH_DEFAULTS = new DiscordTemplates(
+                "★ Milestones recorded: %s obtained %s targets at %s",
+                "- %s",
+                "- ★ [World First] %s",
+                "...and %s more"
+        );
+    }
+
+    private NotificationGrouping() {
+    }
+
+    /**
+     * Decides per-channel delivery (none, individual, or grouped) for a single player's
+     * records queued during the same server tick.
+     *
+     * <ul>
+     *   <li>Player and broadcast channels count all records.</li>
+     *   <li>World-first channel counts only world-first records.</li>
+     *   <li>Discord counts records selected by {@code discordNotifyScope} ({@code "world_first"} or {@code "all"}).</li>
+     *   <li>Each channel groups into one message when its eligible count is {@code >= GROUP_THRESHOLD} (3),
+     *       sorting grouped items by {@code groupSortOrder}; counts of 1 or 2 send individual messages in order.</li>
+     *   <li>Sound plays at most once per player per tick whenever at least one record was queued
+     *       and {@code milestoneSoundEnabled} is true.</li>
+     * </ul>
+     */
+    public static <T> FlushPlan<T> planFlush(
+            List<T> records,
+            Predicate<T> isWorldFirst,
+            Comparator<T> groupSortOrder,
+            boolean notifyPlayer,
+            boolean broadcastMilestones,
+            boolean announceWorldFirst,
+            boolean milestoneSoundEnabled,
+            String discordNotifyScope) {
+        if (records == null || records.isEmpty()) {
+            return new FlushPlan<>(
+                    ChannelPlan.none(),
+                    ChannelPlan.none(),
+                    ChannelPlan.none(),
+                    false,
+                    ChannelPlan.none());
+        }
+
+        List<T> worldFirstRecords = new ArrayList<>();
+        for (T rec : records) {
+            if (isWorldFirst != null && isWorldFirst.test(rec)) {
+                worldFirstRecords.add(rec);
+            }
+        }
+
+        ChannelPlan<T> playerChat = planChannel(records, notifyPlayer, groupSortOrder);
+        ChannelPlan<T> broadcastChat = planChannel(records, broadcastMilestones, groupSortOrder);
+        ChannelPlan<T> worldFirstChat = planChannel(worldFirstRecords, announceWorldFirst, groupSortOrder);
+
+        List<T> discordEligible = "world_first".equals(discordNotifyScope) ? worldFirstRecords : records;
+        ChannelPlan<T> discord = planChannel(discordEligible, true, groupSortOrder);
+
+        return new FlushPlan<>(playerChat, broadcastChat, worldFirstChat, milestoneSoundEnabled, discord);
+    }
+
+    private static <T> ChannelPlan<T> planChannel(List<T> eligible, boolean enabled, Comparator<T> groupSortOrder) {
+        if (!enabled || eligible.isEmpty()) {
+            return ChannelPlan.none();
+        }
+        if (eligible.size() >= GROUP_THRESHOLD) {
+            List<T> sorted = new ArrayList<>(eligible);
+            if (groupSortOrder != null) {
+                sorted.sort(groupSortOrder);
+            }
+            return new ChannelPlan<>(SendMode.GROUPED, List.copyOf(sorted));
+        }
+        return new ChannelPlan<>(SendMode.INDIVIDUAL, List.copyOf(eligible));
+    }
+
+    /** Takes the first {@value #CHAT_LIST_MAX_ITEMS} items and counts the remaining ones. */
+    public static <T> ListSummary<T> summarizeChatList(List<T> sortedItems) {
+        return summarizeList(sortedItems, CHAT_LIST_MAX_ITEMS);
+    }
+
+    /** Takes at most {@code maxShown} items and counts the remaining ones. */
+    public static <T> ListSummary<T> summarizeList(List<T> items, int maxShown) {
+        if (items == null || items.isEmpty()) {
+            return new ListSummary<>(List.of(), 0);
+        }
+        int cap = Math.max(0, maxShown);
+        if (items.size() <= cap) {
+            return new ListSummary<>(List.copyOf(items), 0);
+        }
+        return new ListSummary<>(List.copyOf(items.subList(0, cap)), items.size() - cap);
+    }
+
+    /**
+     * Pure string formatter mirroring grouped chat list assembly: joins the first 5 names with
+     * {@code separator} and appends {@code moreTemplate} formatted with the remaining count when needed.
+     */
+    public static String formatChatListText(List<String> sortedDisplayNames, String separator, String moreTemplate) {
+        ListSummary<String> summary = summarizeChatList(sortedDisplayNames);
+        if (summary.shown().isEmpty() && !summary.hasMore()) {
+            return "";
+        }
+        String sep = separator != null ? separator : ", ";
+        StringBuilder sb = new StringBuilder();
+        List<String> shown = summary.shown();
+        for (int i = 0; i < shown.size(); i++) {
+            if (i > 0) {
+                sb.append(sep);
+            }
+            sb.append(shown.get(i));
+        }
+        if (summary.hasMore()) {
+            sb.append(formatSafe(moreTemplate, ", and %s more", summary.remainingCount()));
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Builds the plain-text body for a grouped Discord notification, enforcing the
+     * {@value #DISCORD_MAX_LINES}-line cap and {@value #DISCORD_PLAIN_MAX_CHARS}-character limit.
+     */
+    public static String buildDiscordGroupPlainText(
+            String playerName,
+            String formattedRecord,
+            List<DiscordItem> items,
+            DiscordTemplates templates) {
+        return buildDiscordGroupPlainText(
+                playerName, formattedRecord, items, templates, DISCORD_MAX_LINES, DISCORD_PLAIN_MAX_CHARS);
+    }
+
+    /**
+     * Builds the plain-text body for a grouped Discord notification with configurable line and character limits.
+     */
+    public static String buildDiscordGroupPlainText(
+            String playerName,
+            String formattedRecord,
+            List<DiscordItem> items,
+            DiscordTemplates templates,
+            int maxLines,
+            int maxChars) {
+        if (items == null || items.isEmpty()) {
+            return "";
+        }
+        DiscordTemplates t = templates != null ? templates : DiscordTemplates.ENGLISH_DEFAULTS;
+        String safeName = playerName != null ? playerName : "";
+        String safeTime = formattedRecord != null ? formattedRecord : "";
+        String header = formatSafe(
+                t.groupHeader(),
+                DiscordTemplates.ENGLISH_DEFAULTS.groupHeader(),
+                safeName,
+                items.size(),
+                safeTime);
+        return assembleDiscordBody(header, formatDiscordItemLines(items, t), t.moreLine(), maxLines, maxChars);
+    }
+
+    /**
+     * Builds only the item lines (with optional trailing "more" line) for a grouped Discord payload,
+     * capped at {@code maxLines} and {@code maxChars}. Designed to be reused for F4 embed descriptions.
+     */
+    public static String buildDiscordGroupLines(
+            List<DiscordItem> items,
+            DiscordTemplates templates,
+            int maxLines,
+            int maxChars) {
+        if (items == null || items.isEmpty()) {
+            return "";
+        }
+        DiscordTemplates t = templates != null ? templates : DiscordTemplates.ENGLISH_DEFAULTS;
+        return assembleDiscordBody(null, formatDiscordItemLines(items, t), t.moreLine(), maxLines, maxChars);
+    }
+
+    private static List<String> formatDiscordItemLines(List<DiscordItem> items, DiscordTemplates templates) {
+        List<String> lines = new ArrayList<>(items.size());
+        for (DiscordItem item : items) {
+            String label = item.label() != null ? item.label() : "";
+            if (item.worldFirst()) {
+                lines.add(formatSafe(
+                        templates.groupLineWorldFirst(),
+                        DiscordTemplates.ENGLISH_DEFAULTS.groupLineWorldFirst(),
+                        label));
+            } else {
+                lines.add(formatSafe(
+                        templates.groupLine(),
+                        DiscordTemplates.ENGLISH_DEFAULTS.groupLine(),
+                        label));
+            }
+        }
+        return lines;
+    }
+
+    private static String assembleDiscordBody(
+            String header,
+            List<String> itemLines,
+            String moreTemplate,
+            int maxLines,
+            int maxChars) {
+        int total = itemLines.size();
+        int shown = Math.min(total, Math.max(0, maxLines));
+        int limit = Math.max(0, maxChars);
+
+        String content = renderDiscordBody(header, itemLines, shown, total, moreTemplate);
+        while (content.length() > limit && shown > 0) {
+            shown--;
+            content = renderDiscordBody(header, itemLines, shown, total, moreTemplate);
+        }
+        if (content.length() > limit) {
+            return TextEscaping.truncateUtf16(content, limit);
+        }
+        return content;
+    }
+
+    private static String renderDiscordBody(
+            String header,
+            List<String> itemLines,
+            int shown,
+            int total,
+            String moreTemplate) {
+        StringBuilder sb = new StringBuilder();
+        if (header != null && !header.isEmpty()) {
+            sb.append(header);
+        }
+        for (int i = 0; i < shown; i++) {
+            if (sb.length() > 0) {
+                sb.append('\n');
+            }
+            sb.append(itemLines.get(i));
+        }
+        int remaining = total - shown;
+        if (remaining > 0) {
+            if (sb.length() > 0) {
+                sb.append('\n');
+            }
+            sb.append(formatSafe(moreTemplate, DiscordTemplates.ENGLISH_DEFAULTS.moreLine(), remaining));
+        }
+        return sb.toString();
+    }
+
+    private static String formatSafe(String template, String fallbackTemplate, Object... args) {
+        String effective = template != null ? template : fallbackTemplate;
+        try {
+            return String.format(Locale.ROOT, effective, args);
+        } catch (IllegalFormatException e) {
+            return String.format(Locale.ROOT, fallbackTemplate, args);
+        }
+    }
+}

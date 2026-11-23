@@ -1,6 +1,7 @@
 package com.pengin0503.itemmilestonelog;
 
 import com.mojang.logging.LogUtils;
+import com.pengin0503.itemmilestonelog.gametest.MilestoneGameTestRegistration;
 import com.pengin0503.itemmilestonelog.network.ModNetworking;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
@@ -23,6 +24,7 @@ public class ItemMilestoneLog {
         modContainer.registerConfig(ModConfig.Type.LOCAL, Config.SPEC);
 
         modEventBus.addListener(ModNetworking::registerPayloads);
+        modEventBus.addListener(MilestoneGameTestRegistration::register);
         NeoForge.EVENT_BUS.register(Tracker.class);
         NeoForge.EVENT_BUS.register(MilestoneCommands.class);
         NeoForge.EVENT_BUS.addListener(ItemMilestoneLog::onServerStarting);
@@ -37,6 +39,7 @@ public class ItemMilestoneLog {
     }
 
     private static void onServerStopping(ServerStoppingEvent event) {
+        Tracker.clearPendingNotifications();
         DiscordNotifier.shutdown();
     }
 }

@@ -9,6 +9,7 @@ import net.minecraft.nbt.StringTag;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -42,6 +43,9 @@ class MilestoneDataTest {
         pdA.lastKnownName = "Alice";
         pdA.firstJoinHintShown = true;
         pdA.muteBroadcasts = true;
+        pdA.muteProgressAlerts = true;
+        pdA.progressNotified.put(TargetKey.of("minecraft:iron_ingot", 100), 0);
+        pdA.progressNotified.put(TargetKey.of("minecraft:gold_ingot", 500), 50);
 
         MilestoneData.PlayerData pdB = original.player(playerB);
         pdB.targets.add(atmStar);
@@ -65,6 +69,11 @@ class MilestoneDataTest {
         assertEquals("Alice", loadedA.lastKnownName);
         assertTrue(loadedA.firstJoinHintShown);
         assertTrue(loadedA.muteBroadcasts);
+        assertTrue(loadedA.muteProgressAlerts);
+        assertEquals(Map.of(
+                TargetKey.of("minecraft:iron_ingot", 100), 0,
+                TargetKey.of("minecraft:gold_ingot", 500), 50
+        ), loadedA.progressNotified);
 
         MilestoneData.PlayerData loadedB = loaded.playerOrNull(playerB);
         assertNotNull(loadedB);
@@ -74,7 +83,12 @@ class MilestoneDataTest {
         assertEquals("", loadedB.lastKnownName);
         assertFalse(loadedB.firstJoinHintShown);
         assertFalse(loadedB.muteBroadcasts);
+        assertFalse(loadedB.muteProgressAlerts);
+        assertTrue(loadedB.progressNotified.isEmpty());
+        assertTrue(saved.getCompound("players").getCompound(playerA.toString()).contains("muteProgressAlerts"));
         assertFalse(saved.getCompound("players").getCompound(playerB.toString()).contains("carriedFromCreative"));
+        assertFalse(saved.getCompound("players").getCompound(playerB.toString()).contains("muteProgressAlerts"));
+        assertFalse(saved.getCompound("players").getCompound(playerB.toString()).contains("progressNotified"));
 
         WorldFirstRecord wf1 = loaded.worldFirstOrNull(diamond1);
         assertNotNull(wf1);
@@ -123,6 +137,8 @@ class MilestoneDataTest {
         assertEquals("", pd.lastKnownName);
         assertFalse(pd.firstJoinHintShown);
         assertFalse(pd.muteBroadcasts);
+        assertFalse(pd.muteProgressAlerts);
+        assertTrue(pd.progressNotified.isEmpty());
         assertTrue(loaded.worldFirsts().isEmpty());
     }
 
@@ -208,5 +224,112 @@ class MilestoneDataTest {
         assertEquals(1, loaded.allPlayers().size());
         assertNotNull(loaded.playerOrNull(validUuid));
         assertEquals("ValidAlice", loaded.playerOrNull(validUuid).lastKnownName);
+    }
+
+    @Test
+    void persistsProgressNotifiedAndSkipsInvalidOrOutOfRangeEntries() {
+        UUID playerA = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        UUID playerB = UUID.fromString("22222222-2222-2222-2222-222222222222");
+
+        CompoundTag progressTag = new CompoundTag();
+        progressTag.putInt("minecraft:diamond#1000", 50);
+        progressTag.putInt("minecraft:iron_ingot#64", 0);
+        progressTag.putInt("minecraft:emerald#0", 50); // invalid TargetKey count
+        progressTag.putInt("bad key", 50); // invalid TargetKey syntax
+        progressTag.putInt("minecraft:coal#100", -1); // out of range (< 0)
+        progressTag.putInt("minecraft:gold_ingot#100", 100); // out of range (> 99)
+        progressTag.putString("minecraft:redstone#100", "fifty"); // non-numeric value
+
+        CompoundTag playerATag = new CompoundTag();
+        playerATag.putString("lastKnownName", "Alice");
+        playerATag.put("progressNotified", progressTag);
+
+        CompoundTag playerBTag = new CompoundTag();
+        playerBTag.putString("lastKnownName", "Bob");
+        playerBTag.put("progressNotified", StringTag.valueOf("garbage")); // wrong tag type
+
+        CompoundTag players = new CompoundTag();
+        players.put(playerA.toString(), playerATag);
+        players.put(playerB.toString(), playerBTag);
+        CompoundTag root = new CompoundTag();
+        root.put("players", players);
+
+        MilestoneData loaded = MilestoneData.load(root, null);
+        MilestoneData.PlayerData loadedA = loaded.playerOrNull(playerA);
+        assertNotNull(loadedA);
+        assertEquals("Alice", loadedA.lastKnownName);
+        assertEquals(Map.of(
+                TargetKey.of("minecraft:diamond", 1000), 50,
+                TargetKey.of("minecraft:iron_ingot", 64), 0
+        ), loadedA.progressNotified);
+
+        MilestoneData.PlayerData loadedB = loaded.playerOrNull(playerB);
+        assertNotNull(loadedB);
+        assertEquals("Bob", loadedB.lastKnownName);
+        assertTrue(loadedB.progressNotified.isEmpty());
+
+        CompoundTag resaved = loaded.save(new CompoundTag(), null);
+        CompoundTag savedATag = resaved.getCompound("players").getCompound(playerA.toString());
+        assertTrue(savedATag.contains("progressNotified"));
+        assertEquals(50, savedATag.getCompound("progressNotified").getInt("minecraft:diamond#1000"));
+        assertEquals(0, savedATag.getCompound("progressNotified").getInt("minecraft:iron_ingot#64"));
+        assertFalse(resaved.getCompound("players").getCompound(playerB.toString()).contains("progressNotified"));
+    }
+
+    @Test
+    void persistsMuteProgressAlertsLenientlyOmitsWhenFalseAndSurvivesResetAll() {
+        UUID playerA = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        UUID playerB = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        UUID playerC = UUID.fromString("33333333-3333-3333-3333-333333333333");
+
+        CompoundTag playerATag = new CompoundTag();
+        playerATag.putString("lastKnownName", "Alice");
+        playerATag.putBoolean("muteProgressAlerts", true);
+
+        CompoundTag playerBTag = new CompoundTag();
+        playerBTag.putString("lastKnownName", "Bob");
+        // muteProgressAlerts absent -> defaults to false
+
+        CompoundTag playerCTag = new CompoundTag();
+        playerCTag.putString("lastKnownName", "Charlie");
+        playerCTag.put("muteProgressAlerts", StringTag.valueOf("garbage")); // malformed tag -> skipped
+
+        CompoundTag players = new CompoundTag();
+        players.put(playerA.toString(), playerATag);
+        players.put(playerB.toString(), playerBTag);
+        players.put(playerC.toString(), playerCTag);
+        CompoundTag root = new CompoundTag();
+        root.put("players", players);
+
+        MilestoneData loaded = MilestoneData.load(root, null);
+        MilestoneData.PlayerData loadedA = loaded.playerOrNull(playerA);
+        MilestoneData.PlayerData loadedB = loaded.playerOrNull(playerB);
+        MilestoneData.PlayerData loadedC = loaded.playerOrNull(playerC);
+        assertNotNull(loadedA);
+        assertNotNull(loadedB);
+        assertNotNull(loadedC);
+        assertTrue(loadedA.muteProgressAlerts);
+        assertFalse(loadedB.muteProgressAlerts);
+        assertFalse(loadedC.muteProgressAlerts);
+        assertEquals("Charlie", loadedC.lastKnownName);
+
+        // Write only when true
+        CompoundTag resaved = loaded.save(new CompoundTag(), null);
+        CompoundTag savedPlayers = resaved.getCompound("players");
+        assertTrue(savedPlayers.getCompound(playerA.toString()).getBoolean("muteProgressAlerts"));
+        assertFalse(savedPlayers.getCompound(playerB.toString()).contains("muteProgressAlerts"));
+        assertFalse(savedPlayers.getCompound(playerC.toString()).contains("muteProgressAlerts"));
+
+        // ResetAll must NOT clear personal setting muteProgressAlerts, while purge removes PlayerData
+        TargetKey diamond100 = TargetKey.of("minecraft:diamond", 100);
+        loadedA.records.put(diamond100, new MilestoneRecord(100, 1L, 1000L));
+        loadedA.progressNotified.put(diamond100, 50);
+        assertTrue(MilestoneService.resetAllRecords(loaded, playerA, null).success());
+        assertTrue(loadedA.records.isEmpty());
+        assertTrue(loadedA.progressNotified.isEmpty());
+        assertTrue(loadedA.muteProgressAlerts);
+
+        assertTrue(loaded.purgePlayer(playerA));
+        assertNull(loaded.playerOrNull(playerA));
     }
 }
