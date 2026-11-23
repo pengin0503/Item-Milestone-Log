@@ -401,6 +401,69 @@ public final class Presets {
         return resolvable.isEmpty() ? List.of() : List.copyOf(resolvable);
     }
 
+    /** F16: maximum number of unrecorded rows listed by {@code presetprogress}. */
+    public static final int PROGRESS_MAX_ROWS = 50;
+
+    /**
+     * Result of {@link #presetProgress} (F16).
+     *
+     * @param recorded         X: keys of {@code R(S)} present in the player's records (exact {@link TargetKey} match)
+     * @param total            Y: {@code |R(S)|}
+     * @param unrecordedShown  unrecorded keys of {@code R(S)} in {@link TargetKey} order, at most {@code maxRows}
+     * @param unrecordedHidden unrecorded keys beyond {@code maxRows} (the "...and N more" count)
+     * @param skipped          distinct preset keys excluded from {@code R(S)} because their item does not exist
+     */
+    public record PresetProgress(int recorded, int total, List<TargetKey> unrecordedShown,
+                                 int unrecordedHidden, int skipped) {
+        /**
+         * Every key of a non-empty {@code R(S)} is recorded. An empty {@code R(S)} is never
+         * "complete", matching F5 (no "0 / 0 completed").
+         */
+        public boolean complete() {
+            return total > 0 && recorded == total;
+        }
+    }
+
+    /**
+     * Pure progress computation for F16 {@code presetprogress}. Uses the same {@code R(S)} as the
+     * F5 completion judgment ({@link #resolvableTargets(Collection, Predicate)}) and the same exact
+     * {@link TargetKey} match against {@code recordedKeys}, so X / Y agree with F5.
+     */
+    public static PresetProgress presetProgress(
+            @Nullable PresetDefinition preset,
+            @Nullable Set<TargetKey> recordedKeys,
+            @Nullable Predicate<String> itemExists,
+            int maxRows) {
+        if (preset == null || preset.items() == null) {
+            return new PresetProgress(0, 0, List.of(), 0, 0);
+        }
+        Set<TargetKey> distinct = new LinkedHashSet<>();
+        for (TargetKey key : preset.items()) {
+            if (key != null) {
+                distinct.add(key);
+            }
+        }
+        List<TargetKey> resolvable = resolvableTargets(distinct, itemExists);
+        Set<TargetKey> recorded = recordedKeys != null ? recordedKeys : Set.of();
+        int recordedCount = 0;
+        List<TargetKey> unrecorded = new ArrayList<>();
+        for (TargetKey key : resolvable) {
+            if (recorded.contains(key)) {
+                recordedCount++;
+            } else {
+                unrecorded.add(key);
+            }
+        }
+        unrecorded.sort(TargetKey::compareTo);
+        int limit = Math.max(0, Math.min(maxRows, unrecorded.size()));
+        return new PresetProgress(
+                recordedCount,
+                resolvable.size(),
+                List.copyOf(unrecorded.subList(0, limit)),
+                unrecorded.size() - limit,
+                distinct.size() - resolvable.size());
+    }
+
     /**
      * Pure judgment function for F5 preset completion: returns all presets from {@code allPresets}
      * newly completed by recording {@code justRecordedKey}.

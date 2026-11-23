@@ -406,6 +406,64 @@ class MilestoneDataTest {
     }
 
     @Test
+    void persistsHideFromLookupLenientlyOmitsWhenFalseRoundTripsAndSurvivesResetAll() {
+        UUID playerA = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        UUID playerB = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        UUID playerC = UUID.fromString("33333333-3333-3333-3333-333333333333");
+
+        CompoundTag playerATag = new CompoundTag();
+        playerATag.putString("lastKnownName", "Alice");
+        playerATag.putBoolean("hideFromLookup", true);
+
+        CompoundTag playerBTag = new CompoundTag();
+        playerBTag.putString("lastKnownName", "Bob");
+        // hideFromLookup absent (1.0.1 / pre-F14 data) -> defaults to false
+
+        CompoundTag playerCTag = new CompoundTag();
+        playerCTag.putString("lastKnownName", "Charlie");
+        playerCTag.put("hideFromLookup", StringTag.valueOf("garbage")); // malformed tag -> skipped
+
+        CompoundTag players = new CompoundTag();
+        players.put(playerA.toString(), playerATag);
+        players.put(playerB.toString(), playerBTag);
+        players.put(playerC.toString(), playerCTag);
+        CompoundTag root = new CompoundTag();
+        root.put("players", players);
+
+        MilestoneData loaded = MilestoneData.load(root, null);
+        MilestoneData.PlayerData loadedA = loaded.playerOrNull(playerA);
+        MilestoneData.PlayerData loadedB = loaded.playerOrNull(playerB);
+        MilestoneData.PlayerData loadedC = loaded.playerOrNull(playerC);
+        assertNotNull(loadedA);
+        assertNotNull(loadedB);
+        assertNotNull(loadedC);
+        assertTrue(loadedA.hideFromLookup);
+        assertTrue(loadedA.isHiddenFromLookup());
+        assertFalse(loadedB.isHiddenFromLookup());
+        assertFalse(loadedC.isHiddenFromLookup());
+        assertEquals("Charlie", loadedC.lastKnownName);
+
+        // Write only when true
+        CompoundTag resaved = loaded.save(new CompoundTag(), null);
+        CompoundTag savedPlayers = resaved.getCompound("players");
+        assertTrue(savedPlayers.getCompound(playerA.toString()).getBoolean("hideFromLookup"));
+        assertFalse(savedPlayers.getCompound(playerB.toString()).contains("hideFromLookup"));
+        assertFalse(savedPlayers.getCompound(playerC.toString()).contains("hideFromLookup"));
+
+        // Round trip: save -> load keeps the flag
+        MilestoneData reloaded = MilestoneData.load(resaved, null);
+        assertTrue(reloaded.playerOrNull(playerA).isHiddenFromLookup());
+        assertFalse(reloaded.playerOrNull(playerB).isHiddenFromLookup());
+
+        // ResetAll must NOT clear personal setting hideFromLookup
+        TargetKey diamond100 = TargetKey.of("minecraft:diamond", 100);
+        loadedA.records.put(diamond100, new MilestoneRecord(100, 1L, 1000L));
+        assertTrue(MilestoneService.resetAllRecords(loaded, playerA, null).success());
+        assertTrue(loadedA.records.isEmpty());
+        assertTrue(loadedA.isHiddenFromLookup());
+    }
+
+    @Test
     void persistsCompletedPresetsSkipsInvalidEntriesOmitsWhenEmptyAndClearsOnResetAll() {
         UUID playerA = UUID.fromString("11111111-1111-1111-1111-111111111111");
         UUID playerB = UUID.fromString("22222222-2222-2222-2222-222222222222");

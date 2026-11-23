@@ -664,6 +664,77 @@ class MilestoneDataTest {
     }
 
     @Test
+    void persistsHideFromLookupLenientlyRoundTripsMigratesFromLegacyAndSurvivesResetAll(@TempDir Path dir) throws IOException {
+        UUID playerB = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        UUID playerC = UUID.fromString("33333333-3333-3333-3333-333333333333");
+
+        CompoundTag playerATag = new CompoundTag();
+        playerATag.putString("lastKnownName", "Alice");
+        playerATag.putBoolean("hideFromLookup", true);
+
+        CompoundTag playerBTag = new CompoundTag();
+        playerBTag.putString("lastKnownName", "Bob");
+        // hideFromLookup absent (1.0.1 / pre-F14 data) -> defaults to false
+
+        CompoundTag playerCTag = new CompoundTag();
+        playerCTag.putString("lastKnownName", "Charlie");
+        playerCTag.put("hideFromLookup", StringTag.valueOf("garbage")); // malformed -> leniently defaults to false
+
+        CompoundTag players = new CompoundTag();
+        players.put(PLAYER_A.toString(), playerATag);
+        players.put(playerB.toString(), playerBTag);
+        players.put(playerC.toString(), playerCTag);
+        CompoundTag dataTag = new CompoundTag();
+        dataTag.put("players", players);
+
+        MilestoneData loaded = MilestoneData.CODEC.parse(NbtOps.INSTANCE, dataTag).getOrThrow();
+        MilestoneData.PlayerData loadedA = loaded.playerOrNull(PLAYER_A);
+        MilestoneData.PlayerData loadedB = loaded.playerOrNull(playerB);
+        MilestoneData.PlayerData loadedC = loaded.playerOrNull(playerC);
+        assertNotNull(loadedA);
+        assertNotNull(loadedB);
+        assertNotNull(loadedC);
+        assertTrue(loadedA.hideFromLookup);
+        assertTrue(loadedA.isHiddenFromLookup());
+        assertFalse(loadedB.isHiddenFromLookup());
+        assertFalse(loadedC.isHiddenFromLookup());
+        assertEquals("Charlie", loadedC.lastKnownName);
+
+        // Encode back: write only when true
+        CompoundTag encoded = (CompoundTag) MilestoneData.CODEC.encodeStart(NbtOps.INSTANCE, loaded).getOrThrow();
+        CompoundTag encodedPlayers = encoded.getCompoundOrEmpty("players");
+        assertTrue(encodedPlayers.getCompoundOrEmpty(PLAYER_A.toString()).getBooleanOr("hideFromLookup", false));
+        assertFalse(encodedPlayers.getCompoundOrEmpty(playerB.toString()).contains("hideFromLookup"));
+        assertFalse(encodedPlayers.getCompoundOrEmpty(playerC.toString()).contains("hideFromLookup"));
+
+        // Round trip: encode -> decode keeps the flag
+        MilestoneData reloaded = MilestoneData.CODEC.parse(NbtOps.INSTANCE, encoded).getOrThrow();
+        assertTrue(reloaded.playerOrNull(PLAYER_A).isHiddenFromLookup());
+        assertFalse(reloaded.playerOrNull(playerB).isHiddenFromLookup());
+
+        // 1.21.1 legacy file carrying hideFromLookup (same key/type) migrates via readLegacy
+        CompoundTag legacyRoot = new CompoundTag();
+        legacyRoot.put("data", dataTag);
+        legacyRoot.putInt("DataVersion", 3955);
+        Path legacyFile = dir.resolve(MilestoneData.LEGACY_FILE);
+        Files.createDirectories(legacyFile.getParent());
+        NbtIo.writeCompressed(legacyRoot, legacyFile);
+
+        MilestoneData migrated = MilestoneData.readLegacy(legacyFile);
+        assertNotNull(migrated);
+        assertTrue(migrated.playerOrNull(PLAYER_A).isHiddenFromLookup());
+        assertFalse(migrated.playerOrNull(playerB).isHiddenFromLookup());
+        assertFalse(migrated.playerOrNull(playerC).isHiddenFromLookup());
+
+        // ResetAll must NOT clear personal setting hideFromLookup
+        TargetKey diamond100 = TargetKey.of("minecraft:diamond", 100);
+        loadedA.records.put(diamond100, new MilestoneRecord(100, 1L, 1000L));
+        assertTrue(MilestoneService.resetAllRecords(loaded, PLAYER_A, null).success());
+        assertTrue(loadedA.records.isEmpty());
+        assertTrue(loadedA.isHiddenFromLookup());
+    }
+
+    @Test
     void persistsCompletedPresetsSkipsInvalidEntriesMigratesFromLegacyAndClearsOnResetAll(@TempDir Path dir) throws IOException {
         UUID playerB = UUID.fromString("22222222-2222-2222-2222-222222222222");
         UUID playerC = UUID.fromString("33333333-3333-3333-3333-333333333333");

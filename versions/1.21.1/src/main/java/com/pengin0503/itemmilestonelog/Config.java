@@ -133,6 +133,12 @@ public final class Config {
                     "When false, the command is disabled and saved opt-out preferences are ignored (but preserved).")
             .define("allowDiscordOptOut", true);
 
+    /** Allow every player to view other players' records with /milestonelog lookup. */
+    public static final ModConfigSpec.BooleanValue ALLOW_LOOKUP = BUILDER
+            .comment("Allow every player to view other players' records with /milestonelog lookup <player>.",
+                    "When false, only operators (and the singleplayer/LAN host) can look up other players; looking up yourself always works.")
+            .define("allowLookup", true);
+
     /** Announce preset completions to all online players instead of only the completing player. */
     public static final ModConfigSpec.BooleanValue ANNOUNCE_PRESET_COMPLETION = BUILDER
             .comment("Announce to all online players when someone completes all targets of a preset.",

@@ -56,10 +56,17 @@ public class MilestoneData extends SavedData {
         public boolean muteProgressAlerts = false;
         /** Whether this player has opted out of having their milestones posted to Discord. */
         public boolean excludeFromDiscord = false;
+        /** Whether this player hides their records from non-privileged players' lookups (F14). */
+        public boolean hideFromLookup = false;
         /** Target (item + quantity) -> highest progress alert threshold already notified (0 possible as baseline). */
         public final Map<TargetKey, Integer> progressNotified = new LinkedHashMap<>();
         /** Preset IDs that this player has already completed (announced at most once unless resetall). */
         public final Set<String> completedPresets = new LinkedHashSet<>();
+
+        /** Whether this player hides their records from lookups by non-privileged other players (F14). */
+        public boolean isHiddenFromLookup() {
+            return hideFromLookup;
+        }
     }
 
     private final Map<UUID, PlayerData> players = new LinkedHashMap<>();
@@ -277,6 +284,11 @@ public class MilestoneData extends SavedData {
             } else if (entry.contains("excludeFromDiscord")) {
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed excludeFromDiscord tag in SavedData");
             }
+            if (entry.contains("hideFromLookup", Tag.TAG_ANY_NUMERIC)) {
+                pd.hideFromLookup = entry.getBoolean("hideFromLookup");
+            } else if (entry.contains("hideFromLookup")) {
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed hideFromLookup tag in SavedData");
+            }
             if (entry.contains("progressNotified", Tag.TAG_COMPOUND)) {
                 CompoundTag progressTag = entry.getCompound("progressNotified");
                 for (String rawKey : progressTag.getAllKeys()) {
@@ -393,6 +405,9 @@ public class MilestoneData extends SavedData {
             }
             if (pd.excludeFromDiscord) {
                 entry.putBoolean("excludeFromDiscord", true);
+            }
+            if (pd.hideFromLookup) {
+                entry.putBoolean("hideFromLookup", true);
             }
             if (!pd.progressNotified.isEmpty()) {
                 CompoundTag progressTag = new CompoundTag();
