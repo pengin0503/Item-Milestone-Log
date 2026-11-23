@@ -4,7 +4,7 @@
 
 > **改訂（2026-11-23、設計レビューの反映）**: 初版の設計上の不備・矛盾を修正した。修正した箇所には 〔X番号〕 を付けている。各修正の理由と根拠（コードの位置・確認した内容）は末尾の「付録A」にまとめた。採用しない修正は、その箇所を初版の記述に戻せばよい（git の差分で初版と比較できる）。
 >
-> 追加機能の**候補**（未採用）は別文書 `docs/FEATURE_PROPOSALS_1.1.0.md` にある。**候補は採用が決まって本書に移されるまで実装しない。**
+> **改訂（2026-11-23、追加機能の採用）**: 別文書 `docs/FEATURE_PROPOSALS_1.1.0.md` の候補のうち、オーナーが採用した16件を F11〜F26 として本書に移した（見出しに元の候補番号を付けた）。P15（収納の中身を数える）と P16（タイトル演出）は採用しない。F4 の `discordUseEmbeds` の既定値はオーナーの判断で false にした。経緯は末尾の「付録B」。
 
 ## 0. 前提（現在の状態）
 
@@ -40,6 +40,7 @@
     - 専用サーバーのプレイヤー: 権限レベル2以上なら true
     - 統合サーバー（シングルプレイ・LAN）のプレイヤー: **ホスト本人**（`MinecraftServer#isSingleplayerOwner` 相当、バージョンごとの API に合わせる）であるか、権限レベル2以上なら true。LAN のゲストはチートが許可されていない限り false
     - 既存コマンドの `.requires(hasPermission(2))`（admin / firsts reset 系 / exportall）は制約2により変更しない
+    - 新しく追加するコマンドのうち、既存の管理者用コマンドと同じ種類のもの（F3 `exporthtmlall`、F26 `exportcsvall`、F22 `importall`、F8b `firsts resettag` / `admin <player> resettag`、F24 `renameitem`）は、既存と揃えて `.requires(hasPermission(2))` にする（同じ系統のコマンドで、使える人が食い違わないようにする）。`isPrivileged` は、OP 不要のコマンドやプリセットの管理の中で、管理者かどうかで動作を変える箇所（G1、F6 / F13 の `allowLookup`、F14 の非公開）に使う
 12. **外部由来の文字列の扱い** 〔X5〕: プレイヤー名、カスタムプリセットの表示名、他 Mod のアイテム名など、利用者や外部から来る文字列は書式文字列として解釈せず `Component.literal` で埋め込む。HTML（F3）では HTML エスケープ、Discord（F4 / F9）では Markdown のエスケープ、コマンド文字列（F7）では検証を行う（各節に詳細）
 13. **タグ形式のキー** 〔X14〕: F8a の実装以降、`TargetKey.itemId` は `#` で始まるタグ ID（例: `#c:ingots/iron`）になり得る。1.1.0 で追加する全機能は `TargetKey.isTag()` を考慮し、`itemId` を確認せずに `Identifier.parse` やレジストリ参照に渡さない
 
@@ -51,6 +52,8 @@
 |---|---|---|---|---|---|
 | PlayerData | `progressNotified` | compound（キー: エンコード済み TargetKey 文字列（`toEncodedString()`、例 `minecraft:diamond#1000`）、値: int） | 空 | 空なら書かない | F1 |
 | PlayerData | `completedPresets` | 文字列リスト（プリセット ID） | 空 | 空なら書かない | F5 |
+| PlayerData | `hideFromLookup` | boolean | false | true のときだけ書く | F14 |
+| PlayerData | `muteProgressAlerts` | boolean | false | true のときだけ書く | F15 |
 | MilestoneData（`players` と同じ階層） | `lastDigestEpoch` | long | 0 | 0 なら書かない | F9 |
 
 - 26.x では新フィールドを `lenientOptionalFieldOf`（または既存コードと同じ `orElse` による要素単位の読み飛ばし）で定義し、新フィールドが壊れていてもファイル全体の読み込みを失敗させない（issue #40 と同じ方針）。1.21.1 も要素単位で読み飛ばし、warn ログを出す
@@ -59,17 +62,60 @@
   - 記録の確定、`reset <item> [count]`、GUI のリセット、`admin <player> reset`、`remove`: そのキーの `progressNotified` を消す
   - `resetall`、GUI の全リセット、`admin <player> resetall`: `progressNotified` と `completedPresets` をすべて消す
   - `admin <player> purge`: PlayerData ごと消える（従来通り）
-  - import: これらのフィールドを変更しない
+  - `hideFromLookup` / `muteProgressAlerts` は個人の設定なので、`resetall` や admin の操作では消さない（`purge` では PlayerData ごと消える）
+  - import / F22 importall: これらのフィールドを変更しない
+  - F23 undo / F24 renameitem: 各節の規則に従う
   - ログイン時: 記録済みのキーと、実効ターゲット（個人 + `defaultTargets`）に無いキーの `progressNotified` を消す（import や `defaultTargets` の変更で残ったものを片付ける）
-- ダウングレード（1.1.0 → 1.0.1）: 1.0.1 は知らないフィールドを読み捨て、次の保存で消す（通知済み・制覇済みの状態が失われ、1.1.0 に戻すと再び通知され得る）。**タグのターゲット・記録・世界初（F8）は 1.0.1 の検証で弾かれ、次の保存で失われる**。CHANGELOG と README に明記する
+- ダウングレード（1.1.0 → 1.0.1）: 1.0.1 は知らないフィールドを読み捨て、次の保存で消す（通知済み・制覇済みの状態と、非公開・ミュートの設定が失われ、1.1.0 に戻すと再び通知され得る）。**タグのターゲット・記録・世界初（F8）は 1.0.1 の検証で弾かれ、次の保存で失われる**。CHANGELOG と README に明記する
+
+### 1.2 追加する Config の一覧
+
+すべて既存の `Config` クラスのトップレベルに追加する（§1 制約8）。既存の機能の挙動は、既定値のままなら 1.0.1 と変わらない。
+
+| キー | 型 | 既定値 | 範囲・検証 | 機能 |
+|---|---|---|---|---|
+| `presetsEnabled` | boolean | true | | T |
+| `exportImportEnabled` | boolean | true | | T |
+| `worldFirstEnabled` | boolean | true | | T |
+| `progressAlerts` | boolean | true | | F1 |
+| `progressAlertThresholds` | 整数リスト | [50, 90] | 各 1〜99 | F1 |
+| `progressAlertMinCount` | int | 10 | 2〜1,000,000 | F1 |
+| `discordUseEmbeds` | boolean | **false** | | F4 |
+| `announcePresetCompletion` | boolean | false | | F5 |
+| `allowLookup` | boolean | true | | F6・F13 |
+| `milestoneCommand` | 文字列 | "" | | F7 |
+| `discordDigestEnabled` | boolean | false | | F9 |
+| `discordDigestIntervalDays` | int | 7 | 1〜30 | F9 |
+| `autoBackupEnabled` | boolean | true | | F10 |
+| `autoBackupGenerations` | int | 5 | 1〜20 | F10 |
+| `displayTimeZone` | 文字列 | "" | 空、または `ZoneId.of` が受け付ける値 | F11 |
+| `chatItemHover` | boolean | true | | F12 |
+| `scoreboardObjective` | 文字列 | "" | 空、または `^[A-Za-z0-9_.+-]{1,32}$` | F17 |
+| `scoreboardWorldFirstObjective` | 文字列 | "" | 同上 | F17 |
+| `discordLanguage` | 文字列 | "en_us" | `en_us` / `ja_jp` | F18 |
+| `discordNotifyPresetCompletion` | boolean | false | | F19 |
+| `guiWorldFirstMark` | boolean | true | | F25 |
+
+Config を持たない新機能（制約8の例外）: F2（データパックが無ければ何もしない）、F14 / F15（個人の切り替えそのものが ON/OFF）、F16（`presetsEnabled` に従う）、F20（API。T の方針どおり）、F21（データパックが無ければ何もしない）、F22 / F26（`exportImportEnabled` に従う）、F23（コマンドを使わなければ何もしない）、F24（管理者のコマンド）。
 
 ## 2. 実施順序 〔X19〕
 
-G（1.0.1 からの不備修正）→ T（既存機能のスイッチ追加）→ **F8a（タグのデータ表現）** → F1 → F4 → F5 → F6 → F7 → F3 → F9 → F10 → F2 → **F8b（タグの検出・コマンド・表示）** の順を推奨する。
+次の順を推奨する。
 
-- F8 は `TargetKey` の意味（`itemId` が `#` で始まり得る）を変え、F1〜F9 のすべてがその上に乗る。データ表現（F8a）を先に入れておけば、後続の各機能は最初からタグを考慮して作れる。初版のように F8 を最後にすると、F1〜F9 を F8 のときに作り直すことになる
-- F8b は規模が大きいので PR を分けてよい
-- 各機能は相互に独立しているため、上記以外の順序の入れ替え自体は可
+1. G（1.0.1 からの不備修正）→ T（既存機能のスイッチ追加）→ **F8a（タグのデータ表現）** → F11（タイムゾーン）
+2. F1 → F15 → F4 → F18 → F5 → F19 → F20
+3. F6 → F14 → F13 → F16
+4. F7 → F3 → F26 → F9 → F10
+5. F17 → F22 → F23 → F24
+6. F12 → F25 → F21
+7. F2 → **F8b（タグの検出・コマンド・表示）**
+
+- F8 は `TargetKey` の意味（`itemId` が `#` で始まり得る）を変え、ほかのすべての機能がその上に乗る。データ表現（F8a）を先に入れておけば、後続の各機能は最初からタグを考慮して作れる。初版のように F8 を最後にすると、各機能を F8 のときに作り直すことになる
+- F11 は日付を整形するすべての箇所（F3・F4・F9・F13・F26 ほか）に関わるので早めに入れる
+- F17 のスコアの書き込みは、記録数を変える後続の機能（F22・F23・F24）から呼ぶので、それらより先に入れる。F24 は F10 のバックアップを使う
+- F25 の追加ペイロードは F21 の GUI の表示に使うので、F21 より先に入れる
+- F8b は規模が大きいので PR を分けてよい。F8b では、それまでに入れた機能（F12 のホバー、F13 の `toptag`、F16 ほか）のタグの扱いも確認する
+- 上記の依存関係を守れば、順序の入れ替え自体は可
 
 ---
 
@@ -101,11 +147,12 @@ G（1.0.1 からの不備修正）→ T（既存機能のスイッチ追加）�
 - `presetsEnabled`（boolean、既定 true）: false のとき、カスタムプリセットの保存・適用・削除とプリセット一覧を無効化する（コマンドは「無効化されている」旨のメッセージを返す。組み込みプリセットの適用も含めて無効。既存のプリセットファイルやデータは削除しない）
   - 〔X6〕対象: `preset <name>` / `preset list` / `preset save` / `preset delete` / `preset reload`、GUI の APPLY_PRESET / SAVE_PRESET / DELETE_PRESET（サーバー側で拒否し、無効化メッセージをフィードバックとして返す）
   - 〔X6〕GUI: 同期データのプリセット一覧を空にし、`canManagePresets` を false にして送る（「プリセット...」ボタンは残り、一覧画面は既存の「利用可能なプリセットがありません。」表示になる。ペイロード形式は変えない）
-  - F5（制覇）の判定・通知も行わない
-- `exportImportEnabled`（boolean、既定 true）: false のとき export / import コマンド（F3 の exporthtml も含む）を無効化する
-  - 〔X6〕対象: `export` / `exportall` / `import` / `exporthtml` / `exporthtmlall`。OP も対象とする（サーバー所有者が設定で戻す）。F10 の自動バックアップはこのスイッチの影響を受けない
+  - F5（制覇）の判定・通知も行わない（F19 の Discord 通知と F20 の `PresetCompletedEvent` も起きない）
+  - F16 の `presetprogress` と、F21 のデータパックのプリセットも使えない
+- `exportImportEnabled`（boolean、既定 true）: false のとき export / import コマンド（F3 の exporthtml、F22 の importall、F26 の exportcsv も含む）を無効化する
+  - 〔X6〕対象: `export` / `exportall` / `import` / `exporthtml` / `exporthtmlall` / `importall` / `exportcsv` / `exportcsvall`。OP も対象とする（サーバー所有者が設定で戻す）。F10 の自動バックアップはこのスイッチの影響を受けない
 - `worldFirstEnabled`（boolean、既定 true）: false のとき、世界初の**記録自体**を行わない（既存の世界初データは保持するが新規登録しない。`announceWorldFirst` は従来通りアナウンスのみの制御として残す。firsts の閲覧は可能）
-  - 〔X6〕連動: 新しい世界初が生まれないため、`announceWorldFirst` は何もしない。`discordNotifyScope = "world_first"` では Discord に何も送られない。F2 の `world_first: true` 条件は一致しない。F7 の `%worldfirst%` は常に `false`。`firsts reset` / `firsts resetall` は従来通り使える
+  - 〔X6〕連動: 新しい世界初が生まれないため、`announceWorldFirst` は何もしない。`discordNotifyScope = "world_first"` では Discord に何も送られない。F2 の `world_first: true` 条件は一致しない。F7 の `%worldfirst%` と F20 の `isWorldFirst()` は常に `false`。既存の世界初は F17 の件数・F25 の印・F13 の ★ に従来通り反映される。`firsts reset` / `firsts resetall` は従来通り使える
 - Mod API / イベントは「他 Mod が使う側が opt-in する」性質のため、スイッチは追加しない（この節の対象外であることを明記して完了とする）
 
 実装メモ: 無効化メッセージ用に lang キー `message.itemmilestonelog.feature_disabled`（en: "This feature is disabled on this server." / ja: 「この機能はサーバーで無効化されています。」）を追加し、各機能で使い回す（`ServerLang.tr` で受信者の言語のフォールバック付きで送る）。
@@ -128,7 +175,7 @@ G（1.0.1 からの不備修正）→ T（既存機能のスイッチ追加）�
   - 理由: 1.1.0 の導入時、ターゲットの追加・プリセットの適用・import の直後、`defaultTargets` の変更後に、既に持っている分のアラートがまとめて出ないようにする
 - 〔X7〕1回の評価で複数のしきい値を超えた場合は、超えた最大のしきい値について1通だけ通知し、その値を記録する
 - 判定タイミング: 所持数が増える経路（スキャン、拾得、クラフト/精錬の確定）で進捗が再計算されるたび。記録確定（100%）時は従来の達成通知があるのでアラートは出さない（そのキーの `progressNotified` は消す）
-- `notifyPlayer` とは独立に ON/OFF できること（progressAlerts が唯一の制御）
+- `notifyPlayer` とは独立に ON/OFF できること（サーバー全体の制御は progressAlerts だけ。個人は F15 の `muteprogress` で止められる）
 
 ### 実装メモ
 - PlayerData に `Map<TargetKey, Integer> progressNotified`（値 = 通知済み最大しきい値、ベースラインでは 0 もあり得る）を追加。26.x Codec / 1.21.1 NBT の両方で欠落時は空として読む（§1.1）
@@ -180,7 +227,7 @@ G（1.0.1 からの不備修正）→ T（既存機能のスイッチ追加）�
   - 〔X9〕アイテム名はサーバー側の `Component.getString()` で得る（専用サーバーでは英語、シングルプレイ / LAN ではホストのクライアント言語になる）。名前を解決できないアイテム（Mod を外した等）は ID だけを出す
   - 〔X9〕世界初の印: そのキーの世界初の保持者 UUID が本人と一致する記録に付ける
   - 〔X9〕達成率 = 記録済みの数 / 実効ターゲット数（個人ターゲット + `defaultTargets`）。所持数の進捗は載せない（オフラインのプレイヤーは数えられないため、全員分と揃える）
-  - 日付・生成日時のタイムゾーンは既存の表示と同じ（サーバーの既定）
+  - 日付・生成日時のタイムゾーンは F11 の `displayTimeZone`（空ならサーバーの既定）
 - HTML エスケープを必須とする（プレイヤー名・プリセット名・アイテム名等、外部由来の文字列を埋め込む箇所すべて。`&` `<` `>` `"` `'` を実体参照にする）。`<meta charset="utf-8">` を入れる
 - 失敗時（IO エラー等）は既存 export と同じ失敗メッセージ経路を使う（例外詳細をプレイヤーに出さない、という既存方針を維持）
 - 〔X9〕専用サーバーではプレイヤーはこのファイルを開けない（サーバーのフォルダにあるため）。主にシングルプレイとサーバー所有者向けの機能であることを README に書く
@@ -194,8 +241,9 @@ G（1.0.1 からの不備修正）→ T（既存機能のスイッチ追加）�
 ## F4. Discord 通知の Embed 化
 
 ### 仕様
-- Config: `discordUseEmbeds`（boolean、既定 true）。false のときは従来通りのプレーンテキストで送る
-  - 〔X10〕**判断事項**: 既定 true のため、既に Webhook を使っているサーバーでは 1.1.0 への更新で投稿の形式が変わる（T 節の「アップグレードで挙動が変わらない」方針の対象外の新機能だが、目に見える変化）。既定 true を維持する場合は CHANGELOG に明記する。従来の形式を守る場合は既定を false にする
+- Config: `discordUseEmbeds`（boolean、**既定 false**）。false のときは従来通りのプレーンテキストで送る
+  - 〔X10〕既定値は、オーナーの判断で false にした（初版は true）。既に Webhook を使っているサーバーで、1.1.0 に更新しただけで投稿の形式が変わらないようにするため。Embed を使いたいサーバーが true にする
+- 文面と欄名は F18 の `discordLanguage` の言語で作る。日付は F11 の `displayTimeZone` で整形する
 - Embed の構成（true のとき）〔X10〕:
   - title: アイテム表示名＋個数（count > 1 のとき ` ×N`）。表示名はサーバー側の `getString()`（専用サーバーでは英語。シングルプレイ / LAN ではホストの言語）。タグターゲットは F8b の表示名の規則に従う
   - description: 通常 = `<プレイヤー名> obtained <アイテム>`、世界初 = `★ World First — <プレイヤー名> obtained <アイテム>`（従来のプレーン文面と同じ英語）
@@ -231,8 +279,9 @@ G（1.0.1 からの不備修正）→ T（既存機能のスイッチ追加）�
   - Config `announcePresetCompletion`（boolean、既定 false）が true: 全オンラインプレイヤーに `message.itemmilestonelog.preset_completed_broadcast`（%s = プレイヤー名、%s = プリセット表示名）を送る。本人は muteBroadcasts / notifyPlayer に関係なく受け取る。他のプレイヤーは通常ブロードキャストと同じく muteBroadcasts を尊重する
   - false: `notifyPlayer` が true なら本人に `message.itemmilestonelog.preset_completed`（%s = プリセット表示名）を送る
   - 文面例: en "★ All targets of %s are complete!" / ja 「★ %s のターゲットをすべて達成しました！」、broadcast: en "★ %s completed all targets of %s!" / ja 「★ %s が %s のターゲットをすべて達成しました！」
-- プリセット表示名: 組み込みは lang キー `gui.itemmilestonelog.preset.<id>` を `ServerLang.tr` で受信者ごとに引く（値は「プリセット: ATM Star」の形なので、文面はそれを埋め込んで自然な形にしてある）。カスタムは JSON の `name`（無ければ ID）を `Component.literal` で埋め込む（制約12）
+- プリセット表示名: 組み込みは lang キー `gui.itemmilestonelog.preset.<id>` を `ServerLang.tr` で受信者ごとに引く（値は「プリセット: ATM Star」の形なので、文面はそれを埋め込んで自然な形にしてある）。カスタムとデータパック（F21）は JSON の `name`（無ければ ID）を `Component.literal` で埋め込む（制約12）
 - 世界初と同時に起きた場合は両方通知してよい
+- 制覇を検出したら、上の通知に加えて F19（Discord、設定時のみ）と F20（`PresetCompletedEvent`）を行う。判定の対象は `Presets.all()` のすべて（組み込み・カスタム・F21 のデータパック）
 - `completedPresets` はプリセット ID で持つ。カスタムプリセットの中身が後から変わっても制覇済みは取り消さない。同じ ID で削除・作り直しても制覇済みのまま（README に明記）
 - `resetall` で `completedPresets` は消える（§1.1）。単体の `reset` では消さない（リセットと再記録のたびに通知が出るのを防ぐ）
 - `presetsEnabled` が false のときは判定・通知を行わない。import では判定しない
@@ -254,6 +303,7 @@ G（1.0.1 からの不備修正）→ T（既存機能のスイッチ追加）�
 - Config: `allowLookup`（boolean、既定 true）
 - false のとき、lookup は §1 制約11の `isPrivileged` を満たす者だけが使える（一般プレイヤーには T の無効化メッセージ）〔X12〕。シングルプレイ / LAN のホストは使える
 - 自分自身の lookup は常に可
+- F14 で記録を隠しているプレイヤーは、`isPrivileged` を満たさない他のプレイヤーからは lookup できない（`lookup_hidden` の文面を返す）。補完候補にも出さない
 - 〔X12〕補完候補（保存されている全プレイヤー名）は、そのソースが lookup を使えるときだけ出す（`allowLookup` = false のサーバーで一般プレイヤーに過去の参加者名の一覧を見せない）
 - コンソール・RCON からも使える
 
@@ -348,6 +398,7 @@ G（1.0.1 からの不備修正）→ T（既存機能のスイッチ追加）�
 | `/milestonelog admin <player> resettag <tag> [<count>]` | 権限レベル2 | 他プレイヤーのタグの記録をリセット |
 
 - `<tag>` は `#` を付けずに書く（`IdentifierArgument`）。コマンド側で `#` を付けて TargetKey にする
+- `resettag` は F23 の取り消しの対象にする（`reset` と同じ）。F13 の `toptag` もタグ用のコマンド
 - 補完: `addtag` はサーバーのアイテムタグ一覧（`BuiltInRegistries.ITEM` のタグ名）、それ以外はそのプレイヤー（またはワールド）が持っているタグのキー
 
 #### GUI
@@ -382,7 +433,7 @@ G（1.0.1 からの不備修正）→ T（既存機能のスイッチ追加）�
 - 期間内の記録が0件なら送らない（時刻だけ更新する）
 - 送信チェックはサーバー起動時と、稼働中は1時間に1回程度の低頻度で行う（tick カウンタで間引く）
 - Webhook URL が空、または discordDigestEnabled が false のときは何もしない
-- 文面は F4 の Embed 設定に従う（Embed 時はダイジェスト用 Embed 1件に箇条書きを入れる）。件数が多い場合は先頭20件 + 「他 N 件」とする
+- 文面は F4 の Embed 設定に従う（Embed 時はダイジェスト用 Embed 1件に箇条書きを入れる）。件数が多い場合は先頭20件 + 「他 N 件」とする。見出し・各行・「他 N 件」の文面は F18 のキー（`discord.itemmilestonelog.digest.*`）から `discordLanguage` で作る
   - 〔X15〕各行: `<プレイヤー名> — <アイテム>（<プレイ時間>）`、epochMillis の昇順。名前とアイテム名は F4 と同じく Markdown をエスケープする
   - 〔X15〕長さの上限: Embed の description は 4096 文字、プレーンテキストは 2000 文字。20 件でも超える場合は末尾の行を削って「他 N 件」の N を増やす
 - 〔X15〕既知の制限（README に書く）: 送信時刻は送信をキューに積んだ時点で更新する。429 や通信失敗で届かなかったダイジェストは再送しない（既存の通知と同じ方針）。import した記録も epochMillis が期間内ならダイジェストに含まれる（記録に「import 由来」の印が無いため）
@@ -419,6 +470,351 @@ G（1.0.1 からの不備修正）→ T（既存機能のスイッチ追加）�
 
 ---
 
+## F11. 表示に使うタイムゾーン（候補 P1）
+
+### 仕様
+- Config `displayTimeZone`（文字列、既定 "" = サーバーの既定のタイムゾーン）。`Asia/Tokyo` のような IANA の ID、または `ZoneId.of` が受け付ける形式（`UTC`、`+09:00` など）
+  - Config の検証関数で `ZoneId.of` に通し、解釈できない値は NeoForge の Config 検証で既定値（空）に戻す（`ZoneId.of` はタグと違い初期化時に使えるので、検証時に確かめられる）
+- 対象: **サーバーが整形する日付すべて**。チャット（`list` / `firsts` / admin / F6 lookup / F13 / 世界初のアナウンス）、サーバーログの記録行、Discord（プレーンテキストの「at …」、F4 の `Date` 欄、F9）、F3 の HTML（記録の日付と生成日時）、F26 の CSV の `date` 列
+- GUI は従来通り**クライアントのタイムゾーン**（見る人の現地時刻で表示する）。README に「チャット・Discord・出力ファイルは設定のタイムゾーン、GUI は自分の PC のタイムゾーン」と書く
+- 保存データは epochMillis のままで、何も変わらない
+
+### 実装メモ
+- `Playtime.formatDate` / `formatRecord` に `ZoneId` を受け取る版を追加する。既存の引数なしの版は `ZoneId.systemDefault()` のまま残し、GUI（`MilestoneScreen`）はそれを使い続ける。サーバー側の呼び出し（`MilestoneCommands`、`Tracker`、`DiscordNotifier` ほか）は Config から得た `ZoneId` を渡す
+- `ZoneId` の解決（空 → システムの既定、値 → `ZoneId.of`）は1か所にまとめ、Config の再読み込みに追従する（値ごとにキャッシュしてよい）
+
+---
+
+## F12. チャットのアイテム名にホバーでアイテムを表示（候補 P2）
+
+### 仕様
+- サーバーがチャットに出すアイテム名（`MilestoneService.targetDisplayName` が作る Component）に、そのアイテムを表示するホバーイベント（`show_item`）を付ける。記録・ブロードキャスト・世界初・F1 の進捗アラート、`list` / `targets` / `firsts` / admin / F6 / F13 / F16 の各行が対象になる
+  - 表示するスタック: そのアイテムの既定のスタック（個数1、データコンポーネント無し）
+  - タグターゲット（F8）: タグに属するアイテムのうち、レジストリ ID の辞書順で最初のもの。タグが空・存在しない場合はホバーを付けない
+  - レジストリに無いアイテム（Mod を外した等）にはホバーを付けない
+- Config `chatItemHover`（boolean、既定 true）
+- 文字列としての値（`getString()`）は変わらないので、GUI のフィードバック行・HTML・Discord・ログには影響しない
+- バニラクライアント: `show_item` のホバーはバニラクライアントでも表示される。注意点として、ホバーの中身は文字列ではなくアイテムのデータ（アイテム ID とコンポーネント）として送られるので、クライアントが知らないアイテムを入れるとそのクライアントはメッセージを解釈できない。ホバーに入れるのはサーバーのレジストリにあるアイテムだけで、バニラクライアントが遊べる構成（サーバーに Mod のアイテムが無い構成）ではバニラのアイテムしか入らないため、問題は起きない見込み。§3 の mineflayer の参加テストで、ホバー付きのメッセージを受けても切断されないことを確認する
+
+### 実装メモ
+- ホバーイベントの API はバージョンで異なる（1.21.1 は `new HoverEvent(HoverEvent.Action.SHOW_ITEM, new HoverEvent.ItemStackInfo(stack))`、26.x は `new HoverEvent.ShowItem(stack)`）。既存コードに HoverEvent の使用例は無いので、各バージョンでコンパイルを確認する
+- タグの最初のアイテムは F8b のタグのキャッシュから取る（チャットのたびにタグを解決しない）
+
+---
+
+## F13. ランキングと最近の記録（`top` / `recent`）（候補 P3）
+
+### 仕様
+- コマンド追加（OP 不要。権限は F6 の `allowLookup` に従い、false のときは §1 制約11の `isPrivileged` を満たす者だけが使える。満たさない者には T の無効化メッセージ）:
+
+| コマンド | 内容 |
+|---|---|
+| `/milestonelog top` | 記録数の多い順の上位10人と、実行者自身の順位 |
+| `/milestonelog top <item> [<count>]` | そのターゲット（アイテム × 個数、既定 1）を記録した人を、記録時のプレイ時間の短い順に上位10人と、実行者自身の順位 |
+| `/milestonelog toptag <tag> [<count>]` | 同上のタグターゲット版（F8b と同じく `<tag>` は `#` を付けずに書く） |
+| `/milestonelog recent [<n>]` | ワールド全体の最近の記録を、epochMillis の新しい順に n 件（既定 10、範囲 1〜20） |
+
+- `<item>` は既存の `reset` と同じく `IdentifierArgument`（Mod を外したアイテムの記録も指定できる）。`<count>` は 1〜1,000,000
+- 集計の対象: 保存データにいる全プレイヤー（オフラインを含む）。記録が0件のプレイヤーは `top` に出さない。F14 で記録を隠しているプレイヤーは、`isPrivileged` を満たさない閲覧者には出さない（閲覧者本人は常に含める）
+- 順位の付け方:
+  - `top`: 記録数の降順。同数は同じ順位（1, 2, 2, 4 …）とし、表示の並びは名前の辞書順（大文字小文字を区別しない）
+  - `top <item>`: 記録時の playTicks の昇順。同じ値は同じ順位とし、並びは epochMillis の昇順（0 = 不明は後ろ）、次に名前
+  - 上位10件の後に、実行者の行（「あなたの順位」）を必ず出す。上位10件に入っていても出す。記録が無ければ「未記録」の文面
+  - 実行者がプレイヤーでない（コンソール・RCON）場合は、自分の行を出さない
+- `recent`: epochMillis が 0（不明、1.0.0 で作られた記録）の記録は含めない。そのキーの世界初の保持者がその記録の本人なら行頭に ★ を付ける
+- 名前は保存されている最後の名前（空なら UUID）を `Component.literal` で埋め込む（制約12）
+- 補完: `top <item>` はワールドの誰かが記録しているアイテム ID、`toptag` は同じくタグのキー。F6 と同じく、使えないソースには出さない
+- 文面（en / ja）:
+  - `message.itemmilestonelog.top_header`（%s = 人数）: "Most milestones (%s players):" / 「記録数ランキング（%s人）:」
+  - `message.itemmilestonelog.top_entry`（%s = 順位、%s = 名前、%s = 件数）: "%s. %s — %s milestones" / 「%s. %s — %s件」
+  - `message.itemmilestonelog.top_self`（%s = 順位、%s = 件数）: "Your rank: #%s (%s milestones)" / 「あなたの順位: %s位（%s件）」
+  - `message.itemmilestonelog.top_item_header`（%s = ターゲット表示名、%s = 人数）: "Fastest to record %s (%s players):" / 「%s を早く記録した順（%s人）:」
+  - `message.itemmilestonelog.top_item_entry`（%s = 順位、%s = 名前、%s = 記録の整形）: "%s. %s — %s" / 「%s. %s — %s」
+  - `message.itemmilestonelog.top_item_self`（%s = 順位、%s = 記録の整形）: "Your rank: #%s (%s)" / 「あなたの順位: %s位（%s）」
+  - `message.itemmilestonelog.top_self_none`（`top` で実行者の記録が0件）: "You have no milestones yet." / 「あなたはまだ何も記録していません。」
+  - `message.itemmilestonelog.top_item_self_none`（`top <item>` で実行者が未記録）: "You have not recorded this yet." / 「あなたはまだ記録していません。」
+  - `message.itemmilestonelog.top_empty`: "Nobody has recorded any milestones yet." / 「まだ誰も記録していません。」
+  - `message.itemmilestonelog.recent_header`（%s = 件数）: "Recent milestones (%s):" / 「最近の記録（%s件）:」
+  - `message.itemmilestonelog.recent_entry`（%s = 名前、%s = ターゲット表示名、%s = 記録の整形）: "%s — %s (%s)" / 「%s — %s（%s）」。世界初は `recent_entry_world_first`: "★ %s — %s (%s)" / 「★ %s — %s（%s）」
+  - `message.itemmilestonelog.recent_empty`: "No dated milestones yet." / 「日付のある記録はまだありません。」
+
+### 実装メモ
+- 抽出・並べ替え・順位付け（同順位、隠しているプレイヤーの除外、閲覧者本人の扱い）は、PlayerData の集合と閲覧者を受け取る純粋関数にして単体テストする
+- 全プレイヤーを走査するのはコマンド実行時だけなので、キャッシュは持たない
+
+---
+
+## F14. 自分の記録を他人から隠す（`privacy`）（候補 P4）
+
+### 仕様
+- コマンド追加: `/milestonelog privacy`（OP 不要）。実行するたびに切り替え、切り替え後の状態を返す（既存の `mutebroadcast` と同じ形）
+- PlayerData に `hideFromLookup`（boolean、§1.1）を追加する
+- 隠している間は、`isPrivileged` を満たさない他のプレイヤーに対して、次に出ない: F6 の lookup（「非公開」の文面を返す）、F6 の補完候補、F13 の `top` / `recent`
+- 隠していても変わらないもの（README に明記）: 本人の閲覧、`isPrivileged` を満たす者（OP・シングルプレイ / LAN のホスト）の閲覧、admin 系コマンド、`exportall` / `exporthtmlall` / `exportcsvall`、ブロードキャストと世界初のアナウンス、`firsts`、Discord、F17 のスコアボード。これらはサーバーの設定や管理者の操作なので、個人の設定では止めない
+- Config は追加しない（個人の設定そのものが ON/OFF。既存の `mutebroadcast` と同じ扱い。制約8の例外として明記）
+- 文面:
+  - `message.itemmilestonelog.privacy_on`: "Your milestones are now hidden from other players (lookup, top and recent)." / 「あなたの記録を他のプレイヤーから隠しました（lookup・top・recent）。」
+  - `message.itemmilestonelog.privacy_off`: "Your milestones are now visible to other players." / 「あなたの記録を他のプレイヤーに公開しました。」
+  - `message.itemmilestonelog.lookup_hidden`（%s = 名前）: "%s keeps their milestones private." / 「%s は記録を非公開にしています。」
+
+---
+
+## F15. 進捗アラートの個人ミュート（`muteprogress`）（候補 P5）
+
+### 仕様
+- コマンド追加: `/milestonelog muteprogress`（OP 不要）。実行するたびに切り替え、切り替え後の状態を返す
+- PlayerData に `muteProgressAlerts`（boolean、§1.1）を追加する
+- ミュート中は F1 の通知を送らない。**通知済みしきい値（`progressNotified`）の更新は続ける**（解除した直後に、ミュート中に超えた分のアラートがまとめて出ないようにする）
+- `progressAlerts`（Config）が false のときは、ミュートの状態にかかわらず何も送らない
+- Config は追加しない（F14 と同じ理由）
+- 文面:
+  - `message.itemmilestonelog.muteprogress_on`: "Progress alerts are now muted." / 「進捗アラートをミュートしました。」
+  - `message.itemmilestonelog.muteprogress_off`: "Progress alerts are now enabled." / 「進捗アラートを受け取るようにしました。」
+
+---
+
+## F16. プリセットの進捗表示（`presetprogress`）（候補 P6）
+
+### 仕様
+- コマンド追加: `/milestonelog presetprogress <name>`（OP 不要。実行者はプレイヤーに限る。`presetsEnabled` が false なら T の無効化メッセージ）
+  - `preset` の下に `progress` を置かない理由: `preset <name>` は任意の ID を取るので、リテラル `progress` を足すと、`progress` という ID の既存のカスタムプリセットが使えなくなる（`Presets.RESERVED_IDS` に足すことになり、既存のファイルが無視される）
+- 出力:
+  1. 見出し: プリセット表示名と「記録済み X / Y」。Y は F5 の判定対象キー R(S) の件数、X はそのうち records にあるキーの件数（個数まで完全一致。F5 と同じ数え方）
+  2. 未記録のキーの一覧（TargetKey の順）。数量ターゲットは現在の所持数を付ける（既存の `target_progress` の文面。`carriedFromCreative` のアイテムは 0。記録の一時停止中も数は出す）。最大 50 行、超えた分は「他 N 件」
+  3. R(S) から除いたキー（存在しないアイテム・空のタグ）が1件以上あれば、その件数
+  4. すべて記録済みなら、2 の代わりに「すべて記録済み」
+- 未知のプリセット名は既存の `preset_unknown` の文面
+- 補完: 既存の `preset <name>` と同じ候補
+- 文面:
+  - `message.itemmilestonelog.presetprogress_header`（%s = 表示名、%s = X、%s = Y）: "%s: %s / %s recorded" / 「%s: 記録済み %s / %s」
+  - `message.itemmilestonelog.presetprogress_entry`（%s = ターゲット表示名、進捗つきの場合は `target_progress` で包んだもの）: "- %s" / 「- %s」
+  - `message.itemmilestonelog.presetprogress_more`（%s = 件数）: "...and %s more" / 「…ほか %s 件」
+  - `message.itemmilestonelog.presetprogress_skipped`（%s = 件数）: "%s target(s) are not counted because the item or tag does not exist in this game." / 「%s 件は、このゲームにアイテムまたはタグが無いため数えていません。」
+  - `message.itemmilestonelog.presetprogress_complete`: "All targets are recorded." / 「すべてのターゲットを記録済みです。」
+- プリセット表示名の出所は F5 と同じ（組み込みは lang キー、カスタム・データパック（F21）は JSON の `name`）
+
+### 実装メモ
+- R(S) の計算は F5 の純粋関数を共用する（同じ数え方を保証するため）
+
+---
+
+## F17. スコアボード連携（候補 P7）
+
+### 仕様
+- Config:
+  - `scoreboardObjective`（文字列、既定 "" = 無効）: 各プレイヤーの**記録数**を書き込む objective の名前
+  - `scoreboardWorldFirstObjective`（文字列、既定 "" = 無効）: 各プレイヤーが保持している**世界初の件数**を書き込む objective の名前
+  - どちらも、検証関数で `^[A-Za-z0-9_.+-]{1,32}$` に限る（コマンドで引用符なしに書ける文字だけにする）。2つに同じ名前が設定された場合は世界初の方を無効として warn ログを出す
+- objective が無ければ、最初に書き込むときにダミー基準（`dummy`）で作る。表示名は `scoreboard.itemmilestonelog.records`（en "Milestones" / ja 「マイルストーン」）/ `scoreboard.itemmilestonelog.world_firsts`（en "World Firsts" / ja 「世界初」）を `ServerLang` のフォールバック付きで使う（バニラクライアントには英語で表示される）。既にあれば基準を問わずそのまま使う
+- 表示位置は変えない。利用者がバニラの `/scoreboard objectives setdisplay sidebar <名前>` で選ぶ
+- スコアの持ち主はプレイヤー名（オフラインのプレイヤーは保存されている最後の名前。空ならそのプレイヤーは書かない）
+- 書き込むタイミング:
+  - 記録数: サーバー起動時（全プレイヤー）、ログイン時、記録の確定、`reset` / `resetall`（コマンド・GUI）、admin の `reset` / `resetall` / `resettag`、`import`、F22 `importall`、F23 `undo`、F24 `renameitem`。admin の `purge` ではそのプレイヤーのスコアを消す
+  - 世界初の件数: サーバー起動時（全プレイヤー）、新しい世界初の登録、`firsts reset` / `firsts resetall` / `firsts resettag`、F24 `renameitem`
+  - ログイン時に名前が変わっていた（`lastKnownName` と違う）場合は、古い名前のスコアを両方の objective から消す
+- 設定を空に戻しても、既に作った objective とスコアは消さない（利用者がバニラのコマンドで消す）。README に書く
+- 他のデータパックが使っている objective の名前を設定すると、そのスコアを上書きする。README で専用の名前（例 `iml_records`）を勧める
+- F14 で記録を隠していても書き込む（F14 の節を参照）
+
+### 実装メモ
+- スコアボードの API はバージョンで差がある（`ScoreHolder`、`addObjective` の引数）。既存コードに使用例は無いので、各バージョンで確認する
+- 「プレイヤーデータ → 書き込むスコア」の計算と、名前の検証は純粋関数にして単体テストする
+- CI のボットテストに「記録した後に `/scoreboard players get <bot> <objective>` が記録数を返す」を1ケース加えることが望ましい
+
+---
+
+## F18. Discord の言語（候補 P8）
+
+### 仕様
+- Config `discordLanguage`（文字列、`en_us` / `ja_jp`、既定 `en_us`）。検証関数で同梱の言語に限る
+- Discord に送る文面（プレーンテキスト、F4 の Embed の文面と欄名、F9 のダイジェスト、F19 の制覇通知）をすべて lang キー `discord.itemmilestonelog.*` にし、`discordLanguage` の表から引く
+  - **`en_us` の値は 1.0.1 の文面と一字一句同じにする**（既定の設定で投稿の文面が変わらないようにする）。プレーンテキストは `★ Milestone recorded: %s obtained %s at %s` と `★ [World First] %s obtained %s at %s`
+- 引くキー（en / ja）:
+  - `discord.itemmilestonelog.recorded`（%s = 名前、%s = アイテム、%s = 記録の整形）: 上記 / 「★ マイルストーン記録: %s が %s を入手（%s）」
+  - `discord.itemmilestonelog.world_first`（同）: 上記 / 「★ [世界初] %s が %s を入手（%s）」
+  - `discord.itemmilestonelog.embed.recorded`（%s = 名前、%s = アイテム）: "%s obtained %s" / 「%s が %s を入手」
+  - `discord.itemmilestonelog.embed.world_first`（同）: "★ World First — %s obtained %s" / 「★ 世界初 — %s が %s を入手」
+  - `discord.itemmilestonelog.field.playtime` / `field.day` / `field.date`: "Playtime" / "Day" / "Date"、「プレイ時間」/「ゲーム内日数」/「日付」
+  - `discord.itemmilestonelog.digest.title`（%s = 日数）: "Milestones in the last %s day(s)" / 「直近 %s 日間のマイルストーン」
+  - `discord.itemmilestonelog.digest.line`（%s = 名前、%s = アイテム、%s = プレイ時間）: "%s — %s (%s)" / 「%s — %s（%s）」。世界初の行は、この文字列の先頭に `★ ` を付ける（F9）
+  - `discord.itemmilestonelog.digest.more`（%s = 件数）: "...and %s more" / 「…ほか %s 件」
+  - `discord.itemmilestonelog.preset_completed`（%s = 名前、%s = プリセット表示名）: "★ %s completed all targets of %s!" / 「★ %s が %s のターゲットをすべて達成しました！」
+- アイテムの表し方は変えない: プレーンテキストは従来通りアイテム ID（`formatDisplayId`、例 `minecraft:diamond ×100`）、Embed（F4）はサーバー側の表示名。専用サーバーはアイテムの英語名しか持たないので、`ja_jp` でも Embed のアイテム名は英語になる（README に明記）
+- プレイ時間（`27h 15m 30s`）と記録の整形の「Day」は、チャットと同じく英語表記のまま（`Playtime` の既存の書式。この機能では変えない）
+
+### 実装メモ
+- 文面は `Component.translatable(...).getString()` で作ってはいけない。専用サーバーの `Language` には全 Mod の en_us が読み込まれているため、キーが常に英語に解決され、`discordLanguage` が効かない。`ServerLang` の表から直接テンプレートを取り、Minecraft の翻訳と同じ書式（`%s`、`%1$s` などの位置指定、`%%`）で埋める関数（例 `ServerLang.formatForLang(lang, key, args...)`）を追加する
+- 埋め込む値（名前・アイテム名）は、埋め込む前に F4 の Markdown エスケープを通す（テンプレート側の記号はエスケープしない）
+- 単体テスト: en_us の出力が 1.0.1 の `String.format` の結果と一致すること、位置指定と `%%` の扱い
+
+---
+
+## F19. Discord へのプリセット制覇通知（候補 P9）
+
+### 仕様
+- Config `discordNotifyPresetCompletion`（boolean、既定 false）
+- true かつ Webhook が設定されているとき、F5 の制覇を検出したら Discord に1通投稿する。`announcePresetCompletion` と `discordNotifyScope` とは独立（`discordNotifyScope = "world_first"` でも送る）
+- 文面: F18 の `discord.itemmilestonelog.preset_completed`。プリセット表示名は、組み込みは lang キー `gui.itemmilestonelog.preset.<id>` を `discordLanguage` の表から引いた値、カスタム・データパックは JSON の `name`（無ければ ID）
+- F4 の Embed が有効なときは Embed で送る（title = プリセット表示名、description = 上の文面、color = 0x2ECC71（緑系）、footer = プレイヤー名、timestamp = 制覇した時刻）。Markdown のエスケープと長さの上限は F4 と同じ
+- `presetsEnabled` が false のとき（F5 が動かない）は送らない。import では送らない
+- 送信は既存のキューと送信経路を使う（429 はドロップ、再送しない）
+
+---
+
+## F20. API の拡張（世界初フラグ・制覇イベント）（候補 P10）
+
+### 仕様
+- `MilestoneRecordedEvent#isWorldFirst()` を追加する。世界初の値を受け取るコンストラクタを追加し、既存の2つのコンストラクタは残して世界初 = false とする（公開 API の互換を保つ）。`Tracker.record` は新しいコンストラクタで、`recordWorldFirstIfAbsent` の戻り値を渡す
+  - `worldFirstEnabled` が false のときは新しい世界初が生まれないので、常に false
+- `PresetCompletedEvent` を `api` パッケージに追加する（`NeoForge.EVENT_BUS` に投げる。キャンセル不可）
+  - 取得できる値: `getPlayer()`（`ServerPlayer`）、`getPresetId()`、`isBuiltin()`
+  - F5 の判定で制覇を検出したときだけ、`completedPresets` を更新した後に投げる。通知の設定（`announcePresetCompletion` / `notifyPlayer`）には関係なく投げる。import・F23 の undo では投げない
+  - 同じ記録で `MilestoneRecordedEvent` も起きる。順序は `MilestoneRecordedEvent` → `PresetCompletedEvent`
+- Javadoc と README の API の節に、KubeJS での使用例（世界初なら報酬、制覇なら報酬）を追加する
+- 既存の公開メソッド・コンストラクタは変えない（追加のみ）
+
+---
+
+## F21. データパックで配布できるプリセット（候補 P11）
+
+### 仕様
+- 読み込み先: `data/<namespace>/itemmilestonelog/presets/<id>.json`。ファイルの形式はカスタムプリセットと同じ（`name` は任意、`items` は必須。F8a のタグ記法も使える）
+- ID はファイル名（拡張子を除く）。既存と同じ `^[a-z0-9_-]{1,32}$` で、予約語（`list` / `save` / `delete` / `reload`）でないこと。サブフォルダの中のファイルは無視して warn ログを出す（ID に `/` が入らないようにする）
+- 同じ ID の優先順位: **組み込み > config フォルダのファイル > データパック**。負けた方は使わず warn ログを出す
+  - 別々の namespace に同じ ID のファイルがある場合は、namespace の辞書順で先のものを使い、warn ログを出す（同じ namespace・同じパスのファイルは、通常のデータパックの優先順位で1つになる）
+- 読み込み: サーバーのリロードリスナーで読み、`/reload` で読み直す。読み直したら GUI を使っているオンラインプレイヤーに再同期する（既存の `syncAllOnlineGuiPlayers`）
+  - シングルプレイでは、ワールドを閉じたとき（`ServerStoppedEvent`）にデータパックのプリセットを消す（別のワールドに持ち越さない）
+- データパックのプリセットは**読み取り専用**:
+  - `preset save <id>` / GUI の保存で、データパックだけにある ID を指定したら拒否する（`message.itemmilestonelog.preset_datapack_protected`、%s = ID: "Preset '%s' comes from a datapack and cannot be overwritten or deleted." / 「プリセット「%s」はデータパックのもので、上書き・削除できません。」）。config フォルダに同じ ID のファイルを手で置いた場合は、上の優先順位でそちらが使われる
+  - `preset delete <id>` / GUI の削除も同じ文面で拒否する
+  - F25 を受け取ったクライアントの保存画面（`SavePresetScreen`）は、入力中の ID がデータパックのプリセットと一致したら「保存」ボタンを無効にする（G2 の組み込みの ID と同じ扱い）
+  - `preset reload` は config フォルダだけを読み直す（データパックは `/reload` で読み直す）。README に書く
+- 表示: `preset list` の種類の欄に `message.itemmilestonelog.preset_type_datapack`（en "datapack" / ja 「データパック」）。GUI へは既存の `PresetEntry` で「カスタム」（`builtin` = false）として送る（ペイロードの形式は変えない）。種類の表示と削除ボタンの扱いは F25 の追加ペイロードで行う（F25 を受け取れない 1.0.1 のクライアントでは削除ボタンが出て押せるが、サーバーが上の文面で拒否する）
+- 適用・F5 の制覇・F16 の進捗・F19 の通知は、組み込み・カスタムと同じに扱う。`presetsEnabled` が false なら使えない
+- Config は追加しない（データパックを入れなければ何も起きない = 使う側の opt-in。F2 と同じく制約8の例外）
+- 利点（README に書く）: プリセットがワールド（のデータパック）と一緒に移動・配布できる。Mod パックの製作者は KubeJS の data フォルダなどで同梱できる
+
+### 実装メモ
+- リロードリスナーの登録はバージョンで異なる（1.21.1 は `AddReloadListenerEvent`、26.x は `AddServerReloadListenersEvent`。21.1.1 / 26.1.2.71 のソースで確認済み）。`SimpleJsonResourceReloadListener` も 1.21.1（Gson）と 26.x（Codec）で形が違うので、ファイルの一覧だけを受け取り、JSON の解釈は既存の `Presets.parsePresetFile` と共通の関数で行う
+- `Presets` はデータパックのプリセットを別に持ち、config の読み込み（`reloadFrom`）とデータパックの読み込みのどちらが起きても、上の優先順位で `loadedPresets` を作り直す（どちらも `synchronized`）
+- `PresetDefinition` に種類（組み込み / ファイル / データパック）を持たせる（公開 API ではないので変えてよい）
+- 単体テスト: 優先順位、namespace の衝突、無効な ID、サブフォルダの無視
+
+---
+
+## F22. 全員分の import（`importall`）（候補 P12）
+
+### 仕様
+- コマンド追加: `/milestonelog importall <fileName>`（権限レベル2。既存の `exportall` と同じ `.requires`）。`exportImportEnabled` が false なら T の無効化メッセージ
+- 読むファイル: exports フォルダの中の、`exportall` が書く形式（`format` と `players` 配列を持つ）のファイル。ファイル名の検証は既存の `import` と同じ（`isSafeFileName`、exports フォルダの外を指さない）。1人分の形式を渡したら既存の `import_invalid_format`
+- `players` の各要素は、1人分の export と同じ構造（`player` / `targets` / `records`）。既存の1人分のパース処理で読み、`player.uuid` が無い・不正な要素はスキップして件数を数える
+- マージは UUID ごとに既存の `import` と同じ規則（ターゲットは和集合で個人ターゲットの上限まで、記録は playTicks の小さい方）。保存データにいない UUID は新しく作り、`lastKnownName` にファイルの名前を入れる
+- ファイルサイズの上限は 32 MiB（1人分の 10 MiB より大きくする。`exportall` の出力は人数に比例して大きくなるため）。超えたら既存の `import_failed`
+- 既存の `import` と同じく、イベント・世界初・Discord・F1 / F5 / F7 は動かさない。世界初は `exportall` に含まれないので、復元されない（README に明記）
+- 終わったら、オンラインのプレイヤーに再同期し、F17 のスコアを書き込む
+- 文面: `message.itemmilestonelog.importall_done`（%s = ファイル名、%s = プレイヤー数、%s = 追加したターゲット数、%s = 更新した記録数、%s = スキップした要素数）: "Imported %s: %s player(s), %s target(s) added, %s record(s) updated, %s entr(ies) skipped." / 「%s から %s 人分を読み込みました: ターゲット %s 件を追加、記録 %s 件を更新、%s 件をスキップ。」
+- サーバーの引っ越しでオンラインモードとオフラインモードが変わると UUID が変わり、別のプレイヤーとして読み込まれる。README に書く
+
+### 実装メモ
+- サーバースレッドで同期的に読む（管理者の操作で、頻度は低い）。大きなファイルでは一時的に止まり得ることを README に書く
+- パースは既存の `parseSinglePlayerExport` の中身を「JSON オブジェクト → ImportPayload」の関数に切り出して共用する
+- 単体テスト: `exportall` の出力を読み戻せること、UUID の無い要素のスキップ、1人分の形式の拒否
+
+---
+
+## F23. リセットの取り消し（`undo`）（候補 P13）
+
+### 仕様
+- コマンド追加: `/milestonelog undo`（OP 不要。実行者はプレイヤーに限る）
+- 取り消せるもの: 自分の**直前の** `reset <item> [count]` / `resettag` / `resetall`（コマンド）と、GUI の記録のリセット・全リセット。**10 分以内**に限る。1段階だけ（新しいリセットをすると、前のリセットは取り消せなくなる）
+- admin による他プレイヤーのリセット（`admin <player> reset` 等）は対象外（管理者は F10 のバックアップで戻す）
+- 戻すもの:
+  - 消えた記録。取り消しまでに同じキーが再び記録されていたら、playTicks の小さい方を残す（import と同じ規則）
+  - F5 の `completedPresets`（リセットで消えた分を和集合で戻す）
+  - F1 の `progressNotified`: 取り消した後に**未記録のまま**のキーについて、今エントリが無ければリセット前の値を戻す（記録が戻ったキーのエントリは §1.1 の規則どおり持たない）
+  - 世界初はリセットで消えないので対象外
+- 取り消しでは、イベント・通知・Discord・F2 / F5 / F7 を動かさない。F17 のスコアは書き込み、GUI に再同期する
+- 状態はメモリだけに持つ（プレイヤー UUID ごとに1件）。ログアウトしても 10 分以内なら取り消せる。サーバーを止めると消える
+- チャットのコマンドでリセットが成功したときは、既存の完了メッセージの後に1行足す: `message.itemmilestonelog.undo_hint`（"You can undo this within 10 minutes with /milestonelog undo." / 「10 分以内なら /milestonelog undo で元に戻せます。」）。GUI のフィードバックは変えない
+- 文面:
+  - `message.itemmilestonelog.undo_done`（%s = 戻した記録の数）: "Restored %s record(s) from your last reset." / 「直前のリセットから記録を %s 件戻しました。」
+  - `message.itemmilestonelog.undo_nothing`: "Nothing to undo. Only your last reset within the past 10 minutes can be undone." / 「取り消せるものがありません。取り消せるのは、10 分以内の直前のリセットだけです。」
+- Config は追加しない（コマンドを使わなければ何も起きない。制約8の例外として明記）
+
+### 実装メモ
+- リセットの処理（`MilestoneService.resetRecord` / `resetAllRecords` と、F8b の `resettag`）で、消す前の内容を記録しておく。時刻はサーバーの単調時刻（`System.nanoTime`）で判定する
+- 戻す処理は「スナップショット、現在の PlayerData → 新しい PlayerData」の純粋関数にして単体テストする（再記録との競合、`progressNotified` の扱い）
+
+---
+
+## F24. アイテム ID の付け替え（`renameitem`）（候補 P14）
+
+### 仕様
+- コマンド追加: `/milestonelog renameitem <oldId> <newId> [confirm]`（権限レベル2）
+  - `admin` の下に置かない理由: `admin <player>` の `<player>` と同じ位置になり、`renameitem` という名前のプレイヤーと区別できなくなるため、ルート直下に置く
+  - `confirm` なし: **何も変更せず**、変更される件数（プレイヤー数、ターゲット・記録・世界初の件数）と、末尾に `confirm` を付けて実行する旨を返す
+  - `confirm` あり: 実行する
+- 対象はアイテム ID だけ（タグは対象外）。`<oldId>` / `<newId>` は `IdentifierArgument`。`newId` はレジストリにあるアイテムでなければならない（打ち間違いを防ぐ）。`oldId` はレジストリに無くてよい（外した Mod の ID を付け替えるのが主な用途）。`oldId` = `newId` や `minecraft:air` は拒否する
+- 書き換えるもの（個数はそのまま）: 全プレイヤーのターゲット、記録、`progressNotified` のキー、`carriedFromCreative`、ワールドの世界初
+- 付け替え先に既にあるときの規則:
+  - ターゲット: 重複を除く
+  - 記録: playTicks の小さい方を残す
+  - `progressNotified`: 大きい方を残す。付け替えの結果、記録済みになったキーのエントリは消す
+  - 世界初: 両方の epochMillis が分かっていれば小さい（早い）方、どちらかが不明（0）なら付け替え先にあった方を残す
+- 実行の前に F10 のバックアップを1回書く（`autoBackupEnabled` と頻度の制限に関係なく書く。世代の数には含める）。**バックアップが書けなかったら何も変更しない**
+- 書き換えないもの: Config の `defaultTargets`、プリセットのファイル、データパック、export のファイル。`defaultTargets` か読み込み済みのプリセットに `oldId` が含まれていたら、その旨を出力に足す（手で直してもらう）
+- 終わったら、件数を返し、サーバーログに info で残し、オンラインのプレイヤーに再同期し、F17 のスコアを書き込む。イベント・通知・F7 は動かさない
+- 文面:
+  - `message.itemmilestonelog.renameitem_preview`（%s = old、%s = new、%s = プレイヤー数、%s = ターゲット数、%s = 記録数、%s = 世界初の数）: "Renaming %s to %s would change %s player(s): %s target(s), %s record(s), %s world first(s). Add 'confirm' to apply (a backup is written first)." / 「%s を %s に付け替えると、%s 人分（ターゲット %s 件、記録 %s 件、世界初 %s 件）が変わります。実行するには末尾に confirm を付けてください（先にバックアップを書きます）。」
+  - `message.itemmilestonelog.renameitem_done`（同じ並び）: "Renamed %s to %s for %s player(s): %s target(s), %s record(s), %s world first(s)." / 「%s を %s に付け替えました: %s 人分（ターゲット %s 件、記録 %s 件、世界初 %s 件）。」
+  - 新しい ID が未登録、またはどちらかが `minecraft:air` のときは既存の `invalid_item`。2つが同じ ID のときは `message.itemmilestonelog.renameitem_same`: "The old and new IDs are the same." / 「付け替え前と後の ID が同じです。」
+  - `message.itemmilestonelog.renameitem_backup_failed`: "Could not write a backup, so nothing was changed." / 「バックアップを書けなかったため、何も変更していません。」
+  - `message.itemmilestonelog.renameitem_config_note`（%s = old）: "defaultTargets or a preset still contains %s. Edit them by hand." / 「defaultTargets かプリセットに %s が残っています。手で直してください。」
+
+### 実装メモ
+- 書き換えは「MilestoneData、old、new → 件数」の関数にし、付け替え先との衝突の規則を単体テストする
+
+---
+
+## F25. GUI の記録に世界初の印（候補 P17）
+
+### 仕様
+- 新しい optional ペイロード `itemmilestonelog:sync_extra`（S2C）を追加する（§1 制約10の方法。既存の `SyncMilestonesPayload` は変えない。登録は既存の registrar に足す。`PROTOCOL_VERSION` は変えない）
+- 中身は NBT の compound 1つ（`ByteBufCodecs.COMPOUND_TAG` 相当）。受け取り側は**知らないキーを無視する**。以後クライアントへ送るデータを足すときは、新しいペイロード型を作らずにこの compound にキーを足す
+  - `worldFirsts`: 文字列リスト。受信者本人が世界初を保持しているキー（エンコード済み TargetKey）
+  - `readOnlyPresets`: 文字列リスト。F21 のデータパックのプリセットの ID
+  - 各リストは最大 4096 件（既存の同期と同じ上限）。受け取り側は、TargetKey としてパースできない要素とプリセット ID として無効な要素を捨てる
+- 送るタイミング: サーバーが `SyncMilestonesPayload` を送る直前に毎回、`player.connection.hasChannel(sync_extra の TYPE)` が true のときだけ送る（1.0.1 のクライアントとバニラクライアントには送らない）。順序を「extra → 既存の同期」にして、画面が既存の同期で描き直されるときに extra が届いているようにする
+- クライアント:
+  - 受け取った内容を保持する。サーバーから切断したら消す（別のサーバー・ワールドに持ち越さない）。1.0.1 のサーバーからは届かないので、空のまま（従来通りの表示）
+  - 記録行の状態の文字列: 世界初を保持しているキーは `gui.itemmilestonelog.status.recorded_world_first`（en "✔ ★ %s" / ja 「✔ ★ %s」、%s は既存と同じ記録の整形）を使う。それ以外は従来の `gui.itemmilestonelog.status.recorded`。色・位置は変えない（制約1）
+  - プリセット一覧: `readOnlyPresets` にある ID は、種類の表示を `gui.itemmilestonelog.presets.type.datapack`（en "Datapack" / ja 「データパック」）にし、削除ボタンを出さない（組み込みのプリセットの行と同じ扱い。既存の画面は組み込みの行に削除ボタンを作らないので、レイアウトは変わらない）
+- Config `guiWorldFirstMark`（boolean、既定 true）。false のときは `worldFirsts` を空で送る。`readOnlyPresets` は常に送る
+- README に「★ = あなたが世界初」と書く
+
+### 実装メモ
+- 同期の送信箇所（`MilestoneService.syncPlayerIfOpen`、`ModNetworking.handleRequestSync` / `handleAction`）を1つの送信関数にまとめ、そこで extra を先に送る
+- 単体テスト: compound の往復、知らないキーと不正な要素の無視、上限の切り詰め
+
+---
+
+## F26. CSV 出力（候補 P18）
+
+### 仕様
+- コマンド追加: `/milestonelog exportcsv`（自分、OP 不要）と `/milestonelog exportcsvall`（全員、権限レベル2）。権限・出力先・ファイル名の規則は F3 と同じ（拡張子は `.csv`、全員分は `all-players.csv`）。`exportImportEnabled` が false なら T の無効化メッセージ
+- 形式: UTF-8（BOM 付き。表計算ソフトで日本語が化けないように）、改行は CRLF、RFC 4180 のクォート（`,` `"` 改行を含むセルは `"` で囲み、`"` は `""` にする）
+- 1行 = 1記録。列（見出し行あり）: `player_uuid`, `player_name`, `item_id`, `count`, `item_name`, `play_ticks`, `playtime`, `day`, `epoch_millis`, `date`, `world_first`
+  - `item_name` はサーバー側の `getString()`（F3 と同じ）。`playtime` は `Playtime.format`。`day` は表示と同じ 1 始まり（保存値 + 1）、不明なら空。`epoch_millis` と `date`（F11 のタイムゾーンの `yyyy-MM-dd`）は不明（0）なら空。`world_first` は `true` / `false`（その記録の本人がそのキーの世界初の保持者か）
+  - 並びはプレイヤー（名前の辞書順）、次に playTicks の昇順
+  - ターゲット（未記録のもの）は含めない
+- **数式の注入対策**: 文字列のセルが `=` `+` `-` `@`、タブ、CR で始まる場合は先頭に `'` を付ける（オフラインモードのプレイヤー名や Mod のアイテム名が対象になり得る）。数値の列には適用しない（値が負になることは無い）
+- 書き込みは一時ファイル + 移動（既存の export と同じ）。失敗時のメッセージも既存の export と同じ。完了の文面は既存の `export_done` / `exportall_done` を使う
+
+### 実装メモ
+- CSV の組み立て（エスケープ、数式の対策、BOM、CRLF）は純粋関数にして単体テストする
+
+---
+
 ## 3. テスト・検証（全機能共通）
 
 - 追加・変更した純粋ロジック（パース、検証、置換、整形、しきい値判定）には単体テストを追加する。特に F8 の TargetKey パースは必須
@@ -430,16 +826,28 @@ G（1.0.1 からの不備修正）→ T（既存機能のスイッチ追加）�
   - F4 / F9 の Markdown エスケープと切り詰め、F9 の期間と範囲の抽出
   - F10 の世代削除のファイル名一致と、書き出したファイルの読み戻し
   - §1.1 の新フィールドの往復（1.21.1 NBT と 26.x Codec）と、26.x で 1.21.1 形式の新フィールドを読めること
+  - F11 のタイムゾーンの解決（空、IANA の ID、オフセット）と、GUI 用の版が従来の結果のままであること
+  - F13 の順位付け（同順位、隠しているプレイヤーの除外と閲覧者本人の扱い、epochMillis が 0 の記録の除外）
+  - F16 の集計（F5 と同じ R(S)、50 行の上限）
+  - F17 の書き込むスコアの計算と objective の名前の検証
+  - F18 の書式関数（`%s`、位置指定、`%%`）と、en_us の出力が 1.0.1 の文面と一致すること
+  - F21 の優先順位・namespace の衝突・無効な ID
+  - F22 の全員分の読み込み（`exportall` の出力の読み戻し、UUID の無い要素のスキップ、1人分の形式の拒否）
+  - F23 の取り消し（再記録との競合、`completedPresets` と `progressNotified` の戻し方、10 分の期限）
+  - F24 の付け替え（付け替え先との衝突の各規則、件数）
+  - F25 の追加ペイロードの往復（知らないキーと不正な要素の無視、上限）
+  - F26 の CSV（クォート、数式の対策、BOM、CRLF）
 - lang キーの追加は ServerLangTest / LangFilesTest が通ること（en / ja のキー集合とプレースホルダの一致）
 - CI の既存ボットテスト（記録・コマンド・移行）が全バージョンで通ること。F8 を実装した場合は、タグターゲットでの記録がボットテストで1ケース確認できることが望ましい
-- 〔X18〕F2 を入れた状態で mineflayer（バニラクライアント）の参加テストが通ること
-- 〔X2〕手動確認: 1.1.0 のサーバーに 1.0.1 の Mod 入りクライアント、1.0.1 のサーバーに 1.1.0 の Mod 入りクライアントで参加でき、GUI が開けること
+- 〔X18〕F2 を入れた状態で mineflayer（バニラクライアント）の参加テストが通ること。F12 のホバー付きのメッセージ（記録の通知）を受け取っても切断されないことも、このテストで確認する（mineflayer はバニラのプロトコルで受け取るので、パケットの形が壊れていないことを確認できる。バニラの本物のクライアントでの表示は手動で確認する）
+- ボットテストに加えることが望ましいケース: F13 の `top` / `recent` の出力、F17 のスコア（`/scoreboard players get`）、F22 の `exportall` → `importall` の往復、F21 のテスト用データパックのプリセットの適用
+- 〔X2〕手動確認: 1.1.0 のサーバーに 1.0.1 の Mod 入りクライアント、1.0.1 のサーバーに 1.1.0 の Mod 入りクライアントで参加でき、GUI が開けること。F25 の追加ペイロードがあっても、どちらの組み合わせでも切断されないこと
 - バージョン表記を 1.1.0 に上げる（gradle.properties 等、1.0.1 へ上げたときと同じ箇所）
 
 ## 4. ドキュメントとリリース 〔X17〕
 
-- `CHANGELOG.md` に `## 1.1.0` の節を追加する。`check-release.sh` が `mod_version` と同じ節を要求するので、**mod_version を 1.1.0 に上げるコミットと同時に**入れる（無いと CI の release-check が失敗する）。F4 の形式変更（既定 true の場合）と、§1.1 のダウングレードの注意を必ず書く
-- `README.md` / `CURSEFORGE.md`: 新しいコマンド・設定、F3 の出力場所、F7 のセキュリティ上の注意、F8 のタグの書き方と 1.0.1 クライアントでの見え方、F10 の復元手順、G2 の上書き時の挙動
+- `CHANGELOG.md` に `## 1.1.0` の節を追加する。`check-release.sh` が `mod_version` と同じ節を要求するので、**mod_version を 1.1.0 に上げるコミットと同時に**入れる（無いと CI の release-check が失敗する）。§1.1 のダウングレードの注意と、F12 のホバー・F25 の印のように既定で有効な表示の変更を必ず書く
+- `README.md` / `CURSEFORGE.md`: 新しいコマンド・設定、F3 / F26 の出力場所、F7 のセキュリティ上の注意、F8 のタグの書き方と 1.0.1 クライアントでの見え方、F10 の復元手順、G2 の上書き時の挙動、F11 のタイムゾーンが GUI に効かないこと、F14 で隠れるもの・隠れないもの、F17 の objective の名前の選び方、F18 でアイテム名が英語のままになる場合、F20 の API の例、F21 のフォルダの場所と `preset reload` で読み直されないこと、F22 で世界初が戻らないこと・UUID が変わる場合、F23 の期限、F24 で Config やプリセットのファイルは書き換えないこと、F25 の ★ の意味
 - `docs/updates.json`: 1.1.0 の項目と promos は **CurseForge / Modrinth で公開するときのコミットで**更新する。更新チェッカーは main の raw ファイルを読むため、実装の PR で先に更新すると、未公開の版の更新通知がプレイヤーに出る
 - `GEMINI.md`: 「現在の開発バージョンは 1.0.1（未リリース）。バージョン番号は上げない」の記述を 1.1.0 の開発状態に合わせ、`docs/` の一覧に本書を加える
 - `docs/VERSION_NOTES.md`: §1.1 の新フィールドを「保存データの構造」に追記する
@@ -461,7 +869,7 @@ G（1.0.1 からの不備修正）→ T（既存機能のスイッチ追加）�
 | X7 | F1 にベースライン・複数超え・最小個数・端数の規則を追加 | 初版のままだと、1.1.0 導入直後やプリセット適用直後に既に持っている分のアラートがまとめて出る。count = 2 で「1/2 (50%)」が出る。複数のしきい値を同時に超えたときの通知数が未定義 |
 | X8 | F2 の `count` を範囲指定可能に、`world_first` と `player` 条件、既存記録への遡及、バニラ互換の確認 | 「数量。省略時は任意」だけでは完全一致か以上かが決まらない。初版のままだと、データパックを後から入れたワールドでは既存の記録に advancement が付かない。`TRIGGER_TYPE` は `NeoForgeRegistriesSetup.VANILLA_SYNC_REGISTRIES` に無い（21.1.1 / 26.1.2.71） |
 | X9 | F3 のコマンドを `exporthtml` / `exporthtmlall` に | 初版の `exporthtml [player]` は「動作・権限は既存の export と同じ」と矛盾し（既存の export に player 引数は無い）、`all-players.html` を作るコマンドが無かった |
-| X10 | F4 の各項目の固定、Markdown エスケープ、長さの上限、既定値の判断事項 | 初版は「description または fields」で出力が一意に決まらない。`_Steve_` のような名前の `_` などが Markdown として解釈される（現行のプレーンテキストでも同じ）。Discord の上限を超えると投稿が拒否される |
+| X10 | F4 の各項目の固定、Markdown エスケープ、長さの上限、既定値の判断事項（その後オーナーの判断で false に決定。付録B） | 初版は「description または fields」で出力が一意に決まらない。`_Steve_` のような名前の `_` などが Markdown として解釈される（現行のプレーンテキストでも同じ）。Discord の上限を超えると投稿が拒否される |
 | X11 | F5 の判定を「今記録したキーを含むプリセット」「判定対象キー」で定義、本人への通知を多くても1通に、表示名の出所 | 初版のままだと、導入後の最初の記録で導入前に条件を満たしていたプリセットの「制覇」が一斉に出る。Mod が入っていないプリセット（`atm_star`）は永遠に制覇できない／判定対象が空だと0件で制覇になる。`notifyPlayer` と全体アナウンスが両方 true だと本人に2通届く。組み込みの表示名（lang の値）は「プリセット: …」の形 |
 | X12 | F6 の出力形式・権限・補完 | 既存の `list` に世界初の印は無く（`MilestoneCommands.list`）、「list と同じ形式」と「世界初の印」が両立しない |
 | X13 | F7 の実行タイミング・出力抑止・名前の検証 | オフラインモードではプレイヤー名が Mojang の規則で検証されず、記号を含み得るため、初版のセキュリティ上の前提が成り立たない。記録処理の途中で任意のコマンドを実行すると、そのコマンドがデータを変更したときの影響が読めない。`give` などは OP のチャットにフィードバックを出す |
@@ -471,3 +879,35 @@ G（1.0.1 からの不備修正）→ T（既存機能のスイッチ追加）�
 | X17 | ドキュメント・リリース手順の節を追加 | `check-release.sh` が CHANGELOG の節を要求する。`updates.json` は main の raw URL から読まれる。`GEMINI.md` は「1.0.1 未リリース・版を上げない」のままで本仕様と矛盾する |
 | X18 | テスト項目の追加 | CI の専用サーバーでは LAN を再現できない。F2 は初めてのレジストリ登録で、バニラ参加互換の確認が要る |
 | X19 | 実施順序を変更（G 先頭、F8a を前へ） | F8 が TargetKey の意味を変え、F1〜F9 がその上に乗るため |
+
+---
+
+## 付録B. 追加機能の採用の記録（2026-11-23）
+
+`docs/FEATURE_PROPOSALS_1.1.0.md` の候補 P1〜P18 について、オーナーが次のとおり決めた。
+
+| 候補 | 本書の番号 | 結果 |
+|---|---|---|
+| P1 表示に使うタイムゾーン | F11 | 採用 |
+| P2 チャットのアイテム名のホバー | F12 | 採用 |
+| P3 `top` / `recent` | F13 | 採用 |
+| P4 `privacy` | F14 | 採用 |
+| P5 `muteprogress` | F15 | 採用 |
+| P6 `presetprogress` | F16 | 採用 |
+| P7 スコアボード連携 | F17 | 採用 |
+| P8 Discord の言語 | F18 | 採用 |
+| P9 Discord へのプリセット制覇通知 | F19 | 採用 |
+| P10 API の拡張 | F20 | 採用 |
+| P11 データパックのプリセット | F21 | 採用 |
+| P12 `importall` | F22 | 採用 |
+| P13 `undo` | F23 | 採用 |
+| P14 アイテム ID の付け替え | F24 | 採用（コマンドは `admin` の下ではなくルート直下の `renameitem` にした。理由は F24） |
+| P15 収納の中身も数える | — | **不採用**（1.0.1 の「収納の中身は数えない」の決定を維持する） |
+| P16 タイトル演出 | — | **不採用** |
+| P17 GUI の世界初の印 | F25 | 採用（追加ペイロードは、以後のデータの追加にも使える NBT の compound にした） |
+| P18 CSV 出力 | F26 | 採用 |
+
+同時に決めたこと: F4 の `discordUseEmbeds` の既定値は false。
+
+移す際に、候補の段階では決めていなかった点（同順位の扱い、スコアを書き込むタイミング、データパックのプリセットの読み取り専用の扱い、取り消しと再記録の競合、付け替え先との衝突など）を各節で決めた。F1 の `progressAlertMinCount`、F2 の既存の記録への遡及、F8b のタグの表示名は、付録A の修正のとおりとする（オーナーから変更の指示が無いため）。
+
