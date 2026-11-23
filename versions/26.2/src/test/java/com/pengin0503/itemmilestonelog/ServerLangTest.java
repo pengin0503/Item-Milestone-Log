@@ -35,7 +35,7 @@ class ServerLangTest {
         if (Files.isDirectory(local)) {
             return local;
         }
-        return Path.of("versions", "1.21.1", "src", "main", "java");
+        return Path.of("versions", "26.2", "src", "main", "java");
     }
 
     @Test

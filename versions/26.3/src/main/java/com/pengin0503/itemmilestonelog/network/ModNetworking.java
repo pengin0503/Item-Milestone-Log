@@ -24,7 +24,9 @@ public final class ModNetworking {
     private static final int MAX_BURST_TOKENS = 40;
     private static final int MAX_RATE_LIMIT_ENTRIES = 1024;
     private static final long RATE_LIMIT_IDLE_NANOS = 60_000_000_000L; // 60s; a bucket fully refills in ~2s, so older entries are equivalent to fresh ones
+    private static final long CLEANUP_COOLDOWN_NANOS = 10_000_000_000L; // 10s between cleanup sweeps when the map stays large
     private static final Map<UUID, RateLimitState> RATE_LIMITS = new ConcurrentHashMap<>();
+    private static volatile long lastCleanupNanos = System.nanoTime();
 
     private static final class RateLimitState {
         long lastNanos = System.nanoTime();
@@ -38,7 +40,8 @@ public final class ModNetworking {
 
     private static boolean tryAcquireRateLimit(ServerPlayer player) {
         long now = System.nanoTime();
-        if (RATE_LIMITS.size() > MAX_RATE_LIMIT_ENTRIES) {
+        if (RATE_LIMITS.size() > MAX_RATE_LIMIT_ENTRIES && now - lastCleanupNanos > CLEANUP_COOLDOWN_NANOS) {
+            lastCleanupNanos = now;
             // Evict only idle entries instead of clearing every player's limits.
             RATE_LIMITS.entrySet().removeIf(entry -> {
                 RateLimitState s = entry.getValue();

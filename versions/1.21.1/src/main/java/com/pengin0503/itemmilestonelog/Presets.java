@@ -289,7 +289,7 @@ public final class Presets {
         }
         json.add("items", arr);
 
-        Path temp = Files.createTempFile(dir, id + ".", ".tmp");
+        Path temp = Files.createTempFile(dir, "preset-" + id + ".", ".tmp");
         try {
             try (Writer writer = Files.newBufferedWriter(temp, StandardCharsets.UTF_8)) {
                 GSON.toJson(json, writer);
