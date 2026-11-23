@@ -44,14 +44,29 @@ public final class Playtime {
 
     /** Formats an epoch millisecond timestamp as {@code yyyy-MM-dd} in the system default timezone. */
     public static String formatDate(long epochMillis) {
-        return DATE_FORMATTER.withZone(ZoneId.systemDefault()).format(Instant.ofEpochMilli(epochMillis));
+        return formatDate(epochMillis, ZoneId.systemDefault());
+    }
+
+    /** Formats an epoch millisecond timestamp as {@code yyyy-MM-dd} in the given timezone. */
+    public static String formatDate(long epochMillis, ZoneId zone) {
+        ZoneId effectiveZone = zone != null ? zone : ZoneId.systemDefault();
+        return DATE_FORMATTER.withZone(effectiveZone).format(Instant.ofEpochMilli(epochMillis));
     }
 
     /**
      * Formats a milestone record with optional in-game Day and real-world date in parentheses,
-     * e.g. {@code "27h 15m 30s (Day 12, 2026-11-22)"}. Unknown fields are omitted.
+     * e.g. {@code "27h 15m 30s (Day 12, 2026-11-22)"} in the system default timezone (used by GUI).
+     * Unknown fields are omitted.
      */
     public static String formatRecord(MilestoneRecord record) {
+        return formatRecord(record, ZoneId.systemDefault());
+    }
+
+    /**
+     * Formats a milestone record with optional in-game Day and real-world date in parentheses
+     * using the given timezone (used by server-side output). Unknown fields are omitted.
+     */
+    public static String formatRecord(MilestoneRecord record, ZoneId zone) {
         String base = format(record.playTicks());
         boolean hasDay = record.hasDay();
         boolean hasEpoch = record.hasEpoch();
@@ -66,7 +81,7 @@ public final class Playtime {
             }
         }
         if (hasEpoch) {
-            sb.append(formatDate(record.epochMillis()));
+            sb.append(formatDate(record.epochMillis(), zone));
         }
         sb.append(')');
         return sb.toString();

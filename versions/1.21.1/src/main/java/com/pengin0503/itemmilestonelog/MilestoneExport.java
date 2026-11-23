@@ -9,7 +9,6 @@ import com.google.gson.JsonParser;
 import com.google.gson.JsonPrimitive;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
-import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.level.storage.LevelResource;
 
@@ -306,15 +305,12 @@ public final class MilestoneExport {
             for (JsonElement el : root.getAsJsonArray("targets")) {
                 if (el.isJsonPrimitive() && el.getAsJsonPrimitive().isString()) {
                     String rawTarget = el.getAsString();
-                    TargetKey parsedKey = TargetKey.tryParseEncoded(rawTarget);
-                    if (parsedKey == null) {
+                    TargetKey normalized = TargetKey.tryParseNormalized(rawTarget, false, true);
+                    if (normalized != null) {
+                        targets.add(normalized);
+                    } else {
                         ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid target '{}' in export file {}",
                                 rawTarget, file.getFileName());
-                        continue;
-                    }
-                    ResourceLocation rl = ResourceLocation.tryParse(parsedKey.itemId());
-                    if (rl != null && !"minecraft:air".equals(rl.toString())) {
-                        targets.add(new TargetKey(rl.toString(), parsedKey.count()));
                     }
                 } else if (el.isJsonObject()) {
                     JsonObject obj = el.getAsJsonObject();
@@ -324,8 +320,8 @@ public final class MilestoneExport {
                         continue;
                     }
                     String rawItem = obj.get("item").getAsString().trim();
-                    ResourceLocation rl = ResourceLocation.tryParse(rawItem);
-                    if (rl == null || rl.getPath().isEmpty() || rl.getNamespace().isEmpty() || "minecraft:air".equals(rl.toString())) {
+                    String normalizedId = TargetKey.normalizeItemId(rawItem, false);
+                    if (normalizedId == null || "minecraft:air".equals(normalizedId)) {
                         continue;
                     }
                     int count = TargetKey.MIN_COUNT;
@@ -337,7 +333,10 @@ public final class MilestoneExport {
                             continue;
                         }
                     }
-                    targets.add(new TargetKey(rl.toString(), count));
+                    TargetKey normalized = TargetKey.normalize(normalizedId, count, false, true);
+                    if (normalized != null) {
+                        targets.add(normalized);
+                    }
                 }
             }
         }
@@ -353,14 +352,10 @@ public final class MilestoneExport {
                     continue;
                 }
                 String rawKey = entry.getKey();
-                TargetKey keyFromMap = TargetKey.tryParseEncoded(rawKey);
+                TargetKey keyFromMap = TargetKey.tryParseNormalized(rawKey, false, true);
                 if (keyFromMap == null) {
                     ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid record key '{}' in export file {}",
                             rawKey, file.getFileName());
-                    continue;
-                }
-                ResourceLocation rl = ResourceLocation.tryParse(keyFromMap.itemId());
-                if (rl == null || "minecraft:air".equals(rl.toString())) {
                     continue;
                 }
                 JsonObject recObj = entry.getValue().getAsJsonObject();
@@ -383,7 +378,10 @@ public final class MilestoneExport {
                 long day = parsedDay != null ? parsedDay : MilestoneRecord.UNKNOWN_DAY;
                 Long parsedEpoch = recObj.has("epoch") ? parseStrictJsonLong(recObj.get("epoch")) : null;
                 long epoch = parsedEpoch != null ? parsedEpoch : MilestoneRecord.UNKNOWN_EPOCH;
-                TargetKey normalizedKey = new TargetKey(rl.toString(), count);
+                TargetKey normalizedKey = TargetKey.normalize(keyFromMap.itemId(), count, false, true);
+                if (normalizedKey == null) {
+                    continue;
+                }
                 MilestoneRecord incoming = new MilestoneRecord(ticks, day, epoch);
                 MilestoneRecord existing = records.get(normalizedKey);
                 if (existing == null || incoming.playTicks() < existing.playTicks()) {

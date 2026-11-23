@@ -148,4 +148,59 @@ class PresetsTest {
 
         Presets.reloadFrom(dir.resolve("clean"));
     }
+
+    @Test
+    void overwritingCustomPresetPreservesDisplayNameAndDropsUnknownFields(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("handcrafted.json");
+        Files.writeString(file, """
+                {
+                  "name": "My Handcrafted Pack",
+                  "extra_field": "should_not_be_kept",
+                  "items": [
+                    "minecraft:dirt",
+                    "#c:ingots/iron",
+                    { "item": "#minecraft:logs", "count": 64 }
+                  ]
+                }
+                """);
+        assertEquals(1, Presets.reloadFrom(dir));
+        Presets.PresetDefinition initial = Presets.get("handcrafted");
+        assertNotNull(initial);
+        assertEquals("My Handcrafted Pack", initial.displayName());
+        assertEquals(List.of(TargetKey.of("minecraft:dirt")), initial.items());
+
+        List<TargetKey> updated = List.of(
+                TargetKey.of("minecraft:diamond"),
+                TargetKey.of("minecraft:emerald", 16));
+        assertTrue(Presets.saveCustomTo(dir, "handcrafted", updated));
+
+        JsonObject savedJson = JsonParser.parseString(Files.readString(file)).getAsJsonObject();
+        assertEquals("My Handcrafted Pack", savedJson.get("name").getAsString());
+        assertFalse(savedJson.has("extra_field"));
+        assertEquals("My Handcrafted Pack", Presets.get("handcrafted").displayName());
+        assertEquals(updated, Presets.get("handcrafted").items());
+
+        Presets.reloadFrom(dir);
+        assertEquals("My Handcrafted Pack", Presets.get("handcrafted").displayName());
+        assertEquals(updated, Presets.get("handcrafted").items());
+
+        // Blank, non-string, missing name, or corrupt JSON falls back to preset ID
+        Files.writeString(dir.resolve("blank_name.json"), """
+                { "name": "   ", "items": ["minecraft:dirt"] }
+                """);
+        assertTrue(Presets.saveCustomTo(dir, "blank_name", List.of(TargetKey.of("minecraft:stone"))));
+        assertEquals("blank_name", Presets.get("blank_name").displayName());
+
+        Files.writeString(dir.resolve("num_name.json"), """
+                { "name": 42, "items": ["minecraft:dirt"] }
+                """);
+        assertTrue(Presets.saveCustomTo(dir, "num_name", List.of(TargetKey.of("minecraft:stone"))));
+        assertEquals("num_name", Presets.get("num_name").displayName());
+
+        Files.writeString(dir.resolve("corrupt_existing.json"), "{ not json");
+        assertTrue(Presets.saveCustomTo(dir, "corrupt_existing", List.of(TargetKey.of("minecraft:stone"))));
+        assertEquals("corrupt_existing", Presets.get("corrupt_existing").displayName());
+
+        Presets.reloadFrom(dir.resolve("clean"));
+    }
 }

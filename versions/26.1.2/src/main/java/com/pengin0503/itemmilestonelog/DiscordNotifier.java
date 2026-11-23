@@ -57,7 +57,7 @@ public final class DiscordNotifier {
             return;
         }
 
-        String formattedTime = Playtime.formatRecord(record);
+        String formattedTime = Playtime.formatRecord(record, Config.displayTimeZone());
         String itemLabel = target.formatDisplayId();
         String content = worldFirst
                 ? String.format("★ [World First] %s obtained %s at %s", playerName, itemLabel, formattedTime)

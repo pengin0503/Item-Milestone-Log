@@ -18,11 +18,16 @@ import net.neoforged.neoforge.network.PacketDistributor;
 
 import javax.annotation.Nullable;
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
+import java.util.function.Function;
+import java.util.function.Predicate;
+import java.util.function.Supplier;
 
 /**
  * Shared server-side milestone operations and validation used by both
@@ -71,19 +76,35 @@ public final class MilestoneService {
         return base;
     }
 
-    public static boolean canManagePresets(CommandSourceStack source) {
+    public static boolean isPrivileged(CommandSourceStack source) {
         MinecraftServer server = source.getServer();
-        if (server == null || !server.isDedicatedServer()) {
-            return true;
-        }
-        return source.hasPermission(2);
+        boolean dedicated = server == null || server.isDedicatedServer();
+        ServerPlayer player = source.getPlayer();
+        boolean isPlayer = player != null;
+        boolean singleplayerOwner = isPlayer && server != null && server.isSingleplayerOwner(player.getGameProfile());
+        boolean hasAdmin = source.hasPermission(PrivilegePolicy.ADMIN_PERMISSION_LEVEL);
+        return PrivilegePolicy.isPrivileged(dedicated, isPlayer, singleplayerOwner, hasAdmin);
+    }
+
+    public static boolean isPrivileged(ServerPlayer player) {
+        MinecraftServer server = player.server;
+        boolean dedicated = server == null || server.isDedicatedServer();
+        boolean singleplayerOwner = server != null && server.isSingleplayerOwner(player.getGameProfile());
+        boolean hasAdmin = player.hasPermissions(PrivilegePolicy.ADMIN_PERMISSION_LEVEL);
+        return PrivilegePolicy.isPrivileged(dedicated, true, singleplayerOwner, hasAdmin);
+    }
+
+    public static boolean canManagePresets(CommandSourceStack source) {
+        return isPrivileged(source);
     }
 
     public static boolean canManagePresets(ServerPlayer player) {
-        if (!player.server.isDedicatedServer()) {
-            return true;
-        }
-        return player.hasPermissions(2);
+        return isPrivileged(player);
+    }
+
+    private static boolean isKnownNonAirItem(String normalizedId) {
+        ResourceLocation rl = ResourceLocation.tryParse(normalizedId);
+        return rl != null && BuiltInRegistries.ITEM.containsKey(rl) && BuiltInRegistries.ITEM.get(rl) != Items.AIR;
     }
 
     public static ActionResult addTarget(ServerPlayer player, String itemId) {
@@ -91,29 +112,33 @@ public final class MilestoneService {
     }
 
     public static ActionResult addTarget(ServerPlayer player, String itemId, int count) {
+        return addTarget(MilestoneData.get(player.server), player.getUUID(), player, itemId, count,
+                MilestoneService::isKnownNonAirItem, MilestoneService::targetDisplayName);
+    }
+
+    static ActionResult addTarget(MilestoneData data, UUID playerId, @Nullable ServerPlayer player,
+                                  String itemId, int count,
+                                  Predicate<String> isKnownNonAirItem,
+                                  Function<TargetKey, Component> displayName) {
         if (!TargetKey.isValidCount(count)) {
             return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_count",
                     TargetKey.MIN_COUNT, TargetKey.MAX_COUNT));
         }
-        if (!isValidItemId(itemId)) {
+        String normalizedId = TargetKey.normalizeItemId(itemId);
+        if (normalizedId == null || !isKnownNonAirItem.test(normalizedId)) {
             return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_item", String.valueOf(itemId)));
         }
-        ResourceLocation rl = ResourceLocation.parse(itemId);
-        if (BuiltInRegistries.ITEM.get(rl) == Items.AIR) {
-            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_item", itemId));
-        }
-        TargetKey key = new TargetKey(rl.toString(), count);
-        MilestoneData data = MilestoneData.get(player.server);
-        MilestoneData.PlayerData pd = data.player(player.getUUID());
+        TargetKey key = new TargetKey(normalizedId, count);
+        MilestoneData.PlayerData pd = data.player(playerId);
         if (pd.targets.contains(key)) {
-            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.already_target", targetDisplayName(key)));
+            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.already_target", displayName.apply(key)));
         }
         if (pd.targets.size() >= MAX_PERSONAL_TARGETS) {
             return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.targets_limit_reached", MAX_PERSONAL_TARGETS));
         }
         pd.targets.add(key);
         data.setDirty();
-        return new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.added", targetDisplayName(key)));
+        return new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.added", displayName.apply(key)));
     }
 
     public static ActionResult addHandTarget(ServerPlayer player) {
@@ -134,6 +159,14 @@ public final class MilestoneService {
     }
 
     public static ActionResult removeTarget(ServerPlayer player, String itemId, int count) {
+        return removeTarget(MilestoneData.get(player.server), player.getUUID(), player, itemId, count,
+                MilestoneService::isValidItemId, MilestoneService::targetDisplayName);
+    }
+
+    static ActionResult removeTarget(MilestoneData data, UUID playerId, @Nullable ServerPlayer player,
+                                     String itemId, int count,
+                                     Predicate<String> isKnownItem,
+                                     Function<TargetKey, Component> displayName) {
         if (!TargetKey.isValidCount(count)) {
             return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_count",
                     TargetKey.MIN_COUNT, TargetKey.MAX_COUNT));
@@ -141,40 +174,51 @@ public final class MilestoneService {
         if (!TargetKey.isValidItemId(itemId)) {
             return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_item", String.valueOf(itemId)));
         }
-        ResourceLocation rl = ResourceLocation.tryParse(itemId);
-        String normalizedId = rl != null ? rl.toString() : itemId;
+        String normalized = TargetKey.normalizeItemId(itemId);
+        String normalizedId = normalized != null ? normalized : itemId;
         TargetKey key = new TargetKey(normalizedId, count);
-        MilestoneData data = MilestoneData.get(player.server);
-        MilestoneData.PlayerData pd = data.playerOrNull(player.getUUID());
+        MilestoneData.PlayerData pd = data.playerOrNull(playerId);
         if (pd != null && (pd.targets.remove(key) || (!normalizedId.equals(itemId) && pd.targets.remove(new TargetKey(itemId, count))))) {
             data.setDirty();
-            return new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.removed", targetDisplayName(key)));
+            return new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.removed", displayName.apply(key)));
         }
-        if (!isValidItemId(normalizedId)) {
+        if (!isKnownItem.test(normalizedId)) {
             return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_item", itemId));
         }
-        return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.not_target", targetDisplayName(key)));
+        return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.not_target", displayName.apply(key)));
     }
 
     public static ActionResult applyPreset(ServerPlayer player, String name) {
+        return applyPreset(MilestoneData.get(player.server), player.getUUID(), player, name,
+                MilestoneService::isKnownNonAirItem, Config.PRESETS_ENABLED.get());
+    }
+
+    static ActionResult applyPreset(MilestoneData data, UUID playerId, @Nullable ServerPlayer player,
+                                    String name, Predicate<String> isKnownNonAirItem) {
+        return applyPreset(data, playerId, player, name, isKnownNonAirItem, true);
+    }
+
+    static ActionResult applyPreset(MilestoneData data, UUID playerId, @Nullable ServerPlayer player,
+                                    String name, Predicate<String> isKnownNonAirItem, boolean presetsEnabled) {
+        if (!presetsEnabled) {
+            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.feature_disabled"));
+        }
         Presets.PresetDefinition preset = Presets.get(name);
         if (preset == null) {
             return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.preset_unknown", name,
                     String.join(", ", Presets.names())));
         }
-        MilestoneData data = MilestoneData.get(player.server);
-        MilestoneData.PlayerData pd = data.player(player.getUUID());
+        MilestoneData.PlayerData pd = data.player(playerId);
         int added = 0;
         int addedWithCount = 0;
         int skippedMissing = 0;
         int skippedLimit = 0;
         for (TargetKey entry : preset.items()) {
-            ResourceLocation rl = ResourceLocation.tryParse(entry.itemId());
-            if (rl == null || !BuiltInRegistries.ITEM.containsKey(rl) || BuiltInRegistries.ITEM.get(rl) == Items.AIR) {
+            TargetKey normalized = TargetKey.normalize(entry.itemId(), entry.count(), false, true);
+            if (normalized == null || !isKnownNonAirItem.test(normalized.itemId())) {
                 skippedMissing++;
                 continue;
             }
-            TargetKey normalized = new TargetKey(rl.toString(), entry.count());
             if (pd.targets.contains(normalized)) {
                 continue;
             }
@@ -207,7 +251,21 @@ public final class MilestoneService {
     }
 
     public static ActionResult savePreset(ServerPlayer player, String rawName) {
-        if (!canManagePresets(player)) {
+        return savePreset(MilestoneData.get(player.server), player.getUUID(), player,
+                isPrivileged(player), rawName, Presets::presetsDir, Config.PRESETS_ENABLED.get());
+    }
+
+    static ActionResult savePreset(MilestoneData data, UUID playerId, @Nullable ServerPlayer player,
+                                   boolean allowed, String rawName, Supplier<Path> presetsDir) {
+        return savePreset(data, playerId, player, allowed, rawName, presetsDir, true);
+    }
+
+    static ActionResult savePreset(MilestoneData data, UUID playerId, @Nullable ServerPlayer player,
+                                   boolean allowed, String rawName, Supplier<Path> presetsDir, boolean presetsEnabled) {
+        if (!presetsEnabled) {
+            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.feature_disabled"));
+        }
+        if (!allowed) {
             return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.preset_no_permission"));
         }
         String name = rawName != null ? rawName.trim() : "";
@@ -217,14 +275,13 @@ public final class MilestoneService {
         if (Presets.isBuiltin(name)) {
             return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.preset_builtin_protected", name));
         }
-        MilestoneData data = MilestoneData.get(player.server);
-        MilestoneData.PlayerData pd = data.playerOrNull(player.getUUID());
+        MilestoneData.PlayerData pd = data.playerOrNull(playerId);
         if (pd == null || pd.targets.isEmpty()) {
             return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.preset_no_personal_targets"));
         }
         List<TargetKey> items = List.copyOf(pd.targets);
         try {
-            boolean overwritten = Presets.saveCustom(name, items);
+            boolean overwritten = Presets.saveCustomTo(presetsDir.get(), name, items);
             String key = overwritten ? "message.itemmilestonelog.preset_overwritten" : "message.itemmilestonelog.preset_saved";
             return new ActionResult(true, ServerLang.tr(player, key, name, items.size()));
         } catch (IOException | IllegalArgumentException e) {
@@ -234,7 +291,20 @@ public final class MilestoneService {
     }
 
     public static ActionResult deletePreset(CommandSourceStack source, String name) {
-        if (!canManagePresets(source)) {
+        return deletePreset(source, isPrivileged(source), name, Presets::presetsDir, Config.PRESETS_ENABLED.get());
+    }
+
+    static ActionResult deletePreset(@Nullable CommandSourceStack source, boolean allowed,
+                                     String name, Supplier<Path> presetsDir) {
+        return deletePreset(source, allowed, name, presetsDir, true);
+    }
+
+    static ActionResult deletePreset(@Nullable CommandSourceStack source, boolean allowed,
+                                     String name, Supplier<Path> presetsDir, boolean presetsEnabled) {
+        if (!presetsEnabled) {
+            return new ActionResult(false, ServerLang.tr(source, "message.itemmilestonelog.feature_disabled"));
+        }
+        if (!allowed) {
             return new ActionResult(false, ServerLang.tr(source, "message.itemmilestonelog.preset_no_permission"));
         }
         if (Presets.isBuiltin(name)) {
@@ -245,7 +315,7 @@ public final class MilestoneService {
                     String.valueOf(name), String.join(", ", Presets.names())));
         }
         try {
-            if (Presets.deleteCustom(name)) {
+            if (Presets.deleteCustomFrom(presetsDir.get(), name)) {
                 return new ActionResult(true, ServerLang.tr(source, "message.itemmilestonelog.preset_deleted", name));
             }
             return new ActionResult(false, ServerLang.tr(source, "message.itemmilestonelog.preset_unknown",
@@ -265,6 +335,14 @@ public final class MilestoneService {
     }
 
     public static ActionResult resetRecord(ServerPlayer player, String itemId, int count) {
+        return resetRecord(MilestoneData.get(player.server), player.getUUID(), player, itemId, count,
+                MilestoneService::isValidItemId, MilestoneService::targetDisplayName);
+    }
+
+    static ActionResult resetRecord(MilestoneData data, UUID playerId, @Nullable ServerPlayer player,
+                                    String itemId, int count,
+                                    Predicate<String> isKnownItem,
+                                    Function<TargetKey, Component> displayName) {
         if (!TargetKey.isValidCount(count)) {
             return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_count",
                     TargetKey.MIN_COUNT, TargetKey.MAX_COUNT));
@@ -272,25 +350,27 @@ public final class MilestoneService {
         if (!TargetKey.isValidItemId(itemId)) {
             return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_item", String.valueOf(itemId)));
         }
-        ResourceLocation rl = ResourceLocation.tryParse(itemId);
-        String normalizedId = rl != null ? rl.toString() : itemId;
+        String normalized = TargetKey.normalizeItemId(itemId);
+        String normalizedId = normalized != null ? normalized : itemId;
         TargetKey key = new TargetKey(normalizedId, count);
-        MilestoneData data = MilestoneData.get(player.server);
-        MilestoneData.PlayerData pd = data.playerOrNull(player.getUUID());
+        MilestoneData.PlayerData pd = data.playerOrNull(playerId);
         if (pd != null && (pd.records.remove(key) != null
                 || (!normalizedId.equals(itemId) && pd.records.remove(new TargetKey(itemId, count)) != null))) {
             data.setDirty();
-            return new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.reset_done", targetDisplayName(key)));
+            return new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.reset_done", displayName.apply(key)));
         }
-        if (!isValidItemId(normalizedId)) {
+        if (!isKnownItem.test(normalizedId)) {
             return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_item", itemId));
         }
-        return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.not_recorded", targetDisplayName(key)));
+        return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.not_recorded", displayName.apply(key)));
     }
 
     public static ActionResult resetAllRecords(ServerPlayer player) {
-        MilestoneData data = MilestoneData.get(player.server);
-        MilestoneData.PlayerData pd = data.playerOrNull(player.getUUID());
+        return resetAllRecords(MilestoneData.get(player.server), player.getUUID(), player);
+    }
+
+    static ActionResult resetAllRecords(MilestoneData data, UUID playerId, @Nullable ServerPlayer player) {
+        MilestoneData.PlayerData pd = data.playerOrNull(playerId);
         int count = pd != null ? pd.records.size() : 0;
         if (count > 0) {
             pd.records.clear();
@@ -319,11 +399,45 @@ public final class MilestoneService {
     public static SyncMilestonesPayload createSyncPayload(ServerPlayer player, boolean openScreen, @Nullable Component feedback) {
         MilestoneData data = MilestoneData.get(player.server);
         MilestoneData.PlayerData pd = data.playerOrNull(player.getUUID());
+        return buildSyncPayload(
+                pd,
+                Tracker.defaultTargets(),
+                Tracker.carriedFromCreative(pd),
+                itemIds -> Tracker.countItemsInPossession(player, itemIds),
+                Playtime.currentTicks(player),
+                isPrivileged(player),
+                openScreen,
+                feedback,
+                Config.PRESETS_ENABLED.get()
+        );
+    }
 
-        Set<TargetKey> defaultSet = Tracker.defaultTargets();
+    static SyncMilestonesPayload buildSyncPayload(
+            @Nullable MilestoneData.PlayerData pd,
+            Set<TargetKey> defaultSet,
+            Set<String> carried,
+            Function<Set<String>, Map<String, Integer>> possessionCounter,
+            int currentPlaytime,
+            boolean canManagePresets,
+            boolean openScreen,
+            @Nullable Component feedback) {
+        return buildSyncPayload(pd, defaultSet, carried, possessionCounter, currentPlaytime,
+                canManagePresets, openScreen, feedback, true);
+    }
+
+    static SyncMilestonesPayload buildSyncPayload(
+            @Nullable MilestoneData.PlayerData pd,
+            Set<TargetKey> defaultSet,
+            Set<String> carried,
+            Function<Set<String>, Map<String, Integer>> possessionCounter,
+            int currentPlaytime,
+            boolean canManagePresets,
+            boolean openScreen,
+            @Nullable Component feedback,
+            boolean presetsEnabled) {
         Set<TargetKey> personalSet = pd != null ? pd.targets : Set.of();
 
-        Set<TargetKey> effective = Tracker.effectiveTargets(pd);
+        Set<TargetKey> effective = Tracker.effectiveTargets(defaultSet, pd);
         List<TargetKey> sortedTargets = new ArrayList<>(effective);
         sortedTargets.sort(TargetKey::compareTo);
 
@@ -339,7 +453,6 @@ public final class MilestoneService {
         }
 
         // Q9: compute current possession count for unachieved targets with count > 1 at sync time.
-        Set<String> carried = Tracker.carriedFromCreative(pd);
         Set<String> progressItemIds = new java.util.HashSet<>();
         for (TargetKey key : sortedTargets) {
             if (key.count() > TargetKey.MIN_COUNT && !records.containsKey(key) && !carried.contains(key.itemId())) {
@@ -349,7 +462,7 @@ public final class MilestoneService {
         Map<TargetKey, Integer> progress = new LinkedHashMap<>();
         Map<String, Integer> counts = progressItemIds.isEmpty()
                 ? Map.of()
-                : Tracker.countItemsInPossession(player, progressItemIds);
+                : possessionCounter.apply(progressItemIds);
         for (TargetKey key : sortedTargets) {
             if (key.count() > TargetKey.MIN_COUNT && !records.containsKey(key)) {
                 int current = carried.contains(key.itemId()) ? 0 : counts.getOrDefault(key.itemId(), 0);
@@ -358,23 +471,24 @@ public final class MilestoneService {
         }
 
         List<PresetEntry> presetEntries = new ArrayList<>();
-        for (Presets.PresetDefinition p : Presets.all()) {
-            presetEntries.add(new PresetEntry(
-                    p.id(),
-                    p.builtin() ? "" : p.displayName(),
-                    p.items().size(),
-                    p.builtin()
-            ));
+        if (presetsEnabled) {
+            for (Presets.PresetDefinition p : Presets.all()) {
+                presetEntries.add(new PresetEntry(
+                        p.id(),
+                        p.builtin() ? "" : p.displayName(),
+                        p.items().size(),
+                        p.builtin()
+                ));
+            }
         }
 
-        int currentPlaytime = Playtime.currentTicks(player);
         return new SyncMilestonesPayload(
                 targetEntries,
                 records,
                 progress,
                 currentPlaytime,
                 presetEntries,
-                canManagePresets(player),
+                presetsEnabled && canManagePresets,
                 openScreen,
                 feedback
         );

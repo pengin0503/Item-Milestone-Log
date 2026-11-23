@@ -217,4 +217,30 @@ class MilestoneExportTest {
         assertEquals(0, equalStats.addedTargets());
         assertEquals(0, equalStats.updatedRecords());
     }
+
+    @Test
+    void normalizesImplicitNamespacesAndSkipsTagSyntaxDuringImport(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("TagsAndShortIds.json");
+        Files.writeString(file, """
+                {
+                  "format": 1,
+                  "targets": [
+                    "diamond",
+                    { "item": "emerald", "count": 5 },
+                    "#c:ingots/iron",
+                    "#c:ingots/iron#10",
+                    { "item": "#minecraft:logs", "count": 64 }
+                  ],
+                  "records": {
+                    "diamond": { "ticks": 120, "day": 1, "epoch": 1795600000000 },
+                    "#c:ingots/iron": { "ticks": 240, "day": 1, "epoch": 1795600000000 },
+                    "#c:ingots/iron#10": { "ticks": 360, "day": 2, "epoch": 1795600000000 }
+                  }
+                }
+                """);
+        MilestoneExport.ImportPayload payload = MilestoneExport.parseSinglePlayerExport(file);
+        assertEquals(List.of(TargetKey.of("minecraft:diamond"), TargetKey.of("minecraft:emerald", 5)), payload.targets());
+        assertEquals(1, payload.records().size());
+        assertEquals(120, payload.records().get(TargetKey.of("minecraft:diamond")).playTicks());
+    }
 }

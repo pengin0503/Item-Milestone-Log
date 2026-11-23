@@ -8,21 +8,95 @@ import org.junit.jupiter.api.Test;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.Reader;
+import java.lang.reflect.Field;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Keeps the shared translation files in step with each other. */
+/** Keeps the shared translation files in step with each other and with {@link ServerLang}. */
 class LangFilesTest {
     private static final Pattern ANY_FORMAT_SPECIFIER = Pattern.compile("%(\\d+\\$)?[-#+ 0,(]*\\d*(\\.\\d+)?([a-zA-Z%])");
+    private static final Path LANG_REL_PATH = Path.of("common", "resources", "assets", ItemMilestoneLog.MOD_ID, "lang");
+
+    @SuppressWarnings("unchecked")
+    private static List<String> bundledLanguages() throws Exception {
+        Field f = ServerLang.class.getDeclaredField("BUNDLED_LANGUAGES");
+        f.setAccessible(true);
+        return (List<String>) f.get(null);
+    }
+
+    private static Path resolveLangDir() throws Exception {
+        String mainSourceDir = System.getProperty("itemmilestonelog.mainSourceDir");
+        if (mainSourceDir != null && !mainSourceDir.isBlank()) {
+            Path cur = Path.of(mainSourceDir).toAbsolutePath().normalize();
+            for (int i = 0; i < 6 && cur != null; i++) {
+                Path candidate = cur.resolve(LANG_REL_PATH);
+                if (Files.isDirectory(candidate)) {
+                    return candidate;
+                }
+                cur = cur.getParent();
+            }
+        }
+        Path fromVersionDir = Path.of("..", "..").resolve(LANG_REL_PATH).normalize();
+        if (Files.isDirectory(fromVersionDir)) {
+            return fromVersionDir;
+        }
+        if (Files.isDirectory(LANG_REL_PATH)) {
+            return LANG_REL_PATH;
+        }
+        URL url = LangFilesTest.class.getResource("/assets/" + ItemMilestoneLog.MOD_ID + "/lang/en_us.json");
+        if (url != null && "file".equals(url.getProtocol())) {
+            Path parent = Path.of(url.toURI()).getParent();
+            if (parent != null && Files.isDirectory(parent)) {
+                return parent;
+            }
+        }
+        throw new AssertionError("Could not locate lang directory for " + ItemMilestoneLog.MOD_ID);
+    }
+
+    @Test
+    void bundledLanguagesMatchLangDirectoryFiles() throws Exception {
+        List<String> bundled = bundledLanguages();
+        Set<String> bundledSet = new LinkedHashSet<>(bundled);
+        assertEquals(bundled.size(), bundledSet.size(), "ServerLang.BUNDLED_LANGUAGES must not contain duplicates: " + bundled);
+        assertTrue(bundledSet.contains("en_us"), "en_us must be in ServerLang.BUNDLED_LANGUAGES");
+        assertTrue(bundledSet.contains("ja_jp"), "ja_jp must be in ServerLang.BUNDLED_LANGUAGES");
+        for (String lang : bundled) {
+            assertEquals(lang.toLowerCase(Locale.ROOT), lang,
+                    "ServerLang.BUNDLED_LANGUAGES entries must be lowercase: " + lang);
+        }
+
+        Path langDir = resolveLangDir();
+        Set<String> diskLangs = new TreeSet<>();
+        try (Stream<Path> files = Files.list(langDir)) {
+            for (Path file : files.filter(Files::isRegularFile).toList()) {
+                String name = file.getFileName().toString();
+                if (name.endsWith(".json")) {
+                    diskLangs.add(name.substring(0, name.length() - ".json".length()));
+                }
+            }
+        }
+
+        assertEquals(diskLangs, new TreeSet<>(bundledSet),
+                "Lang files in " + langDir + " must match ServerLang.BUNDLED_LANGUAGES");
+    }
 
     @Test
     void japaneseHasExactlyTheEnglishKeys() throws Exception {
@@ -34,15 +108,73 @@ class LangFilesTest {
     @Test
     void translationsKeepTheSameNumberOfPlaceholdersAndValidFormatSpecifiers() throws Exception {
         Map<String, String> en = read("en_us");
-        Map<String, String> ja = read("ja_jp");
         for (Map.Entry<String, String> entry : en.entrySet()) {
+            extractFormatSlots(entry.getKey() + " (en_us)", entry.getValue());
+        }
+        for (String lang : bundledLanguages()) {
+            if ("en_us".equals(lang)) {
+                continue;
+            }
+            Map<String, String> translations = read(lang);
+            validateLanguageAgainstEnglish(lang, en, translations, "ja_jp".equals(lang));
+        }
+    }
+
+    @Test
+    void validationRulesAllowPartialThirdLanguagesButRejectUnknownKeysAndMismatchedPlaceholders() {
+        Map<String, String> en = Map.of(
+                "message.itemmilestonelog.added", "Now tracking: %s",
+                "message.itemmilestonelog.summary", "Playtime: %s | Milestones: %s / %s"
+        );
+
+        // Partial 3rd language (missing a key) with matching placeholders is allowed
+        validateLanguageAgainstEnglish("de_de", en,
+                Map.of("message.itemmilestonelog.added", "Verfolge jetzt: %s"),
+                false);
+
+        // Unknown key not in en_us fails even for partial languages
+        assertThrows(AssertionError.class, () -> validateLanguageAgainstEnglish("de_de", en,
+                Map.of("message.itemmilestonelog.unknown_extra", "Extra"),
+                false));
+
+        // Mismatched placeholder slots fail
+        assertThrows(AssertionError.class, () -> validateLanguageAgainstEnglish("de_de", en,
+                Map.of("message.itemmilestonelog.added", "Verfolge: %s (%s)"),
+                false));
+
+        // Non-%s format specifier fails
+        assertThrows(AssertionError.class, () -> validateLanguageAgainstEnglish("de_de", en,
+                Map.of("message.itemmilestonelog.added", "Verfolge: %d"),
+                false));
+
+        // Strict language (ja_jp) fails when a key is missing
+        assertThrows(AssertionError.class, () -> validateLanguageAgainstEnglish("ja_jp", en,
+                Map.of("message.itemmilestonelog.added", "追加しました: %s"),
+                true));
+    }
+
+    private static void validateLanguageAgainstEnglish(
+            String language,
+            Map<String, String> en,
+            Map<String, String> translations,
+            boolean requireAllKeys) {
+        Set<String> extra = new TreeSet<>(translations.keySet());
+        extra.removeAll(en.keySet());
+        assertTrue(extra.isEmpty(), "Keys in " + language + ".json absent from en_us.json: " + extra);
+
+        if (requireAllKeys) {
+            Set<String> missing = new TreeSet<>(en.keySet());
+            missing.removeAll(translations.keySet());
+            assertTrue(missing.isEmpty(), "Missing keys in " + language + ".json: " + missing);
+        }
+
+        for (Map.Entry<String, String> entry : translations.entrySet()) {
             String key = entry.getKey();
-            String enVal = entry.getValue();
-            String jaVal = ja.get(key);
-            assertNotNull(jaVal, "Missing Japanese translation for " + key);
+            String enVal = en.get(key);
+            assertNotNull(enVal, "Missing English key for " + key);
             List<Integer> enSlots = extractFormatSlots(key + " (en_us)", enVal);
-            List<Integer> jaSlots = extractFormatSlots(key + " (ja_jp)", jaVal);
-            assertEquals(enSlots, jaSlots, "placeholder slots differ for " + key);
+            List<Integer> langSlots = extractFormatSlots(key + " (" + language + ")", entry.getValue());
+            assertEquals(enSlots, langSlots, "placeholder slots differ for " + key + " in " + language);
         }
     }
 
