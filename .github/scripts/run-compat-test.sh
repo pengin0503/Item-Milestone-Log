@@ -105,10 +105,15 @@ write_server_log4j_config() {
 EOF
 }
 
+# The version line matters: without it the client treats options.txt as a
+# pre-1.13 file and the data fixer tries to parse key binding values as
+# legacy LWJGL2 numeric codes, which fails on "key.keyboard.m" and wedges
+# startup before quick play can connect (observed in the first CI run).
 prepare_client_options() {
   local run_dir="$1"
   mkdir -p "$run_dir"
   cat > "$run_dir/options.txt" <<'EOF'
+version:3955
 pauseOnLostFocus:false
 onboardAccessibility:false
 skipMultiplayerWarning:true
