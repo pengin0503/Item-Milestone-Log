@@ -396,4 +396,45 @@ class MilestoneServiceTest {
         assertTrue(disabledSync.presets().isEmpty());
         assertFalse(disabledSync.canManagePresets());
     }
+
+    @Test
+    void removeResetAndResetAllCleanUpProgressNotifiedEntries() {
+        MilestoneData data = new MilestoneData();
+        MilestoneData.PlayerData pd = data.player(PLAYER_A);
+        Set<String> knownItems = Set.of("minecraft:diamond", "minecraft:iron_ingot", "minecraft:emerald");
+
+        TargetKey diamond100 = TargetKey.of("minecraft:diamond", 100);
+        TargetKey iron100 = TargetKey.of("minecraft:iron_ingot", 100);
+        TargetKey emerald100 = TargetKey.of("minecraft:emerald", 100);
+
+        pd.targets.add(diamond100);
+        pd.targets.add(iron100);
+        pd.targets.add(emerald100);
+        pd.records.put(iron100, new MilestoneRecord(200, 1L, 1000L));
+        pd.progressNotified.put(diamond100, 50);
+        pd.progressNotified.put(iron100, 90);
+        pd.progressNotified.put(emerald100, 50);
+        pd.muteProgressAlerts = true;
+
+        // removeTarget deletes progressNotified for the removed key only
+        assertTrue(MilestoneService.removeTarget(
+                data, PLAYER_A, null, "minecraft:diamond", 100, knownItems::contains, LITERAL_NAME).success());
+        assertFalse(pd.progressNotified.containsKey(diamond100));
+        assertEquals(90, pd.progressNotified.get(iron100));
+        assertEquals(50, pd.progressNotified.get(emerald100));
+        assertTrue(pd.muteProgressAlerts);
+
+        // resetRecord deletes progressNotified for the reset key only
+        assertTrue(MilestoneService.resetRecord(
+                data, PLAYER_A, null, "minecraft:iron_ingot", 100, knownItems::contains, LITERAL_NAME).success());
+        assertFalse(pd.progressNotified.containsKey(iron100));
+        assertEquals(50, pd.progressNotified.get(emerald100));
+        assertTrue(pd.muteProgressAlerts);
+
+        // resetAllRecords clears all remaining progressNotified even when records map is already empty
+        assertTrue(pd.records.isEmpty());
+        assertTrue(MilestoneService.resetAllRecords(data, PLAYER_A, null).success());
+        assertTrue(pd.progressNotified.isEmpty());
+        assertTrue(pd.muteProgressAlerts);
+    }
 }

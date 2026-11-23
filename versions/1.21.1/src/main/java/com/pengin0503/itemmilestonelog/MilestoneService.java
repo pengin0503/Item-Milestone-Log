@@ -178,9 +178,16 @@ public final class MilestoneService {
         String normalizedId = normalized != null ? normalized : itemId;
         TargetKey key = new TargetKey(normalizedId, count);
         MilestoneData.PlayerData pd = data.playerOrNull(playerId);
-        if (pd != null && (pd.targets.remove(key) || (!normalizedId.equals(itemId) && pd.targets.remove(new TargetKey(itemId, count))))) {
-            data.setDirty();
-            return new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.removed", displayName.apply(key)));
+        if (pd != null) {
+            TargetKey rawKey = !normalizedId.equals(itemId) ? new TargetKey(itemId, count) : null;
+            if (pd.targets.remove(key) || (rawKey != null && pd.targets.remove(rawKey))) {
+                pd.progressNotified.remove(key);
+                if (rawKey != null) {
+                    pd.progressNotified.remove(rawKey);
+                }
+                data.setDirty();
+                return new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.removed", displayName.apply(key)));
+            }
         }
         if (!isKnownItem.test(normalizedId)) {
             return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_item", itemId));
@@ -354,10 +361,16 @@ public final class MilestoneService {
         String normalizedId = normalized != null ? normalized : itemId;
         TargetKey key = new TargetKey(normalizedId, count);
         MilestoneData.PlayerData pd = data.playerOrNull(playerId);
-        if (pd != null && (pd.records.remove(key) != null
-                || (!normalizedId.equals(itemId) && pd.records.remove(new TargetKey(itemId, count)) != null))) {
-            data.setDirty();
-            return new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.reset_done", displayName.apply(key)));
+        if (pd != null) {
+            TargetKey rawKey = !normalizedId.equals(itemId) ? new TargetKey(itemId, count) : null;
+            if (pd.records.remove(key) != null || (rawKey != null && pd.records.remove(rawKey) != null)) {
+                pd.progressNotified.remove(key);
+                if (rawKey != null) {
+                    pd.progressNotified.remove(rawKey);
+                }
+                data.setDirty();
+                return new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.reset_done", displayName.apply(key)));
+            }
         }
         if (!isKnownItem.test(normalizedId)) {
             return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_item", itemId));
@@ -372,8 +385,18 @@ public final class MilestoneService {
     static ActionResult resetAllRecords(MilestoneData data, UUID playerId, @Nullable ServerPlayer player) {
         MilestoneData.PlayerData pd = data.playerOrNull(playerId);
         int count = pd != null ? pd.records.size() : 0;
-        if (count > 0) {
-            pd.records.clear();
+        boolean changed = false;
+        if (pd != null) {
+            if (count > 0) {
+                pd.records.clear();
+                changed = true;
+            }
+            if (!pd.progressNotified.isEmpty()) {
+                pd.progressNotified.clear();
+                changed = true;
+            }
+        }
+        if (changed) {
             data.setDirty();
         }
         return new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.resetall_done", count));

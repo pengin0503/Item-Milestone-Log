@@ -92,13 +92,57 @@ public final class Config {
                     "The client GUI always uses the player's local timezone.")
             .define("displayTimeZone", "", Config::validateDisplayTimeZone);
 
+    /** Send the player a chat alert when a quantity target crosses a progress threshold. */
+    public static final ModConfigSpec.BooleanValue PROGRESS_ALERTS = BUILDER
+            .comment("Notify the player in chat when a quantity target crosses a progress threshold (independent of notifyPlayer).")
+            .define("progressAlerts", true);
+
+    /** Percentage thresholds (1-99) at which to send progress alerts for quantity targets. */
+    public static final ModConfigSpec.ConfigValue<List<? extends Integer>> PROGRESS_ALERT_THRESHOLDS = BUILDER
+            .comment("Percentage thresholds (1-99) at which to send progress alerts for quantity targets.",
+                    "Duplicates are ignored and values are evaluated in ascending order. Leave empty to disable.")
+            .defineListAllowEmpty("progressAlertThresholds", List.of(50, 90), () -> 50, Config::validateProgressThreshold);
+
+    /** Minimum target quantity required to trigger progress alerts. */
+    public static final ModConfigSpec.IntValue PROGRESS_ALERT_MIN_COUNT = BUILDER
+            .comment("Minimum target quantity required for progress alerts (2-1000000).")
+            .defineInRange("progressAlertMinCount", ProgressAlertLogic.DEFAULT_MIN_COUNT,
+                    ProgressAlertLogic.MIN_ALERT_COUNT_LOWER, TargetKey.MAX_COUNT);
+
+    /** Group simultaneous milestone record notifications from the same tick into one message per channel. */
+    public static final ModConfigSpec.BooleanValue GROUP_SIMULTANEOUS_RECORDS = BUILDER
+            .comment("Group notifications when 3 or more milestones are recorded for the same player in the same tick.",
+                    "Set to false to send an individual notification immediately for every record.")
+            .define("groupSimultaneousRecords", true);
+
     static final ModConfigSpec SPEC = BUILDER.build();
+
+    private record ThresholdsCache(List<? extends Integer> source, List<Integer> normalized) {
+    }
+
+    private static volatile ThresholdsCache progressAlertThresholdsCache = new ThresholdsCache(null, List.of());
 
     private Config() {
     }
 
     static boolean validateTargetEntry(Object obj) {
         return obj instanceof String s && TargetKey.tryParseNormalized(s, true, true) != null;
+    }
+
+    static boolean validateProgressThreshold(Object obj) {
+        return obj instanceof Integer n && ProgressAlertLogic.isValidThreshold(n);
+    }
+
+    /** Returns deduplicated, ascending-sorted progress alert thresholds (1-99). */
+    public static List<Integer> progressAlertThresholds() {
+        List<? extends Integer> current = PROGRESS_ALERT_THRESHOLDS.get();
+        ThresholdsCache cache = progressAlertThresholdsCache;
+        if (current == cache.source()) {
+            return cache.normalized();
+        }
+        List<Integer> normalized = ProgressAlertLogic.normalizeThresholds(current);
+        progressAlertThresholdsCache = new ThresholdsCache(current, normalized);
+        return normalized;
     }
 
     static boolean validateDisplayTimeZone(Object obj) {

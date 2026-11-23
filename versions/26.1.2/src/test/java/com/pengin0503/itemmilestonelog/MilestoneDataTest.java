@@ -52,6 +52,9 @@ class MilestoneDataTest {
         pdA.lastKnownName = "Alice";
         pdA.firstJoinHintShown = true;
         pdA.muteBroadcasts = true;
+        pdA.muteProgressAlerts = true;
+        pdA.progressNotified.put(TargetKey.of("minecraft:iron_ingot", 100), 0);
+        pdA.progressNotified.put(TargetKey.of("minecraft:gold_ingot", 500), 50);
 
         MilestoneData.PlayerData pdB = original.player(playerB);
         pdB.targets.add(atmStar);
@@ -75,6 +78,11 @@ class MilestoneDataTest {
         assertEquals("Alice", loadedA.lastKnownName);
         assertTrue(loadedA.firstJoinHintShown);
         assertTrue(loadedA.muteBroadcasts);
+        assertTrue(loadedA.muteProgressAlerts);
+        assertEquals(Map.of(
+                TargetKey.of("minecraft:iron_ingot", 100), 0,
+                TargetKey.of("minecraft:gold_ingot", 500), 50
+        ), loadedA.progressNotified);
 
         MilestoneData.PlayerData loadedB = loaded.playerOrNull(playerB);
         assertNotNull(loadedB);
@@ -84,6 +92,8 @@ class MilestoneDataTest {
         assertEquals("", loadedB.lastKnownName);
         assertFalse(loadedB.firstJoinHintShown);
         assertFalse(loadedB.muteBroadcasts);
+        assertFalse(loadedB.muteProgressAlerts);
+        assertTrue(loadedB.progressNotified.isEmpty());
 
         WorldFirstRecord wf1 = loaded.worldFirstOrNull(diamond1);
         assertNotNull(wf1);
@@ -179,6 +189,8 @@ class MilestoneDataTest {
         assertEquals(List.of(TargetKey.of("minecraft:diamond"), TargetKey.of("allthetweaks:atm_star")), List.copyOf(pd.targets));
         assertEquals(Map.of(TargetKey.of("minecraft:diamond"), MilestoneRecord.legacy(12340)), pd.records);
         assertTrue(pd.carriedFromCreative.isEmpty());
+        assertFalse(pd.muteProgressAlerts);
+        assertTrue(pd.progressNotified.isEmpty());
         assertTrue(loaded.worldFirsts().isEmpty());
     }
 
@@ -425,6 +437,146 @@ class MilestoneDataTest {
         assertFalse(player.contains("lastKnownName"), player::toString);
         assertFalse(player.contains("firstJoinHintShown"), player::toString);
         assertFalse(player.contains("muteBroadcasts"), player::toString);
+        assertFalse(player.contains("muteProgressAlerts"), player::toString);
+        assertFalse(player.contains("progressNotified"), player::toString);
         assertFalse(saved.contains("worldFirsts"), saved::toString);
+    }
+
+    @Test
+    void persistsProgressNotifiedAndSkipsInvalidOrOutOfRangeEntries(@TempDir Path dir) throws IOException {
+        UUID playerB = UUID.fromString("22222222-2222-2222-2222-222222222222");
+
+        CompoundTag progressTag = new CompoundTag();
+        progressTag.putInt("minecraft:diamond#1000", 50);
+        progressTag.putInt("minecraft:iron_ingot#64", 0);
+        progressTag.putInt("minecraft:emerald#0", 50); // invalid TargetKey count
+        progressTag.putInt("bad key", 50); // invalid TargetKey syntax
+        progressTag.putInt("minecraft:coal#100", -1); // out of range (< 0)
+        progressTag.putInt("minecraft:gold_ingot#100", 100); // out of range (> 99)
+        progressTag.putString("minecraft:redstone#100", "fifty"); // non-numeric value
+
+        CompoundTag playerATag = new CompoundTag();
+        playerATag.putString("lastKnownName", "Alice");
+        playerATag.put("progressNotified", progressTag);
+
+        CompoundTag playerBTag = new CompoundTag();
+        playerBTag.putString("lastKnownName", "Bob");
+        playerBTag.put("progressNotified", StringTag.valueOf("garbage")); // malformed compound
+
+        CompoundTag players = new CompoundTag();
+        players.put(PLAYER_A.toString(), playerATag);
+        players.put(playerB.toString(), playerBTag);
+        CompoundTag dataTag = new CompoundTag();
+        dataTag.put("players", players);
+
+        MilestoneData loaded = MilestoneData.CODEC.parse(NbtOps.INSTANCE, dataTag).getOrThrow();
+        MilestoneData.PlayerData loadedA = loaded.playerOrNull(PLAYER_A);
+        assertNotNull(loadedA);
+        assertEquals("Alice", loadedA.lastKnownName);
+        assertEquals(Map.of(
+                TargetKey.of("minecraft:diamond", 1000), 50,
+                TargetKey.of("minecraft:iron_ingot", 64), 0
+        ), loadedA.progressNotified);
+
+        MilestoneData.PlayerData loadedB = loaded.playerOrNull(playerB);
+        assertNotNull(loadedB);
+        assertEquals("Bob", loadedB.lastKnownName);
+        assertTrue(loadedB.progressNotified.isEmpty());
+
+        // Encode back and verify NBT key/value format and omission when empty
+        CompoundTag encoded = (CompoundTag) MilestoneData.CODEC.encodeStart(NbtOps.INSTANCE, loaded).getOrThrow();
+        CompoundTag encodedPlayers = encoded.getCompoundOrEmpty("players");
+        CompoundTag encodedA = encodedPlayers.getCompoundOrEmpty(PLAYER_A.toString());
+        assertTrue(encodedA.contains("progressNotified"));
+        CompoundTag encodedProg = encodedA.getCompoundOrEmpty("progressNotified");
+        assertEquals(50, encodedProg.getIntOr("minecraft:diamond#1000", -1));
+        assertEquals(0, encodedProg.getIntOr("minecraft:iron_ingot#64", -1));
+        assertFalse(encodedPlayers.getCompoundOrEmpty(playerB.toString()).contains("progressNotified"));
+
+        // Verify 1.21.1 legacy file carrying progressNotified imports cleanly via readLegacy
+        CompoundTag legacyRoot = new CompoundTag();
+        legacyRoot.put("data", dataTag);
+        legacyRoot.putInt("DataVersion", 3955);
+        Path legacyFile = dir.resolve(MilestoneData.LEGACY_FILE);
+        Files.createDirectories(legacyFile.getParent());
+        NbtIo.writeCompressed(legacyRoot, legacyFile);
+
+        MilestoneData migrated = MilestoneData.readLegacy(legacyFile);
+        assertNotNull(migrated);
+        assertEquals(Map.of(
+                TargetKey.of("minecraft:diamond", 1000), 50,
+                TargetKey.of("minecraft:iron_ingot", 64), 0
+        ), migrated.playerOrNull(PLAYER_A).progressNotified);
+        assertTrue(migrated.playerOrNull(playerB).progressNotified.isEmpty());
+    }
+
+    @Test
+    void persistsMuteProgressAlertsLenientlyMigratesFromLegacyAndSurvivesResetAll(@TempDir Path dir) throws IOException {
+        UUID playerB = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        UUID playerC = UUID.fromString("33333333-3333-3333-3333-333333333333");
+
+        CompoundTag playerATag = new CompoundTag();
+        playerATag.putString("lastKnownName", "Alice");
+        playerATag.putBoolean("muteProgressAlerts", true);
+
+        CompoundTag playerBTag = new CompoundTag();
+        playerBTag.putString("lastKnownName", "Bob");
+        // muteProgressAlerts absent -> defaults to false
+
+        CompoundTag playerCTag = new CompoundTag();
+        playerCTag.putString("lastKnownName", "Charlie");
+        playerCTag.put("muteProgressAlerts", StringTag.valueOf("garbage")); // malformed -> leniently defaults to false
+
+        CompoundTag players = new CompoundTag();
+        players.put(PLAYER_A.toString(), playerATag);
+        players.put(playerB.toString(), playerBTag);
+        players.put(playerC.toString(), playerCTag);
+        CompoundTag dataTag = new CompoundTag();
+        dataTag.put("players", players);
+
+        MilestoneData loaded = MilestoneData.CODEC.parse(NbtOps.INSTANCE, dataTag).getOrThrow();
+        MilestoneData.PlayerData loadedA = loaded.playerOrNull(PLAYER_A);
+        MilestoneData.PlayerData loadedB = loaded.playerOrNull(playerB);
+        MilestoneData.PlayerData loadedC = loaded.playerOrNull(playerC);
+        assertNotNull(loadedA);
+        assertNotNull(loadedB);
+        assertNotNull(loadedC);
+        assertTrue(loadedA.muteProgressAlerts);
+        assertFalse(loadedB.muteProgressAlerts);
+        assertFalse(loadedC.muteProgressAlerts);
+        assertEquals("Charlie", loadedC.lastKnownName);
+
+        // Encode back: write only when true
+        CompoundTag encoded = (CompoundTag) MilestoneData.CODEC.encodeStart(NbtOps.INSTANCE, loaded).getOrThrow();
+        CompoundTag encodedPlayers = encoded.getCompoundOrEmpty("players");
+        assertTrue(encodedPlayers.getCompoundOrEmpty(PLAYER_A.toString()).getBooleanOr("muteProgressAlerts", false));
+        assertFalse(encodedPlayers.getCompoundOrEmpty(playerB.toString()).contains("muteProgressAlerts"));
+        assertFalse(encodedPlayers.getCompoundOrEmpty(playerC.toString()).contains("muteProgressAlerts"));
+
+        // 1.21.1 legacy file carrying muteProgressAlerts migrates via readLegacy
+        CompoundTag legacyRoot = new CompoundTag();
+        legacyRoot.put("data", dataTag);
+        legacyRoot.putInt("DataVersion", 3955);
+        Path legacyFile = dir.resolve(MilestoneData.LEGACY_FILE);
+        Files.createDirectories(legacyFile.getParent());
+        NbtIo.writeCompressed(legacyRoot, legacyFile);
+
+        MilestoneData migrated = MilestoneData.readLegacy(legacyFile);
+        assertNotNull(migrated);
+        assertTrue(migrated.playerOrNull(PLAYER_A).muteProgressAlerts);
+        assertFalse(migrated.playerOrNull(playerB).muteProgressAlerts);
+        assertFalse(migrated.playerOrNull(playerC).muteProgressAlerts);
+
+        // ResetAll must NOT clear personal setting muteProgressAlerts, while purge removes PlayerData
+        TargetKey diamond100 = TargetKey.of("minecraft:diamond", 100);
+        loadedA.records.put(diamond100, new MilestoneRecord(100, 1L, 1000L));
+        loadedA.progressNotified.put(diamond100, 50);
+        assertTrue(MilestoneService.resetAllRecords(loaded, PLAYER_A, null).success());
+        assertTrue(loadedA.records.isEmpty());
+        assertTrue(loadedA.progressNotified.isEmpty());
+        assertTrue(loadedA.muteProgressAlerts);
+
+        assertTrue(loaded.purgePlayer(PLAYER_A));
+        assertNull(loaded.playerOrNull(PLAYER_A));
     }
 }

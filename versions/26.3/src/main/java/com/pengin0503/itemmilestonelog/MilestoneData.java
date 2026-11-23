@@ -47,6 +47,8 @@ public class MilestoneData extends SavedData {
         public String lastKnownName = "";
         public boolean firstJoinHintShown = false;
         public boolean muteBroadcasts = false;
+        public boolean muteProgressAlerts = false;
+        public final Map<TargetKey, Integer> progressNotified = new LinkedHashMap<>();
     }
 
     private record WorldFirstEntry(String uuid, String name, int ticks, long day, long epoch) {
@@ -139,6 +141,20 @@ public class MilestoneData extends SavedData {
         return nested;
     }
 
+    /** Lenient per-entry wrapper for {@code progressNotified} values: non-numeric values decode to -1 and are skipped. */
+    private static final Codec<Integer> LENIENT_PROGRESS_THRESHOLD_CODEC = Codec.INT.orElse(-1);
+
+    private static Map<String, Integer> encodeProgressNotified(PlayerData pd) {
+        if (pd.progressNotified.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Integer> encoded = new LinkedHashMap<>(pd.progressNotified.size());
+        for (Map.Entry<TargetKey, Integer> e : pd.progressNotified.entrySet()) {
+            encoded.put(e.getKey().toEncodedString(), e.getValue());
+        }
+        return encoded;
+    }
+
     private static final Codec<PlayerData> PLAYER_DATA_CODEC = RecordCodecBuilder.create(instance -> instance.group(
             Codec.STRING.listOf().optionalFieldOf("targets", List.of())
                     .forGetter(MilestoneData::encodeTargets),
@@ -151,8 +167,13 @@ public class MilestoneData extends SavedData {
             Codec.BOOL.optionalFieldOf("firstJoinHintShown", false)
                     .forGetter(pd -> pd.firstJoinHintShown),
             Codec.BOOL.optionalFieldOf("muteBroadcasts", false)
-                    .forGetter(pd -> pd.muteBroadcasts)
-    ).apply(instance, (targets, records, carriedFromCreative, lastKnownName, firstJoinHintShown, muteBroadcasts) -> {
+                    .forGetter(pd -> pd.muteBroadcasts),
+            Codec.BOOL.lenientOptionalFieldOf("muteProgressAlerts", false)
+                    .forGetter(pd -> pd.muteProgressAlerts),
+            Codec.unboundedMap(Codec.STRING, LENIENT_PROGRESS_THRESHOLD_CODEC)
+                    .lenientOptionalFieldOf("progressNotified", Map.of())
+                    .forGetter(MilestoneData::encodeProgressNotified)
+    ).apply(instance, (targets, records, carriedFromCreative, lastKnownName, firstJoinHintShown, muteBroadcasts, muteProgressAlerts, progressNotified) -> {
         PlayerData pd = new PlayerData();
         for (String raw : targets) {
             TargetKey parsed = TargetKey.tryParseEncoded(raw);
@@ -193,6 +214,22 @@ public class MilestoneData extends SavedData {
         pd.lastKnownName = lastKnownName;
         pd.firstJoinHintShown = firstJoinHintShown;
         pd.muteBroadcasts = muteBroadcasts;
+        pd.muteProgressAlerts = muteProgressAlerts;
+        for (Map.Entry<String, Integer> progEntry : progressNotified.entrySet()) {
+            String rawKey = progEntry.getKey();
+            TargetKey parsed = TargetKey.tryParseEncoded(rawKey);
+            if (parsed == null) {
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid progressNotified key '{}' in SavedData", rawKey);
+                continue;
+            }
+            Integer threshold = progEntry.getValue();
+            if (threshold == null || !ProgressAlertLogic.isValidStoredThreshold(threshold)) {
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping out-of-range progressNotified value '{}' for '{}' in SavedData",
+                        threshold, rawKey);
+                continue;
+            }
+            pd.progressNotified.put(parsed, threshold);
+        }
         return pd;
     }));
 

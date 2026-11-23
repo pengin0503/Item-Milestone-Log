@@ -123,6 +123,9 @@ jobs:
       - name: Build and run unit tests
         run: ./gradlew -p versions/${{ matrix.mc }} build -Pneo_version=${{ steps.neo.outputs.version }} --console=plain
 
+      - name: Run GameTests
+        run: ./gradlew -p versions/${{ matrix.mc }} runGameTestServer -Pneo_version=${{ steps.neo.outputs.version }} --console=plain
+
       - name: Build the release jar against the minimum NeoForge
         if: matrix.neo == 'latest'
         run: ./gradlew -p versions/${{ matrix.mc }} jar -Pneo_version=${{ steps.neo.outputs.min }} --console=plain
