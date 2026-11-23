@@ -155,7 +155,8 @@ public final class Tracker {
                 MilestoneService::isKnownNonAirItem,
                 Config.SHOW_FIRST_JOIN_HINT.get(),
                 hasMod,
-                player);
+                player,
+                System.currentTimeMillis());
         for (Component msg : messages) {
             player.sendSystemMessage(msg);
         }
@@ -172,6 +173,23 @@ public final class Tracker {
             boolean showFirstJoinHint,
             boolean hasModChannel,
             @Nullable ServerPlayer player) {
+        return processPlayerLogin(
+                data, playerId, playerName, defaultTargets, firstJoinPresets, presetsEnabled,
+                isKnownNonAirItem, showFirstJoinHint, hasModChannel, player, System.currentTimeMillis());
+    }
+
+    static List<Component> processPlayerLogin(
+            MilestoneData data,
+            UUID playerId,
+            @Nullable String playerName,
+            Set<TargetKey> defaultTargets,
+            @Nullable List<? extends String> firstJoinPresets,
+            boolean presetsEnabled,
+            Predicate<String> isKnownNonAirItem,
+            boolean showFirstJoinHint,
+            boolean hasModChannel,
+            @Nullable ServerPlayer player,
+            long nowMillis) {
         int firstJoinAdded = data.playerOrNull(playerId) == null
                 ? MilestoneService.applyFirstJoinPresets(
                         data, playerId, firstJoinPresets, isKnownNonAirItem, presetsEnabled)
@@ -179,6 +197,10 @@ public final class Tracker {
         MilestoneData.PlayerData pd = data.player(playerId);
         if (playerName != null && !playerName.equals(pd.lastKnownName)) {
             pd.lastKnownName = playerName;
+            data.setDirty();
+        }
+        if (nowMillis > 0L && pd.lastSeen != nowMillis) {
+            pd.lastSeen = nowMillis;
             data.setDirty();
         }
         if (cleanupProgressNotified(pd, effectiveTargets(defaultTargets, pd))) {
@@ -205,8 +227,20 @@ public final class Tracker {
         if (event.getEntity() instanceof FakePlayer) {
             return;
         }
-        ModNetworking.removeRateLimit(event.getEntity().getUUID());
-        PENDING_CRAFT_CHECKS.remove(event.getEntity().getUUID());
+        UUID playerId = event.getEntity().getUUID();
+        if (event.getEntity() instanceof ServerPlayer player && player.server != null) {
+            processPlayerLogout(MilestoneData.get(player.server), playerId, System.currentTimeMillis());
+        }
+        ModNetworking.removeRateLimit(playerId);
+        PENDING_CRAFT_CHECKS.remove(playerId);
+    }
+
+    static void processPlayerLogout(MilestoneData data, UUID playerId, long nowMillis) {
+        MilestoneData.PlayerData pd = data.playerOrNull(playerId);
+        if (pd != null && nowMillis > 0L && pd.lastSeen != nowMillis) {
+            pd.lastSeen = nowMillis;
+            data.setDirty();
+        }
     }
 
     @SubscribeEvent

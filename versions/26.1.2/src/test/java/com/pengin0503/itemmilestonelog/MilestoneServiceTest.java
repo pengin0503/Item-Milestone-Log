@@ -13,6 +13,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -1382,5 +1383,148 @@ class MilestoneServiceTest {
                 chainedData, PLAYER_A, List.of("all_missing", "vanilla_endgame"), knownItems::contains, true));
         assertEquals(Set.of(TargetKey.of("minecraft:diamond"), TargetKey.of("minecraft:netherite_ingot")),
                 chainedData.playerOrNull(PLAYER_A).targets);
+    }
+
+    @Test
+    void pruneInactivePlayersPreviewsDeletesOnlyEligiblePlayersFallsBackToDatFileAndKeepsWorldFirsts(@TempDir Path playerDataDir) throws Exception {
+        long now = 1_800_000_000_000L;
+        int days = 30;
+        long oldTime = now - (days * PruneDataLogic.MILLIS_PER_DAY) - 10_000L;
+        long recentTime = now - (5L * PruneDataLogic.MILLIS_PER_DAY);
+
+        UUID eligibleByLastSeen = UUID.fromString("00000000-0000-0000-0000-000000000001");
+        UUID eligibleByDatFile = UUID.fromString("00000000-0000-0000-0000-000000000002");
+        UUID eligibleWorldFirstHolder = UUID.fromString("00000000-0000-0000-0000-000000000003");
+        UUID hasRecord = UUID.fromString("00000000-0000-0000-0000-000000000004");
+        UUID hasTarget = UUID.fromString("00000000-0000-0000-0000-000000000005");
+        UUID hasCreativeCarry = UUID.fromString("00000000-0000-0000-0000-000000000006");
+        UUID hasMuteBroadcast = UUID.fromString("00000000-0000-0000-0000-000000000007");
+        UUID hasHideFromLookup = UUID.fromString("00000000-0000-0000-0000-000000000008");
+        UUID hasMuteProgress = UUID.fromString("00000000-0000-0000-0000-000000000009");
+        UUID hasExcludeDiscord = UUID.fromString("00000000-0000-0000-0000-00000000000a");
+        UUID currentlyOnline = UUID.fromString("00000000-0000-0000-0000-00000000000b");
+        UUID recentLastSeenWithOldDat = UUID.fromString("00000000-0000-0000-0000-00000000000c");
+        UUID unknownLastSeenNoDat = UUID.fromString("00000000-0000-0000-0000-00000000000d");
+        UUID recentDatOnly = UUID.fromString("00000000-0000-0000-0000-00000000000e");
+
+        MilestoneData data = new MilestoneData();
+
+        // 1. Eligible via lastSeen (firstJoinHintShown and lastKnownName do not block pruning)
+        MilestoneData.PlayerData pd1 = data.player(eligibleByLastSeen);
+        pd1.lastKnownName = "OldVisitor";
+        pd1.firstJoinHintShown = true;
+        pd1.lastSeen = oldTime;
+
+        // 2. Eligible via vanilla <uuid>.dat mtime fallback (lastSeen == 0)
+        MilestoneData.PlayerData pd2 = data.player(eligibleByDatFile);
+        pd2.lastKnownName = "LegacyVisitor";
+        Path oldDat = playerDataDir.resolve(eligibleByDatFile + ".dat");
+        Files.writeString(oldDat, "nbt");
+        Files.setLastModifiedTime(oldDat, FileTime.fromMillis(oldTime));
+
+        // 3. Eligible player who also holds a world-first record (PlayerData pruned, world-first kept)
+        MilestoneData.PlayerData pd3 = data.player(eligibleWorldFirstHolder);
+        pd3.lastKnownName = "FormerChampion";
+        pd3.lastSeen = oldTime;
+        TargetKey diamond = TargetKey.of("minecraft:diamond");
+        assertTrue(data.recordWorldFirstIfAbsent(diamond, eligibleWorldFirstHolder, "FormerChampion",
+                new MilestoneRecord(1000, 1L, oldTime)));
+
+        // 4..10. Ineligible due to records, personal targets, creative carry, or personal settings
+        MilestoneData.PlayerData pdRec = data.player(hasRecord);
+        pdRec.lastSeen = oldTime;
+        pdRec.records.put(diamond, new MilestoneRecord(2000, 2L, oldTime));
+
+        MilestoneData.PlayerData pdTgt = data.player(hasTarget);
+        pdTgt.lastSeen = oldTime;
+        pdTgt.targets.add(diamond);
+
+        MilestoneData.PlayerData pdCarry = data.player(hasCreativeCarry);
+        pdCarry.lastSeen = oldTime;
+        pdCarry.carriedFromCreative.add("minecraft:diamond");
+
+        MilestoneData.PlayerData pdMuteB = data.player(hasMuteBroadcast);
+        pdMuteB.lastSeen = oldTime;
+        pdMuteB.muteBroadcasts = true;
+
+        MilestoneData.PlayerData pdHide = data.player(hasHideFromLookup);
+        pdHide.lastSeen = oldTime;
+        pdHide.hideFromLookup = true;
+
+        MilestoneData.PlayerData pdMuteP = data.player(hasMuteProgress);
+        pdMuteP.lastSeen = oldTime;
+        pdMuteP.muteProgressAlerts = true;
+
+        MilestoneData.PlayerData pdExcl = data.player(hasExcludeDiscord);
+        pdExcl.lastSeen = oldTime;
+        pdExcl.excludeFromDiscord = true;
+
+        // 11. Ineligible: currently online
+        MilestoneData.PlayerData pdOnline = data.player(currentlyOnline);
+        pdOnline.lastSeen = oldTime;
+
+        // 12. Ineligible: positive recent lastSeen wins even if .dat is old
+        MilestoneData.PlayerData pdRecent = data.player(recentLastSeenWithOldDat);
+        pdRecent.lastSeen = recentTime;
+        Path oldDatIgnored = playerDataDir.resolve(recentLastSeenWithOldDat + ".dat");
+        Files.writeString(oldDatIgnored, "nbt");
+        Files.setLastModifiedTime(oldDatIgnored, FileTime.fromMillis(oldTime));
+
+        // 13. Ineligible: lastSeen == 0 and no .dat file (unknown)
+        data.player(unknownLastSeenNoDat).lastKnownName = "Unknown";
+
+        // 14. Ineligible: lastSeen == 0 and .dat file is recent
+        data.player(recentDatOnly).lastKnownName = "RecentLegacy";
+        Path recentDat = playerDataDir.resolve(recentDatOnly + ".dat");
+        Files.writeString(recentDat, "nbt");
+        Files.setLastModifiedTime(recentDat, FileTime.fromMillis(recentTime));
+
+        int totalBefore = data.allPlayers().size();
+        assertEquals(14, totalBefore);
+
+        // Preview (confirm = false): reports 3 targets and changes nothing
+        int previewCount = MilestoneService.pruneInactivePlayers(
+                data, currentlyOnline::equals, playerDataDir, now, days, false);
+        assertEquals(3, previewCount);
+        assertEquals(14, data.allPlayers().size());
+        assertNotNull(data.playerOrNull(eligibleByLastSeen));
+        assertNotNull(data.playerOrNull(eligibleByDatFile));
+        assertNotNull(data.playerOrNull(eligibleWorldFirstHolder));
+
+        // Confirm (confirm = true): deletes only the 3 eligible players, keeps everyone else and world firsts
+        int deletedCount = MilestoneService.pruneInactivePlayers(
+                data, currentlyOnline::equals, playerDataDir, now, days, true);
+        assertEquals(3, deletedCount);
+        assertEquals(11, data.allPlayers().size());
+        assertNull(data.playerOrNull(eligibleByLastSeen));
+        assertNull(data.playerOrNull(eligibleByDatFile));
+        assertNull(data.playerOrNull(eligibleWorldFirstHolder));
+        assertNotNull(data.playerOrNull(hasRecord));
+        assertNotNull(data.playerOrNull(hasTarget));
+        assertNotNull(data.playerOrNull(hasCreativeCarry));
+        assertNotNull(data.playerOrNull(hasMuteBroadcast));
+        assertNotNull(data.playerOrNull(hasHideFromLookup));
+        assertNotNull(data.playerOrNull(hasMuteProgress));
+        assertNotNull(data.playerOrNull(hasExcludeDiscord));
+        assertNotNull(data.playerOrNull(currentlyOnline));
+        assertNotNull(data.playerOrNull(recentLastSeenWithOldDat));
+        assertNotNull(data.playerOrNull(unknownLastSeenNoDat));
+        assertNotNull(data.playerOrNull(recentDatOnly));
+        assertNotNull(data.worldFirstOrNull(diamond));
+        assertEquals(eligibleWorldFirstHolder, data.worldFirstOrNull(diamond).playerUuid());
+
+        // Verify en_us and ja_jp messages match spec verbatim
+        assertEquals(
+                "3 player(s) have no records, no personal targets and no personal settings, and were last seen more than 30 day(s) ago. Add 'confirm' to delete their data.",
+                ServerLang.trForLang("en_us", "message.itemmilestonelog.prunedata_preview", 3, 30).getString());
+        assertEquals(
+                "3 人分のデータが対象です（記録・個人の目標・個人の設定が無く、最後に来てから 30 日を超えている）。消すには末尾に confirm を付けてください。",
+                ServerLang.trForLang("ja_jp", "message.itemmilestonelog.prunedata_preview", 3, 30).getString());
+        assertEquals(
+                "Deleted the data of 3 player(s).",
+                ServerLang.trForLang("en_us", "message.itemmilestonelog.prunedata_done", 3).getString());
+        assertEquals(
+                "3 人分のデータを消しました。",
+                ServerLang.trForLang("ja_jp", "message.itemmilestonelog.prunedata_done", 3).getString());
     }
 }

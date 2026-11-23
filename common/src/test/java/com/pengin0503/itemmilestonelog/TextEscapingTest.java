@@ -14,6 +14,10 @@ class TextEscapingTest {
                 "&lt;script&gt;alert(&quot;x&quot; &amp; &#39;y&#39;)&lt;/script&gt;",
                 TextEscaping.escapeHtml("<script>alert(\"x\" & 'y')</script>")
         );
+        assertEquals(
+                "&amp;&lt;&gt;&quot;&#39; ★ ダイヤモンド \uD83D\uDC8E",
+                TextEscaping.escapeHtml("&<>\"' ★ ダイヤモンド \uD83D\uDC8E")
+        );
     }
 
     @Test

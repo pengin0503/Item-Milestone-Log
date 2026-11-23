@@ -333,6 +333,8 @@ public final class MilestoneCommands {
                                 .requires(src -> src.hasPermission(2))
                                 .executes(MilestoneCommands::firstsResetAll)))
                 .then(Commands.literal("export").executes(MilestoneCommands::exportSelf))
+                .then(Commands.literal("exporthtml").executes(MilestoneCommands::exportHtmlSelf))
+                .then(Commands.literal("exportcsv").executes(MilestoneCommands::exportCsvSelf))
                 .then(Commands.literal("import")
                         .then(Commands.argument("fileName", StringArgumentType.word())
                                 .suggests(exportFileSuggestions)
@@ -340,6 +342,17 @@ public final class MilestoneCommands {
                 .then(Commands.literal("exportall")
                         .requires(src -> src.hasPermission(2))
                         .executes(MilestoneCommands::exportAll))
+                .then(Commands.literal("exporthtmlall")
+                        .requires(src -> src.hasPermission(2))
+                        .executes(MilestoneCommands::exportHtmlAll))
+                .then(Commands.literal("exportcsvall")
+                        .requires(src -> src.hasPermission(2))
+                        .executes(MilestoneCommands::exportCsvAll))
+                .then(Commands.literal("importall")
+                        .requires(src -> src.hasPermission(2))
+                        .then(Commands.argument("fileName", StringArgumentType.word())
+                                .suggests(exportFileSuggestions)
+                                .executes(ctx -> importAll(ctx, StringArgumentType.getString(ctx, "fileName")))))
                 .then(Commands.literal("mutebroadcast").executes(MilestoneCommands::muteBroadcast))
                 .then(Commands.literal("muteprogress").executes(MilestoneCommands::muteProgress))
                 .then(Commands.literal("discordoptout").executes(MilestoneCommands::discordOptOut))
@@ -366,6 +379,12 @@ public final class MilestoneCommands {
                                 .executes(ctx -> recent(ctx, IntegerArgumentType.getInteger(ctx, "n")))))
                 .then(Commands.literal("stats")
                         .executes(MilestoneCommands::stats))
+                .then(Commands.literal("prunedata")
+                        .requires(src -> src.hasPermission(2))
+                        .then(Commands.argument("days", IntegerArgumentType.integer(PruneDataLogic.MIN_DAYS, PruneDataLogic.MAX_DAYS))
+                                .executes(ctx -> pruneData(ctx, IntegerArgumentType.getInteger(ctx, "days"), false))
+                                .then(Commands.literal("confirm")
+                                        .executes(ctx -> pruneData(ctx, IntegerArgumentType.getInteger(ctx, "days"), true)))))
                 .then(Commands.literal("admin")
                         .requires(src -> src.hasPermission(2))
                         .then(Commands.literal("players").executes(MilestoneCommands::adminPlayers))
@@ -830,6 +849,115 @@ public final class MilestoneCommands {
                     data.allPlayers().size(), relPath));
         } catch (IOException e) {
             ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Export-all failed", e);
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.export_failed"));
+        }
+    }
+
+    private static int importAll(CommandContext<CommandSourceStack> ctx, String fileName) {
+        CommandSourceStack source = ctx.getSource();
+        if (!Config.EXPORT_IMPORT_ENABLED.get()) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.feature_disabled"));
+        }
+        if (!MilestoneExport.isSafeFileName(fileName)) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.import_invalid_name", fileName));
+        }
+        MinecraftServer server = source.getServer();
+        Path dir = MilestoneExport.exportsDir(server).normalize();
+        Path file = dir.resolve(fileName).normalize();
+        if (!file.getParent().equals(dir)) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.import_invalid_name", fileName));
+        }
+        if (!Files.isRegularFile(file)) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.import_not_found", fileName));
+        }
+        try {
+            MilestoneExport.AllPlayersImportPayload payload = MilestoneExport.parseAllPlayersExport(file);
+            MilestoneData data = MilestoneData.get(server);
+            MilestoneExport.ImportAllMergeStats stats = MilestoneExport.mergeAllInto(data, payload);
+            MilestoneService.syncAllOnlineGuiPlayers(server, null);
+            return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.importall_done",
+                    fileName,
+                    stats.importedPlayers(),
+                    stats.addedTargets(),
+                    stats.updatedRecords(),
+                    stats.updatedWorldFirsts(),
+                    stats.skippedEntries()));
+        } catch (IllegalArgumentException e) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.import_invalid_format", fileName));
+        } catch (IOException e) {
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Import-all of {} failed", fileName, e);
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.import_failed", fileName));
+        }
+    }
+
+    private static int exportHtmlSelf(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+        ServerPlayer player = player(ctx);
+        if (!Config.EXPORT_IMPORT_ENABLED.get()) {
+            return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.feature_disabled"));
+        }
+        MilestoneData data = MilestoneData.get(player.server);
+        MilestoneData.PlayerData pd = data.playerOrNull(player.getUUID());
+        String playerName = player.getGameProfile().getName();
+        Path dir = MilestoneExport.exportsDir(player.server);
+        try {
+            String relPath = MilestoneExport.exportPlayerHtml(dir, player.getUUID(), playerName, pd, data);
+            return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.export_done", relPath));
+        } catch (IOException e) {
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] HTML export failed", e);
+            return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.export_failed"));
+        }
+    }
+
+    private static int exportHtmlAll(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+        if (!Config.EXPORT_IMPORT_ENABLED.get()) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.feature_disabled"));
+        }
+        MinecraftServer server = source.getServer();
+        MilestoneData data = MilestoneData.get(server);
+        Path dir = MilestoneExport.exportsDir(server);
+        try {
+            String relPath = MilestoneExport.exportAllHtml(dir, data);
+            return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.exportall_done",
+                    data.allPlayers().size(), relPath));
+        } catch (IOException e) {
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] HTML export-all failed", e);
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.export_failed"));
+        }
+    }
+
+    private static int exportCsvSelf(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+        ServerPlayer player = player(ctx);
+        if (!Config.EXPORT_IMPORT_ENABLED.get()) {
+            return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.feature_disabled"));
+        }
+        MilestoneData data = MilestoneData.get(player.server);
+        MilestoneData.PlayerData pd = data.playerOrNull(player.getUUID());
+        String playerName = player.getGameProfile().getName();
+        Path dir = MilestoneExport.exportsDir(player.server);
+        try {
+            String relPath = MilestoneExport.exportPlayerCsv(dir, player.getUUID(), playerName, pd, data);
+            return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.export_done", relPath));
+        } catch (IOException e) {
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] CSV export failed", e);
+            return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.export_failed"));
+        }
+    }
+
+    private static int exportCsvAll(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+        if (!Config.EXPORT_IMPORT_ENABLED.get()) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.feature_disabled"));
+        }
+        MinecraftServer server = source.getServer();
+        MilestoneData data = MilestoneData.get(server);
+        Path dir = MilestoneExport.exportsDir(server);
+        try {
+            String relPath = MilestoneExport.exportAllCsv(dir, data);
+            return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.exportall_done",
+                    data.allPlayers().size(), relPath));
+        } catch (IOException e) {
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] CSV export-all failed", e);
             return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.export_failed"));
         }
     }
@@ -1404,5 +1532,19 @@ public final class MilestoneCommands {
             return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.admin_purge_done", name, uuid.toString()));
         }
         return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.admin_player_not_found", query));
+    }
+
+    // --------------------------------------------------------- F37 prunedata
+
+    private static int pruneData(CommandContext<CommandSourceStack> ctx, int days, boolean confirm) {
+        CommandSourceStack source = ctx.getSource();
+        MinecraftServer server = source.getServer();
+        int count = MilestoneService.pruneInactivePlayers(server, days, confirm);
+        if (!confirm) {
+            return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.prunedata_preview", count, days));
+        }
+        ItemMilestoneLog.LOGGER.info("[ItemMilestoneLog] Admin {} pruned data for {} player(s) (days={})",
+                source.getTextName(), count, days);
+        return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.prunedata_done", count));
     }
 }

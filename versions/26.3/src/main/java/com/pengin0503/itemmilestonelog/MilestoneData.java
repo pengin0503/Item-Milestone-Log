@@ -50,6 +50,7 @@ public class MilestoneData extends SavedData {
         public boolean muteProgressAlerts = false;
         public boolean excludeFromDiscord = false;
         public boolean hideFromLookup = false;
+        public long lastSeen = 0L;
         public final Map<TargetKey, Integer> progressNotified = new LinkedHashMap<>();
         public final Set<String> completedPresets = new LinkedHashSet<>();
 
@@ -185,13 +186,15 @@ public class MilestoneData extends SavedData {
                     .forGetter(pd -> pd.excludeFromDiscord),
             Codec.BOOL.lenientOptionalFieldOf("hideFromLookup", false)
                     .forGetter(pd -> pd.hideFromLookup),
+            Codec.LONG.lenientOptionalFieldOf("lastSeen", 0L)
+                    .forGetter(pd -> pd.lastSeen > 0L ? pd.lastSeen : 0L),
             Codec.unboundedMap(Codec.STRING, LENIENT_PROGRESS_THRESHOLD_CODEC)
                     .lenientOptionalFieldOf("progressNotified", Map.of())
                     .forGetter(MilestoneData::encodeProgressNotified),
             Codec.list(LENIENT_COMPLETED_PRESET_CODEC)
                     .lenientOptionalFieldOf("completedPresets", List.of())
                     .forGetter(pd -> pd.completedPresets.isEmpty() ? List.of() : new ArrayList<>(pd.completedPresets))
-    ).apply(instance, (targets, records, carriedFromCreative, lastKnownName, firstJoinHintShown, muteBroadcasts, muteProgressAlerts, excludeFromDiscord, hideFromLookup, progressNotified, completedPresets) -> {
+    ).apply(instance, (targets, records, carriedFromCreative, lastKnownName, firstJoinHintShown, muteBroadcasts, muteProgressAlerts, excludeFromDiscord, hideFromLookup, lastSeen, progressNotified, completedPresets) -> {
         PlayerData pd = new PlayerData();
         for (String raw : targets) {
             TargetKey parsed = TargetKey.tryParseEncoded(raw);
@@ -235,6 +238,11 @@ public class MilestoneData extends SavedData {
         pd.muteProgressAlerts = muteProgressAlerts;
         pd.excludeFromDiscord = excludeFromDiscord;
         pd.hideFromLookup = hideFromLookup;
+        if (lastSeen > 0L) {
+            pd.lastSeen = lastSeen;
+        } else if (lastSeen < 0L) {
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping negative lastSeen value {} in SavedData", lastSeen);
+        }
         for (Map.Entry<String, Integer> progEntry : progressNotified.entrySet()) {
             String rawKey = progEntry.getKey();
             TargetKey parsed = TargetKey.tryParseEncoded(rawKey);
@@ -391,6 +399,16 @@ public class MilestoneData extends SavedData {
             setDirty();
         }
         return count;
+    }
+
+    /**
+     * Replaces the stored world-first map with {@code updated} and marks the data dirty
+     * (used when merging imported world firsts in F31).
+     */
+    void replaceWorldFirsts(Map<TargetKey, WorldFirstRecord> updated) {
+        worldFirsts.clear();
+        worldFirsts.putAll(updated);
+        setDirty();
     }
 
     private Map<String, PlayerData> playersByStringKey() {
