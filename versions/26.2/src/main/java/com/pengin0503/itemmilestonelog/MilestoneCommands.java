@@ -539,7 +539,8 @@ public final class MilestoneCommands {
             String relPath = MilestoneExport.exportPlayer(dir, player.getUUID(), playerName, pd);
             return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.export_done", relPath));
         } catch (IOException e) {
-            return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.export_failed", e.getMessage()));
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Export failed", e);
+            return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.export_failed"));
         }
     }
 
@@ -570,7 +571,8 @@ public final class MilestoneCommands {
         } catch (IllegalArgumentException e) {
             return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.import_invalid_format", fileName));
         } catch (IOException e) {
-            return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.import_failed", fileName, e.getMessage()));
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Import of {} failed", fileName, e);
+            return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.import_failed", fileName));
         }
     }
 
@@ -584,7 +586,8 @@ public final class MilestoneCommands {
             return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.exportall_done",
                     data.allPlayers().size(), relPath));
         } catch (IOException e) {
-            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.export_failed", e.getMessage()));
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Export-all failed", e);
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.export_failed"));
         }
     }
 

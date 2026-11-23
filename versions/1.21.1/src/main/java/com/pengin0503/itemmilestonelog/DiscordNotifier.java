@@ -11,9 +11,10 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -25,6 +26,7 @@ import java.util.concurrent.TimeUnit;
  */
 public final class DiscordNotifier {
     private static final Duration TIMEOUT = Duration.ofSeconds(10);
+    private static final int QUEUE_CAPACITY = 100;
 
     private static ExecutorService executor;
     private static HttpClient httpClient;
@@ -87,6 +89,10 @@ public final class DiscordNotifier {
                     .build();
             HttpResponse<Void> response = client.send(request, HttpResponse.BodyHandlers.discarding());
             int status = response.statusCode();
+            if (status == 429) {
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Discord webhook rate limited (HTTP 429); dropping message");
+                return;
+            }
             if (status < 200 || status >= 300) {
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Discord webhook returned HTTP {}", status);
             }
@@ -101,11 +107,14 @@ public final class DiscordNotifier {
 
     private static synchronized ExecutorService ensureExecutor() {
         if (executor == null || executor.isShutdown()) {
-            executor = Executors.newSingleThreadExecutor(r -> {
-                Thread t = new Thread(r, "itemmilestonelog-discord");
-                t.setDaemon(true);
-                return t;
-            });
+            executor = new ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS,
+                    new ArrayBlockingQueue<>(QUEUE_CAPACITY),
+                    r -> {
+                        Thread t = new Thread(r, "itemmilestonelog-discord");
+                        t.setDaemon(true);
+                        return t;
+                    },
+                    new ThreadPoolExecutor.DiscardOldestPolicy());
         }
         return executor;
     }
@@ -131,6 +140,10 @@ public final class DiscordNotifier {
                 Thread.currentThread().interrupt();
             }
             executor = null;
+        }
+        if (httpClient != null) {
+            httpClient.close();
+            httpClient = null;
         }
     }
 }

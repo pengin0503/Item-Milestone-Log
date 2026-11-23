@@ -59,13 +59,22 @@ public class MilestoneData extends SavedData {
     ).apply(instance, MilestoneRecord::new));
 
     /**
+     * Lenient per-entry wrapper: a malformed record (e.g. missing "ticks") decodes to a sentinel with
+     * negative ticks, which the PlayerData factory skips with a warning, instead of failing the whole
+     * SavedData. Mirrors the 1.21.1 NBT loader's per-entry skipping. Encoding is unchanged.
+     * Only used for values inside count maps; item-level format detection needs the strict codec.
+     */
+    private static final Codec<MilestoneRecord> LENIENT_RECORD_CODEC = RECORD_OBJECT_CODEC.orElse(
+            new MilestoneRecord(-1, MilestoneRecord.UNKNOWN_DAY, MilestoneRecord.UNKNOWN_EPOCH));
+
+    /**
      * Decodes all three record formats under {@code records[itemId]}:
      * 1.0.0 plain int (count = 1), early 1.0.1 compound {ticks, day, epoch} (count = 1),
      * and quantity map { "<count>": {ticks, day, epoch}, ... }.
      */
     private static final Codec<Map<String, MilestoneRecord>> ITEM_RECORDS_CODEC = Codec.either(
             Codec.INT,
-            Codec.either(RECORD_OBJECT_CODEC, Codec.unboundedMap(Codec.STRING, RECORD_OBJECT_CODEC))
+            Codec.either(RECORD_OBJECT_CODEC, Codec.unboundedMap(Codec.STRING, LENIENT_RECORD_CODEC))
     ).xmap(
             either -> either.map(
                     ticks -> Map.of("1", MilestoneRecord.legacy(ticks)),
@@ -75,7 +84,8 @@ public class MilestoneData extends SavedData {
                     )
             ),
             countMap -> Either.right(Either.right(countMap))
-    );
+    // An item whose value matches none of the formats decodes to no records instead of failing the player.
+    ).orElse(Map.of());
 
     private static final Codec<WorldFirstEntry> WORLD_FIRST_CODEC = RecordCodecBuilder.create(instance -> instance.group(
             Codec.STRING.fieldOf("uuid").forGetter(WorldFirstEntry::uuid),
@@ -85,20 +95,25 @@ public class MilestoneData extends SavedData {
             Codec.LONG.optionalFieldOf("epoch", MilestoneRecord.UNKNOWN_EPOCH).forGetter(WorldFirstEntry::epoch)
     ).apply(instance, WorldFirstEntry::new));
 
+    /** Lenient per-entry wrapper (see {@link #LENIENT_RECORD_CODEC}): failed entries become ticks == -1 and are skipped. */
+    private static final Codec<WorldFirstEntry> LENIENT_WORLD_FIRST_CODEC = WORLD_FIRST_CODEC.orElse(
+            new WorldFirstEntry("", "", -1, MilestoneRecord.UNKNOWN_DAY, MilestoneRecord.UNKNOWN_EPOCH));
+
     /**
      * Decodes both early 1.0.1 worldFirsts (itemId -> entry, count = 1)
      * and quantity worldFirsts (itemId -> { "<count>": entry, ... }).
      */
     private static final Codec<Map<String, WorldFirstEntry>> ITEM_WORLD_FIRSTS_CODEC = Codec.either(
             WORLD_FIRST_CODEC,
-            Codec.unboundedMap(Codec.STRING, WORLD_FIRST_CODEC)
+            Codec.unboundedMap(Codec.STRING, LENIENT_WORLD_FIRST_CODEC)
     ).xmap(
             either -> either.map(
                     single -> Map.of("1", single),
                     countMap -> countMap
             ),
             Either::right
-    );
+    // An item whose value matches neither format decodes to no entries instead of failing the file.
+    ).orElse(Map.of());
 
     private static List<String> encodeTargets(PlayerData pd) {
         if (pd.targets.isEmpty()) {
@@ -201,13 +216,23 @@ public class MilestoneData extends SavedData {
         var storage = server.getDataStorage();
         MilestoneData data = storage.get(TYPE);
         if (data == null) {
-            data = readLegacy(server.getWorldPath(LevelResource.ROOT).resolve(LEGACY_FILE));
-            if (data == null) {
+            Path newFormatFile = server.getWorldPath(LevelResource.ROOT)
+                    .resolve("data/" + ItemMilestoneLog.MOD_ID + "/milestones.dat");
+            if (Files.isRegularFile(newFormatFile)) {
+                // New-format data exists but failed to load: importing the legacy file now would resurrect stale records.
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] The new-format data file {} exists but could not be loaded; "
+                        + "the legacy data in {} is NOT being re-imported (to avoid resurrecting stale records). "
+                        + "Starting with empty data.", newFormatFile, LEGACY_FILE);
                 data = new MilestoneData();
             } else {
-                data.setDirty();
-                ItemMilestoneLog.LOGGER.info("[ItemMilestoneLog] Imported the records of {} player(s) from {}",
-                        data.players.size(), LEGACY_FILE);
+                data = readLegacy(server.getWorldPath(LevelResource.ROOT).resolve(LEGACY_FILE));
+                if (data == null) {
+                    data = new MilestoneData();
+                } else {
+                    data.setDirty();
+                    ItemMilestoneLog.LOGGER.info("[ItemMilestoneLog] Imported the records of {} player(s) from {}",
+                            data.players.size(), LEGACY_FILE);
+                }
             }
             storage.set(TYPE, data);
         }

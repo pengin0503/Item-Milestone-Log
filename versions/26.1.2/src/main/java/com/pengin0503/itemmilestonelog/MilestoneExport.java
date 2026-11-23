@@ -71,10 +71,29 @@ public final class MilestoneExport {
                 && SAFE_FILENAME.matcher(fileName).matches();
     }
 
+    /** Maximum size of an import file read on the server thread (10 MiB). */
+    private static final long MAX_IMPORT_BYTES = 10L * 1024 * 1024;
+
     public static String sanitizePlayerFileName(String playerName) {
         String base = (playerName == null || playerName.isBlank()) ? "player" : playerName.replaceAll("[^a-zA-Z0-9._-]", "_");
         if (base.contains("..")) {
             base = base.replace("..", "_");
+        }
+        // Strip trailing dots (invalid/ambiguous on some filesystems), then re-check the ".." rule.
+        int end = base.length();
+        while (end > 0 && base.charAt(end - 1) == '.') {
+            end--;
+        }
+        base = base.substring(0, end);
+        if (base.isEmpty()) {
+            base = "player";
+        }
+        if (base.contains("..")) {
+            base = base.replace("..", "_");
+        }
+        // Must not collide with the export-all file all-players.json.
+        if (base.equalsIgnoreCase("all-players")) {
+            base = "all-players-player";
         }
         return base + ".json";
     }
@@ -234,6 +253,9 @@ public final class MilestoneExport {
     }
 
     public static ImportPayload parseSinglePlayerExport(Path file) throws IOException, IllegalArgumentException {
+        if (Files.size(file) > MAX_IMPORT_BYTES) {
+            throw new IOException("Import file exceeds " + MAX_IMPORT_BYTES + " bytes");
+        }
         JsonObject root;
         try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
             JsonElement parsed = JsonParser.parseReader(reader);
@@ -303,7 +325,7 @@ public final class MilestoneExport {
                     }
                     String rawItem = obj.get("item").getAsString().trim();
                     Identifier rl = Identifier.tryParse(rawItem);
-                    if (rl == null || "minecraft:air".equals(rl.toString())) {
+                    if (rl == null || rl.getPath().isEmpty() || rl.getNamespace().isEmpty() || "minecraft:air".equals(rl.toString())) {
                         continue;
                     }
                     int count = TargetKey.MIN_COUNT;

@@ -16,6 +16,7 @@ import net.minecraft.world.level.GameType;
 import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.common.NeoForge;
+import net.neoforged.neoforge.common.util.FakePlayer;
 import net.neoforged.neoforge.event.entity.player.ItemEntityPickupEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.tick.PlayerTickEvent;
@@ -29,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -38,8 +40,13 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class Tracker {
     private static volatile String lastWarnedSoundId = null;
     private static final Set<String> WARNED_DEFAULT_TARGETS = ConcurrentHashMap.newKeySet();
-    private static volatile List<? extends String> lastDefaultTargets = null;
-    private static volatile Set<TargetKey> cachedDefaultTargets = Set.of();
+    /** Immutable snapshot of the config list a parse was derived from and its result; published atomically. */
+    private record DefaultTargetsCache(List<? extends String> source, Set<TargetKey> targets) {
+    }
+
+    private static volatile DefaultTargetsCache defaultTargetsCache = new DefaultTargetsCache(null, Set.of());
+    /** Craft/smelt results awaiting verification next tick: player -> itemId -> max event count. Server thread only. */
+    private static final Map<UUID, Map<String, Integer>> PENDING_CRAFT_CHECKS = new HashMap<>();
 
     private Tracker() {
     }
@@ -47,8 +54,9 @@ public final class Tracker {
     /** Parses server-configured defaultTargets into valid {@link TargetKey}s, warning once per invalid entry. */
     public static Set<TargetKey> defaultTargets() {
         List<? extends String> current = Config.DEFAULT_TARGETS.get();
-        if (current == lastDefaultTargets) {
-            return cachedDefaultTargets;
+        DefaultTargetsCache cache = defaultTargetsCache;
+        if (current == cache.source()) {
+            return cache.targets();
         }
         Set<TargetKey> result = new LinkedHashSet<>();
         for (String raw : current) {
@@ -62,9 +70,9 @@ public final class Tracker {
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Ignoring invalid defaultTargets entry '{}'", raw);
             }
         }
-        lastDefaultTargets = current;
-        cachedDefaultTargets = Collections.unmodifiableSet(new LinkedHashSet<>(result));
-        return cachedDefaultTargets;
+        Set<TargetKey> immutable = Collections.unmodifiableSet(new LinkedHashSet<>(result));
+        defaultTargetsCache = new DefaultTargetsCache(current, immutable);
+        return immutable;
     }
 
     /** Effective targets for a player: global defaults from config + personal targets. */
@@ -79,6 +87,9 @@ public final class Tracker {
     @SubscribeEvent
     public static void onPlayerLoggedIn(PlayerEvent.PlayerLoggedInEvent event) {
         if (!(event.getEntity() instanceof ServerPlayer player)) {
+            return;
+        }
+        if (player instanceof FakePlayer) {
             return;
         }
         MilestoneData data = MilestoneData.get(player.server);
@@ -102,13 +113,26 @@ public final class Tracker {
 
     @SubscribeEvent
     public static void onPlayerLoggedOut(PlayerEvent.PlayerLoggedOutEvent event) {
+        if (event.getEntity() instanceof FakePlayer) {
+            return;
+        }
         ModNetworking.removeRateLimit(event.getEntity().getUUID());
+        PENDING_CRAFT_CHECKS.remove(event.getEntity().getUUID());
     }
 
     @SubscribeEvent
     public static void onPlayerTick(PlayerTickEvent.Post event) {
         if (!(event.getEntity() instanceof ServerPlayer player)) {
             return;
+        }
+        if (player instanceof FakePlayer) {
+            return;
+        }
+        Map<String, Integer> pendingCrafts = PENDING_CRAFT_CHECKS.remove(player.getUUID());
+        if (pendingCrafts != null) {
+            for (Map.Entry<String, Integer> entry : pendingCrafts.entrySet()) {
+                tryRecordForItem(player, entry.getKey(), entry.getValue(), true);
+            }
         }
         int interval = Config.SCAN_INTERVAL_TICKS.get();
         // Spread player scans across the entire interval using floorMod.
@@ -198,7 +222,8 @@ public final class Tracker {
      */
     @SubscribeEvent(priority = EventPriority.LOWEST)
     public static void onGameModeChange(PlayerEvent.PlayerChangeGameModeEvent event) {
-        if (!(event.getEntity() instanceof ServerPlayer player) || !Config.IGNORE_CREATIVE_AND_SPECTATOR.get()) {
+        if (!(event.getEntity() instanceof ServerPlayer player) || player instanceof FakePlayer
+                || !Config.IGNORE_CREATIVE_AND_SPECTATOR.get()) {
             return;
         }
         if (!isCreativeOrSpectator(event.getCurrentGameMode()) || isCreativeOrSpectator(event.getNewGameMode())) {
@@ -231,27 +256,35 @@ public final class Tracker {
 
     @SubscribeEvent
     public static void onItemCrafted(PlayerEvent.ItemCraftedEvent event) {
-        if (event.getEntity() instanceof ServerPlayer player) {
+        if (event.getEntity() instanceof ServerPlayer player && !(player instanceof FakePlayer)) {
             ItemStack stack = event.getCrafting();
             if (!stack.isEmpty()) {
-                tryRecordForItem(player, itemId(stack), stack.getCount(), false);
+                queueCraftCheck(player, itemId(stack), stack.getCount());
             }
         }
     }
 
     @SubscribeEvent
     public static void onItemSmelted(PlayerEvent.ItemSmeltedEvent event) {
-        if (event.getEntity() instanceof ServerPlayer player) {
+        if (event.getEntity() instanceof ServerPlayer player && !(player instanceof FakePlayer)) {
             ItemStack stack = event.getSmelting();
             if (!stack.isEmpty()) {
-                tryRecordForItem(player, itemId(stack), stack.getCount(), false);
+                queueCraftCheck(player, itemId(stack), stack.getCount());
             }
         }
+    }
+
+    private static void queueCraftCheck(ServerPlayer player, String itemId, int eventCount) {
+        PENDING_CRAFT_CHECKS.computeIfAbsent(player.getUUID(), k -> new HashMap<>())
+                .merge(itemId, eventCount, Math::max);
     }
 
     @SubscribeEvent
     public static void onItemPickup(ItemEntityPickupEvent.Post event) {
         if (!(event.getPlayer() instanceof ServerPlayer player)) {
+            return;
+        }
+        if (player instanceof FakePlayer) {
             return;
         }
         ItemStack before = event.getOriginalStack();
@@ -356,7 +389,10 @@ public final class Tracker {
         if (pendingForItem.isEmpty()) {
             return;
         }
-        int total = Math.max(totalInPossession, minCountFromEvent);
+        // When the event amount is already reflected in possession (pickup, or the deferred craft/smelt
+        // check one tick later when the crafted stack sits in the inventory or cursor), possession is the
+        // ground truth: a Q-dropped result stack is on the ground by then and is correctly not counted.
+        int total = alreadyAddedToInventory ? totalInPossession : Math.max(totalInPossession, minCountFromEvent);
         pendingForItem.sort(TargetKey::compareTo);
         boolean anyRecorded = false;
         for (TargetKey key : pendingForItem) {
@@ -417,7 +453,7 @@ public final class Tracker {
             String formattedRecord = Playtime.formatRecord(rec);
             for (ServerPlayer recipient : player.server.getPlayerList().getPlayers()) {
                 MilestoneData.PlayerData recPd = data.playerOrNull(recipient.getUUID());
-                if (recPd != null && recPd.muteBroadcasts) {
+                if (recipient != player && recPd != null && recPd.muteBroadcasts) {
                     continue;
                 }
                 recipient.sendSystemMessage(ServerLang.tr(recipient, "message.itemmilestonelog.world_first_recorded",

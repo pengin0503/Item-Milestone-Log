@@ -8,6 +8,7 @@ import net.minecraft.stats.Stats;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.Locale;
 
 /** Helpers around the vanilla cumulative playtime statistic and record formatting. */
 public final class Playtime {
@@ -30,7 +31,7 @@ public final class Playtime {
         long hours = totalSeconds / 3600;
         long minutes = (totalSeconds % 3600) / 60;
         long seconds = totalSeconds % 60;
-        return String.format("%dh %02dm %02ds", hours, minutes, seconds);
+        return String.format(Locale.ROOT, "%dh %02dm %02ds", hours, minutes, seconds);
     }
 
     public static String formatDate(long epochMillis) {

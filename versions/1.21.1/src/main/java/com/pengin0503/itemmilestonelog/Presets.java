@@ -63,6 +63,8 @@ public final class Presets {
     );
 
     private static final Pattern VALID_ID_PATTERN = Pattern.compile("^[a-z0-9_-]{1,32}$");
+    /** Command literals under /milestone preset; IDs equal to these could never be applied from chat. */
+    private static final Set<String> RESERVED_IDS = Set.of("list", "save", "delete", "reload");
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
     private static volatile Map<String, PresetDefinition> loadedPresets = builtinMap();
@@ -91,7 +93,7 @@ public final class Presets {
     }
 
     public static boolean isValidId(String id) {
-        return id != null && VALID_ID_PATTERN.matcher(id).matches();
+        return id != null && VALID_ID_PATTERN.matcher(id).matches() && !RESERVED_IDS.contains(id);
     }
 
     public static boolean isBuiltin(String id) {
@@ -188,7 +190,17 @@ public final class Presets {
         if (root.has("name") && root.get("name").isJsonPrimitive() && root.get("name").getAsJsonPrimitive().isString()) {
             String rawName = root.get("name").getAsString().trim();
             if (!rawName.isEmpty()) {
-                displayName = rawName;
+                // Cap to the 256-char sync limit so a hand-written preset cannot break the sync payload for clients.
+                // Never split a UTF-16 surrogate pair at the cut (would leave a malformed string).
+                int limit = 256;
+                if (rawName.length() > limit) {
+                    if (Character.isHighSurrogate(rawName.charAt(limit - 1))) {
+                        limit--;
+                    }
+                    displayName = rawName.substring(0, limit);
+                } else {
+                    displayName = rawName;
+                }
             }
         }
 
@@ -219,7 +231,7 @@ public final class Presets {
                 }
                 String rawItem = obj.get("item").getAsString().trim();
                 ResourceLocation rl = ResourceLocation.tryParse(rawItem);
-                if (rl == null || "minecraft:air".equals(rl.toString())) {
+                if (rl == null || rl.getPath().isEmpty() || rl.getNamespace().isEmpty() || "minecraft:air".equals(rl.toString())) {
                     ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid item '{}' in preset {}", rawItem, fileName);
                     continue;
                 }
@@ -325,12 +337,14 @@ public final class Presets {
         }
         Path target = dir.resolve(id + ".json");
         boolean deleted = Files.deleteIfExists(target);
+        boolean removedFromMemory = false;
         if (loadedPresets.containsKey(id)) {
             Map<String, PresetDefinition> next = new TreeMap<>(loadedPresets);
             next.remove(id);
             loadedPresets = Collections.unmodifiableMap(new LinkedHashMap<>(next));
+            removedFromMemory = true;
         }
-        return deleted;
+        return removedFromMemory || deleted;
     }
 
     public static PresetDefinition get(String id) {

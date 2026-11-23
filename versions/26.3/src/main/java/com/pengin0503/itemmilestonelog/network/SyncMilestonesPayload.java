@@ -37,16 +37,22 @@ public record SyncMilestonesPayload(
             StreamCodec.of(SyncMilestonesPayload::encode, SyncMilestonesPayload::decode);
 
     private static void encode(RegistryFriendlyByteBuf buf, SyncMilestonesPayload payload) {
-        buf.writeVarInt(payload.targets.size());
-        for (TargetEntry entry : payload.targets) {
+        // Mirror the decode-side MAX_LIST_ENTRIES cap so we never write a list the client would reject.
+        List<TargetEntry> targets = payload.targets.subList(0, Math.min(payload.targets.size(), MAX_LIST_ENTRIES));
+        buf.writeVarInt(targets.size());
+        for (TargetEntry entry : targets) {
             buf.writeUtf(entry.itemId());
             buf.writeVarInt(entry.count());
             buf.writeBoolean(entry.personal());
             buf.writeBoolean(entry.defaultTarget());
         }
 
-        buf.writeVarInt(payload.records.size());
+        buf.writeVarInt(Math.min(payload.records.size(), MAX_LIST_ENTRIES));
+        int recordsWritten = 0;
         for (Map.Entry<TargetKey, MilestoneRecord> e : payload.records.entrySet()) {
+            if (recordsWritten++ >= MAX_LIST_ENTRIES) {
+                break;
+            }
             TargetKey key = e.getKey();
             MilestoneRecord rec = e.getValue();
             buf.writeUtf(key.itemId());
@@ -56,8 +62,12 @@ public record SyncMilestonesPayload(
             buf.writeLong(rec.epochMillis());
         }
 
-        buf.writeVarInt(payload.progress.size());
+        buf.writeVarInt(Math.min(payload.progress.size(), MAX_LIST_ENTRIES));
+        int progressWritten = 0;
         for (Map.Entry<TargetKey, Integer> e : payload.progress.entrySet()) {
+            if (progressWritten++ >= MAX_LIST_ENTRIES) {
+                break;
+            }
             TargetKey key = e.getKey();
             buf.writeUtf(key.itemId());
             buf.writeVarInt(key.count());
@@ -66,10 +76,11 @@ public record SyncMilestonesPayload(
 
         buf.writeVarInt(payload.currentPlaytimeTicks);
 
-        buf.writeVarInt(payload.presets.size());
-        for (PresetEntry preset : payload.presets) {
+        List<PresetEntry> presets = payload.presets.subList(0, Math.min(payload.presets.size(), MAX_LIST_ENTRIES));
+        buf.writeVarInt(presets.size());
+        for (PresetEntry preset : presets) {
             buf.writeUtf(preset.id());
-            buf.writeUtf(preset.displayName() == null ? "" : preset.displayName());
+            buf.writeUtf(preset.displayName() == null ? "" : preset.displayName(), MAX_STRING_LEN);
             buf.writeVarInt(preset.itemCount());
             buf.writeBoolean(preset.builtin());
         }
