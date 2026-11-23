@@ -757,7 +757,7 @@ public final class MilestoneCommands {
         Map<TargetKey, MilestoneRecord> records = pd != null ? pd.records : Map.of();
         int done = (int) targets.stream().filter(records::containsKey).count();
         send(ctx, ServerLang.tr(player, "message.itemmilestonelog.summary",
-                Playtime.format(Playtime.currentTicks(player)), done, targets.size()));
+                Playtime.formatComponent(player, Playtime.currentTicks(player)), done, targets.size()));
         if (Tracker.recordingPaused(player)) {
             send(ctx, ServerLang.tr(player, "message.itemmilestonelog.summary_creative_paused"));
         }
@@ -767,7 +767,7 @@ public final class MilestoneCommands {
     private static int playtime(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
         ServerPlayer player = player(ctx);
         return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.playtime",
-                Playtime.format(Playtime.currentTicks(player))));
+                Playtime.formatComponent(player, Playtime.currentTicks(player))));
     }
 
     private static int add(CommandContext<CommandSourceStack> ctx, String itemId, int count) throws CommandSyntaxException {
@@ -851,7 +851,7 @@ public final class MilestoneCommands {
             Component line;
             if (rec != null) {
                 line = ServerLang.tr(player, "message.itemmilestonelog.target_done",
-                        MilestoneService.targetDisplayName(key), Playtime.format(rec.playTicks()));
+                        MilestoneService.targetDisplayName(key), Playtime.formatComponent(player, rec.playTicks()));
             } else {
                 // F50: a tag target gets the note when any of its members is carried out of creative.
                 boolean isCarried = Tracker.isCreativeCarriedTarget(key, carried, tagIndex);
@@ -901,7 +901,7 @@ public final class MilestoneCommands {
         ZoneId zone = Config.displayTimeZone();
         for (var e : displayed) {
             Component line = ServerLang.tr(player, "message.itemmilestonelog.target_done",
-                    MilestoneService.targetDisplayName(e.getKey()), Playtime.formatRecord(e.getValue(), zone));
+                    MilestoneService.targetDisplayName(e.getKey()), Playtime.formatRecordComponent(player, e.getValue(), zone));
             ctx.getSource().sendSuccess(() -> line, false);
         }
         if (slice != null) {
@@ -1111,7 +1111,7 @@ public final class MilestoneCommands {
             source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.firsts_entry",
                     MilestoneService.targetDisplayName(wf.targetKey()),
                     playerName,
-                    Playtime.formatRecord(wf.toMilestoneRecord(), zone)), false);
+                    Playtime.formatRecordComponent(source, wf.toMilestoneRecord(), zone)), false);
         }
         if (slice != null) {
             sendPageFooter(source, slice, Pagination.firstsCommandPrefix());
@@ -1646,12 +1646,12 @@ public final class MilestoneCommands {
                 targetName, ranking.entries().size()), false);
         for (MilestoneRankings.ItemEntry e : ranking.entries().subList(0, Math.min(MilestoneRankings.TOP_LIMIT, ranking.entries().size()))) {
             source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.top_item_entry",
-                    e.rank(), Component.literal(e.name()), Playtime.formatRecord(e.record(), zone)), false);
+                    e.rank(), Component.literal(e.name()), Playtime.formatRecordComponent(source, e.record(), zone)), false);
         }
         if (viewer.uuid() != null) {
             MilestoneRankings.ItemEntry self = ranking.self();
             Component selfLine = self != null
-                    ? ServerLang.tr(source, "message.itemmilestonelog.top_item_self", self.rank(), Playtime.formatRecord(self.record(), zone))
+                    ? ServerLang.tr(source, "message.itemmilestonelog.top_item_self", self.rank(), Playtime.formatRecordComponent(source, self.record(), zone))
                     : ServerLang.tr(source, "message.itemmilestonelog.top_item_self_none");
             source.sendSuccess(() -> selfLine, false);
         }
@@ -1680,7 +1680,7 @@ public final class MilestoneCommands {
                     ? "message.itemmilestonelog.recent_entry_world_first"
                     : "message.itemmilestonelog.recent_entry";
             source.sendSuccess(() -> ServerLang.tr(source, key, Component.literal(r.name()),
-                    MilestoneService.targetDisplayName(r.key()), Playtime.formatRecord(r.record(), zone)), false);
+                    MilestoneService.targetDisplayName(r.key()), Playtime.formatRecordComponent(source, r.record(), zone)), false);
         }
         return rows.size();
     }
@@ -1740,7 +1740,7 @@ public final class MilestoneCommands {
         ZoneId zone = Config.displayTimeZone();
         for (var e : displayed) {
             source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.target_done",
-                    MilestoneService.targetDisplayName(e.getKey()), Playtime.formatRecord(e.getValue(), zone)), false);
+                    MilestoneService.targetDisplayName(e.getKey()), Playtime.formatRecordComponent(source, e.getValue(), zone)), false);
         }
         if (slice != null) {
             sendPageFooter(source, slice, commandPrefix);
@@ -1780,7 +1780,7 @@ public final class MilestoneCommands {
         for (TargetKey key : displayed) {
             MilestoneRecord rec = pd.records.get(key);
             Component line = rec != null
-                    ? ServerLang.tr(source, "message.itemmilestonelog.target_done", MilestoneService.targetDisplayName(key), Playtime.format(rec.playTicks()))
+                    ? ServerLang.tr(source, "message.itemmilestonelog.target_done", MilestoneService.targetDisplayName(key), Playtime.formatComponent(source, rec.playTicks()))
                     : ServerLang.tr(source, "message.itemmilestonelog.target_pending", MilestoneService.targetDisplayName(key));
             source.sendSuccess(() -> line, false);
         }

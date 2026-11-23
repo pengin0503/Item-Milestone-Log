@@ -322,7 +322,7 @@ public final class MilestoneScreen extends Screen {
         // Header summary: current playtime (live ticking) + achieved / total targets
         Component header = Component.translatable(
                 "gui.itemmilestonelog.header",
-                Playtime.format(data.currentPlaytimeTicks() + elapsedTicks),
+                Playtime.formatComponent(data.currentPlaytimeTicks() + elapsedTicks, Playtime.CLIENT),
                 cachedAchievedCount,
                 data.targets().size()
         );
@@ -501,7 +501,7 @@ public final class MilestoneScreen extends Screen {
             int statusColor;
             if (recordedRecord != null) {
                 statusComponent = Component.translatable("gui.itemmilestonelog.status.recorded",
-                        Playtime.formatRecord(recordedRecord));
+                        Playtime.formatRecordComponent(recordedRecord, java.time.ZoneId.systemDefault(), Playtime.CLIENT));
                 statusColor = 0x55FF55;
             } else {
                 statusComponent = Component.translatable("gui.itemmilestonelog.status.pending");

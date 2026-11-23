@@ -158,6 +158,12 @@ public final class Config {
                     "Example: [\"vanilla_endgame\"]")
             .defineListAllowEmpty("firstJoinPresets", List.of(), () -> "vanilla_endgame", Config::validateFirstJoinPreset);
 
+    /** F12: attach a show_item hover (the item's default stack) to item names in chat messages. */
+    public static final ModConfigSpec.BooleanValue CHAT_ITEM_HOVER = BUILDER
+            .comment("Show the item when hovering an item name in this mod's chat messages (show_item hover).",
+                    "Tag targets show the first item of the tag (by registry ID). The text itself is unchanged.")
+            .define("chatItemHover", true);
+
     static final ModConfigSpec SPEC = BUILDER.build();
 
     private record ThresholdsCache(List<? extends Integer> source, List<Integer> normalized) {
@@ -195,6 +201,18 @@ public final class Config {
     /** Resolves {@link #DISPLAY_TIME_ZONE}, falling back to the server's default timezone when empty or invalid. */
     public static ZoneId displayTimeZone() {
         return DisplayTimeZone.resolve(DISPLAY_TIME_ZONE.get());
+    }
+
+    /**
+     * F12: {@link #CHAT_ITEM_HOVER}, or {@code false} while the config is not loaded yet
+     * (plain unit tests), so building a chat component never throws.
+     */
+    public static boolean chatItemHover() {
+        try {
+            return CHAT_ITEM_HOVER.get();
+        } catch (IllegalStateException notLoaded) {
+            return false;
+        }
     }
 
     private static boolean validateSoundId(Object obj) {

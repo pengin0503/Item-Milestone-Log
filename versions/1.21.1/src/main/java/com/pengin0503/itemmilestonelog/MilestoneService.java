@@ -8,6 +8,7 @@ import com.pengin0503.itemmilestonelog.network.TargetEntry;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.HoverEvent;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
@@ -106,21 +107,50 @@ public final class MilestoneService {
         return Component.literal(itemId == null ? "" : itemId);
     }
 
-    /** Formats a target display name, appending {@code " ×<count>"} when count > 1. */
+    /**
+     * Formats a target display name, appending {@code " ×<count>"} when count > 1.
+     * F12: carries a {@code show_item} hover when {@code chatItemHover} is enabled (see {@link #withItemHover}).
+     */
     public static Component targetDisplayName(TargetKey key) {
         Component base = itemName(key.itemId());
         if (key.count() > TargetKey.MIN_COUNT) {
-            return base.copy().append(Component.literal(key.formatSuffix()));
+            base = base.copy().append(Component.literal(key.formatSuffix()));
         }
-        return base;
+        return withItemHover(base, key.itemId());
     }
 
     public static Component targetDisplayName(String itemId, int count) {
         Component base = itemName(itemId);
         if (count > TargetKey.MIN_COUNT) {
-            return base.copy().append(Component.literal(" ×" + count));
+            base = base.copy().append(Component.literal(" ×" + count));
         }
-        return base;
+        return withItemHover(base, itemId);
+    }
+
+    /**
+     * F12: returns {@code name} with a {@code show_item} hover of the default stack (count 1, no
+     * components) of the item chosen by {@link ChatItemHover#hoverItemId}, or {@code name} unchanged
+     * when the hover is disabled or no item applies. Only the style changes, so {@code getString()}
+     * is identical either way.
+     */
+    static Component withItemHover(Component name, String targetId) {
+        if (!Config.chatItemHover()) {
+            return name; // checked first so the tag cache / registry are not touched when disabled
+        }
+        String hoverId = ChatItemHover.hoverItemId(true, targetId, TagTargets.index(),
+                MilestoneService::isRegisteredNonAirItem);
+        if (hoverId == null) {
+            return name;
+        }
+        ItemStack stack = new ItemStack(BuiltInRegistries.ITEM.get(ResourceLocation.parse(hoverId)));
+        HoverEvent hover = new HoverEvent(HoverEvent.Action.SHOW_ITEM, new HoverEvent.ItemStackInfo(stack));
+        return name.copy().withStyle(style -> style.withHoverEvent(hover));
+    }
+
+    /** F12: whether {@code itemId} (not a tag) is in the item registry and is not air. */
+    private static boolean isRegisteredNonAirItem(String itemId) {
+        ResourceLocation rl = ResourceLocation.tryParse(itemId);
+        return rl != null && BuiltInRegistries.ITEM.containsKey(rl) && BuiltInRegistries.ITEM.get(rl) != Items.AIR;
     }
 
     /**

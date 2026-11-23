@@ -189,6 +189,7 @@
   "message.itemmilestonelog.page_out_of_range": "There is no page %s (pages 1–%s).",
   "message.itemmilestonelog.page_prev": "[< Prev]",
   "message.itemmilestonelog.playtime": "Your cumulative playtime: %s",
+  "message.itemmilestonelog.playtime_format": "%sh %sm %ss",
   "message.itemmilestonelog.preset_applied": "Preset '%s' applied: %s targets added, %s skipped (item not present in this pack).",
   "message.itemmilestonelog.preset_applied_with_counts": "Preset '%s' applied: %s targets added (%s with quantity), %s skipped (item not present in this pack).",
   "message.itemmilestonelog.preset_applied_limit": "%s more target(s) were skipped because your target list is full.",
@@ -224,7 +225,10 @@
   "message.itemmilestonelog.recent_entry": "%s — %s (%s)",
   "message.itemmilestonelog.recent_entry_world_first": "★ %s — %s (%s)",
   "message.itemmilestonelog.recent_header": "Recent milestones (%s):",
-  "message.itemmilestonelog.recorded": "★ Milestone recorded: %s at playtime %s",
+  "message.itemmilestonelog.record_date": "%s (%s)",
+  "message.itemmilestonelog.record_day": "%s (Day %s)",
+  "message.itemmilestonelog.record_day_date": "%s (Day %s, %s)",
+  "message.itemmilestonelog.recorded":"★ Milestone recorded: %s at playtime %s",
   "message.itemmilestonelog.recorded_broadcast": "★ %s recorded %s at playtime %s",
   "message.itemmilestonelog.recorded_group": "★ %s milestones recorded at playtime %s: %s",
   "message.itemmilestonelog.recorded_group_broadcast": "★ %s recorded %s milestones at playtime %s: %s",
@@ -264,5 +268,7 @@
   "message.itemmilestonelog.undo_hint": "You can undo this within 10 minutes with /milestonelog undo.",
   "message.itemmilestonelog.undo_nothing": "Nothing to undo. Only your last reset or bulk removal within the past 10 minutes can be undone.",
   "message.itemmilestonelog.world_first_group": "★ World First! %s first obtained %s targets at %s: %s",
-  "message.itemmilestonelog.world_first_recorded": "★ World First! %s first obtained %s at %s"
+  "message.itemmilestonelog.world_first_recorded": "★ World First! %s first obtained %s at %s",
+  "scoreboard.itemmilestonelog.records": "Milestones",
+  "scoreboard.itemmilestonelog.world_firsts": "World Firsts"
 }

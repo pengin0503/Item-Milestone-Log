@@ -39,6 +39,19 @@ class TagIndexTest {
     }
 
     @Test
+    void lexicographicFirstMemberIgnoresInsertionOrder() {
+        TagIndex index = sample();
+        // "#c:ingots" was inserted iron, gold: firstMember keeps insertion order, F12 uses ID order.
+        assertEquals("minecraft:iron_ingot", index.firstMember("#c:ingots"));
+        assertEquals("minecraft:gold_ingot", index.lexicographicFirstMember("#c:ingots"));
+        assertEquals("minecraft:iron_ingot", index.lexicographicFirstMember("#c:ingots/iron"));
+        assertNull(index.lexicographicFirstMember("#c:empty"));
+        assertNull(index.lexicographicFirstMember("#c:missing"));
+        assertNull(index.lexicographicFirstMember(null));
+        assertNull(TagIndex.EMPTY.lexicographicFirstMember("#c:ingots"));
+    }
+
+    @Test
     void tagsContainingIsTheReverseIndex() {
         TagIndex index = sample();
         assertEquals(Set.of("#c:ingots", "#c:ingots/iron"), index.tagsContaining("minecraft:iron_ingot"));
