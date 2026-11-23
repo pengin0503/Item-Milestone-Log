@@ -7,6 +7,8 @@
 > **改訂（2026-11-23、追加機能の採用）**: 別文書 `docs/FEATURE_PROPOSALS_1.1.0.md` の候補のうち、オーナーが採用した16件を F11〜F26 として本書に移した（見出しに元の候補番号を付けた）。P15（収納の中身を数える）と P16（タイトル演出）は採用しない。F4 の `discordUseEmbeds` の既定値はオーナーの判断で false にした。経緯は末尾の「付録B」。
 >
 > **改訂（2026-11-23、第2回の候補の採用）**: 第2回の候補 P19〜P32 をすべて採用した。P19〜P30 を F27〜F38 として本書に移し、P31 を §3 に、P32 を §2.1（**1.1.0 と 1.2.0 の2回のリリースに分ける**）に反映した。ファイル名は `FEATURE_SPEC_1.1.0.md` のままとし、1.2.0 の分も本書で扱う。あわせて、日本語の文面の用語を既存の lang ファイルに揃えた（〔X20〕）。経緯は付録B。
+>
+> **改訂（2026-11-23、第3回の候補の採用）**: 第3回の候補 P33〜P43 をすべて採用した。P33〜P42 を F39〜F48 として本書に移し、P43 を §3.1 に入れた。P35〜P37 の採用にあたり、オーナーが制約1（F41・F42・F44）と制約2・11（F43）の例外を承認した（各制約に明記）。見送りを勧めた R12〜R14 は見送りのまま。経緯は付録B。
 
 ## 0. 前提（現在の状態）
 
@@ -27,7 +29,9 @@
 ## 1. 共通制約（全機能に適用）
 
 1. **GUI のデザインは変更しない**（決定済み）。許可されるのは既存レイアウト内での表示テキストの追加・変更のみ。ボタン配置、画面構成、色は変えない
+   - 例外（オーナーが 2026-11-23 に承認。いずれも 1.2.0）: F41 のキー割り当て（カーソルのアイテムを目標に追加）とアクションバーへの結果の表示、F42 のアイテムのツールチップへの行の追加、F44 の NeoForge の汎用の設定画面。どれも本 Mod の画面（MilestoneScreen / ItemPickerScreen / PresetListScreen など）のレイアウトは変えない。これ以外のクライアントの新しい表示・画面（付録の R5・R11）は引き続き行わない
 2. 既存コマンドの構文・動作は変えない。コマンドは追加のみ
+   - 例外（オーナーが 2026-11-23 に承認。1.2.0）: F43 で、既存の管理者用コマンドの `.requires` を「権限レベル2以上、**または**権限ノードが true」に広げる。構文は変えず、OP と、権限 Mod を使わないサーバーでの結果は変わらない
 3. **SavedData の後方互換を必須**とする。1.0.1 以前のセーブデータを読み込めて壊れないこと。新フィールドが欠ける場合は既定値として扱い、1.21.1 → 26.x の記録引き継ぎでも同様に継続すること
 4. バニラクライアントが専用サーバーに参加できる性質を維持する（新規ペイロードを作る場合も optional 登録、サーバー側処理はクライアント Mod の有無に依存しない）
 5. 追加する表示テキストは en_us / ja_jp 両方に lang キーを追加する（プレースホルダの数・順序を両言語で一致させる。ServerLangTest / LangFilesTest が検証する）。リテラルの `%` は `%%` と書く
@@ -42,8 +46,9 @@
     - プレイヤー以外のソース（コンソール・RCON・コマンドブロック等）: 権限レベル2以上なら true
     - 専用サーバーのプレイヤー: 権限レベル2以上なら true
     - 統合サーバー（シングルプレイ・LAN）のプレイヤー: **ホスト本人**（`MinecraftServer#isSingleplayerOwner` 相当、バージョンごとの API に合わせる）であるか、権限レベル2以上なら true。LAN のゲストはチートが許可されていない限り false
-    - 既存コマンドの `.requires(hasPermission(2))`（admin / firsts reset 系 / exportall）は制約2により変更しない
+    - 既存コマンドの `.requires(hasPermission(2))`（admin / firsts reset 系 / exportall）は、1.1.0 では制約2により変更しない
     - 新しく追加するコマンドのうち、既存の管理者用コマンドと同じ種類のもの（F3 `exporthtmlall`、F26 `exportcsvall`、F22 `importall`、F8b `firsts resettag` / `admin <player> resettag`、F24 `renameitem`、F37 `prunedata`）は、既存と揃えて `.requires(hasPermission(2))` にする（同じ系統のコマンドで、使える人が食い違わないようにする）。F33 のコマンドは既存の `admin` の下に置くので、`admin` の `.requires` がそのまま効く。`isPrivileged` は、OP 不要のコマンドやプリセットの管理の中で、管理者かどうかで動作を変える箇所（G1、F6 / F13 / F38 の `allowLookup`、F14 の非公開、F29 の一覧に出すかどうか）に使う
+    - 1.2.0 の F43 以降: 上の `.requires` と `isPrivileged` を使う箇所の判定を、F43 の判定関数（従来の判定、**または**権限ノード）に置き換える（制約2の例外。オーナーが承認）。置き換えた後も、権限 Mod が無ければ結果は変わらない
 12. **外部由来の文字列の扱い** 〔X5〕: プレイヤー名、カスタムプリセットの表示名、他 Mod のアイテム名など、利用者や外部から来る文字列は書式文字列として解釈せず `Component.literal` で埋め込む。HTML（F3）では HTML エスケープ、Discord（F4 / F9）では Markdown のエスケープ、コマンド文字列（F7）では検証を行う（各節に詳細）
 13. **タグ形式のキー** 〔X14〕: F8a の実装以降（**1.2.0**、§2.1）、`TargetKey.itemId` は `#` で始まるタグ ID（例: `#c:ingots/iron`）になり得る。1.2.0 で追加・変更する全機能は `TargetKey.isTag()` を考慮し、`itemId` を確認せずに `Identifier.parse` やレジストリ参照に渡さない
     - 1.1.0 ではタグを受け付けない。ただし 1.1.0 で作る機能も、キーの正規化・検証は 1.1.0 で先に1か所にまとめる関数（§2.1、F8a の「正規化を1か所にまとめる」）を通し、1.2.0 でタグに対応する箇所を F8b の「1.1.0 の機能へのタグの対応」の一覧で追えるようにする
@@ -59,6 +64,7 @@
 | PlayerData | `hideFromLookup` | boolean | false | true のときだけ書く | F14 |
 | PlayerData | `muteProgressAlerts` | boolean | false | true のときだけ書く | F15 |
 | PlayerData | `lastSeen` | long（epochMillis） | 0（不明） | 0 なら書かない | F37（1.1.0） |
+| PlayerData | `excludeFromDiscord` | boolean | false | true のときだけ書く | F45（1.1.0） |
 | MilestoneData（`players` と同じ階層） | `lastDigestEpoch` | long | 0 | 0 なら書かない | F9（1.2.0） |
 
 - 26.x では新フィールドを `lenientOptionalFieldOf`（または既存コードと同じ `orElse` による要素単位の読み飛ばし）で定義し、新フィールドが壊れていてもファイル全体の読み込みを失敗させない（issue #40 と同じ方針）。1.21.1 も要素単位で読み飛ばし、warn ログを出す
@@ -67,19 +73,19 @@
   - 記録の確定、`reset <item> [count]`、GUI のリセット、`admin <player> reset`、`remove`: そのキーの `progressNotified` を消す
   - `resetall`、GUI の全リセット、`admin <player> resetall`: `progressNotified` と `completedPresets` をすべて消す
   - `admin <player> purge`: PlayerData ごと消える（従来通り）
-  - `hideFromLookup` / `muteProgressAlerts` は個人の設定なので、`resetall` や admin の操作では消さない（`purge` では PlayerData ごと消える）
+  - `hideFromLookup` / `muteProgressAlerts` / `excludeFromDiscord` は個人の設定なので、`resetall` や admin の操作では消さない（`purge` では PlayerData ごと消える）
   - `lastSeen` はログインとログアウトのときだけ書き換える（F37）。リセット・import・admin の操作では変えない
   - F28 の一括削除: 外したキーの `progressNotified` を消す（`remove` と同じ）
   - F33 の `grant`: 記録の確定と同じ（そのキーの `progressNotified` を消す）
   - import / F22 importall: これらのフィールドを変更しない
   - F23 undo / F24 renameitem / F37 prunedata: 各節の規則に従う
   - ログイン時: 記録済みのキーと、実効ターゲット（個人 + `defaultTargets`）に無いキーの `progressNotified` を消す（import や `defaultTargets` の変更で残ったものを片付ける）
-- ダウングレード（1.1.0 → 1.0.1）: 1.0.1 は知らないフィールドを読み捨て、次の保存で消す（通知済み・制覇済みの状態と、非公開・ミュートの設定が失われ、1.1.0 に戻すと再び通知され得る）。**タグのターゲット・記録・世界初（F8）は 1.0.1 の検証で弾かれ、次の保存で失われる**。CHANGELOG と README に明記する
+- ダウングレード（1.1.0 → 1.0.1）: 1.0.1 は知らないフィールドを読み捨て、次の保存で消す（通知済み・制覇済みの状態と、非公開・ミュート・Discord から外す設定が失われ、1.1.0 に戻すと再び通知され得る）。**タグのターゲット・記録・世界初（F8）は 1.0.1 の検証で弾かれ、次の保存で失われる**。CHANGELOG と README に明記する
 - ダウングレード（1.2.0 → 1.1.0）: 1.1.0 もタグを受け付けないので、タグのターゲット・記録・世界初は同じく失われる。`lastDigestEpoch` も失われ、1.2.0 に戻すと F9 の初回の扱い（送らずに時刻だけ記録する）になる。1.2.0 の CHANGELOG に明記する
 
 ### 1.2 追加する Config の一覧
 
-すべて既存の `Config` クラスのトップレベルに追加する（§1 制約8）。既存の機能の挙動は、既定値のままなら 1.0.1 と変わらない。例外は F27 の `groupSimultaneousRecords`（既定 true。同じ tick に3件以上の記録があると通知がまとまる）で、CHANGELOG に書く。既定で有効な新機能（F1、F10、F12、F25 など）も §4 のとおり CHANGELOG に書く。「版」の列は、その設定が入るリリース（§2.1）。
+すべて既存の `Config` クラスのトップレベルに追加する（§1 制約8）。既存の機能の挙動は、既定値のままなら 1.0.1 と変わらない。例外は F27 の `groupSimultaneousRecords`（既定 true。同じ tick に3件以上の記録があると通知がまとまる）と、設定を持たない表示の改善の F47（`firsts` に今の名前を出す。1.1.0）・F48（日本語などのクライアントでプレイ時間と Day の表記が変わる。英語は変わらない。1.2.0）で、CHANGELOG に書く。既定で有効な新機能（F1、F10、F12、F25、F42 など）も §4 のとおり CHANGELOG に書く。「版」の列は、その設定が入るリリース（§2.1）。
 
 | キー | 型 | 既定値 | 範囲・検証 | 機能 | 版 |
 |---|---|---|---|---|---|
@@ -105,21 +111,30 @@
 | `discordLanguage` | 文字列 | "en_us" | 同梱の言語（F34 の `ServerLang.BUNDLED_LANGUAGES`。現在は `en_us` / `ja_jp`） | F18 | 1.1.0 |
 | `discordNotifyPresetCompletion` | boolean | false | | F19 | 1.1.0 |
 | `guiWorldFirstMark` | boolean | true | | F25 | 1.2.0 |
+| `firstJoinPresets` | 文字列リスト | []（空 = 無効） | 各要素が `Presets.isValidId` の形。未知の ID は warn ログを出して飛ばす | F40 | 1.1.0 |
+| `allowDiscordOptOut` | boolean | true | | F45 | 1.1.0 |
+| `itemTooltipStatus` | boolean | true | クライアントが自分のファイルの値を使う | F42 | 1.2.0 |
+| `discordWorldFirstWebhookUrl` | 文字列 | ""（空 = 使わない） | 空、https の URL、または `env:<変数名>`（F39） | F46 | 1.2.0 |
 
-Config を持たない新機能（制約8の例外）: F2（データパックが無ければ何もしない）、F14 / F15（個人の切り替えそのものが ON/OFF）、F16（`presetsEnabled` に従う）、F20（API。T の方針どおり）、F21（データパックが無ければ何もしない）、F22 / F26（`exportImportEnabled` に従う）、F23 / F28 / F29（コマンドを使わなければ何もしない）、F24 / F33 / F37（管理者のコマンド）、F30（ページ番号を付けなければ従来通り）、F31（`exportImportEnabled` に従う）、F32（API。T の方針どおり）、F34（利用者向けの機能ではない）、F35 / F36（挙動を良くする内部の改善で、切り替える意味が無い）、F38（`allowLookup` に従う）。
+- 既存の `discordWebhookUrl` は、1.1.0 の F39 で `env:<変数名>` の書き方も受け付ける（設定のキー・既定値は変えない）
+- 1.2.0 の F44 の設定画面には、上の表と 1.0.1 の設定のうち、Webhook の URL の2つを除いたすべてを出す（表示名と説明の lang キーが要る）
+
+Config を持たない新機能（制約8の例外）: F2（データパックが無ければ何もしない）、F14 / F15（個人の切り替えそのものが ON/OFF）、F16（`presetsEnabled` に従う）、F20（API。T の方針どおり）、F21（データパックが無ければ何もしない）、F22 / F26（`exportImportEnabled` に従う）、F23 / F28 / F29（コマンドを使わなければ何もしない）、F24 / F33 / F37（管理者のコマンド）、F30（ページ番号を付けなければ従来通り）、F31（`exportImportEnabled` に従う）、F32（API。T の方針どおり）、F34（利用者向けの機能ではない）、F35 / F36（挙動を良くする内部の改善で、切り替える意味が無い）、F38（`allowLookup` に従う）、F39（既存の設定の書き方を増やすだけ）、F41（キーが既定で割り当てられていないことが OFF）、F43（権限 Mod を入れて設定しなければ従来通り）、F44（使わなければ何も変わらない）、F47 / F48（表示の改善。F48 は英語の結果を変えない）。
 
 ## 2. リリースの分け方と実施順序 〔X19〕
 
 ### 2.1 2回のリリースに分ける（候補 P32、2026-11-23 に採用）
 
-G・T・F1〜F38 を2回のリリースに分ける。1.1.0 には保存データとコマンドが中心の機能を、1.2.0 には新しい登録・通信・リロード・定期処理・コマンドの実行・ファイルの書き換えを伴う機能とタグ（F8）を入れる。1回の版に全部を入れると、審査に出すまでの期間が延び、不具合が出たときに原因の切り分けも難しくなるため（1.0.1 では、実装の後のレビューで issue #28〜#48 の範囲に多数の指摘が出た）。
+G・T・F1〜F48 を2回のリリースに分ける。1.1.0 には保存データとコマンドが中心の機能を、1.2.0 には新しい登録・通信・リロード・定期処理・コマンドの実行・ファイルの書き換え・クライアントの新しい表示を伴う機能とタグ（F8）を入れる。1回の版に全部を入れると、審査に出すまでの期間が延び、不具合が出たときに原因の切り分けも難しくなるため（1.0.1 では、実装の後のレビューで issue #28〜#48 の範囲に多数の指摘が出た）。
 
 | リリース | 入れるもの |
 |---|---|
-| **1.1.0** | G、T、F1、F3、F4、F5、F6、F11、F13（`toptag` を除く）、F14、F15、F16、F18、F19、F20、F22、F23、F26、F27〜F38、**F8a のうち「正規化を1か所にまとめる」だけ**（タグの記法はまだ受け付けない） |
-| **1.2.0** | F8a（タグの記法・保存）、F8b（タグの検出・コマンド・表示と、1.1.0 の機能のタグへの対応）、F2、F7、F9、F10、F12、F13 の `toptag`、F17、F21、F24、F25 |
+| **1.1.0** | §3.1 の CI の参加テスト（実装の前に）、G、T、F1、F3、F4、F5、F6、F11、F13（`toptag` を除く）、F14、F15、F16、F18、F19、F20、F22、F23、F26、F27〜F38、F39、F40、F45、F47、**F8a のうち「正規化を1か所にまとめる」だけ**（タグの記法はまだ受け付けない） |
+| **1.2.0** | F8a（タグの記法・保存）、F8b（タグの検出・コマンド・表示と、1.1.0 の機能のタグへの対応）、F2、F7、F9、F10、F12、F13 の `toptag`、F17、F21、F24、F25、F41、F42、F43、F44、F46、F48 |
 
 - 1.2.0 に回した理由: F2 は本 Mod で初めてのレジストリ登録、F25 は新しいペイロード、F21 はリロードリスナー、F17 はスコアボード、F7 は任意のコマンドの実行、F9 は定期処理、F10 はセーブデータの書き出し、F24 は F10 を使う全データの書き換え、F12 はバージョンごとに API が違い、バニラクライアントでの確認も要る。F8 は `TargetKey` の意味を変え、ほかの機能すべてに触れる
+  - 第3回の分: F41・F42・F44 はクライアントの新しい表示で、本物のクライアントでの手動の確認が要る（F41 はバージョンで API の名前も違う）。F43 は全部の管理者用コマンドの判定を置き換えるので、1.2.0 で足す管理者用コマンド（F8b・F24）が揃ってから入れる。F48 は記録の整形をチャット・GUI の全箇所で置き換えるので、同じくチャットの文面を変える F12 と同時に入れる。F46 は F35 の送り方の改善が実際のサーバーで落ち着いてから入れる
+  - 第3回の分のうち 1.1.0 に入れるもの（F39・F40・F45・F47）は、どれも小さく、1.1.0 の機能（F35、F33 のプリセットの適用、F14 と同じ個人の設定、`firsts`）の延長にある
 - 1.1.0 は、1.2.0 の機能が無くても完結する。1.2.0 の機能と関わる箇所（F17 のスコアを書く、F7 を動かす、F2 のトリガーを呼ぶ、F25 で送る、タグを扱う）は、1.2.0 でその機能を入れるときに足す。各節の「1.2.0（…以降）」の記述と、F8b の「1.1.0 の機能へのタグの対応」がその一覧になる
 - F8a の正規化だけを 1.1.0 に入れる理由: 正規化の箇所（`Config.validateTargetEntry`、`Presets.parsePresetFile` ほか、F8a の一覧）を 1.1.0 のうちに1つの関数にまとめておけば、1.1.0 で足すコマンド（F28・F32・F33 ほか）も最初からその関数を通り、1.2.0 でタグを受け付けるときの変更がその関数と F8b の一覧の箇所に限られる
 - 版ごとに CHANGELOG・`docs/updates.json`・mod バージョンを分ける（§4）
@@ -128,25 +143,29 @@ G・T・F1〜F38 を2回のリリースに分ける。1.1.0 には保存デー�
 
 **1.1.0**
 
-1. P31: issue #44 のテスト不足の解消（§3。既存のコードは変えず、テストだけを足す）→ F34（言語ファイルのテスト）
+1. P31: issue #44 のテスト不足の解消（§3。既存のコードは変えず、テストだけを足す）→ F34（言語ファイルのテスト）→ §3.1（版の違うクライアントとサーバーの参加テスト。受け取りの debug ログだけを足す）
 2. G（1.0.1 からの不備修正）→ T（既存機能のスイッチ追加）→ F8a の正規化の整理 → F11（タイムゾーン）
 3. F1 → F15 → F27 → F36（記録の経路）
-4. F4 → F18 → F35 → F5 → F19 → F20 → F32
-5. F6 → F14 → F13 → F38 → F16
-6. F23 → F28 → F33
+4. F4 → F18 → F35 → F39 → F45 → F5 → F19 → F20 → F32
+5. F6 → F14 → F13 → F38 → F16 → F47
+6. F23 → F28 → F33 → F40
 7. F3 → F26 → F22 → F31 → F37
 8. F30 → F29（`help` は 1.1.0 のコマンドが揃ってから）
 
 **1.2.0**
 
 1. F8a（タグの記法）→ F8b（タグの検出・コマンド・表示、1.1.0 の機能のタグへの対応、F13 の `toptag`）
-2. F12 → F17 → F7 → F2
-3. F10 → F24 → F9
+2. F12 → F48 → F17 → F7 → F2
+3. F10 → F24 → F9 → F46
 4. F25 → F21
+5. F43（1.2.0 の管理者用コマンドが揃ってから）
+6. F41 → F42 → F44（設定画面は 1.2.0 の設定が揃ってから。lang キーを全設定に足すため）
 
 - F11 は日付を整形するすべての箇所（F3・F4・F13・F26 ほか、1.2.0 の F9）に関わるので早めに入れる
 - F27 は F5 の通知と F19 の送り方を決めるので、F5 より先に入れる。F35 は F27 と同じく Discord の投稿が届かない問題への対処なので、Discord の機能（F4・F18）と続けて入れる
 - F28 は F23 の取り消しの対象を広げるので、F23 の後に入れる
+- F39 と F45 は Discord に送る箇所すべてに関わるので、F35 の直後、F19 より先に入れる。F40 は F33 の `admin <player> preset` と同じ適用の関数を使うので、F33 の後に入れる
+- §3.1 は 1.1.0 の通信の変更（無いはずだが）を最初から毎回確かめるため、コードの変更より先に入れる
 - 1.2.0 では、タグ（F8a / F8b）を先に入れ、後続の 1.2.0 の機能は最初からタグを考慮して作る（初版の F8 を最後にした順序では各機能を作り直すことになる、という 〔X19〕 の理由は 1.2.0 の中で保つ）
 - F17 のスコアの書き込みは、記録数を変える機能（1.1.0 の F22・F23・F31・F33・F37 と 1.2.0 の F24）から呼ぶ。F17 を入れるときに、1.1.0 の機能の各箇所にも足す。F24 は F10 のバックアップを使う
 - F25 の追加ペイロードは F21 の GUI の表示に使うので、F21 より先に入れる
@@ -488,6 +507,7 @@ F8 は 1.2.0 で入る（§2.1）。1.1.0 の機能はタグを扱わずに作�
 - 期間内の記録が0件なら送らない（時刻だけ更新する）
 - 送信チェックはサーバー起動時と、稼働中は1時間に1回程度の低頻度で行う（tick カウンタで間引く）
 - Webhook URL が空、または discordDigestEnabled が false のときは何もしない
+- F45 で Discord から外しているプレイヤーの行は含めない。行の名前は F47 の規則（保存されている最後の名前）。送り先は `discordWebhookUrl` だけ（F46 の世界初の Webhook には送らない）
 - 文面は F4 の Embed 設定に従う（Embed 時はダイジェスト用 Embed 1件に箇条書きを入れる）。件数が多い場合は先頭20件 + 「他 N 件」とする。見出し・各行・「他 N 件」の文面は F18 のキー（`discord.itemmilestonelog.digest.*`）から `discordLanguage` で作る
   - 〔X15〕各行: `<プレイヤー名> — <アイテム>（<プレイ時間>）`、epochMillis の昇順。名前とアイテム名は F4 と同じく Markdown をエスケープする
   - 〔X15〕長さの上限: Embed の description は 4096 文字、プレーンテキストは 2000 文字。20 件でも超える場合は末尾の行を削って「他 N 件」の N を増やす
@@ -605,7 +625,7 @@ F8 は 1.2.0 で入る（§2.1）。1.1.0 の機能はタグを扱わずに作�
 - コマンド追加: `/milestonelog privacy`（OP 不要）。実行するたびに切り替え、切り替え後の状態を返す（既存の `mutebroadcast` と同じ形）
 - PlayerData に `hideFromLookup`（boolean、§1.1）を追加する
 - 隠している間は、`isPrivileged` を満たさない他のプレイヤーに対して、次に出ない: F6 の lookup（「非公開」の文面を返す）、F6 の補完候補、F13 の `top` / `recent`、F38 の `stats` の数
-- 隠していても変わらないもの（README に明記）: 本人の閲覧、`isPrivileged` を満たす者（OP・シングルプレイ / LAN のホスト）の閲覧、admin 系コマンド、`exportall` / `exporthtmlall` / `exportcsvall`、ブロードキャストと世界初のアナウンス、`firsts`、Discord、F17 のスコアボード。これらはサーバーの設定や管理者の操作なので、個人の設定では止めない
+- 隠していても変わらないもの（README に明記）: 本人の閲覧、`isPrivileged` を満たす者（OP・シングルプレイ / LAN のホスト）の閲覧、admin 系コマンド、`exportall` / `exporthtmlall` / `exportcsvall`、ブロードキャストと世界初のアナウンス、`firsts`、Discord、F17 のスコアボード。これらはサーバーの設定や管理者の操作なので、個人の設定では止めない（Discord への投稿だけは、F45 の `discordoptout` で本人が別に止められる）
 - Config は追加しない（個人の設定そのものが ON/OFF。既存の `mutebroadcast` と同じ扱い。制約8の例外として明記）
 - 文面:
   - `message.itemmilestonelog.privacy_on`: "Your milestones are now hidden from other players (lookup, top, recent and stats)." / 「あなたの記録を他のプレイヤーから隠しました（lookup・top・recent・stats）。」
@@ -697,7 +717,7 @@ F8 は 1.2.0 で入る（§2.1）。1.1.0 の機能はタグを扱わずに作�
   - `discord.itemmilestonelog.digest.title` と `digest.line` は F9 と同時（1.2.0）に足す。`digest.more` は F27 も使うので 1.1.0 で足す
   - `discord.itemmilestonelog.preset_completed`（%s = 名前、%s = プリセット表示名）: "★ %s completed all targets of %s!" / 「★ %s が %s の目標をすべて達成しました！」
 - アイテムの表し方は変えない: プレーンテキストは従来通りアイテム ID（`formatDisplayId`、例 `minecraft:diamond ×100`）、Embed（F4）はサーバー側の表示名。専用サーバーはアイテムの英語名しか持たないので、`ja_jp` でも Embed のアイテム名は英語になる（README に明記）
-- プレイ時間（`27h 15m 30s`）と記録の整形の「Day」は、チャットと同じく英語表記のまま（`Playtime` の既存の書式。この機能では変えない）
+- プレイ時間（`27h 15m 30s`）と記録の整形の「Day」は、英語表記のまま（`Playtime` の既存の書式。この機能では変えない）。1.2.0 の F48 でチャットと GUI は言語に合わせるが、Discord は F48 でも英語表記のまま
 
 ### 実装メモ
 - 文面は `Component.translatable(...).getString()` で作ってはいけない。専用サーバーの `Language` には全 Mod の en_us が読み込まれているため、キーが常に英語に解決され、`discordLanguage` が効かない。`ServerLang` の表から直接テンプレートを取り、Minecraft の翻訳と同じ書式（`%s`、`%1$s` などの位置指定、`%%`）で埋める関数（例 `ServerLang.formatForLang(lang, key, args...)`）を追加する
@@ -929,7 +949,7 @@ F8 は 1.2.0 で入る（§2.1）。1.1.0 の機能はタグを扱わずに作�
 
 ### 仕様
 - `/milestonelog help`（OP 不要）: そのソースが使えるサブコマンドだけを、1行ずつ短い説明つきで出す
-  - 出さないもの: Brigadier の `requires` を満たさないもの（`CommandNode#canUse`）、T のスイッチで無効なもの（`exportImportEnabled` = false の export / import 系、`presetsEnabled` = false の `preset` / `presetprogress` / `presetremove`）、`allowLookup` = false で `isPrivileged` を満たさない者の `lookup` / `top` / `recent` / `stats`、プレイヤー以外のソースにはプレイヤー専用のもの
+  - 出さないもの: Brigadier の `requires` を満たさないもの（`CommandNode#canUse`）、T のスイッチで無効なもの（`exportImportEnabled` = false の export / import 系、`presetsEnabled` = false の `preset` / `presetprogress` / `presetremove`）、`allowLookup` = false で `isPrivileged` を満たさない者の `lookup` / `top` / `recent` / `stats`、`allowDiscordOptOut` = false の `discordoptout`（F45）、プレイヤー以外のソースにはプレイヤー専用のもの
   - 並びは下の表の順。各行をクリックすると、チャット欄に `/milestonelog <name> ` が入る（`ClickEvent` の `suggest_command`。実行はしない。バニラクライアントでも動く）
 - `/milestonelog help <subcommand>`: そのサブコマンドの説明と、Brigadier の `CommandDispatcher#getSmartUsage` で得た書き方（そのソースが使える引数だけ）を出す。補完は上の一覧に出るものだけ。未知の名前や使えないものは `help_unknown`
 - 文面:
@@ -963,6 +983,7 @@ F8 は 1.2.0 で入る（§2.1）。1.1.0 の機能はタグを扱わずに作�
 | privacy | 1.1.0 | ○ | Hide or show your milestones to other players | 自分の記録を他のプレイヤーから隠す・公開する |
 | mutebroadcast | 1.1.0 | ○ | Mute or unmute other players' milestone announcements | 他のプレイヤーの記録のお知らせを止める・戻す |
 | muteprogress | 1.1.0 | ○ | Mute or unmute your progress alerts | 進捗アラートを止める・戻す |
+| discordoptout | 1.1.0 | ○ | Stop or resume posting your milestones to Discord | 自分の記録を Discord に投稿しない・投稿する |
 | export | 1.1.0 | ○ | Export your milestones to a JSON file | 自分の記録を JSON ファイルに書き出す |
 | exporthtml | 1.1.0 | ○ | Export your milestones as an HTML page | 自分の記録を HTML に書き出す |
 | exportcsv | 1.1.0 | ○ | Export your milestones as a CSV file | 自分の記録を CSV に書き出す |
@@ -1119,7 +1140,7 @@ F8 は 1.2.0 で入る（§2.1）。1.1.0 の機能はタグを扱わずに作�
 - HTTP 429 のとき: 応答の `Retry-After` ヘッダー（秒。小数を含み得るものとして読む）が 5 秒以下なら、その時間だけ送信用のスレッドで待ち、1回だけ送り直す。ヘッダーが無い・読めない・5 秒を超える、または2回目も 429 なら、従来通り捨てて warn ログを出す
   - 根拠: Discord の文書（Rate Limits）は「再試行の時期は `Retry-After` ヘッダーか本文の `retry_after` で決めること」としている。本文は秒の小数（例 64.57）、ヘッダーは同じ例で整数（65）。送り直しを1回に限る理由: 401・403・429 の応答は「無効なリクエスト」として 10 分間に 10,000 件までに数えられ、超えると IP が一時的に制限される
   - 待つ間、後続の投稿はキューで待つ（キューの上限 100 件と、溢れたら古いものから捨てる動作は従来通り）。サーバーの停止時は既存の `shutdown` の待ち（2 秒）の後に止めるので、待っている投稿は捨てられる
-- HTTP 404 または 401 のとき: その URL への送信を止め、warn ログを1回だけ出す（「Webhook が削除されたか URL が誤っている。設定を直すと再開する」）。`discordWebhookUrl` の値が変わったら再開する
+- HTTP 404 または 401 のとき: その URL への送信を止め、warn ログを1回だけ出す（「Webhook が削除されたか URL が誤っている。設定を直すと再開する」）。`discordWebhookUrl` の値（F39 の `env:` を使う場合は解決した後の URL）が変わったら再開する
   - 根拠: Discord の文書は「Webhook が 404 を返したら、その Webhook を再び使わないこと。繰り返すと一時的に制限される」としている。現在のコードは投稿のたびに送り、毎回 warn ログを出す
 - スレッド・フォーラムへの送信（README に書くだけ。コードの変更は不要）: Webhook の URL の末尾に `?thread_id=<スレッドの ID>` を付けると、そのスレッドに投稿される。Webhook の送り先がフォーラム（またはメディア）チャンネルの場合は、`thread_id` が必須になる（Discord の文書の Execute Webhook。本 Mod は `thread_name` を送らない）。現在のコードは URL をそのまま使うので動くはずだが、README に書く前に実際の Webhook で確かめる
 - Config は追加しない（失われていた投稿を減らすための改善で、切り替える意味が無い。制約8の例外）。Webhook の URL を秘密として扱う既存の方針（ログ・チャットに出さない）は変えない
@@ -1157,7 +1178,7 @@ F8 は 1.2.0 で入る（§2.1）。1.1.0 の機能はタグを扱わずに作�
 - `/milestonelog prunedata <days> [confirm]`（権限レベル2。`<days>` は 1〜3650）。F24 と同じ理由でルート直下に置く
   - 対象: 次をすべて満たすプレイヤーのデータ
     - 記録が0件、個人ターゲットが0件、`carriedFromCreative` が空
-    - 個人の設定が既定のまま（`muteBroadcasts`、F14 の `hideFromLookup`、F15 の `muteProgressAlerts` がすべて false）
+    - 個人の設定が既定のまま（`muteBroadcasts`、F14 の `hideFromLookup`、F15 の `muteProgressAlerts`、F45 の `excludeFromDiscord` がすべて false）
     - オンラインでない
     - 最後にいた時刻が `<days>` 日より前。時刻は `lastSeen`、それが 0（1.1.0 より前のデータ）なら、そのプレイヤーのバニラのプレイヤーデータのファイル（`server.getWorldPath(LevelResource.PLAYER_DATA_DIR)` の `<uuid>.dat`）の更新時刻を使う。どちらも分からなければ対象にしない
   - `carriedFromCreative` が空でないものを除く理由: 消すと、クリエイティブから持ち帰ったアイテムを持ったまま戻ってきたときに、それが記録される。個人の設定があるものを除く理由: 本人の選んだ設定を黙って失わせない
@@ -1197,6 +1218,233 @@ F8 は 1.2.0 で入る（§2.1）。1.1.0 の機能はタグを扱わずに作�
 
 ---
 
+## F39. Discord の Webhook URL を設定ファイルに書かずに済むようにする（候補 P33）
+
+### 仕様
+- 背景: `discordWebhookUrl` は設定ファイル（`config/itemmilestonelog-common.toml`、26.3 は `itemmilestonelog-local.toml`）に平文で書かれる。Webhook の URL を知っている人は誰でもそのチャンネルに投稿できる（`DiscordNotifier` はこの URL を秘密として扱い、ログやチャットに出さない）。シングルプレイではこの設定ファイルが全ワールドで共通（制約8・X1）なので、あるワールドのために設定した Webhook に別のワールドの記録も投稿される。Mod パックの製作者が config フォルダを含めてパックを書き出すと、URL も配られ、受け取った全員のシングルプレイの記録が製作者のチャンネルに投稿される
+- `discordWebhookUrl` の値が `env:<変数名>`（例 `env:IML_DISCORD_WEBHOOK`）なら、その環境変数の値を URL として使う
+  - `<変数名>` は `^[A-Za-z_][A-Za-z0-9_]*$`。接頭辞 `env:` は小文字のみ。前後の空白は従来通り無視する
+  - 変数が無い・空・変数名が不正なら、URL が空のときと同じく何も送らない。warn ログを**値が変わるまで1回だけ**出す（変数名は出してよい。値は出さない）
+  - 環境変数の値にも従来の検査（https であること）を行う。値はログにもチャットにも出さない（既存の方針）
+  - 環境変数はプロセスの起動時に決まるので、値を変えたらサーバーの再起動が要る（README に書く）
+  - 解決は「設定の値、環境変数を引く関数 → URL または無効の理由」の純粋関数にする。F35 の「URL が変わったら再開する」は、**解決した後の URL** で比べる
+- 統合サーバー（シングルプレイ・LAN）でワールドを開いたとき（`ServerStartedEvent`、`!server.isDedicatedServer()`）、URL が解決できれば（`env:` を含む）、warn ログを1回出す: 「Discord の Webhook が設定されている。シングルプレイではこの設定は全ワールドで共通で、config フォルダを含めて Mod パックを書き出すと、受け取った人にも配られる」
+- README: 上の2つの注意、`env:` の書き方、Mod パックを書き出す前に URL を消すこと
+- 1.2.0 の F46 の `discordWorldFirstWebhookUrl` も同じ書き方を受け付ける。1.2.0 の F44 の設定画面には、Webhook の URL を出さない（F44）
+- Config は追加しない（既存の設定の書き方を増やすだけで、空にすれば従来通り無効。制約8の例外）
+
+### 実装メモ
+- 既存の `discordWebhookUrl` には検証関数が無い（`define("discordWebhookUrl", "")`）ので、`env:` の値は NeoForge の検証で戻されない。検証関数を足す場合も `env:` を通すこと
+- 単体テスト: `env:` の解決（変数あり・無し・空・不正な名前・`ENV:` の大文字）、https の検査が環境変数の値にも効くこと、warn ログに値が含まれないこと
+
+---
+
+## F40. 初めて参加したプレイヤーに、外せる目標を配る（`firstJoinPresets`）（候補 P34）
+
+### 仕様
+- 背景: `defaultTargets` は全員に固定で、個人では外せない（`remove` は個人ターゲットだけを外す。`not_target` の文面 "or it is a global default"）。サーバーが「最初の目標」を配りつつ、各自が要らないものを外せるようにする手段が無い
+- Config `firstJoinPresets`（文字列リスト、既定 空 = 無効）。各要素はプリセット ID（`Presets.isValidId` の規則。形が不正な要素は Config の検証で弾く）
+- 動作: ログインの時点（`Tracker.onPlayerLoggedIn`）で、そのプレイヤーの PlayerData が**無かった**とき（`MilestoneData.playerOrNull` が null）だけ、列挙したプリセットを順に、個人ターゲットとして適用する
+  - 適用の処理は `preset <name>` と同じ関数を使う（存在しないアイテムの飛ばし方、上限 1024 件、F1 のベースライン、F8a の正規化も同じ）
+  - PlayerData がある人（この機能を入れる前から参加している人、F22 の `importall` でデータが作られた人）には適用しない。それらの人に配るには F33 の `admin <player> preset <name>` を使う（README に書く）
+  - F37 の `prunedata` や `admin <player> purge` で消されたプレイヤーが戻ってきたときは「初めて」とみなされ、もう一度配られる（`prunedata` で消されるのは目標が0件の人だけなので、困ることは少ない。README に書く）
+  - 未知の ID（そのプリセットが無い）は飛ばし、warn ログを出す。サーバーの起動時（`ServerStartingEvent` の `Presets.reload` の後）に、未知の ID をまとめて1回 warn ログに出す。ログイン時は飛ばすだけ（ログを繰り返さない）
+  - `presetsEnabled` が false なら何もしない
+  - 管理者の操作ではないので F23 の取り消しの対象にしない（本人が要らないものは `remove` / F28 の `presetremove` で外す）
+  - 1.2.0（F21 以降）: データパックのプリセットの ID も使える（ログインの時点では読み込み済み）
+- 本人への通知: 1件以上追加したら、初回のヒント（`showFirstJoinHint`）より前に1行送る（`ServerLang.tr` で本人の言語）。0件なら送らない
+  - `message.itemmilestonelog.first_join_presets`（%s = 追加した件数）: en "This server added %s starter targets to your list. Use /milestonelog remove to drop any you don't want." / ja 「このサーバーが用意した目標を %s 件、あなたの目標に追加しました。要らないものは /milestonelog remove で外せます。」
+- Config の ON/OFF は `firstJoinPresets` が空かどうか（制約8の「設定値が空なら無効」）
+
+### 実装メモ
+- 「PlayerData があったか」は `data.player(uuid)` を呼ぶ**前に** `playerOrNull` で確かめる（`player` は `computeIfAbsent` で作ってしまうため）
+- 単体テスト: PlayerData がある人に適用しないこと、未知の ID の飛ばし、`presetsEnabled` が false のとき、上限
+
+---
+
+## F41. インベントリでカーソルを合わせたアイテムを、キー1つで目標に追加（候補 P35）
+
+### 仕様
+- 背景: 目標を足す手段は、GUI のアイテム選択画面での検索、`add`（ID の入力）、`addhand`（手に持つ）だけ。チェストの中やクリエイティブの一覧で見つけたアイテムを、そのまま足せない
+- クライアントのキー割り当て「カーソルのアイテムを目標に追加」（`key.itemmilestonelog.add_hovered`）を足す。既定は割り当てなし（GUI を開くキーを既定なしにした issue #17 と同じ理由）。カテゴリは既存の GUI を開くキーと同じ。衝突の判定は `KeyConflictContext.GUI`
+- 動作: コンテナの画面（`AbstractContainerScreen` とその派生。インベントリ・チェスト・クリエイティブなど）で押したとき、カーソルの下のスロットにアイテムがあれば、そのアイテム ID・個数 1 で、既存の `MilestoneActionPayload` の `ADD_TARGET` を送る
+  - キーは NeoForge の `ScreenEvent.KeyPressed.Post` で受け取る（21.1.1 / 26.1.2.71 / 26.2.0.57 / 26.3.0.76 にある）。**Post は、画面がキーを処理しなかったときだけ起こる**ので、クリエイティブの検索欄や他 Mod の検索欄に文字を打っている間は反応しない（Pre を使うと、検索欄に打った文字でも目標が足される）
+  - カーソルの下のスロットは NeoForge が足した公開メソッドで得る。**名前がバージョンで違う**: 1.21.1 / 26.1.2 / 26.2 は `getSlotUnderMouse()`、26.3 は `getHoveredSlot()`（各バージョンの NeoForge の下限の userdev のパッチで確認。Minecraft 本体の `hoveredSlot` は protected）。アクセストランスフォーマーは要らない
+  - 送るのはアイテム ID だけ（ポーションやエンチャントの本など、データの違いは目標に含まれない。既存の `add` と同じ）
+  - 既存のペイロードと値を使うので通信の形式は変わらず（制約10）、1.0.1 / 1.1.0 のサーバーでも動く。サーバーの検証・上限・速度の制限（`tryAcquireRateLimit`）は既存のまま
+  - サーバーに Mod が無い（チャンネルが無い）ときは、GUI を開くキーと同じく `server_not_installed` をアクションバーに出す
+- 結果の表示: サーバーは既存の処理どおりフィードバック付きの同期を返す。現在のクライアントは、Mod の画面が開いていないと同期を捨てる（`ClientMilestoneHandler.onSyncReceived`）。**Mod の画面以外が開いているとき、同期にフィードバックがあれば、それをアクションバーに出す**（`sendOverlayMessage`。26.x の既存の呼び方。1.21.1 は既存コードの書き方に合わせる）
+  - このフィードバックは、このキーで送った操作の返事に限る（クライアントが、送ってから2秒以内の最初の同期だけを表示する）。記録のたびに届く同期（`syncPlayerIfOpen`）にはフィードバックが無いので、元から表示されない
+- 制約1の例外（オーナーが 2026-11-23 に承認）: キー割り当ての追加と、アクションバーへの表示。Mod の画面（MilestoneScreen など）のデザインは変えない
+- Config は追加しない（キーが既定で割り当てられていないことが OFF。制約8の例外）
+
+### 実装メモ
+- 手動の確認（バニラの本物のクライアントでしか確かめられない）: インベントリ・チェスト・クリエイティブの一覧で足せること、クリエイティブの検索欄に文字を打っても足されないこと、既に目標のアイテムで既存の文面がアクションバーに出ること、Mod の無いサーバーで `server_not_installed` が出ること
+- 文面: キー名 `key.itemmilestonelog.add_hovered`: en "Add hovered item to targets" / ja 「カーソルのアイテムを目標に追加」
+
+---
+
+## F42. アイテムのツールチップに記録の状態を出す（候補 P36）
+
+### 仕様
+- 背景: そのアイテムが自分の目標か、記録済みかを確かめるには、GUI か `targets` を開く必要がある
+- Mod 入りのクライアントで、アイテムのツールチップ（NeoForge の `ItemTooltipEvent`。21.1.1 / 26.1.2.71 / 26.2.0.57 / 26.3.0.76 にある）の末尾に行を足す。そのアイテム ID のキー（個人ターゲット + `defaultTargets` + 記録）ごとに1行:
+  - 目標で未記録: `gui.itemmilestonelog.item_tooltip.target`（%s = 個数の表記。count が 1 なら空、2 以上なら ` ×N`）: en "Milestone target%s (not yet obtained)" / ja 「目標%s（未取得）」
+  - 記録済み: `gui.itemmilestonelog.item_tooltip.recorded`（%s = 個数の表記、%s = プレイ時間）: en "Milestone recorded%s — %s" / ja 「記録済み%s — %s」。プレイ時間は F48 の書式（1.2.0 は F48 と同時なので、言語に合わせた書式）
+  - 並びは TargetKey の順。最大3行、超えた分は `gui.itemmilestonelog.item_tooltip.more`（%s = 件数）: en "...and %s more" / ja 「…ほか %s 件」
+  - 色は灰色（`ChatFormatting.GRAY`）。目標でも記録でもないアイテムには何も足さない
+  - 1.2.0（F8b）: タグのターゲットは、そのアイテムを含むタグのキーも出す（表示名は F8b の規則）
+- データ: クライアントは最新の同期（`SyncMilestonesPayload`）を保持し、受け取るたびに「アイテム ID → キーの一覧」の表を作り直す（ツールチップは JEI / EMI の一覧などで頻繁に作られるので、ツールチップの処理は表を引くだけにする）。切断したとき（`ClientPlayerNetworkEvent.LoggingOut`）に捨てる
+  - サーバーは、Mod 入りのクライアント（`hasChannel(SyncMilestonesPayload.TYPE)`）に、**ログイン時にも**同期を送る（`openScreen` = false、フィードバックなし。`PlayerLoggedInEvent` で送る。`OnDatapackSyncEvent` はログインの途中で起こるので使わない）。1.0.1 / 1.1.0 のクライアントは画面が無いと同期を捨てるので、送っても害は無い
+  - 現在のサーバーは記録のたびに Mod 入りの全クライアントへ同期を送っている（`syncPlayerIfOpen` はチャンネルの有無しか見ない）ので、記録・目標の変更はそのまま反映される。1.0.1 / 1.1.0 のサーバーではログイン時の同期が無いので、GUI を一度開くか、何かを記録するまで出ない（README に書く）
+  - 既知の制限: `defaultTargets` の変更はプレイヤーごとの同期を起こさないので、次の同期まで古い表のまま
+- Config `itemTooltipStatus`（boolean、既定 true）。COMMON（26.3 は LOCAL）の設定はクライアントでは各自の PC のファイルが読まれるので、各自が切り替えられる。サーバーの値は使わない
+- 制約1の例外（オーナーが 2026-11-23 に承認）: ツールチップへの行の追加。Mod の画面のデザインは変えない。バニラクライアントでは何も変わらない
+- `ItemTooltipEvent` はサーバー側でも起こり得る（`ItemStack.getTooltipLines` を呼ぶ Mod がある）ので、クライアント専用のエントリポイント（`Dist.CLIENT`）でだけ登録する
+
+### 実装メモ
+- 「同期の内容、アイテム ID → 足す行」は純粋関数にして単体テストする（目標・記録・複数キー・3行の上限）
+
+---
+
+## F43. 権限 Mod で管理者のコマンドを許可できるようにする（候補 P37）
+
+### 仕様
+- 背景: 管理者のコマンドは `.requires(hasPermission(2))`（OP の権限レベル2）だけで判定している。OP を渡さずに、一部のコマンドだけをスタッフに許可する運用ができない
+- NeoForge の権限 API（`PermissionAPI`、`PermissionGatherEvent.Nodes`、`PermissionNode`。21.1.1 / 26.1.2.71 / 26.2.0.57 / 26.3.0.76 のソースで同じ API を確認）に、次の boolean のノードを登録する:
+
+| ノード | 許可するもの |
+|---|---|
+| `itemmilestonelog.admin` | `admin` の下のすべて（F33 を含む。1.2.0 の F8b `admin <player> resettag` も） |
+| `itemmilestonelog.firsts.reset` | `firsts reset` / `firsts resetall`（1.2.0 の F8b `firsts resettag` も） |
+| `itemmilestonelog.export.all` | `exportall` / `exporthtmlall` / `exportcsvall` |
+| `itemmilestonelog.import.all` | `importall`、および `import` で他のプレイヤーの書き出したファイルを読み込むこと（現在は権限レベル2で判定している箇所） |
+| `itemmilestonelog.prunedata` | `prunedata` |
+| `itemmilestonelog.renameitem` | `renameitem` |
+| `itemmilestonelog.presets.manage` | 専用サーバーでのカスタムプリセットの保存・削除（G1 の判定） |
+| `itemmilestonelog.viewhidden` | `allowLookup` が false のときの `lookup` / `top` / `recent` / `stats` の使用と、F14 で隠した記録の閲覧 |
+
+- 判定: プレイヤーのソースは「従来の判定（`.requires` の権限レベル2、または制約11の `isPrivileged`）を満たす、**または**ノードが true」。プレイヤー以外のソース（コンソール・RCON・コマンドブロック・関数）は従来の判定だけで、`PermissionAPI` を呼ばない（`PermissionAPI.getPermission` は `ServerPlayer` を必要とし、権限 API の初期化はサーバーの起動時に行われるため）
+  - ノードの既定（`PermissionResolver`）は「そのプレイヤーが権限レベル2以上」。権限 Mod が無い（NeoForge の既定のハンドラ）なら、判定の結果は従来と同じ
+  - 「または」なので、ノードで OP から権限を**取り上げることはできない**（許可を足せるだけ）。README に書く
+  - 判定は1か所（`MilestonePermissions.check(source, node)` など）にまとめ、各コマンドの `.requires` と、制約11の `isPrivileged` を使う箇所から呼ぶ
+- 権限 Mod の設定: NeoForge の設定 `permissionHandler` を、権限 Mod のハンドラにする必要がある（既定は `neoforge:default_handler`。詳細は権限 Mod の説明に従う）。README に書く
+  - 設定の置き場所はバージョンで違う: 1.21.1 / 26.1.2 / 26.2 はワールドごとの SERVER 型の設定（`serverconfig/neoforge-server.toml`）、26.3 は SYNCED 型の設定（`NeoForgeSyncedConfig`）。各バージョンの NeoForge の下限のソースで確かめた。26.3 のファイルの場所は、README に書く前に 26.3 の NeoForge で確かめる
+- コマンドの補完: クライアントに送るコマンドの木は `requires` で絞られ、ログイン時などに送られる。権限を変えた直後は、再参加するまで補完に出ないことがある（実行できるかは実行の時点で判定されるので、すぐ変わる）。権限 Mod が木を送り直すかは権限 Mod による。README に書く
+- F29 の `help` は、各コマンドの `requires`（`CommandNode#canUse`）で出すかを決めているので、そのままノードに従う
+- 制約2・11の例外（オーナーが 2026-11-23 に承認）: 既存の管理者用コマンドの `.requires` を「権限レベル2以上、またはノード」に広げる。OP と、権限 Mod を使わないサーバーの挙動は変わらない
+- Config は追加しない（権限 Mod を入れて設定しなければ従来通り。制約8の例外）
+
+### 実装メモ
+- ノードは `PermissionGatherEvent.Nodes`（ゲームのイベントバス）で登録する。登録していないノードを `getPermission` に渡すと `UnregisteredPermissionException` になる
+- 26.x の Minecraft は独自の権限の仕組み（`Permissions` / `PermissionSet`。本 Mod の 26.x の `MilestoneService.isPrivileged` も使っている）を持つ。権限レベルの判定はそれを使い続け、ノードは NeoForge の API だけで判定する（全バージョンで同じ動作にする）
+- 単体テスト: 判定（プレイヤー以外 × レベル、プレイヤー × レベル × ノード）、ノードの表と、それを使うコマンド・箇所の対応（表に無いノードを使わない）
+- 手動の確認: LuckPerms などの権限 Mod を入れた専用サーバーで、OP でないプレイヤーにノードを与えて実行できること
+
+---
+
+## F44. NeoForge の設定画面を使えるようにする（候補 P38）
+
+### 仕様
+- 背景: 設定を変えるには toml を手で編集する必要がある。NeoForge には、Mod の設定から画面を自動で作る `ConfigurationScreen` と、それを Mod 一覧の「設定」ボタンに出す `IConfigScreenFactory` がある（21.1.1 / 26.1.2.71 / 26.2.0.57 / 26.3.0.76）が、本 Mod は登録していない
+- クライアントのエントリポイントで、`IConfigScreenFactory` として `ConfigurationScreen` を登録する（`modContainer.registerExtensionPoint`。クライアントのエントリポイントのコンストラクタで `ModContainer` を受け取る）
+- **Webhook の URL（`discordWebhookUrl`、F46 の `discordWorldFirstWebhookUrl`）は画面に出さない**。`ConfigurationScreen` のフィルター（`ConfigurationSectionScreen.Filter`。4バージョンにある）で除く。理由: 画面には値がそのまま出るので、配信やスクリーンショットで URL が漏れる（F39）。これらはファイルで設定する
+- 各設定の表示名と説明の lang キーを en / ja に足す: `itemmilestonelog.configuration.<キー>` と `itemmilestonelog.configuration.<キー>.tooltip`（`ConfigurationScreen` がこの規則でキーを引く。説明のキーが無いと英語のコメントが出るが、日本語のクライアントのために ja にも足す。制約5により en にも同じキーが要る）。画面の題名 `itemmilestonelog.configuration.title`（%s = Mod の表示名）も足す
+  - 対象は、画面に出す全設定（1.0.1 の 11 項目と §1.2 の全項目から、上の2つを除いたもの）
+- 注意（README と、画面の題名の下の説明に使える箇所が無いので README に書く）: COMMON（26.3 は LOCAL）の設定はその PC のファイルなので、マルチプレイのサーバーに入っているときに変えても、サーバーには効かない（効くのは F42 の `itemTooltipStatus` など、クライアントが使う設定だけ）。シングルプレイでは全ワールドに効く（X1）
+  - 26.3 の LOCAL 型の設定が画面に出ることは、26.3.0.76 のソースで確かめた（`ConfigurationScreen` は全種類の設定を並べ、編集を止めるのは SYNCED 型だけ）
+- 制約1・R5 の例外（オーナーが 2026-11-23 に承認）: 本 Mod の画面ではなく、NeoForge の汎用の画面を使えるようにする。本 Mod の画面のデザインは変えない
+- Config は追加しない（使わなければ何も変わらない。制約8の例外）
+
+### 実装メモ
+- 単体テスト（静的な検査）: `Config.SPEC` の全項目（画面に出さない2つを除く）について、en_us.json に表示名と説明のキーがあること。設定を足したときの書き忘れを防ぐ
+- 手動の確認: 4バージョンで画面が開き、値を変えて保存できること、Webhook の URL が出ないこと
+
+---
+
+## F45. Discord への投稿から自分を外す（`discordoptout`）（候補 P39）
+
+### 仕様
+- 背景: F14 は lookup などから記録を隠すが、Discord には従来通り投稿される（F14 の「隠していても変わらないもの」）。外部のサービスに自分の名前と記録が送られることを望まないプレイヤーが、それを止める手段が無い
+- `/milestonelog discordoptout`（OP 不要。実行者はプレイヤーに限る）。実行するたびに切り替え、切り替え後の状態を返す（F14 の `privacy` と同じ形）
+- PlayerData に `excludeFromDiscord`（boolean、§1.1）を足す
+- 外している人の分は、Discord に送らない: 記録の投稿（世界初を含む）、F27 のまとめた投稿（その人の分だけ溜めない）、F19 の制覇の投稿、1.2.0 の F9 のダイジェストの行、1.2.0 の F46 の世界初の Webhook
+- 外していても変わらないもの（README に書く）: ゲーム内のブロードキャストと世界初のアナウンス、`firsts`、サーバーログ、書き出し、F17 のスコア、API のイベント（他の Mod や KubeJS のスクリプトが自分で Discord に送る場合は止まらない）
+- Config `allowDiscordOptOut`（boolean、既定 true）。false なら、このコマンドは T の `feature_disabled` を返し、保存されている `excludeFromDiscord` は無視される（全員を投稿する方針のサーバー向け。値は消さないので、true に戻すと元の状態に戻る）
+  - false のとき F29 の `help` に `discordoptout` を出さない
+- Webhook が設定されていないサーバーでもコマンドは使える（状態を保存するだけ）
+- 文面:
+  - `message.itemmilestonelog.discordoptout_on`: en "Your milestones will no longer be posted to Discord." / ja 「あなたの記録を Discord に投稿しないようにしました。」
+  - `message.itemmilestonelog.discordoptout_off`: en "Your milestones will be posted to Discord again." / ja 「あなたの記録を Discord に投稿するようにしました。」
+
+### 実装メモ
+- 「送るかどうか」の判定（`allowDiscordOptOut` と `excludeFromDiscord`）は1つの関数にし、Discord に送るすべての箇所から呼ぶ
+- 単体テスト: 判定、F27 の溜め方で外している人の分が除かれること
+
+---
+
+## F46. 世界初だけを別の Webhook に送る（候補 P40）
+
+### 仕様
+- 背景: `discordNotifyScope` は `all` か `world_first` のどちらか一方。全記録を記録用のチャンネルに、世界初だけをお知らせ用のチャンネルに、という分け方ができない
+- Config `discordWorldFirstWebhookUrl`（文字列、既定 "" = 使わない）。F39 の `env:<変数名>` も使える。検査は `discordWebhookUrl` と同じ（https）
+- 設定されていれば（解決できれば）、**世界初の投稿はこちらだけに送る**（二重に送らない）。`discordWebhookUrl` には、`discordNotifyScope` に従って世界初**以外**を送る
+  - `discordNotifyScope` が `world_first` でこの設定があると、`discordWebhookUrl` には記録の投稿が何も送られない（F19 と 1.2.0 の F9 は送られる）
+  - `discordWebhookUrl` が空でこの設定があれば、世界初だけが送られる
+  - F27 のまとめ方: 送り先ごとに分けてから、それぞれで F27 のしきい値（3件）を適用する（世界初が2件・他が5件なら、世界初は1件ずつ、他はまとめた1通）
+  - F19 の制覇の投稿と F9 のダイジェストは `discordWebhookUrl` に送る（この設定には送らない）
+- F35 の 429・404・401 の扱いは URL ごとに行う（片方の Webhook が消されても、もう片方は送り続ける）
+- F45 で外している人の分は送らない
+- 世界初の文面・Embed は従来通り（F4・F18）
+- Config の ON/OFF は値が空かどうか（制約8の「設定値が空なら無効」）
+
+### 実装メモ
+- 「投稿の種類、2つの URL の設定、`discordNotifyScope` → 送り先」は純粋関数にして単体テストする
+
+---
+
+## F47. `firsts` に今の名前を出す（候補 P41）
+
+### 仕様
+- 背景: `firsts` は世界初の保持者の名前として、記録した時点の名前（`WorldFirstRecord.playerName`）を出している（`MilestoneCommands.firstsList`）。名前を変えたプレイヤーは古い名前で表示され、`lookup` や `admin`・F13 の名前（保存されている最後の名前 `lastKnownName`）と食い違う
+- `firsts` の各行の名前:
+  1. 保存データに保持者の UUID の PlayerData があり、`lastKnownName` が空でなければ、その名前
+  2. 1 が記録時の名前（空でないもの）と違えば（大文字小文字を区別して比べる）、`message.itemmilestonelog.firsts_name_renamed`（%s = 今の名前、%s = 記録時の名前）: en "%s (was %s)" / ja 「%s（旧: %s）」
+  3. PlayerData が無ければ（F37 や `purge` で消された）、従来通り記録時の名前、それも空なら UUID
+  - 名前は `Component.literal` で埋め込む（制約12）
+- 保存データ・書き出し（F31 の世界初を含む）・API の `WorldFirstRecord.playerName` は変えない（記録時の名前という意味を保つ）
+- 1.2.0 の F9 のダイジェストの世界初の行も 1 と 3 の規則で名前を出す（「旧:」は付けない。Discord の行を短く保つため）
+- 名前の変更前後の対応が `firsts` で見えるようになるが、`admin players` と同じく保存されている最後の名前を出すだけで、Minecraft の名前は公開の情報なので、F14 の対象にはしない（README に書く）
+- Config は追加しない（既存の表示の改善。§1.2 の例外として CHANGELOG に書く）
+
+### 実装メモ
+- 名前の選び方は純粋関数にして単体テストする（同じ名前、変わった名前、PlayerData なし、両方空）
+
+---
+
+## F48. プレイ時間と「Day」の表記をプレイヤーの言語に合わせる（候補 P42）
+
+### 仕様
+- 背景: チャットのプレイ時間は `Playtime.format` の `27h 03m 05s`、記録の整形は `Playtime.formatRecord` の `(Day 5, 2026-11-23)` で、日本語の文面の中でも英語の表記になる（F18 で「英語表記のまま」としたもの）
+- **チャットと GUI だけ**、lang キーで組み立てる:
+  - `message.itemmilestonelog.playtime_format`（%s = 時、%s = 分（2桁）、%s = 秒（2桁））: en "%sh %sm %ss" / ja 「%s時間%s分%s秒」。分と秒の0埋めはコードで行い、文字列として渡す
+  - `message.itemmilestonelog.record_day_date`（%s = プレイ時間、%s = Day（1 始まり）、%s = 日付）: en "%s (Day %s, %s)" / ja 「%s（%s日目、%s）」
+  - `message.itemmilestonelog.record_day`（%s = プレイ時間、%s = Day）: en "%s (Day %s)" / ja 「%s（%s日目）」
+  - `message.itemmilestonelog.record_date`（%s = プレイ時間、%s = 日付）: en "%s (%s)" / ja 「%s（%s）」
+  - Day も日付も不明なら、プレイ時間だけ（従来通り）。日付の書式は `yyyy-MM-dd` のまま、タイムゾーンは F11
+  - **en_us の結果は従来の `Playtime.format` / `formatRecord` の文字列と一字一句同じにする**（英語のクライアントでは何も変わらない）
+- サーバーから送る文面は `ServerLang.tr(受信者, ...)` で組み立てた Component を引数として入れ子にする（Mod 入りのクライアントは自分の言語で、バニラクライアントは `translatableWithFallback` の受信者の言語の値で表示される）。ブロードキャストと世界初のアナウンスは、既存どおり受信者ごとに組み立てる
+- GUI（MilestoneScreen のヘッダーと記録の状態の行、F42 のツールチップ）はクライアントの言語で `Component.translatable` で組み立てる。記録の状態の行は既存の幅での切り詰め（`plainSubstrByWidth`）のままにし、日本語でどこまで見えるかを手動で確かめる
+- **英語の書式のままにするもの**: Discord（F4・F18・F27・F19・F9）、サーバーログ、書き出し（JSON・F3 の HTML・F26 の CSV）、API。機械で読む人がいるため。F18 の「英語表記のまま」は Discord について引き続き有効
+- 1.2.0（F12）: ホバーを付けたチャットのメッセージも同じ組み立て方にする
+- Config は追加しない（表示の文面の改善で、en_us の結果は変わらない。§1.2 の例外として CHANGELOG に書く）
+
+### 実装メモ
+- `Playtime.formatRecord` は文字列を返し、チャット・GUI・Discord・ログで使われている（26.1.2 で `Playtime.format` / `formatRecord` の呼び出しは 14 か所）。文字列版は Discord・ログ・書き出し用に残し、チャットと GUI 用に Component を返す版を作って置き換える
+- 単体テスト: en_us の Component の文字列が文字列版と一致すること（Day・日付の有無の4通り、0 時間、100 時間以上）、ja_jp の文面
+
+---
+
 ## 3. テスト・検証（全機能共通）
 
 - **〔P31〕1.1.0 の実装の最初の PR で、issue #44 の4点のテストを入れる**（既存のコードは変えず、テストだけを足す）: (1) `SyncMilestonesPayload` / `MilestoneActionPayload` の encode / decode（文字列の上限と 4096 件の上限を含む）、(2) `ModNetworking` のトークンバケット（補充の端数、ログアウト時・放置時の削除、片付けの間隔）と `MilestoneService`・`Tracker` の中心の処理、(3) `gui.itemmilestonelog.*` のキーが en_us.json にあることの静的な検査、(4) 26.x の `MilestoneDataTest` に、1.21.1 にある壊れた要素（ticks の欠け・負の値）の場合を戻す
@@ -1230,23 +1478,49 @@ F8 は 1.2.0 で入る（§2.1）。1.1.0 の機能はタグを扱わずに作�
   - F36 の早い終了と `carriedFromCreative` の印の扱い
   - F37 の整理の対象の判定
   - F38 の集計（隠しているプレイヤーの除外、同順位）
+  - F39 の `env:` の解決（変数あり・無し・空・不正な名前）と、ログに値が出ないこと
+  - F40 の適用の条件（PlayerData の有無、未知の ID、`presetsEnabled`）
+  - F42 のツールチップの行（目標・記録・複数キー・3行の上限）
+  - F43 の判定（プレイヤー以外 × レベル、プレイヤー × レベル × ノード）とノードの表
+  - F44 の静的な検査（設定画面に出す全設定の表示名・説明の lang キー）
+  - F45 の送るかどうかの判定と、F27 の溜め方からの除外
+  - F46 の送り先の決定（投稿の種類 × 2つの URL × `discordNotifyScope`）
+  - F47 の名前の選び方
+  - F48 の en_us の結果が従来の文字列と一致すること
 - lang キーの追加は ServerLangTest / LangFilesTest が通ること（en / ja のキー集合とプレースホルダの一致。F34 の後は、lang フォルダのファイルと `BUNDLED_LANGUAGES` の一致も）
 - CI の既存ボットテスト（記録・コマンド・移行）が全バージョンで通ること。F8 を実装した場合は、タグターゲットでの記録がボットテストで1ケース確認できることが望ましい
 - 〔X18〕F2 を入れた状態で mineflayer（バニラクライアント）の参加テストが通ること。F12 のホバー付きのメッセージ（記録の通知）を受け取っても切断されないことも、このテストで確認する（mineflayer はバニラのプロトコルで受け取るので、パケットの形が壊れていないことを確認できる。バニラの本物のクライアントでの表示は手動で確認する）
 - ボットテストに加えることが望ましいケース: F13 の `top` / `recent` の出力、F17 のスコア（`/scoreboard players get`）、F22 の `exportall` → `importall` の往復（F31 の世界初を含む）、F21 のテスト用データパックのプリセットの適用、F27（`scanIntervalTicks` を大きくしたうえで、`/give` で3種類以上のターゲットを次のスキャンまでに渡し、まとめた1通がボットに届くこと）、F28 の `removeall` → `undo`、F30 のページ指定、F33 の `grant`
 - 〔X18〕F29 の `suggest_command` と F30 の `run_command` のクリックは、mineflayer では押せないので、バニラの本物のクライアントで手動で確かめる（26.x では admin 系の `[次へ]` に確認画面が出ることも）
-- 〔X2〕手動確認: 1.1.0 のサーバーに 1.0.1 の Mod 入りクライアント、1.0.1 のサーバーに 1.1.0 の Mod 入りクライアントで参加でき、GUI が開けること。F25 の追加ペイロードがあっても、どちらの組み合わせでも切断されないこと
+- 〔X2〕手動確認: 1.1.0 のサーバーに 1.0.1 の Mod 入りクライアント、1.0.1 のサーバーに 1.1.0 の Mod 入りクライアントで参加でき、GUI が開けること。F25 の追加ペイロードがあっても、どちらの組み合わせでも切断されないこと（§3.1 の CI が入った後は、参加と切断の有無は CI が確かめるので、手動では GUI の見た目だけを確かめる）
+- クライアントの新しい表示（1.2.0 の F41・F42・F44、F48 の GUI の文面）は、バニラの本物のクライアントで手動で確かめる（各節の実装メモ）
 - バージョン表記を 1.1.0（2回目は 1.2.0）に上げる（gradle.properties 等、1.0.1 へ上げたときと同じ箇所）
 - 〔X2〕1.2.0 の手動確認: 1.1.0 と 1.2.0 の組み合わせ（両方向）でも、参加・GUI・F25 の追加ペイロードの有無を確かめる
+
+### 3.1 版の違うクライアントとサーバーの参加を CI で確かめる（候補 P43）
+
+- **1.1.0 の実装の前に入れる**（§2.2 の 1.1.0 の 1）
+- 背景: 上の 〔X2〕 の確認（1.0.1 の Mod 入りクライアント ↔ 1.1.0 のサーバー、とその逆）は手動になっている。通信の互換（制約10）は、壊すと参加の時点で切断される影響の大きい部分なのに、自動の検査が無い。CI の mineflayer はバニラのプロトコルしか話さないので、Mod のチャンネルの交渉（NeoForge の `NetworkComponentNegotiator`）は確かめられない
+- ジョブ: 仮想ディスプレイ（Xvfb）の上で本物のクライアント（ModDevGradle の `createClientLaunchScript` で作るスクリプト）を `--quickPlayMultiplayer localhost:<port>` 付きで起動し、別の版の Mod を入れた専用サーバー（既存の server-test の `.github/scripts/server-lib.sh`）に参加させる
+  - 組み合わせ: (a) 開発中の版のクライアント → 1.0.1 のサーバー、(b) 1.0.1 のクライアント → 開発中の版のサーバー、(c) 同じ版どうし（対照）。1.2.0 の開発中は、1.1.0 との組み合わせ（両方向）も足す
+  - まず 1.21.1 と 26.1.2 で入れる。クラウドでの起動は 1.21.1 で実績がある（2026-11-22、Mesa の llvmpipe で描画できた）。26.1.2 のクライアントは OpenGL を使う（同梱のライブラリが lwjgl-opengl）ので、同じく動く見込み。26.2 / 26.3 は起動を確かめてから足す
+  - 1.0.1 の jar: タグとリリースがまだ無いので、1.0.1 のコミット（12763d2）を同じワークフローでビルドする（CI の jar はビット単位で再現する）。1.1.0 のリリース後は、そのリリースの jar を使う
+  - 準備: `run/options.txt` を先に書く（GUI を開くキーの割り当て、`pauseOnLostFocus:false`、`onboardAccessibility:false`）。参加した後、xdotool で GUI を開くキーを押す
+  - 判定: 両方のログに切断（NeoForge の交渉の失敗、`Disconnected`）が無いこと。加えて、開発中の版の側に、受け取りを示す debug ログを足し（クライアント: 同期を受け取った。サーバー: `RequestSyncPayload` を受け取った）、テストではそのロガーを debug にして行があることを確かめる。1.0.1 の側にはログを足せないので、開発中の版の側だけで判定する
+    - (a): クライアントのログに「同期を受け取った」（1.0.1 のサーバーが応答した）
+    - (b): サーバーのログに「`RequestSyncPayload` を受け取った」（1.0.1 のクライアントがチャンネルを持ち、要求を送れた）
+  - 1.2.0 の F25 の追加ペイロード: (a) と (b) のそれぞれで、切断されないことと、開発中の版の側で送った・受け取ったログ（相手が 1.1.0 以前なら送らないこと）を確かめる
+  - 時間: クライアントの起動に数分かかる。既存の server-test と並列のジョブにし、NeoForge のサーバーのインストールのキャッシュを共用する
+- このジョブが入った後は、上の 〔X2〕 の手動確認は GUI の見た目の確認だけにする
 
 ## 4. ドキュメントとリリース 〔X17〕
 
 1.1.0 と 1.2.0 のそれぞれで、次を行う（§2.1）。各版の文書には、その版に入る機能だけを書く。
 
-- `CHANGELOG.md` に `## 1.1.0`（2回目は `## 1.2.0`）の節を追加する。`check-release.sh` が `mod_version` と同じ節を要求するので、**mod_version を上げるコミットと同時に**入れる（無いと CI の release-check が失敗する）。§1.1 のダウングレードの注意、既定で挙動が変わるもの（1.1.0 の F27 の通知のまとめ）、既定で有効な表示の変更（1.1.0 の F1、1.2.0 の F12 のホバー・F25 の印）を必ず書く
+- `CHANGELOG.md` に `## 1.1.0`（2回目は `## 1.2.0`）の節を追加する。`check-release.sh` が `mod_version` と同じ節を要求するので、**mod_version を上げるコミットと同時に**入れる（無いと CI の release-check が失敗する）。§1.1 のダウングレードの注意、既定で挙動が変わるもの（1.1.0 の F27 の通知のまとめ）、既定で有効な表示の変更（1.1.0 の F1・F47 の `firsts` の名前、1.2.0 の F12 のホバー・F25 の印・F42 のツールチップ・F48 のプレイ時間の表記）を必ず書く
 - `README.md` / `CURSEFORGE.md`: 新しいコマンド・設定（§1.2 のすべての設定を README の Configuration の一覧に足す）と、次の注意:
-  - 1.1.0: F3 / F26 の出力場所、G2 の上書き時の挙動、F11 のタイムゾーンが GUI に効かないこと、F14 で隠れるもの・隠れないもの、F18 でアイテム名が英語のままになる場合、F20 / F32 の API の例と `getCause()`、F22 で UUID が変わる場合と 1.0.1 のファイルでは世界初が戻らないこと（F31）、F23 の期限と一括削除も取り消せること、F27 のまとめ方、F30 の `[次へ]` で 26.x の admin 系に確認画面が出ること、F33 の `grant` が「推定」マークとは別物であること、F34 の翻訳の追加の手順、F35 の `?thread_id=`（実機で確かめてから）、F37 で消えるもの・消えないもの
-  - 1.2.0: F7 のセキュリティ上の注意、F8 のタグの書き方と 1.0.1 / 1.1.0 のクライアントでの見え方、F10 の復元手順、F17 の objective の名前の選び方、F21 のフォルダの場所と `preset reload` で読み直されないこと、F24 で Config やプリセットのファイルは書き換えないこと、F25 の ★ の意味
+  - 1.1.0: F3 / F26 の出力場所、G2 の上書き時の挙動、F11 のタイムゾーンが GUI に効かないこと、F14 で隠れるもの・隠れないもの、F18 でアイテム名が英語のままになる場合、F20 / F32 の API の例と `getCause()`、F22 で UUID が変わる場合と 1.0.1 のファイルでは世界初が戻らないこと（F31）、F23 の期限と一括削除も取り消せること、F27 のまとめ方、F30 の `[次へ]` で 26.x の admin 系に確認画面が出ること、F33 の `grant` が「推定」マークとは別物であること、F34 の翻訳の追加の手順、F35 の `?thread_id=`（実機で確かめてから）、F37 で消えるもの・消えないもの、F39 の `env:` の書き方とシングルプレイ・Mod パックの書き出しの注意、F40 が初めて参加する人だけに配ること（既にいる人には F33 の `admin <player> preset`）、F45 で止まるもの・止まらないもの、F47 で `firsts` に今の名前が出ること
+  - 1.2.0: F7 のセキュリティ上の注意、F8 のタグの書き方と 1.0.1 / 1.1.0 のクライアントでの見え方、F10 の復元手順、F17 の objective の名前の選び方、F21 のフォルダの場所と `preset reload` で読み直されないこと、F24 で Config やプリセットのファイルは書き換えないこと、F25 の ★ の意味、F41 のキーの割り当て方、F42 が 1.0.1 / 1.1.0 のサーバーでは GUI を開くまで出ないことと `itemTooltipStatus`、F43 のノードの一覧・`permissionHandler` の設定・OP から権限を取り上げられないこと・補完の反映、F44 の設定画面がその PC の設定であること（サーバーには効かない）と Webhook の URL が出ないこと、F46 の送り分け、F48 で Discord・ログ・書き出しは英語の書式のままであること
 - `docs/updates.json`: その版の項目と promos は **CurseForge / Modrinth で公開するときのコミットで**更新する。更新チェッカーは main の raw ファイルを読むため、実装の PR で先に更新すると、未公開の版の更新通知がプレイヤーに出る
 - `GEMINI.md`: 「現在の開発バージョンは 1.0.1（未リリース）。バージョン番号は上げない」の記述を、その時点の開発状態（1.1.0、のちに 1.2.0）に合わせ、`docs/` の一覧に本書を加える
 - `docs/VERSION_NOTES.md`: §1.1 の新フィールドを「保存データの構造」に、その版の分だけ追記する
@@ -1344,3 +1618,32 @@ F8 は 1.2.0 で入る（§2.1）。1.1.0 の機能はタグを扱わずに作�
 - P28: 索引は作らないことにした（作り直しの漏れの危険が利益に見合わない）。`carriedFromCreative` の印を外す処理を保つため、早い終了の条件に「その印が無いこと」を入れた
 - P29: 対象から、`carriedFromCreative` が空でないもの・個人の設定があるもの・オンラインのものを除いた。`lastSeen` が無い 1.1.0 より前のデータには、バニラのプレイヤーデータのファイルの更新時刻を使う（フォルダの場所はバージョンで違うので `LevelResource.PLAYER_DATA_DIR` を使う）。消すのは空のデータだけなので、F10 のバックアップは書かない
 - P32: 候補の分け方の例に、第2回の候補の版を足した。加えて、F8a の「正規化を1か所にまとめる」だけを 1.1.0 に入れることにした（1.2.0 でタグを受け付けるときの変更を小さくするため）。F13 の `toptag` と F23 の `resettag` の取り消しは、タグとともに 1.2.0 に入る
+
+### 第3回の候補（P33〜P43）の採用（2026-11-23）
+
+オーナーが、第3回の候補をすべて採用した（見送りを勧めた R12〜R14 は見送りのまま）。P35・P36・P38 の採用は制約1の例外の、P37 の採用は制約2・11の例外の承認を含む（各制約に明記した）。
+
+| 候補 | 本書の番号・箇所 | 版 |
+|---|---|---|
+| P33 Webhook の URL を設定ファイルに書かずに済むようにする | F39 | 1.1.0 |
+| P34 初めて参加したプレイヤーに目標を配る | F40 | 1.1.0 |
+| P35 カーソルのアイテムをキー1つで目標に追加 | F41 | 1.2.0 |
+| P36 ツールチップに記録の状態 | F42 | 1.2.0 |
+| P37 権限 Mod で管理者のコマンドを許可 | F43 | 1.2.0 |
+| P38 NeoForge の設定画面 | F44 | 1.2.0 |
+| P39 Discord への投稿から自分を外す | F45 | 1.1.0（F9 の分は 1.2.0） |
+| P40 世界初だけを別の Webhook に | F46 | 1.2.0 |
+| P41 `firsts` に今の名前 | F47 | 1.1.0 |
+| P42 プレイ時間と Day の表記を言語に合わせる | F48 | 1.2.0 |
+| P43 版の違う組み合わせの参加を CI で確かめる | §3.1 | 1.1.0 の実装の前 |
+
+移す際に、候補の段階から変えた点・新しく決めた点（オーナーの判断で戻せる）:
+- P35: **候補の「26.1.2 はアクセストランスフォーマーが要る見込み」は誤りだった**。NeoForge が `AbstractContainerScreen` に公開メソッドを足している（1.21.1 / 26.1.2 / 26.2 は `getSlotUnderMouse()`、26.3 は `getHoveredSlot()`。各バージョンの NeoForge の下限 21.1.1 / 26.1.2.71 / 26.2.0.57 / 26.3.0.76 の userdev のパッチで確かめた）。候補は Minecraft 本体の jar だけを見ていた。あわせて、キーは `ScreenEvent.KeyPressed.Post` で受け取ることにした（Pre だと、クリエイティブの検索欄に打った文字でも目標が足される）。アクションバーに出すのは、このキーで送った操作の返事だけにした
+- P36: ログイン時の同期は `PlayerLoggedInEvent` で送ることにした（`OnDatapackSyncEvent` はログインの途中で起こるため）。ツールチップの処理は表を引くだけにし、表は同期を受け取ったときに作り直す（JEI / EMI が多数のツールチップを作るため）。切断時に表を捨てる
+- P37: ノードの一覧を決めた（`import` で他人のファイルを読む判定、G1 のプリセットの管理、`allowLookup` と F14 を越えて見る `viewhidden` を足した）。プレイヤー以外のソースでは権限 API を呼ばないことにした（API が `ServerPlayer` を必要とし、初期化がサーバーの起動時のため）。「または」の判定なので、ノードで OP から権限を取り上げられないことを明記した。権限 Mod を使うには NeoForge の `permissionHandler` の設定が要ることを書いた（21.1.1 / 26.1.2.71 / 26.2.0.57 のソースではワールドごとの SERVER 型の設定、26.3.0.76 では SYNCED 型の設定にある）
+- P38: **Webhook の URL は設定画面に出さない**ことにした（画面に値がそのまま出るため。NeoForge の `ConfigurationScreen` のフィルターで除ける）。26.3 の LOCAL 型の設定が画面に出ることを 26.3.0.76 のソースで確かめた。説明の lang キーが無いと英語のコメントが出ること（NeoForge の `translatableWithFallback`）を確かめたうえで、ja のために en / ja の両方に足すことにした
+- P39: コマンド名を `discordoptout` にした。`prunedata`（F37）の対象から、この設定がある人を除いた（ほかの個人の設定と同じ）
+- P40: F27 のまとめ方を送り先ごとに分けること、`discordNotifyScope` が `world_first` だと `discordWebhookUrl` には記録が送られなくなること、F19 と F9 は `discordWebhookUrl` に送ることを決めた
+- P41: PlayerData が無い（消された）保持者は記録時の名前のままにした。F9 のダイジェストにも同じ規則を使う（「旧:」は付けない）
+- P42: GUI も対象にした（候補の「チャットと GUI」のとおり）。en_us の結果を従来と一字一句同じにし、テストで止めることにした
+- P43: 1.0.1 の jar は、タグとリリースがまだ無いので、1.0.1 のコミットを CI でビルドして使う。判定は、開発中の版の側に足す debug ログで行う（1.0.1 の側にはログを足せないため）。1.2.0 の F25 の追加ペイロードの確認もこのジョブで行う
