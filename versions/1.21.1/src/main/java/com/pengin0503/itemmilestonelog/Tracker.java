@@ -3,6 +3,7 @@ package com.pengin0503.itemmilestonelog;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecordedEvent;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
+import com.pengin0503.itemmilestonelog.network.ModNetworking;
 import com.pengin0503.itemmilestonelog.network.SyncMilestonesPayload;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
@@ -97,6 +98,11 @@ public final class Tracker {
                     : "message.itemmilestonelog.join_hint_vanilla";
             player.sendSystemMessage(ServerLang.tr(player, key));
         }
+    }
+
+    @SubscribeEvent
+    public static void onPlayerLoggedOut(PlayerEvent.PlayerLoggedOutEvent event) {
+        ModNetworking.removeRateLimit(event.getEntity().getUUID());
     }
 
     @SubscribeEvent

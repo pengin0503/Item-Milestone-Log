@@ -22,6 +22,8 @@ public final class ModNetworking {
     private static final String PROTOCOL_VERSION = "1";
     private static final long REFILL_INTERVAL_NANOS = 50_000_000L; // 20 actions/sec steady rate
     private static final int MAX_BURST_TOKENS = 40;
+    private static final int MAX_RATE_LIMIT_ENTRIES = 1024;
+    private static final long RATE_LIMIT_IDLE_NANOS = 60_000_000_000L; // 60s; a bucket fully refills in ~2s, so older entries are equivalent to fresh ones
     private static final Map<UUID, RateLimitState> RATE_LIMITS = new ConcurrentHashMap<>();
 
     private static final class RateLimitState {
@@ -29,11 +31,22 @@ public final class ModNetworking {
         int tokens = MAX_BURST_TOKENS;
     }
 
+    /** Drops a player's rate-limit state, e.g. when they log out, so the map stays bounded by online players. */
+    public static void removeRateLimit(UUID uuid) {
+        RATE_LIMITS.remove(uuid);
+    }
+
     private static boolean tryAcquireRateLimit(ServerPlayer player) {
-        if (RATE_LIMITS.size() > 1024) {
-            RATE_LIMITS.clear();
-        }
         long now = System.nanoTime();
+        if (RATE_LIMITS.size() > MAX_RATE_LIMIT_ENTRIES) {
+            // Evict only idle entries instead of clearing every player's limits.
+            RATE_LIMITS.entrySet().removeIf(entry -> {
+                RateLimitState s = entry.getValue();
+                synchronized (s) {
+                    return now - s.lastNanos > RATE_LIMIT_IDLE_NANOS;
+                }
+            });
+        }
         RateLimitState state = RATE_LIMITS.computeIfAbsent(player.getUUID(), u -> new RateLimitState());
         synchronized (state) {
             long elapsed = now - state.lastNanos;
