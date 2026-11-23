@@ -1,7 +1,10 @@
 package com.pengin0503.itemmilestonelog.api;
 
 import com.pengin0503.itemmilestonelog.MilestoneData;
+import com.pengin0503.itemmilestonelog.MilestoneService;
+import com.pengin0503.itemmilestonelog.Tracker;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerPlayer;
 
 import java.util.Collections;
 import java.util.LinkedHashSet;
@@ -11,19 +14,117 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Read-only server-side API for querying Item Milestone Log data from other mods or scripts.
+ * Server-side API for querying and updating Item Milestone Log data from other mods or scripts.
  *
  * <p><strong>Thread-safety:</strong> All methods in this class access {@link MilestoneData}
  * backed by the server's {@code SavedDataStorage} and must be called on the logical server
- * thread only.
+ * thread only. The write methods ({@link #addTarget}, {@link #removeTarget}, {@link #recordNow})
+ * enforce this and throw {@link IllegalStateException} when called from another thread; the read
+ * methods do not check.
  *
  * <p><strong>Null handling:</strong> Required context arguments ({@code server} and {@code player})
  * must not be {@code null} and throw {@link NullPointerException} if {@code null}. Query filter
  * arguments ({@code itemId} and {@code target}) tolerate {@code null} (or invalid values) and
- * return {@link Optional#empty()}.
+ * return {@link Optional#empty()}; the write methods return {@code false} for a {@code null}
+ * {@code target}.
+ *
+ * <p><strong>Tag keys:</strong> In 1.1.0, {@link TargetKey} only represents item IDs; tag keys
+ * ({@code #namespace:path}) are not accepted, and the write methods return {@code false} for them.
+ *
+ * <p>Example KubeJS server script recording a milestone when a quest is completed:
+ * <pre>{@code
+ * const Api = Java.loadClass('com.pengin0503.itemmilestonelog.api.ItemMilestoneLogApi')
+ * const TargetKey = Java.loadClass('com.pengin0503.itemmilestonelog.api.TargetKey')
+ * // Call from your quest mod's completion callback, on the server thread:
+ * Api.recordNow(player, TargetKey.of('minecraft:nether_star'))
+ * }</pre>
  */
 public final class ItemMilestoneLogApi {
+    /** Maximum nesting depth of {@link #recordNow} calls made from {@link MilestoneRecordedEvent} listeners. */
+    public static final int MAX_RECORD_NOW_DEPTH = 16;
+
     private ItemMilestoneLogApi() {
+    }
+
+    /**
+     * Adds {@code target} to the player's personal targets, with the same validation and limit as the
+     * {@code /milestonelog add} command: the item must exist in the registry and must not be air, and a
+     * player can have at most 1024 personal targets. Creates the player's saved data if missing. If the
+     * player is online, their milestone GUI is re-synced.
+     *
+     * @param server the running server
+     * @param player UUID of the player (online or offline)
+     * @param target the target to add; {@code null} returns {@code false}
+     * @return {@code true} if the target was added; {@code false} if {@code target} is {@code null},
+     *         invalid, a tag key, already a personal target, or the limit is reached
+     * @throws NullPointerException  if {@code server} or {@code player} is {@code null}
+     * @throws IllegalStateException if not called on the server thread
+     */
+    public static boolean addTarget(MinecraftServer server, UUID player, TargetKey target) {
+        Objects.requireNonNull(server, "server");
+        Objects.requireNonNull(player, "player");
+        requireServerThread(server.isSameThread(), "addTarget");
+        return MilestoneService.addTargetFromApi(server, player, target);
+    }
+
+    /**
+     * Removes {@code target} from the player's personal targets, with the same cleanup as the
+     * {@code /milestonelog remove} command (the stored progress-alert state for that key is cleared;
+     * the record, if any, is kept). Keys listed in the server's {@code defaultTargets} cannot be
+     * removed. If the player is online, their milestone GUI is re-synced.
+     *
+     * @param server the running server
+     * @param player UUID of the player (online or offline)
+     * @param target the target to remove; {@code null} returns {@code false}
+     * @return {@code true} if the target was removed; {@code false} if {@code target} is {@code null},
+     *         a tag key, a {@code defaultTargets} key, or not a personal target
+     * @throws NullPointerException  if {@code server} or {@code player} is {@code null}
+     * @throws IllegalStateException if not called on the server thread
+     */
+    public static boolean removeTarget(MinecraftServer server, UUID player, TargetKey target) {
+        Objects.requireNonNull(server, "server");
+        Objects.requireNonNull(player, "player");
+        requireServerThread(server.isSameThread(), "removeTarget");
+        return MilestoneService.removeTargetFromApi(server, player, target);
+    }
+
+    /**
+     * Records {@code target} for {@code player} now, without checking that the player possesses the
+     * items. The record goes through the normal record path: notifications (including grouped
+     * notifications), world-first, {@link MilestoneRecordedEvent} with
+     * {@link RecordCause#API}, Discord, progress-alert cleanup, and preset completion
+     * ({@link PresetCompletedEvent}). The player's GUI is re-synced.
+     *
+     * <p>May be called from a {@link MilestoneRecordedEvent} listener to chain records. Calls nested
+     * deeper than {@value #MAX_RECORD_NOW_DEPTH} levels return {@code false} and log a warning.
+     *
+     * @param player the online player to record for
+     * @param target the target to record; {@code null} returns {@code false}
+     * @return {@code true} if a new record was created; {@code false} if {@code target} is
+     *         {@code null} or a tag key, not one of the player's effective targets (personal +
+     *         {@code defaultTargets}), already recorded, recording is paused for the player
+     *         (creative/spectator with {@code ignoreCreativeAndSpectator}), the player is a
+     *         {@code FakePlayer}, or the nesting depth limit was exceeded
+     * @throws NullPointerException  if {@code player} is {@code null}
+     * @throws IllegalStateException if not called on the server thread
+     */
+    public static boolean recordNow(ServerPlayer player, TargetKey target) {
+        Objects.requireNonNull(player, "player");
+        MinecraftServer server = player.level().getServer();
+        requireServerThread(server != null && server.isSameThread(), "recordNow");
+        if (target == null) {
+            return false;
+        }
+        return Tracker.recordNow(player, target);
+    }
+
+    /** Throws {@link IllegalStateException} unless {@code onServerThread} is {@code true}. */
+    static void requireServerThread(boolean onServerThread, String method) {
+        if (!onServerThread) {
+            throw new IllegalStateException(
+                    "ItemMilestoneLogApi." + method + " must be called on the server thread (called from "
+                            + Thread.currentThread().getName() + ")");
+        }
     }
 
     /**

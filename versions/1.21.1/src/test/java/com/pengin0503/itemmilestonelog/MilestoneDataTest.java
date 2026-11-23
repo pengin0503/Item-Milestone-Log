@@ -4,12 +4,14 @@ import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
 import com.pengin0503.itemmilestonelog.api.WorldFirstRecord;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.IntTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.StringTag;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -44,8 +46,11 @@ class MilestoneDataTest {
         pdA.firstJoinHintShown = true;
         pdA.muteBroadcasts = true;
         pdA.muteProgressAlerts = true;
+        pdA.excludeFromDiscord = true;
         pdA.progressNotified.put(TargetKey.of("minecraft:iron_ingot", 100), 0);
         pdA.progressNotified.put(TargetKey.of("minecraft:gold_ingot", 500), 50);
+        pdA.completedPresets.add("vanilla_endgame");
+        pdA.completedPresets.add("my_custom_pack");
 
         MilestoneData.PlayerData pdB = original.player(playerB);
         pdB.targets.add(atmStar);
@@ -70,10 +75,12 @@ class MilestoneDataTest {
         assertTrue(loadedA.firstJoinHintShown);
         assertTrue(loadedA.muteBroadcasts);
         assertTrue(loadedA.muteProgressAlerts);
+        assertTrue(loadedA.excludeFromDiscord);
         assertEquals(Map.of(
                 TargetKey.of("minecraft:iron_ingot", 100), 0,
                 TargetKey.of("minecraft:gold_ingot", 500), 50
         ), loadedA.progressNotified);
+        assertEquals(List.of("vanilla_endgame", "my_custom_pack"), List.copyOf(loadedA.completedPresets));
 
         MilestoneData.PlayerData loadedB = loaded.playerOrNull(playerB);
         assertNotNull(loadedB);
@@ -84,11 +91,17 @@ class MilestoneDataTest {
         assertFalse(loadedB.firstJoinHintShown);
         assertFalse(loadedB.muteBroadcasts);
         assertFalse(loadedB.muteProgressAlerts);
+        assertFalse(loadedB.excludeFromDiscord);
         assertTrue(loadedB.progressNotified.isEmpty());
+        assertTrue(loadedB.completedPresets.isEmpty());
         assertTrue(saved.getCompound("players").getCompound(playerA.toString()).contains("muteProgressAlerts"));
+        assertTrue(saved.getCompound("players").getCompound(playerA.toString()).contains("excludeFromDiscord"));
+        assertTrue(saved.getCompound("players").getCompound(playerA.toString()).contains("completedPresets"));
         assertFalse(saved.getCompound("players").getCompound(playerB.toString()).contains("carriedFromCreative"));
         assertFalse(saved.getCompound("players").getCompound(playerB.toString()).contains("muteProgressAlerts"));
+        assertFalse(saved.getCompound("players").getCompound(playerB.toString()).contains("excludeFromDiscord"));
         assertFalse(saved.getCompound("players").getCompound(playerB.toString()).contains("progressNotified"));
+        assertFalse(saved.getCompound("players").getCompound(playerB.toString()).contains("completedPresets"));
 
         WorldFirstRecord wf1 = loaded.worldFirstOrNull(diamond1);
         assertNotNull(wf1);
@@ -138,7 +151,9 @@ class MilestoneDataTest {
         assertFalse(pd.firstJoinHintShown);
         assertFalse(pd.muteBroadcasts);
         assertFalse(pd.muteProgressAlerts);
+        assertFalse(pd.excludeFromDiscord);
         assertTrue(pd.progressNotified.isEmpty());
+        assertTrue(pd.completedPresets.isEmpty());
         assertTrue(loaded.worldFirsts().isEmpty());
     }
 
@@ -331,5 +346,142 @@ class MilestoneDataTest {
 
         assertTrue(loaded.purgePlayer(playerA));
         assertNull(loaded.playerOrNull(playerA));
+    }
+
+    @Test
+    void persistsExcludeFromDiscordLenientlyOmitsWhenFalseAndSurvivesResetAll() {
+        UUID playerA = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        UUID playerB = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        UUID playerC = UUID.fromString("33333333-3333-3333-3333-333333333333");
+
+        CompoundTag playerATag = new CompoundTag();
+        playerATag.putString("lastKnownName", "Alice");
+        playerATag.putBoolean("excludeFromDiscord", true);
+
+        CompoundTag playerBTag = new CompoundTag();
+        playerBTag.putString("lastKnownName", "Bob");
+        // excludeFromDiscord absent -> defaults to false
+
+        CompoundTag playerCTag = new CompoundTag();
+        playerCTag.putString("lastKnownName", "Charlie");
+        playerCTag.put("excludeFromDiscord", StringTag.valueOf("garbage")); // malformed tag -> skipped
+
+        CompoundTag players = new CompoundTag();
+        players.put(playerA.toString(), playerATag);
+        players.put(playerB.toString(), playerBTag);
+        players.put(playerC.toString(), playerCTag);
+        CompoundTag root = new CompoundTag();
+        root.put("players", players);
+
+        MilestoneData loaded = MilestoneData.load(root, null);
+        MilestoneData.PlayerData loadedA = loaded.playerOrNull(playerA);
+        MilestoneData.PlayerData loadedB = loaded.playerOrNull(playerB);
+        MilestoneData.PlayerData loadedC = loaded.playerOrNull(playerC);
+        assertNotNull(loadedA);
+        assertNotNull(loadedB);
+        assertNotNull(loadedC);
+        assertTrue(loadedA.excludeFromDiscord);
+        assertFalse(loadedB.excludeFromDiscord);
+        assertFalse(loadedC.excludeFromDiscord);
+        assertEquals("Charlie", loadedC.lastKnownName);
+
+        // Write only when true
+        CompoundTag resaved = loaded.save(new CompoundTag(), null);
+        CompoundTag savedPlayers = resaved.getCompound("players");
+        assertTrue(savedPlayers.getCompound(playerA.toString()).getBoolean("excludeFromDiscord"));
+        assertFalse(savedPlayers.getCompound(playerB.toString()).contains("excludeFromDiscord"));
+        assertFalse(savedPlayers.getCompound(playerC.toString()).contains("excludeFromDiscord"));
+
+        // ResetAll must NOT clear personal setting excludeFromDiscord, while purge removes PlayerData
+        TargetKey diamond100 = TargetKey.of("minecraft:diamond", 100);
+        loadedA.records.put(diamond100, new MilestoneRecord(100, 1L, 1000L));
+        loadedA.progressNotified.put(diamond100, 50);
+        assertTrue(MilestoneService.resetAllRecords(loaded, playerA, null).success());
+        assertTrue(loadedA.records.isEmpty());
+        assertTrue(loadedA.progressNotified.isEmpty());
+        assertTrue(loadedA.excludeFromDiscord);
+
+        assertTrue(loaded.purgePlayer(playerA));
+        assertNull(loaded.playerOrNull(playerA));
+    }
+
+    @Test
+    void persistsCompletedPresetsSkipsInvalidEntriesOmitsWhenEmptyAndClearsOnResetAll() {
+        UUID playerA = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        UUID playerB = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        UUID playerC = UUID.fromString("33333333-3333-3333-3333-333333333333");
+        UUID playerD = UUID.fromString("44444444-4444-4444-4444-444444444444");
+
+        ListTag completedList = new ListTag();
+        completedList.add(StringTag.valueOf("vanilla_endgame"));
+        completedList.add(StringTag.valueOf("atm_star"));
+        completedList.add(StringTag.valueOf("my_custom-1"));
+        completedList.add(StringTag.valueOf("")); // invalid empty ID
+        completedList.add(StringTag.valueOf("Bad Name")); // invalid characters
+        completedList.add(StringTag.valueOf("list")); // reserved ID
+
+        CompoundTag playerATag = new CompoundTag();
+        playerATag.putString("lastKnownName", "Alice");
+        playerATag.put("completedPresets", completedList);
+
+        CompoundTag playerBTag = new CompoundTag();
+        playerBTag.putString("lastKnownName", "Bob");
+        // completedPresets absent -> defaults to empty
+
+        CompoundTag playerCTag = new CompoundTag();
+        playerCTag.putString("lastKnownName", "Charlie");
+        playerCTag.put("completedPresets", StringTag.valueOf("not-a-list")); // wrong tag type
+
+        ListTag intList = new ListTag();
+        intList.add(IntTag.valueOf(42));
+        CompoundTag playerDTag = new CompoundTag();
+        playerDTag.putString("lastKnownName", "Dana");
+        playerDTag.put("completedPresets", intList); // non-string list elements
+
+        CompoundTag players = new CompoundTag();
+        players.put(playerA.toString(), playerATag);
+        players.put(playerB.toString(), playerBTag);
+        players.put(playerC.toString(), playerCTag);
+        players.put(playerD.toString(), playerDTag);
+        CompoundTag root = new CompoundTag();
+        root.put("players", players);
+
+        MilestoneData loaded = MilestoneData.load(root, null);
+        MilestoneData.PlayerData loadedA = loaded.playerOrNull(playerA);
+        MilestoneData.PlayerData loadedB = loaded.playerOrNull(playerB);
+        MilestoneData.PlayerData loadedC = loaded.playerOrNull(playerC);
+        MilestoneData.PlayerData loadedD = loaded.playerOrNull(playerD);
+        assertNotNull(loadedA);
+        assertNotNull(loadedB);
+        assertNotNull(loadedC);
+        assertNotNull(loadedD);
+        assertEquals(List.of("vanilla_endgame", "atm_star", "my_custom-1"), List.copyOf(loadedA.completedPresets));
+        assertTrue(loadedB.completedPresets.isEmpty());
+        assertTrue(loadedC.completedPresets.isEmpty());
+        assertEquals("Charlie", loadedC.lastKnownName);
+        assertTrue(loadedD.completedPresets.isEmpty());
+        assertEquals("Dana", loadedD.lastKnownName);
+
+        // Save back: written only when non-empty
+        CompoundTag resaved = loaded.save(new CompoundTag(), null);
+        CompoundTag savedPlayers = resaved.getCompound("players");
+        assertTrue(savedPlayers.getCompound(playerA.toString()).contains("completedPresets"));
+        assertEquals(3, savedPlayers.getCompound(playerA.toString()).getList("completedPresets", 8).size());
+        assertFalse(savedPlayers.getCompound(playerB.toString()).contains("completedPresets"));
+        assertFalse(savedPlayers.getCompound(playerC.toString()).contains("completedPresets"));
+        assertFalse(savedPlayers.getCompound(playerD.toString()).contains("completedPresets"));
+
+        // Single reset keeps completedPresets; resetAll clears completedPresets
+        TargetKey diamond = TargetKey.of("minecraft:diamond");
+        loadedA.records.put(diamond, new MilestoneRecord(100, 1L, 1000L));
+        assertTrue(MilestoneService.resetRecord(
+                loaded, playerA, null, "minecraft:diamond", 1, Set.of("minecraft:diamond")::contains,
+                k -> net.minecraft.network.chat.Component.literal(k.formatDisplayId())).success());
+        assertEquals(Set.of("vanilla_endgame", "atm_star", "my_custom-1"), loadedA.completedPresets);
+
+        assertTrue(MilestoneService.resetAllRecords(loaded, playerA, null).success());
+        assertTrue(loadedA.completedPresets.isEmpty());
+        CompoundTag afterResetAll = loaded.save(new CompoundTag(), null);
+        assertFalse(afterResetAll.getCompound("players").getCompound(playerA.toString()).contains("completedPresets"));
     }
 }

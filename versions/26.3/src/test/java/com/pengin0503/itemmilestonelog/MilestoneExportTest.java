@@ -63,6 +63,7 @@ class MilestoneExportTest {
         dstPd.records.put(diamond1, new MilestoneRecord(5000, 5L, 1795700000000L));
         MilestoneRecord fasterEmerald = new MilestoneRecord(2000, 2L, 1795400000000L);
         dstPd.records.put(emerald1, fasterEmerald);
+        dstPd.completedPresets.add("vanilla_endgame");
 
         MilestoneExport.ImportPayload payload = MilestoneExport.parseSinglePlayerExport(exportedFile);
         MilestoneExport.ImportMergeStats stats = MilestoneExport.mergeInto(targetData, uuid, payload);
@@ -73,6 +74,7 @@ class MilestoneExportTest {
         assertEquals(fasterDiamond, dstPd.records.get(diamond1));
         assertEquals(diamond100Rec, dstPd.records.get(diamond100));
         assertEquals(fasterEmerald, dstPd.records.get(emerald1));
+        assertEquals(List.of("vanilla_endgame"), List.copyOf(dstPd.completedPresets));
     }
 
     @Test

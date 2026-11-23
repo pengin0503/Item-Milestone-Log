@@ -157,6 +157,35 @@ class NotificationGroupingTest {
                 three, StubRecord::worldFirst, BY_KEY, true, false, false, false, "all");
         assertEquals(NotificationGrouping.SendMode.GROUPED, soundOff.playerChat().mode());
         assertFalse(soundOff.playSound());
+
+        // Opted-out player (F45): empty Discord queue or discordEnabled=false suppresses only Discord
+        NotificationGrouping.FlushPlan<StubRecord> emptyDiscordQueue = NotificationGrouping.planFlush(
+                three, List.of(), StubRecord::worldFirst, BY_KEY, true, true, true, true, true, "all");
+        assertEquals(NotificationGrouping.SendMode.GROUPED, emptyDiscordQueue.playerChat().mode());
+        assertEquals(NotificationGrouping.SendMode.GROUPED, emptyDiscordQueue.broadcastChat().mode());
+        assertEquals(NotificationGrouping.SendMode.GROUPED, emptyDiscordQueue.worldFirstChat().mode());
+        assertTrue(emptyDiscordQueue.playSound());
+        assertEquals(NotificationGrouping.SendMode.NONE, emptyDiscordQueue.discord().mode());
+        assertTrue(emptyDiscordQueue.discord().items().isEmpty());
+
+        NotificationGrouping.FlushPlan<StubRecord> discordDisabledAtFlush = NotificationGrouping.planFlush(
+                three, three, StubRecord::worldFirst, BY_KEY, true, true, true, true, false, "all");
+        assertEquals(NotificationGrouping.SendMode.GROUPED, discordDisabledAtFlush.playerChat().mode());
+        assertEquals(NotificationGrouping.SendMode.GROUPED, discordDisabledAtFlush.broadcastChat().mode());
+        assertEquals(NotificationGrouping.SendMode.GROUPED, discordDisabledAtFlush.worldFirstChat().mode());
+        assertTrue(discordDisabledAtFlush.playSound());
+        assertEquals(NotificationGrouping.SendMode.NONE, discordDisabledAtFlush.discord().mode());
+        assertTrue(discordDisabledAtFlush.discord().items().isEmpty());
+
+        // Partial Discord queue with world_first scope filters only the Discord queue independently
+        List<StubRecord> twoDiscord = List.of(
+                new StubRecord("minecraft:b", true),
+                new StubRecord("minecraft:c", false));
+        NotificationGrouping.FlushPlan<StubRecord> partialWf = NotificationGrouping.planFlush(
+                three, twoDiscord, StubRecord::worldFirst, BY_KEY, true, true, true, true, true, "world_first");
+        assertEquals(NotificationGrouping.SendMode.GROUPED, partialWf.playerChat().mode());
+        assertEquals(NotificationGrouping.SendMode.INDIVIDUAL, partialWf.discord().mode());
+        assertEquals(List.of(new StubRecord("minecraft:b", true)), partialWf.discord().items());
     }
 
     @Test

@@ -164,7 +164,12 @@ type, so putting such an item in a chest and taking it out later does count; use
 
 ## Mod & KubeJS API
 
-The `com.pengin0503.itemmilestonelog.api` package provides a server-side event and read-only query helpers:
+The `com.pengin0503.itemmilestonelog.api` package provides a server-side event, read-only query helpers, and write helpers:
+
+- `MilestoneRecordedEvent` fires when a record is confirmed during normal gameplay, via `ItemMilestoneLogApi.recordNow`, or via an admin `grant`. `event.getCause()` returns a `RecordCause` (`GAMEPLAY` / `API` / `ADMIN_GRANT`), so reward scripts can tell them apart.
+- `ItemMilestoneLogApi.addTarget(server, playerUuid, targetKey)` / `removeTarget(server, playerUuid, targetKey)` add or remove a personal target, with the same validation, 1024-target limit, and cleanup as `/milestonelog add` / `remove` (`defaultTargets` keys cannot be removed). They return `true` when something changed.
+- `ItemMilestoneLogApi.recordNow(serverPlayer, targetKey)` records a target without checking possession, through the normal record path (notifications, world-first, events, Discord, presets). It returns `false` if the key is not one of the player's effective targets, is already recorded, recording is paused (creative/spectator), or the player is a `FakePlayer`. Calling it from a `MilestoneRecordedEvent` listener is allowed; chains nested deeper than 16 return `false` with a warning.
+- The write helpers must be called on the server thread (otherwise they throw `IllegalStateException`) and also re-sync the GUI of online players. In 1.1.0 they return `false` for tag keys.
 
 ### Java (NeoForge Mod)
 
@@ -199,6 +204,19 @@ NeoForgeEvents.onEvent('com.pengin0503.itemmilestonelog.api.MilestoneRecordedEve
   const count = event.getCount()
   const ticks = event.getPlayTicks()
   player.tell(`Recorded ${itemId} x${count} at ${ticks} ticks!`)
+})
+```
+
+Recording a milestone when a quest is completed (e.g. with FTB Quests' KubeJS integration):
+
+```js
+// kubejs/server_scripts/quest_milestones.js
+const ItemMilestoneLogApi = Java.loadClass('com.pengin0503.itemmilestonelog.api.ItemMilestoneLogApi')
+const TargetKey = Java.loadClass('com.pengin0503.itemmilestonelog.api.TargetKey')
+
+FTBQuestsEvents.completed('0123456789ABCDEF', event => {
+  // Returns false unless minecraft:nether_star is one of the player's targets and not yet recorded
+  ItemMilestoneLogApi.recordNow(event.player, TargetKey.of('minecraft:nether_star'))
 })
 ```
 

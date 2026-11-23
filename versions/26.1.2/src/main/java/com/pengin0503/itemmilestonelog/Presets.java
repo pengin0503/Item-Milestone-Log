@@ -10,6 +10,7 @@ import com.google.gson.JsonPrimitive;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
 import net.neoforged.fml.loading.FMLPaths;
 
+import javax.annotation.Nullable;
 import java.io.IOException;
 import java.io.Reader;
 import java.io.Writer;
@@ -19,6 +20,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -26,6 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.function.Predicate;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
@@ -363,5 +366,146 @@ public final class Presets {
     /** Preset IDs in a stable (alphabetical) order for suggestions, messages and the GUI. */
     public static List<String> names() {
         return List.copyOf(loadedPresets.keySet());
+    }
+
+    /**
+     * Computes {@code R(S)} for a preset (F5 / F16): the targets in {@code preset} whose item
+     * exists in the registry at evaluation time according to {@code itemExists}.
+     */
+    public static List<TargetKey> resolvableTargets(
+            @Nullable PresetDefinition preset,
+            @Nullable Predicate<String> itemExists) {
+        if (preset == null) {
+            return List.of();
+        }
+        return resolvableTargets(preset.items(), itemExists);
+    }
+
+    /**
+     * Computes {@code R(S)} for a preset target list (F5 / F16): filters {@code presetItems} to
+     * non-null targets whose {@link TargetKey#itemId()} satisfies {@code itemExists}, preserving
+     * order and deduplicating.
+     */
+    public static List<TargetKey> resolvableTargets(
+            @Nullable Collection<TargetKey> presetItems,
+            @Nullable Predicate<String> itemExists) {
+        if (presetItems == null || presetItems.isEmpty() || itemExists == null) {
+            return List.of();
+        }
+        Set<TargetKey> resolvable = new LinkedHashSet<>();
+        for (TargetKey key : presetItems) {
+            if (key != null && itemExists.test(key.itemId())) {
+                resolvable.add(key);
+            }
+        }
+        return resolvable.isEmpty() ? List.of() : List.copyOf(resolvable);
+    }
+
+    /**
+     * Pure judgment function for F5 preset completion: returns all presets from {@code allPresets}
+     * newly completed by recording {@code justRecordedKey}.
+     *
+     * <p>A preset {@code S} is newly completed iff:
+     * <ul>
+     *   <li>{@code presetsEnabled} is {@code true},</li>
+     *   <li>{@code R(S)} (targets in {@code S} whose item satisfies {@code itemExists}) is non-empty,</li>
+     *   <li>{@code justRecordedKey} is in {@code R(S)} (exact item + count match),</li>
+     *   <li>{@code S.id()} is not in {@code alreadyCompletedIds}, and</li>
+     *   <li>every key in {@code R(S)} is present in {@code recordedKeys} with an exact {@link TargetKey} match.</li>
+     * </ul>
+     */
+    public static List<PresetDefinition> findNewlyCompletedPresets(
+            @Nullable TargetKey justRecordedKey,
+            @Nullable Set<TargetKey> recordedKeys,
+            @Nullable Collection<PresetDefinition> allPresets,
+            @Nullable Predicate<String> itemExists,
+            @Nullable Set<String> alreadyCompletedIds,
+            boolean presetsEnabled) {
+        if (!presetsEnabled
+                || justRecordedKey == null
+                || recordedKeys == null
+                || recordedKeys.isEmpty()
+                || allPresets == null
+                || allPresets.isEmpty()
+                || itemExists == null) {
+            return List.of();
+        }
+        List<PresetDefinition> completed = new ArrayList<>();
+        for (PresetDefinition preset : allPresets) {
+            if (preset == null || preset.id() == null) {
+                continue;
+            }
+            if (alreadyCompletedIds != null && alreadyCompletedIds.contains(preset.id())) {
+                continue;
+            }
+            List<TargetKey> resolvable = resolvableTargets(preset.items(), itemExists);
+            if (resolvable.isEmpty() || !resolvable.contains(justRecordedKey)) {
+                continue;
+            }
+            if (recordedKeys.containsAll(resolvable)) {
+                completed.add(preset);
+            }
+        }
+        return completed.isEmpty() ? List.of() : List.copyOf(completed);
+    }
+
+    /**
+     * Pure judgment function for F5 preset completion accepting the player's records map.
+     */
+    public static List<PresetDefinition> findNewlyCompletedPresets(
+            @Nullable TargetKey justRecordedKey,
+            @Nullable Map<TargetKey, ?> playerRecords,
+            @Nullable Collection<PresetDefinition> allPresets,
+            @Nullable Predicate<String> itemExists,
+            @Nullable Set<String> alreadyCompletedIds,
+            boolean presetsEnabled) {
+        return findNewlyCompletedPresets(
+                justRecordedKey,
+                playerRecords != null ? playerRecords.keySet() : null,
+                allPresets,
+                itemExists,
+                alreadyCompletedIds,
+                presetsEnabled);
+    }
+
+    /**
+     * Pure judgment function for F5 preset completion returning the newly completed preset IDs.
+     */
+    public static List<String> findNewlyCompletedPresetIds(
+            @Nullable TargetKey justRecordedKey,
+            @Nullable Map<TargetKey, ?> playerRecords,
+            @Nullable Collection<PresetDefinition> allPresets,
+            @Nullable Predicate<String> itemExists,
+            @Nullable Set<String> alreadyCompletedIds,
+            boolean presetsEnabled) {
+        return findNewlyCompletedPresetIds(
+                justRecordedKey,
+                playerRecords != null ? playerRecords.keySet() : null,
+                allPresets,
+                itemExists,
+                alreadyCompletedIds,
+                presetsEnabled);
+    }
+
+    /**
+     * Pure judgment function for F5 preset completion returning the newly completed preset IDs.
+     */
+    public static List<String> findNewlyCompletedPresetIds(
+            @Nullable TargetKey justRecordedKey,
+            @Nullable Set<TargetKey> recordedKeys,
+            @Nullable Collection<PresetDefinition> allPresets,
+            @Nullable Predicate<String> itemExists,
+            @Nullable Set<String> alreadyCompletedIds,
+            boolean presetsEnabled) {
+        List<PresetDefinition> completed = findNewlyCompletedPresets(
+                justRecordedKey, recordedKeys, allPresets, itemExists, alreadyCompletedIds, presetsEnabled);
+        if (completed.isEmpty()) {
+            return List.of();
+        }
+        List<String> ids = new ArrayList<>(completed.size());
+        for (PresetDefinition preset : completed) {
+            ids.add(preset.id());
+        }
+        return List.copyOf(ids);
     }
 }

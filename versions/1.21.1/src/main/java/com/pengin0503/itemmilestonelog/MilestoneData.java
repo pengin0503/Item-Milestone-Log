@@ -54,8 +54,12 @@ public class MilestoneData extends SavedData {
         public boolean muteBroadcasts = false;
         /** Whether this player has opted out of quantity-target progress alerts. */
         public boolean muteProgressAlerts = false;
+        /** Whether this player has opted out of having their milestones posted to Discord. */
+        public boolean excludeFromDiscord = false;
         /** Target (item + quantity) -> highest progress alert threshold already notified (0 possible as baseline). */
         public final Map<TargetKey, Integer> progressNotified = new LinkedHashMap<>();
+        /** Preset IDs that this player has already completed (announced at most once unless resetall). */
+        public final Set<String> completedPresets = new LinkedHashSet<>();
     }
 
     private final Map<UUID, PlayerData> players = new LinkedHashMap<>();
@@ -268,6 +272,11 @@ public class MilestoneData extends SavedData {
             } else if (entry.contains("muteProgressAlerts")) {
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed muteProgressAlerts tag in SavedData");
             }
+            if (entry.contains("excludeFromDiscord", Tag.TAG_ANY_NUMERIC)) {
+                pd.excludeFromDiscord = entry.getBoolean("excludeFromDiscord");
+            } else if (entry.contains("excludeFromDiscord")) {
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed excludeFromDiscord tag in SavedData");
+            }
             if (entry.contains("progressNotified", Tag.TAG_COMPOUND)) {
                 CompoundTag progressTag = entry.getCompound("progressNotified");
                 for (String rawKey : progressTag.getAllKeys()) {
@@ -290,6 +299,23 @@ public class MilestoneData extends SavedData {
                 }
             } else if (entry.contains("progressNotified")) {
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed progressNotified tag in SavedData");
+            }
+            if (entry.contains("completedPresets", Tag.TAG_LIST)) {
+                Tag rawCompleted = entry.get("completedPresets");
+                if (rawCompleted instanceof ListTag rawList && !rawList.isEmpty() && rawList.getElementType() != Tag.TAG_STRING) {
+                    ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed completedPresets tag in SavedData");
+                } else {
+                    for (Tag t : entry.getList("completedPresets", Tag.TAG_STRING)) {
+                        String presetId = t.getAsString();
+                        if (Presets.isValidId(presetId)) {
+                            pd.completedPresets.add(presetId);
+                        } else {
+                            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid completedPresets entry '{}' in SavedData", presetId);
+                        }
+                    }
+                }
+            } else if (entry.contains("completedPresets")) {
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed completedPresets tag in SavedData");
             }
             data.players.put(uuid, pd);
         }
@@ -365,12 +391,22 @@ public class MilestoneData extends SavedData {
             if (pd.muteProgressAlerts) {
                 entry.putBoolean("muteProgressAlerts", true);
             }
+            if (pd.excludeFromDiscord) {
+                entry.putBoolean("excludeFromDiscord", true);
+            }
             if (!pd.progressNotified.isEmpty()) {
                 CompoundTag progressTag = new CompoundTag();
                 for (Map.Entry<TargetKey, Integer> p : pd.progressNotified.entrySet()) {
                     progressTag.putInt(p.getKey().toEncodedString(), p.getValue());
                 }
                 entry.put("progressNotified", progressTag);
+            }
+            if (!pd.completedPresets.isEmpty()) {
+                ListTag completedTag = new ListTag();
+                for (String presetId : pd.completedPresets) {
+                    completedTag.add(StringTag.valueOf(presetId));
+                }
+                entry.put("completedPresets", completedTag);
             }
             all.put(e.getKey().toString(), entry);
         }

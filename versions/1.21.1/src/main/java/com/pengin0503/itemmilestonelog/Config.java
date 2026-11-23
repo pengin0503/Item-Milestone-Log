@@ -54,9 +54,10 @@ public final class Config {
             .comment("Announce to all online players when someone records a world-first item in this world.")
             .define("announceWorldFirst", false);
 
-    /** Discord webhook URL for milestone notifications (empty = disabled; never logged). */
+    /** Discord webhook URL for milestone notifications (empty = disabled; supports env:VAR_NAME; never logged). */
     public static final ModConfigSpec.ConfigValue<String> DISCORD_WEBHOOK_URL = BUILDER
             .comment("Optional Discord webhook URL for milestone notifications. Leave empty to disable.",
+                    "You can also use \"env:VAR_NAME\" to read the URL from an environment variable.",
                     "Treat this URL as a secret; it is never printed to logs or chat.")
             .define("discordWebhookUrl", "");
 
@@ -115,6 +116,35 @@ public final class Config {
                     "Set to false to send an individual notification immediately for every record.")
             .define("groupSimultaneousRecords", true);
 
+    /** Send Discord milestone notifications as rich embeds instead of plain text. */
+    public static final ModConfigSpec.BooleanValue DISCORD_USE_EMBEDS = BUILDER
+            .comment("Send Discord milestone notifications as rich embeds instead of plain text.",
+                    "Set to false to keep the plain-text format.")
+            .define("discordUseEmbeds", false);
+
+    /** Language used for Discord webhook notifications (must be a bundled language). */
+    public static final ModConfigSpec.ConfigValue<String> DISCORD_LANGUAGE = BUILDER
+            .comment("Language for Discord webhook notifications (\"en_us\" or \"ja_jp\").")
+            .define("discordLanguage", "en_us", Config::validateDiscordLanguage);
+
+    /** Allow players to opt out of having their milestones posted to Discord. */
+    public static final ModConfigSpec.BooleanValue ALLOW_DISCORD_OPT_OUT = BUILDER
+            .comment("Allow players to opt out of having their milestones posted to Discord via /milestonelog discordoptout.",
+                    "When false, the command is disabled and saved opt-out preferences are ignored (but preserved).")
+            .define("allowDiscordOptOut", true);
+
+    /** Announce preset completions to all online players instead of only the completing player. */
+    public static final ModConfigSpec.BooleanValue ANNOUNCE_PRESET_COMPLETION = BUILDER
+            .comment("Announce to all online players when someone completes all targets of a preset.",
+                    "When false, only the completing player is notified (if notifyPlayer is enabled).")
+            .define("announcePresetCompletion", false);
+
+    /** Post preset completions to Discord when a webhook is configured. */
+    public static final ModConfigSpec.BooleanValue DISCORD_NOTIFY_PRESET_COMPLETION = BUILDER
+            .comment("Post preset completions to Discord when a webhook URL is configured.",
+                    "Independent of announcePresetCompletion and discordNotifyScope.")
+            .define("discordNotifyPresetCompletion", false);
+
     static final ModConfigSpec SPEC = BUILDER.build();
 
     private record ThresholdsCache(List<? extends Integer> source, List<Integer> normalized) {
@@ -160,5 +190,9 @@ public final class Config {
 
     private static boolean validateDiscordScope(Object obj) {
         return obj instanceof String s && ("all".equals(s) || "world_first".equals(s));
+    }
+
+    static boolean validateDiscordLanguage(Object obj) {
+        return obj instanceof String s && ServerLang.BUNDLED_LANGUAGES.contains(s);
     }
 }

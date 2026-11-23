@@ -5,6 +5,7 @@ import java.util.Comparator;
 import java.util.IllegalFormatException;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.IntFunction;
 import java.util.function.Predicate;
 
 /**
@@ -99,6 +100,34 @@ public final class NotificationGrouping {
             boolean announceWorldFirst,
             boolean milestoneSoundEnabled,
             String discordNotifyScope) {
+        return planFlush(
+                records,
+                records,
+                isWorldFirst,
+                groupSortOrder,
+                notifyPlayer,
+                broadcastMilestones,
+                announceWorldFirst,
+                milestoneSoundEnabled,
+                true,
+                discordNotifyScope);
+    }
+
+    /**
+     * Decides per-channel delivery for a single player's queued records in a single tick,
+     * with an independent Discord queue and opt-out gate (F27 + F45).
+     */
+    public static <T> FlushPlan<T> planFlush(
+            List<T> records,
+            List<T> discordRecords,
+            Predicate<T> isWorldFirst,
+            Comparator<T> groupSortOrder,
+            boolean notifyPlayer,
+            boolean broadcastMilestones,
+            boolean announceWorldFirst,
+            boolean milestoneSoundEnabled,
+            boolean discordEnabled,
+            String discordNotifyScope) {
         if (records == null || records.isEmpty()) {
             return new FlushPlan<>(
                     ChannelPlan.none(),
@@ -119,8 +148,20 @@ public final class NotificationGrouping {
         ChannelPlan<T> broadcastChat = planChannel(records, broadcastMilestones, groupSortOrder);
         ChannelPlan<T> worldFirstChat = planChannel(worldFirstRecords, announceWorldFirst, groupSortOrder);
 
-        List<T> discordEligible = "world_first".equals(discordNotifyScope) ? worldFirstRecords : records;
-        ChannelPlan<T> discord = planChannel(discordEligible, true, groupSortOrder);
+        ChannelPlan<T> discord;
+        if (!discordEnabled || discordRecords == null || discordRecords.isEmpty()) {
+            discord = ChannelPlan.none();
+        } else if ("world_first".equals(discordNotifyScope)) {
+            List<T> discordWorldFirst = new ArrayList<>();
+            for (T rec : discordRecords) {
+                if (isWorldFirst != null && isWorldFirst.test(rec)) {
+                    discordWorldFirst.add(rec);
+                }
+            }
+            discord = planChannel(discordWorldFirst, true, groupSortOrder);
+        } else {
+            discord = planChannel(discordRecords, true, groupSortOrder);
+        }
 
         return new FlushPlan<>(playerChat, broadcastChat, worldFirstChat, milestoneSoundEnabled, discord);
     }
@@ -253,20 +294,31 @@ public final class NotificationGrouping {
         return lines;
     }
 
-    private static String assembleDiscordBody(
+    /**
+     * Assembles an optional header line, up to {@code maxLines} formatted item lines, and a
+     * trailing "more" line produced by {@code moreLineFormatter} when lines are omitted,
+     * keeping the result within {@code maxChars} UTF-16 code units.
+     */
+    public static String assembleDiscordBody(
             String header,
             List<String> itemLines,
-            String moreTemplate,
+            IntFunction<String> moreLineFormatter,
             int maxLines,
             int maxChars) {
+        if (itemLines == null || itemLines.isEmpty()) {
+            return "";
+        }
+        IntFunction<String> formatter = moreLineFormatter != null
+                ? moreLineFormatter
+                : remaining -> formatSafe(null, DiscordTemplates.ENGLISH_DEFAULTS.moreLine(), remaining);
         int total = itemLines.size();
         int shown = Math.min(total, Math.max(0, maxLines));
         int limit = Math.max(0, maxChars);
 
-        String content = renderDiscordBody(header, itemLines, shown, total, moreTemplate);
+        String content = renderDiscordBody(header, itemLines, shown, total, formatter);
         while (content.length() > limit && shown > 0) {
             shown--;
-            content = renderDiscordBody(header, itemLines, shown, total, moreTemplate);
+            content = renderDiscordBody(header, itemLines, shown, total, formatter);
         }
         if (content.length() > limit) {
             return TextEscaping.truncateUtf16(content, limit);
@@ -274,12 +326,26 @@ public final class NotificationGrouping {
         return content;
     }
 
+    private static String assembleDiscordBody(
+            String header,
+            List<String> itemLines,
+            String moreTemplate,
+            int maxLines,
+            int maxChars) {
+        return assembleDiscordBody(
+                header,
+                itemLines,
+                remaining -> formatSafe(moreTemplate, DiscordTemplates.ENGLISH_DEFAULTS.moreLine(), remaining),
+                maxLines,
+                maxChars);
+    }
+
     private static String renderDiscordBody(
             String header,
             List<String> itemLines,
             int shown,
             int total,
-            String moreTemplate) {
+            IntFunction<String> moreLineFormatter) {
         StringBuilder sb = new StringBuilder();
         if (header != null && !header.isEmpty()) {
             sb.append(header);
@@ -295,7 +361,10 @@ public final class NotificationGrouping {
             if (sb.length() > 0) {
                 sb.append('\n');
             }
-            sb.append(formatSafe(moreTemplate, DiscordTemplates.ENGLISH_DEFAULTS.moreLine(), remaining));
+            String moreLine = moreLineFormatter.apply(remaining);
+            if (moreLine != null) {
+                sb.append(moreLine);
+            }
         }
         return sb.toString();
     }

@@ -4,6 +4,7 @@ import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
 import com.pengin0503.itemmilestonelog.api.WorldFirstRecord;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.IntTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.NbtIo;
 import net.minecraft.nbt.NbtOps;
@@ -17,6 +18,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -53,8 +55,11 @@ class MilestoneDataTest {
         pdA.firstJoinHintShown = true;
         pdA.muteBroadcasts = true;
         pdA.muteProgressAlerts = true;
+        pdA.excludeFromDiscord = true;
         pdA.progressNotified.put(TargetKey.of("minecraft:iron_ingot", 100), 0);
         pdA.progressNotified.put(TargetKey.of("minecraft:gold_ingot", 500), 50);
+        pdA.completedPresets.add("vanilla_endgame");
+        pdA.completedPresets.add("my_custom_pack");
 
         MilestoneData.PlayerData pdB = original.player(playerB);
         pdB.targets.add(atmStar);
@@ -79,10 +84,12 @@ class MilestoneDataTest {
         assertTrue(loadedA.firstJoinHintShown);
         assertTrue(loadedA.muteBroadcasts);
         assertTrue(loadedA.muteProgressAlerts);
+        assertTrue(loadedA.excludeFromDiscord);
         assertEquals(Map.of(
                 TargetKey.of("minecraft:iron_ingot", 100), 0,
                 TargetKey.of("minecraft:gold_ingot", 500), 50
         ), loadedA.progressNotified);
+        assertEquals(List.of("vanilla_endgame", "my_custom_pack"), List.copyOf(loadedA.completedPresets));
 
         MilestoneData.PlayerData loadedB = loaded.playerOrNull(playerB);
         assertNotNull(loadedB);
@@ -93,7 +100,9 @@ class MilestoneDataTest {
         assertFalse(loadedB.firstJoinHintShown);
         assertFalse(loadedB.muteBroadcasts);
         assertFalse(loadedB.muteProgressAlerts);
+        assertFalse(loadedB.excludeFromDiscord);
         assertTrue(loadedB.progressNotified.isEmpty());
+        assertTrue(loadedB.completedPresets.isEmpty());
 
         WorldFirstRecord wf1 = loaded.worldFirstOrNull(diamond1);
         assertNotNull(wf1);
@@ -190,7 +199,9 @@ class MilestoneDataTest {
         assertEquals(Map.of(TargetKey.of("minecraft:diamond"), MilestoneRecord.legacy(12340)), pd.records);
         assertTrue(pd.carriedFromCreative.isEmpty());
         assertFalse(pd.muteProgressAlerts);
+        assertFalse(pd.excludeFromDiscord);
         assertTrue(pd.progressNotified.isEmpty());
+        assertTrue(pd.completedPresets.isEmpty());
         assertTrue(loaded.worldFirsts().isEmpty());
     }
 
@@ -438,7 +449,9 @@ class MilestoneDataTest {
         assertFalse(player.contains("firstJoinHintShown"), player::toString);
         assertFalse(player.contains("muteBroadcasts"), player::toString);
         assertFalse(player.contains("muteProgressAlerts"), player::toString);
+        assertFalse(player.contains("excludeFromDiscord"), player::toString);
         assertFalse(player.contains("progressNotified"), player::toString);
+        assertFalse(player.contains("completedPresets"), player::toString);
         assertFalse(saved.contains("worldFirsts"), saved::toString);
     }
 
@@ -578,5 +591,167 @@ class MilestoneDataTest {
 
         assertTrue(loaded.purgePlayer(PLAYER_A));
         assertNull(loaded.playerOrNull(PLAYER_A));
+    }
+
+    @Test
+    void persistsExcludeFromDiscordLenientlyMigratesFromLegacyAndSurvivesResetAll(@TempDir Path dir) throws IOException {
+        UUID playerB = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        UUID playerC = UUID.fromString("33333333-3333-3333-3333-333333333333");
+
+        CompoundTag playerATag = new CompoundTag();
+        playerATag.putString("lastKnownName", "Alice");
+        playerATag.putBoolean("excludeFromDiscord", true);
+
+        CompoundTag playerBTag = new CompoundTag();
+        playerBTag.putString("lastKnownName", "Bob");
+        // excludeFromDiscord absent -> defaults to false
+
+        CompoundTag playerCTag = new CompoundTag();
+        playerCTag.putString("lastKnownName", "Charlie");
+        playerCTag.put("excludeFromDiscord", StringTag.valueOf("garbage")); // malformed -> leniently defaults to false
+
+        CompoundTag players = new CompoundTag();
+        players.put(PLAYER_A.toString(), playerATag);
+        players.put(playerB.toString(), playerBTag);
+        players.put(playerC.toString(), playerCTag);
+        CompoundTag dataTag = new CompoundTag();
+        dataTag.put("players", players);
+
+        MilestoneData loaded = MilestoneData.CODEC.parse(NbtOps.INSTANCE, dataTag).getOrThrow();
+        MilestoneData.PlayerData loadedA = loaded.playerOrNull(PLAYER_A);
+        MilestoneData.PlayerData loadedB = loaded.playerOrNull(playerB);
+        MilestoneData.PlayerData loadedC = loaded.playerOrNull(playerC);
+        assertNotNull(loadedA);
+        assertNotNull(loadedB);
+        assertNotNull(loadedC);
+        assertTrue(loadedA.excludeFromDiscord);
+        assertFalse(loadedB.excludeFromDiscord);
+        assertFalse(loadedC.excludeFromDiscord);
+        assertEquals("Charlie", loadedC.lastKnownName);
+
+        // Encode back: write only when true
+        CompoundTag encoded = (CompoundTag) MilestoneData.CODEC.encodeStart(NbtOps.INSTANCE, loaded).getOrThrow();
+        CompoundTag encodedPlayers = encoded.getCompoundOrEmpty("players");
+        assertTrue(encodedPlayers.getCompoundOrEmpty(PLAYER_A.toString()).getBooleanOr("excludeFromDiscord", false));
+        assertFalse(encodedPlayers.getCompoundOrEmpty(playerB.toString()).contains("excludeFromDiscord"));
+        assertFalse(encodedPlayers.getCompoundOrEmpty(playerC.toString()).contains("excludeFromDiscord"));
+
+        // 1.21.1 legacy file carrying excludeFromDiscord migrates via readLegacy
+        CompoundTag legacyRoot = new CompoundTag();
+        legacyRoot.put("data", dataTag);
+        legacyRoot.putInt("DataVersion", 3955);
+        Path legacyFile = dir.resolve(MilestoneData.LEGACY_FILE);
+        Files.createDirectories(legacyFile.getParent());
+        NbtIo.writeCompressed(legacyRoot, legacyFile);
+
+        MilestoneData migrated = MilestoneData.readLegacy(legacyFile);
+        assertNotNull(migrated);
+        assertTrue(migrated.playerOrNull(PLAYER_A).excludeFromDiscord);
+        assertFalse(migrated.playerOrNull(playerB).excludeFromDiscord);
+        assertFalse(migrated.playerOrNull(playerC).excludeFromDiscord);
+
+        // ResetAll must NOT clear personal setting excludeFromDiscord, while purge removes PlayerData
+        TargetKey diamond100 = TargetKey.of("minecraft:diamond", 100);
+        loadedA.records.put(diamond100, new MilestoneRecord(100, 1L, 1000L));
+        loadedA.progressNotified.put(diamond100, 50);
+        assertTrue(MilestoneService.resetAllRecords(loaded, PLAYER_A, null).success());
+        assertTrue(loadedA.records.isEmpty());
+        assertTrue(loadedA.progressNotified.isEmpty());
+        assertTrue(loadedA.excludeFromDiscord);
+
+        assertTrue(loaded.purgePlayer(PLAYER_A));
+        assertNull(loaded.playerOrNull(PLAYER_A));
+    }
+
+    @Test
+    void persistsCompletedPresetsSkipsInvalidEntriesMigratesFromLegacyAndClearsOnResetAll(@TempDir Path dir) throws IOException {
+        UUID playerB = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        UUID playerC = UUID.fromString("33333333-3333-3333-3333-333333333333");
+        UUID playerD = UUID.fromString("44444444-4444-4444-4444-444444444444");
+
+        ListTag completedList = new ListTag();
+        completedList.add(StringTag.valueOf("vanilla_endgame"));
+        completedList.add(StringTag.valueOf("atm_star"));
+        completedList.add(StringTag.valueOf("my_custom-1"));
+        completedList.add(StringTag.valueOf("")); // invalid empty ID
+        completedList.add(StringTag.valueOf("Bad Name")); // invalid characters
+        completedList.add(StringTag.valueOf("list")); // reserved ID
+
+        CompoundTag playerATag = new CompoundTag();
+        playerATag.putString("lastKnownName", "Alice");
+        playerATag.put("completedPresets", completedList);
+
+        CompoundTag playerBTag = new CompoundTag();
+        playerBTag.putString("lastKnownName", "Bob");
+        // completedPresets absent -> defaults to empty
+
+        CompoundTag playerCTag = new CompoundTag();
+        playerCTag.putString("lastKnownName", "Charlie");
+        playerCTag.put("completedPresets", StringTag.valueOf("not-a-list")); // malformed -> leniently defaults to empty
+
+        ListTag intList = new ListTag();
+        intList.add(IntTag.valueOf(42));
+        CompoundTag playerDTag = new CompoundTag();
+        playerDTag.putString("lastKnownName", "Dana");
+        playerDTag.put("completedPresets", intList); // non-string list elements -> leniently skipped
+
+        CompoundTag players = new CompoundTag();
+        players.put(PLAYER_A.toString(), playerATag);
+        players.put(playerB.toString(), playerBTag);
+        players.put(playerC.toString(), playerCTag);
+        players.put(playerD.toString(), playerDTag);
+        CompoundTag dataTag = new CompoundTag();
+        dataTag.put("players", players);
+
+        MilestoneData loaded = MilestoneData.CODEC.parse(NbtOps.INSTANCE, dataTag).getOrThrow();
+        MilestoneData.PlayerData loadedA = loaded.playerOrNull(PLAYER_A);
+        MilestoneData.PlayerData loadedB = loaded.playerOrNull(playerB);
+        MilestoneData.PlayerData loadedC = loaded.playerOrNull(playerC);
+        MilestoneData.PlayerData loadedD = loaded.playerOrNull(playerD);
+        assertNotNull(loadedA);
+        assertNotNull(loadedB);
+        assertNotNull(loadedC);
+        assertNotNull(loadedD);
+        assertEquals(List.of("vanilla_endgame", "atm_star", "my_custom-1"), List.copyOf(loadedA.completedPresets));
+        assertTrue(loadedB.completedPresets.isEmpty());
+        assertTrue(loadedC.completedPresets.isEmpty());
+        assertEquals("Charlie", loadedC.lastKnownName);
+        assertTrue(loadedD.completedPresets.isEmpty());
+        assertEquals("Dana", loadedD.lastKnownName);
+
+        // Encode back: write only when non-empty
+        CompoundTag encoded = (CompoundTag) MilestoneData.CODEC.encodeStart(NbtOps.INSTANCE, loaded).getOrThrow();
+        CompoundTag encodedPlayers = encoded.getCompoundOrEmpty("players");
+        assertTrue(encodedPlayers.getCompoundOrEmpty(PLAYER_A.toString()).contains("completedPresets"));
+        assertFalse(encodedPlayers.getCompoundOrEmpty(playerB.toString()).contains("completedPresets"));
+        assertFalse(encodedPlayers.getCompoundOrEmpty(playerC.toString()).contains("completedPresets"));
+        assertFalse(encodedPlayers.getCompoundOrEmpty(playerD.toString()).contains("completedPresets"));
+
+        // 1.21.1 legacy file carrying completedPresets migrates cleanly via readLegacy
+        CompoundTag legacyRoot = new CompoundTag();
+        legacyRoot.put("data", dataTag);
+        legacyRoot.putInt("DataVersion", 3955);
+        Path legacyFile = dir.resolve(MilestoneData.LEGACY_FILE);
+        Files.createDirectories(legacyFile.getParent());
+        NbtIo.writeCompressed(legacyRoot, legacyFile);
+
+        MilestoneData migrated = MilestoneData.readLegacy(legacyFile);
+        assertNotNull(migrated);
+        assertEquals(List.of("vanilla_endgame", "atm_star", "my_custom-1"),
+                List.copyOf(migrated.playerOrNull(PLAYER_A).completedPresets));
+        assertTrue(migrated.playerOrNull(playerB).completedPresets.isEmpty());
+        assertTrue(migrated.playerOrNull(playerC).completedPresets.isEmpty());
+        assertTrue(migrated.playerOrNull(playerD).completedPresets.isEmpty());
+
+        // Single reset keeps completedPresets; resetAll clears completedPresets
+        TargetKey diamond = TargetKey.of("minecraft:diamond");
+        loadedA.records.put(diamond, new MilestoneRecord(100, 1L, 1000L));
+        assertTrue(MilestoneService.resetRecord(
+                loaded, PLAYER_A, null, "minecraft:diamond", 1, Set.of("minecraft:diamond")::contains,
+                k -> net.minecraft.network.chat.Component.literal(k.formatDisplayId())).success());
+        assertEquals(Set.of("vanilla_endgame", "atm_star", "my_custom-1"), loadedA.completedPresets);
+
+        assertTrue(MilestoneService.resetAllRecords(loaded, PLAYER_A, null).success());
+        assertTrue(loadedA.completedPresets.isEmpty());
     }
 }

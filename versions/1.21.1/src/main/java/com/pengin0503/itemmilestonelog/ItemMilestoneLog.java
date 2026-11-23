@@ -7,6 +7,7 @@ import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.config.ModConfig;
 import net.neoforged.neoforge.common.NeoForge;
+import net.neoforged.neoforge.event.server.ServerStartedEvent;
 import net.neoforged.neoforge.event.server.ServerStartingEvent;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import org.slf4j.Logger;
@@ -36,6 +37,7 @@ public class ItemMilestoneLog {
         NeoForge.EVENT_BUS.register(Tracker.class);
         NeoForge.EVENT_BUS.register(MilestoneCommands.class);
         NeoForge.EVENT_BUS.addListener(ItemMilestoneLog::onServerStarting);
+        NeoForge.EVENT_BUS.addListener(ItemMilestoneLog::onServerStarted);
         NeoForge.EVENT_BUS.addListener(ItemMilestoneLog::onServerStopping);
 
         LOGGER.info("Item Milestone Log loaded");
@@ -44,6 +46,12 @@ public class ItemMilestoneLog {
     private static void onServerStarting(ServerStartingEvent event) {
         int custom = Presets.reload();
         LOGGER.info("[ItemMilestoneLog] Loaded {} preset(s) ({} custom)", Presets.names().size(), custom);
+    }
+
+    private static void onServerStarted(ServerStartedEvent event) {
+        if (!event.getServer().isDedicatedServer()) {
+            DiscordNotifier.warnIfWebhookConfiguredInSingleplayer();
+        }
     }
 
     private static void onServerStopping(ServerStoppingEvent event) {

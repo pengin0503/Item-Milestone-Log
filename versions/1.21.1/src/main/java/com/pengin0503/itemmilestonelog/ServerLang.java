@@ -17,6 +17,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Builds the chat messages that the server sends to players.
@@ -28,8 +30,11 @@ import java.util.Map;
  * to English if no bundled translation exists for that language).
  */
 public final class ServerLang {
-    private static final String DEFAULT_LANG = "en_us";
-    private static final List<String> BUNDLED_LANGUAGES = List.of("en_us", "ja_jp");
+    public static final String DEFAULT_LANG = "en_us";
+    public static final List<String> BUNDLED_LANGUAGES = List.of("en_us", "ja_jp");
+
+    private static final Pattern FORMAT_SPECIFIER = Pattern.compile("%(?:(\\d+)\\$)?([s%])");
+    private static final Object[] EMPTY_ARGS = new Object[0];
 
     private static final Map<String, Map<String, String>> languageTables = loadAll();
 
@@ -73,8 +78,87 @@ public final class ServerLang {
                 : Component.translatable(key, args);
     }
 
+    /**
+     * Resolves {@code key} directly from the bundled language table for {@code language}
+     * (falling back to English) and formats it with Minecraft translation placeholders
+     * ({@code %s}, positional {@code %1$s}, and {@code %%}).
+     *
+     * <p>Unlike {@code Component.translatable(...).getString()}, this never consults the
+     * dedicated server's global English {@code Language} table, so non-English languages
+     * such as {@code ja_jp} work on dedicated servers (e.g. for Discord notifications).
+     */
+    public static String formatForLang(@Nullable String language, String key, Object... args) {
+        if (key == null) {
+            return "";
+        }
+        String template = lookupFallback(language, key);
+        if (template == null) {
+            return key;
+        }
+        return formatTemplate(template, args);
+    }
+
+    /** Formats a raw Minecraft translation template supporting {@code %s}, {@code %N$s}, and {@code %%}. */
+    static String formatTemplate(String template, @Nullable Object... args) {
+        if (template == null || template.isEmpty() || template.indexOf('%') < 0) {
+            return template != null ? template : "";
+        }
+        Object[] safeArgs = args != null ? args : EMPTY_ARGS;
+        Matcher matcher = FORMAT_SPECIFIER.matcher(template);
+        StringBuilder sb = new StringBuilder(template.length());
+        int lastEnd = 0;
+        int implicitIndex = 0;
+        while (matcher.find()) {
+            sb.append(template, lastEnd, matcher.start());
+            String pos = matcher.group(1);
+            String type = matcher.group(2);
+            if ("%".equals(type)) {
+                if (pos == null) {
+                    sb.append('%');
+                } else {
+                    sb.append(template, matcher.start(), matcher.end());
+                }
+            } else {
+                int argIndex;
+                if (pos != null) {
+                    int parsed = parsePositiveIndex(pos);
+                    argIndex = parsed >= 1 ? parsed - 1 : -1;
+                } else {
+                    argIndex = implicitIndex++;
+                }
+                if (argIndex >= 0 && argIndex < safeArgs.length) {
+                    sb.append(argToString(safeArgs[argIndex]));
+                } else {
+                    sb.append(template, matcher.start(), matcher.end());
+                }
+            }
+            lastEnd = matcher.end();
+        }
+        sb.append(template, lastEnd, template.length());
+        return sb.toString();
+    }
+
+    private static int parsePositiveIndex(String digits) {
+        try {
+            int value = Integer.parseInt(digits);
+            return value >= 1 ? value : -1;
+        } catch (NumberFormatException e) {
+            return -1;
+        }
+    }
+
+    private static String argToString(@Nullable Object arg) {
+        if (arg instanceof Component component) {
+            return component.getString();
+        }
+        return String.valueOf(arg);
+    }
+
     @Nullable
     static String lookupFallback(@Nullable String language, String key) {
+        if (key == null) {
+            return null;
+        }
         Map<String, Map<String, String>> all = tables();
         if (language != null && !language.isBlank()) {
             String normalized = language.toLowerCase(Locale.ROOT);

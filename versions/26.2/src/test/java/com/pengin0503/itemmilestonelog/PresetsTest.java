@@ -12,8 +12,12 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+
+import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -202,5 +206,80 @@ class PresetsTest {
         assertEquals("corrupt_existing", Presets.get("corrupt_existing").displayName());
 
         Presets.reloadFrom(dir.resolve("clean"));
+    }
+
+    @Test
+    void findNewlyCompletedPresetIdsEnforcesAllJudgmentRules() {
+        TargetKey diamond1 = TargetKey.of("minecraft:diamond", 1);
+        TargetKey diamond100 = TargetKey.of("minecraft:diamond", 100);
+        TargetKey emerald1 = TargetKey.of("minecraft:emerald", 1);
+        TargetKey emerald50 = TargetKey.of("minecraft:emerald", 50);
+        TargetKey iron1 = TargetKey.of("minecraft:iron_ingot", 1);
+        TargetKey missingModItem = TargetKey.of("missingmod:absent_star", 1);
+
+        Presets.PresetDefinition allMissingPreset = new Presets.PresetDefinition(
+                "all_missing", "All Missing", List.of(missingModItem), false);
+        Presets.PresetDefinition mixedPreset = new Presets.PresetDefinition(
+                "mixed_pack", "Mixed Pack", List.of(diamond1, emerald50, missingModItem), false);
+        Presets.PresetDefinition bulkDiamondPreset = new Presets.PresetDefinition(
+                "bulk_diamond", "Bulk Diamond", List.of(diamond100), false);
+        Presets.PresetDefinition starterPreset = new Presets.PresetDefinition(
+                "starter", "Starter", List.of(iron1), false);
+        Presets.PresetDefinition dualPreset = new Presets.PresetDefinition(
+                "diamond_plus_iron", "Diamond Plus Iron", List.of(diamond1, iron1), false);
+
+        List<Presets.PresetDefinition> presets = List.of(
+                allMissingPreset, mixedPreset, bulkDiamondPreset, starterPreset, dualPreset);
+        Set<String> knownItems = Set.of("minecraft:diamond", "minecraft:emerald", "minecraft:iron_ingot");
+
+        // R(S) calculation filters out nonexistent items and yields empty for allMissingPreset
+        assertTrue(Presets.resolvableTargets(allMissingPreset, knownItems::contains).isEmpty());
+        assertEquals(List.of(diamond1, emerald50),
+                Presets.resolvableTargets(mixedPreset, knownItems::contains));
+
+        MilestoneRecord dummyRecord = new MilestoneRecord(100, 1L, 1_700_000_000_000L);
+        Map<TargetKey, MilestoneRecord> records = new LinkedHashMap<>();
+
+        // 1. Empty R(S): recording an item never completes a preset whose R(S) is empty
+        records.put(iron1, dummyRecord);
+        assertEquals(List.of("starter"),
+                Presets.findNewlyCompletedPresetIds(iron1, records, presets, knownItems::contains, Set.of(), true));
+        assertFalse(Presets.findNewlyCompletedPresetIds(
+                iron1, records, List.of(allMissingPreset), knownItems::contains, Set.of(), true)
+                .contains("all_missing"));
+        // Even if the player somehow had a record for missingModItem, it's not in R(S) so R(S) is still empty
+        Map<TargetKey, MilestoneRecord> withMissingRec = Map.of(missingModItem, dummyRecord);
+        assertTrue(Presets.findNewlyCompletedPresetIds(
+                missingModItem, withMissingRec, List.of(allMissingPreset), knownItems::contains, Set.of(), true)
+                .isEmpty());
+
+        // 2. Count mismatch: recording diamond#100 completes bulk_diamond, NOT mixed_pack (needs diamond#1)
+        //    and recording emerald#1 does not satisfy emerald#50
+        records.put(diamond100, dummyRecord);
+        records.put(emerald1, dummyRecord);
+        assertEquals(List.of("bulk_diamond"),
+                Presets.findNewlyCompletedPresetIds(diamond100, records, presets, knownItems::contains, Set.of("starter"), true));
+        assertTrue(Presets.findNewlyCompletedPresetIds(emerald1, records, presets, knownItems::contains, Set.of("starter", "bulk_diamond"), true)
+                .isEmpty());
+
+        // 3. K not in preset: starter is already satisfied in records, but recording diamond#1 (not in starter)
+        //    must NOT report starter even if starter is not in alreadyCompletedIds
+        records.put(diamond1, dummyRecord);
+        assertEquals(List.of("diamond_plus_iron"),
+                Presets.findNewlyCompletedPresetIds(diamond1, records, presets, knownItems::contains, Set.of(), true));
+
+        // 4. Nonexistent items excluded from R(S): now recording emerald#50 completes mixed_pack
+        //    even though missingmod:absent_star is not recorded
+        records.put(emerald50, dummyRecord);
+        assertEquals(List.of("mixed_pack"),
+                Presets.findNewlyCompletedPresetIds(emerald50, records, presets, knownItems::contains, Set.of("diamond_plus_iron"), true));
+
+        // 5. Already completed: if mixed_pack is already in completedPresets, it is not returned again
+        assertTrue(Presets.findNewlyCompletedPresetIds(
+                emerald50, records, presets, knownItems::contains, Set.of("mixed_pack"), true).isEmpty());
+
+        // 6. presetsEnabled = false: always returns empty list
+        assertTrue(Presets.findNewlyCompletedPresetIds(
+                emerald50, records, presets, knownItems::contains, Set.of(), false).isEmpty());
     }
 }

@@ -76,6 +76,27 @@ public final class MilestoneService {
         return base;
     }
 
+    public static Component presetDisplayName(@Nullable ServerPlayer recipient, Presets.PresetDefinition preset) {
+        if (preset.builtin()) {
+            return ServerLang.tr(recipient, "gui.itemmilestonelog.preset." + preset.id());
+        }
+        return customPresetLiteralName(preset);
+    }
+
+    public static Component presetDisplayNameForLang(@Nullable String language, Presets.PresetDefinition preset) {
+        if (preset.builtin()) {
+            return ServerLang.trForLang(language, "gui.itemmilestonelog.preset." + preset.id());
+        }
+        return customPresetLiteralName(preset);
+    }
+
+    private static Component customPresetLiteralName(Presets.PresetDefinition preset) {
+        String display = (preset.displayName() != null && !preset.displayName().isEmpty())
+                ? preset.displayName()
+                : preset.id();
+        return Component.literal(display != null ? display : "");
+    }
+
     public static boolean isPrivileged(CommandSourceStack source) {
         MinecraftServer server = source.getServer();
         boolean dedicated = server == null || server.isDedicatedServer();
@@ -102,7 +123,7 @@ public final class MilestoneService {
         return isPrivileged(player);
     }
 
-    private static boolean isKnownNonAirItem(String normalizedId) {
+    static boolean isKnownNonAirItem(String normalizedId) {
         Identifier id = Identifier.tryParse(normalizedId);
         return id != null && BuiltInRegistries.ITEM.containsKey(id) && BuiltInRegistries.ITEM.getValue(id) != Items.AIR;
     }
@@ -193,6 +214,66 @@ public final class MilestoneService {
             return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_item", itemId));
         }
         return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.not_target", displayName.apply(key)));
+    }
+
+    /** Display names are not shown for API calls; avoid registry lookups for the unused feedback message. */
+    private static final Function<TargetKey, Component> API_DISPLAY_NAME = key -> Component.literal(key.formatDisplayId());
+
+    /**
+     * F32 {@code ItemMilestoneLogApi#addTarget}: adds {@code target} to the player's personal targets
+     * with the same validation and limit as the {@code add} command, creating the player's data if
+     * missing, and re-syncs the player's GUI if they are online. Callers check the server thread.
+     */
+    public static boolean addTargetFromApi(MinecraftServer server, UUID playerId, @Nullable TargetKey target) {
+        boolean added = addTargetFromApi(MilestoneData.get(server), playerId, target, MilestoneService::isKnownNonAirItem);
+        if (added) {
+            syncOnlinePlayerIfOpen(server, playerId);
+        }
+        return added;
+    }
+
+    static boolean addTargetFromApi(MilestoneData data, UUID playerId, @Nullable TargetKey target,
+                                    Predicate<String> isKnownNonAirItem) {
+        if (target == null) {
+            return false;
+        }
+        return addTarget(data, playerId, null, target.itemId(), target.count(), isKnownNonAirItem, API_DISPLAY_NAME)
+                .success();
+    }
+
+    /**
+     * F32 {@code ItemMilestoneLogApi#removeTarget}: removes {@code target} from the player's personal
+     * targets with the same cleanup as the {@code remove} command (§1.1: drops the key's
+     * {@code progressNotified} entry). Keys in {@code defaultTargets} cannot be removed. Re-syncs the
+     * player's GUI if they are online. Callers check the server thread.
+     */
+    public static boolean removeTargetFromApi(MinecraftServer server, UUID playerId, @Nullable TargetKey target) {
+        boolean removed = removeTargetFromApi(MilestoneData.get(server), playerId, target, Tracker.defaultTargets());
+        if (removed) {
+            syncOnlinePlayerIfOpen(server, playerId);
+        }
+        return removed;
+    }
+
+    static boolean removeTargetFromApi(MilestoneData data, UUID playerId, @Nullable TargetKey target,
+                                       Set<TargetKey> defaultTargets) {
+        if (target == null) {
+            return false;
+        }
+        TargetKey normalized = TargetKey.normalize(target.itemId(), target.count());
+        if (defaultTargets.contains(target) || (normalized != null && defaultTargets.contains(normalized))) {
+            return false;
+        }
+        return removeTarget(data, playerId, null, target.itemId(), target.count(), id -> true, API_DISPLAY_NAME)
+                .success();
+    }
+
+    /** Re-syncs the GUI of {@code playerId} if that player is online and has the GUI channel. */
+    public static void syncOnlinePlayerIfOpen(MinecraftServer server, UUID playerId) {
+        ServerPlayer online = server.getPlayerList().getPlayer(playerId);
+        if (online != null) {
+            syncPlayerIfOpen(online);
+        }
     }
 
     public static ActionResult applyPreset(ServerPlayer player, String name) {
@@ -395,11 +476,34 @@ public final class MilestoneService {
                 pd.progressNotified.clear();
                 changed = true;
             }
+            if (!pd.completedPresets.isEmpty()) {
+                pd.completedPresets.clear();
+                changed = true;
+            }
         }
         if (changed) {
             data.setDirty();
         }
         return new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.resetall_done", count));
+    }
+
+    public static ActionResult toggleDiscordOptOut(ServerPlayer player) {
+        return toggleDiscordOptOut(MilestoneData.get(player.level().getServer()), player.getUUID(), player,
+                Config.ALLOW_DISCORD_OPT_OUT.get());
+    }
+
+    static ActionResult toggleDiscordOptOut(MilestoneData data, UUID playerId, @Nullable ServerPlayer player,
+                                            boolean allowDiscordOptOut) {
+        if (!allowDiscordOptOut) {
+            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.feature_disabled"));
+        }
+        MilestoneData.PlayerData pd = data.player(playerId);
+        pd.excludeFromDiscord = !pd.excludeFromDiscord;
+        data.setDirty();
+        String key = pd.excludeFromDiscord
+                ? "message.itemmilestonelog.discordoptout_on"
+                : "message.itemmilestonelog.discordoptout_off";
+        return new ActionResult(true, ServerLang.tr(player, key));
     }
 
     public static void syncPlayerIfOpen(ServerPlayer player) {

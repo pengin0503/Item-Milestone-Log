@@ -1,7 +1,10 @@
 package com.pengin0503.itemmilestonelog;
 
+import com.pengin0503.itemmilestonelog.api.ItemMilestoneLogApi;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecordedEvent;
+import com.pengin0503.itemmilestonelog.api.PresetCompletedEvent;
+import com.pengin0503.itemmilestonelog.api.RecordCause;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
 import com.pengin0503.itemmilestonelog.network.ModNetworking;
 import com.pengin0503.itemmilestonelog.network.SyncMilestonesPayload;
@@ -16,6 +19,7 @@ import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.GameType;
+import net.neoforged.bus.api.Event;
 import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.common.NeoForge;
@@ -42,8 +46,11 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.IntSupplier;
+import java.util.function.Predicate;
 
 /**
  * Watches tracked items entering a player's possession and records the
@@ -63,11 +70,17 @@ public final class Tracker {
     record QueuedRecord(TargetKey key, MilestoneRecord record, boolean worldFirst) {
     }
 
+    record QueuedPresetCompletion(Presets.PresetDefinition preset, long epochMillis) {
+    }
+
     static final class PendingNotifications {
         final UUID playerId;
         String playerName;
         Component actorDisplayName;
         final List<QueuedRecord> records = new ArrayList<>();
+        final List<QueuedRecord> discordRecords = new ArrayList<>();
+        final List<QueuedPresetCompletion> presetCompletions = new ArrayList<>();
+        final List<QueuedPresetCompletion> discordPresetCompletions = new ArrayList<>();
 
         PendingNotifications(UUID playerId, String playerName, Component actorDisplayName) {
             this.playerId = playerId;
@@ -730,6 +743,54 @@ public final class Tracker {
         return worldFirst ? RecordOutcome.RECORDED_WORLD_FIRST : RecordOutcome.RECORDED;
     }
 
+    static List<Presets.PresetDefinition> evaluatePresetCompletions(
+            MilestoneData data,
+            UUID playerId,
+            TargetKey justRecordedKey,
+            Collection<Presets.PresetDefinition> allPresets,
+            Predicate<String> itemExists,
+            boolean presetsEnabled) {
+        if (!presetsEnabled) {
+            return List.of();
+        }
+        MilestoneData.PlayerData pd = data.playerOrNull(playerId);
+        if (pd == null || pd.records.isEmpty()) {
+            return List.of();
+        }
+        List<Presets.PresetDefinition> newlyCompleted = Presets.findNewlyCompletedPresets(
+                justRecordedKey,
+                pd.records,
+                allPresets,
+                itemExists,
+                pd.completedPresets,
+                true);
+        if (newlyCompleted.isEmpty()) {
+            return List.of();
+        }
+        boolean dirty = false;
+        for (Presets.PresetDefinition preset : newlyCompleted) {
+            if (pd.completedPresets.add(preset.id())) {
+                dirty = true;
+            }
+        }
+        if (dirty) {
+            data.setDirty();
+        }
+        return newlyCompleted;
+    }
+
+    static boolean shouldReceivePresetCompletionChat(
+            UUID actorId,
+            UUID recipientId,
+            boolean recipientMutedBroadcasts,
+            boolean announcePresetCompletion,
+            boolean notifyPlayer) {
+        if (announcePresetCompletion) {
+            return actorId.equals(recipientId) || !recipientMutedBroadcasts;
+        }
+        return notifyPlayer && actorId.equals(recipientId);
+    }
+
     @SubscribeEvent
     public static void onServerTick(ServerTickEvent.Post event) {
         if (PENDING_NOTIFICATIONS.isEmpty()) {
@@ -745,6 +806,17 @@ public final class Tracker {
             TargetKey key,
             MilestoneRecord record,
             boolean worldFirst) {
+        queuePendingNotification(playerId, playerName, actorDisplayName, key, record, worldFirst, true);
+    }
+
+    static void queuePendingNotification(
+            UUID playerId,
+            @Nullable String playerName,
+            @Nullable Component actorDisplayName,
+            TargetKey key,
+            MilestoneRecord record,
+            boolean worldFirst,
+            boolean postToDiscord) {
         String safeName = playerName != null ? playerName : "";
         Component safeDisplayName = actorDisplayName != null ? actorDisplayName : Component.literal(safeName);
         PendingNotifications pending = PENDING_NOTIFICATIONS.computeIfAbsent(
@@ -755,7 +827,43 @@ public final class Tracker {
         if (actorDisplayName != null) {
             pending.actorDisplayName = actorDisplayName;
         }
-        pending.records.add(new QueuedRecord(key, record, worldFirst));
+        QueuedRecord queued = new QueuedRecord(key, record, worldFirst);
+        pending.records.add(queued);
+        if (postToDiscord) {
+            pending.discordRecords.add(queued);
+        }
+    }
+
+    static void queuePendingPresetCompletions(
+            UUID playerId,
+            @Nullable String playerName,
+            @Nullable Component actorDisplayName,
+            List<Presets.PresetDefinition> completedPresets,
+            long epochMillis,
+            boolean postToDiscord) {
+        if (completedPresets == null || completedPresets.isEmpty()) {
+            return;
+        }
+        String safeName = playerName != null ? playerName : "";
+        Component safeDisplayName = actorDisplayName != null ? actorDisplayName : Component.literal(safeName);
+        PendingNotifications pending = PENDING_NOTIFICATIONS.computeIfAbsent(
+                playerId, id -> new PendingNotifications(id, safeName, safeDisplayName));
+        if (!safeName.isEmpty()) {
+            pending.playerName = safeName;
+        }
+        if (actorDisplayName != null) {
+            pending.actorDisplayName = actorDisplayName;
+        }
+        for (Presets.PresetDefinition preset : completedPresets) {
+            if (preset == null) {
+                continue;
+            }
+            QueuedPresetCompletion queued = new QueuedPresetCompletion(preset, epochMillis);
+            pending.presetCompletions.add(queued);
+            if (postToDiscord) {
+                pending.discordPresetCompletions.add(queued);
+            }
+        }
     }
 
     static List<PendingNotifications> drainPendingNotifications() {
@@ -772,7 +880,94 @@ public final class Tracker {
         PENDING_NOTIFICATIONS.clear();
     }
 
+    /** Maximum nesting depth of {@code ItemMilestoneLogApi#recordNow} calls (F32). */
+    static final int MAX_RECORD_NOW_DEPTH = ItemMilestoneLogApi.MAX_RECORD_NOW_DEPTH;
+
+    private static final NestingGuard RECORD_NOW_GUARD = new NestingGuard(MAX_RECORD_NOW_DEPTH);
+
+    /**
+     * Limits the nesting depth of re-entrant calls (F32: {@code recordNow} called from a
+     * {@link MilestoneRecordedEvent} listener) so an endless chain cannot exhaust the stack.
+     * Server-thread only (not thread-safe).
+     */
+    static final class NestingGuard {
+        private final int maxDepth;
+        private int depth;
+
+        NestingGuard(int maxDepth) {
+            this.maxDepth = maxDepth;
+        }
+
+        int depth() {
+            return depth;
+        }
+
+        /**
+         * Runs {@code action} one level deeper and returns its result, or, if that would exceed
+         * {@code maxDepth}, runs {@code onOverflow} instead and returns {@code false}.
+         */
+        boolean run(BooleanSupplier action, Runnable onOverflow) {
+            if (depth >= maxDepth) {
+                onOverflow.run();
+                return false;
+            }
+            depth++;
+            try {
+                return action.getAsBoolean();
+            } finally {
+                depth--;
+            }
+        }
+    }
+
+    /**
+     * F32 {@code recordNow} preconditions: {@code false} for a FakePlayer, while recording is paused,
+     * when {@code key} is not an effective target (defaults + personal), or when already recorded.
+     */
+    static boolean canRecordNow(boolean fakePlayer, boolean recordingPaused, Set<TargetKey> defaults,
+                                @Nullable MilestoneData.PlayerData pd, TargetKey key) {
+        if (fakePlayer || recordingPaused) {
+            return false;
+        }
+        if (!effectiveTargets(defaults, pd).contains(key)) {
+            return false;
+        }
+        return pd == null || !pd.records.containsKey(key);
+    }
+
+    /**
+     * Backs {@code ItemMilestoneLogApi#recordNow} (F32): records {@code key} without checking possession,
+     * through the normal record path with {@link RecordCause#API}. Returns {@code false} without doing
+     * anything when {@link #canRecordNow} rejects it or when the nesting depth would exceed
+     * {@value #MAX_RECORD_NOW_DEPTH} (logged as a warning). Callers check nulls and the server thread.
+     */
+    public static boolean recordNow(ServerPlayer player, TargetKey key) {
+        return RECORD_NOW_GUARD.run(
+                () -> recordNowUnguarded(player, key),
+                () -> ItemMilestoneLog.LOGGER.warn(
+                        "[ItemMilestoneLog] recordNow nesting depth exceeded {}; ignoring {} for {}",
+                        MAX_RECORD_NOW_DEPTH, key.formatDisplayId(), player.getUUID()));
+    }
+
+    private static boolean recordNowUnguarded(ServerPlayer player, TargetKey key) {
+        TargetKey normalized = TargetKey.normalize(key.itemId(), key.count());
+        if (normalized == null) {
+            return false;
+        }
+        MilestoneData data = MilestoneData.get(player.level().getServer());
+        if (!canRecordNow(player instanceof FakePlayer, recordingPaused(player), defaultTargets(),
+                data.playerOrNull(player.getUUID()), normalized)) {
+            return false;
+        }
+        return record(player, data, normalized, true, RecordCause.API);
+    }
+
     private static boolean record(ServerPlayer player, MilestoneData data, TargetKey key, boolean syncImmediately) {
+        return record(player, data, key, syncImmediately, RecordCause.GAMEPLAY);
+    }
+
+    private static boolean record(ServerPlayer player, MilestoneData data, TargetKey key, boolean syncImmediately,
+                                  RecordCause cause) {
         MilestoneData.PlayerData pd = data.player(player.getUUID());
         if (pd.records.containsKey(key)) {
             return false;
@@ -791,25 +986,149 @@ public final class Tracker {
             return false;
         }
         boolean worldFirst = outcome == RecordOutcome.RECORDED_WORLD_FIRST;
+        List<Presets.PresetDefinition> completedPresets = evaluatePresetCompletions(
+                data,
+                player.getUUID(),
+                key,
+                Presets.all(),
+                MilestoneService::isKnownNonAirItem,
+                Config.PRESETS_ENABLED.get());
         ZoneId zone = Config.displayTimeZone();
         String formattedRecord = Playtime.formatRecord(rec, zone);
 
         ItemMilestoneLog.LOGGER.info("[ItemMilestoneLog] {} first obtained {} at playtime {} ({} ticks)",
                 playerName, key.formatDisplayId(), formattedRecord, ticks);
 
+        boolean postToDiscord = DiscordNotifier.shouldPostToDiscord(pd);
         if (Config.GROUP_SIMULTANEOUS_RECORDS.get()) {
-            queuePendingNotification(player.getUUID(), safePlayerName, player.getDisplayName(), key, rec, worldFirst);
-            NeoForge.EVENT_BUS.post(new MilestoneRecordedEvent(player, key.itemId(), key.count(), ticks, day, epochMillis));
+            queuePendingNotification(
+                    player.getUUID(),
+                    safePlayerName,
+                    player.getDisplayName(),
+                    key,
+                    rec,
+                    worldFirst,
+                    postToDiscord);
+            if (!completedPresets.isEmpty()) {
+                queuePendingPresetCompletions(
+                        player.getUUID(),
+                        safePlayerName,
+                        player.getDisplayName(),
+                        completedPresets,
+                        rec.epochMillis(),
+                        postToDiscord);
+            }
+            postRecordEvents(player, key, rec, outcome, completedPresets, cause, event -> NeoForge.EVENT_BUS.post(event));
         } else {
             sendImmediateNotifications(server, data, player, key, ticks, worldFirst, formattedRecord);
-            NeoForge.EVENT_BUS.post(new MilestoneRecordedEvent(player, key.itemId(), key.count(), ticks, day, epochMillis));
-            DiscordNotifier.notifyMilestone(safePlayerName, key, rec, worldFirst);
+            for (Presets.PresetDefinition preset : completedPresets) {
+                sendPresetCompletionChat(
+                        server,
+                        data,
+                        player.getUUID(),
+                        player.getDisplayName(),
+                        player,
+                        preset,
+                        Config.ANNOUNCE_PRESET_COMPLETION.get(),
+                        Config.NOTIFY_PLAYER.get());
+            }
+            postRecordEvents(player, key, rec, outcome, completedPresets, cause, event -> NeoForge.EVENT_BUS.post(event));
+            if (postToDiscord) {
+                DiscordNotifier.notifyMilestone(pd, safePlayerName, key, rec, worldFirst);
+                for (Presets.PresetDefinition preset : completedPresets) {
+                    notifyDiscordPresetCompletion(pd, safePlayerName, preset, rec.epochMillis());
+                }
+            }
         }
 
         if (syncImmediately) {
             MilestoneService.syncPlayerIfOpen(player);
         }
         return true;
+    }
+
+    static void postRecordEvents(
+            ServerPlayer player,
+            TargetKey key,
+            MilestoneRecord record,
+            RecordOutcome outcome,
+            List<Presets.PresetDefinition> completedPresets,
+            Consumer<Event> eventPoster) {
+        postRecordEvents(player, key, record, outcome, completedPresets, RecordCause.GAMEPLAY, eventPoster);
+    }
+
+    static void postRecordEvents(
+            ServerPlayer player,
+            TargetKey key,
+            MilestoneRecord record,
+            RecordOutcome outcome,
+            List<Presets.PresetDefinition> completedPresets,
+            RecordCause cause,
+            Consumer<Event> eventPoster) {
+        if (outcome == RecordOutcome.ALREADY_RECORDED) {
+            return;
+        }
+        eventPoster.accept(new MilestoneRecordedEvent(
+                player,
+                key.itemId(),
+                key.count(),
+                record.playTicks(),
+                record.day(),
+                record.epochMillis(),
+                outcome == RecordOutcome.RECORDED_WORLD_FIRST,
+                cause));
+        if (completedPresets != null) {
+            for (Presets.PresetDefinition preset : completedPresets) {
+                eventPoster.accept(new PresetCompletedEvent(player, preset.id(), preset.builtin()));
+            }
+        }
+    }
+
+    private static void sendPresetCompletionChat(
+            MinecraftServer server,
+            MilestoneData data,
+            UUID actorId,
+            Component actorDisplayName,
+            @Nullable ServerPlayer onlineActor,
+            Presets.PresetDefinition preset,
+            boolean announcePresetCompletion,
+            boolean notifyPlayer) {
+        if (announcePresetCompletion) {
+            for (ServerPlayer recipient : server.getPlayerList().getPlayers()) {
+                MilestoneData.PlayerData recPd = data.playerOrNull(recipient.getUUID());
+                boolean muted = recPd != null && recPd.muteBroadcasts;
+                if (!shouldReceivePresetCompletionChat(actorId, recipient.getUUID(), muted, true, notifyPlayer)) {
+                    continue;
+                }
+                Component presetName = MilestoneService.presetDisplayName(recipient, preset);
+                recipient.sendSystemMessage(ServerLang.tr(
+                        recipient,
+                        "message.itemmilestonelog.preset_completed_broadcast",
+                        actorDisplayName,
+                        presetName));
+            }
+        } else if (onlineActor != null
+                && shouldReceivePresetCompletionChat(actorId, onlineActor.getUUID(), false, false, notifyPlayer)) {
+            Component presetName = MilestoneService.presetDisplayName(onlineActor, preset);
+            onlineActor.sendSystemMessage(ServerLang.tr(
+                    onlineActor,
+                    "message.itemmilestonelog.preset_completed",
+                    presetName));
+        }
+    }
+
+    /**
+     * Posts a newly detected preset completion to Discord (F19).
+     * Called only when {@link DiscordNotifier#shouldPostToDiscord(MilestoneData.PlayerData)} allows
+     * posting for the completing player (both immediately when {@code groupSimultaneousRecords} is
+     * false and on tick-end flush when true).
+     */
+    private static void notifyDiscordPresetCompletion(
+            @Nullable MilestoneData.PlayerData playerData,
+            String playerName,
+            Presets.PresetDefinition preset,
+            long epochMillis) {
+        DiscordNotifier.notifyPresetCompletion(playerData, playerName, preset, epochMillis);
     }
 
     private static void sendImmediateNotifications(
@@ -864,6 +1183,7 @@ public final class Tracker {
         boolean notifyPlayer = Config.NOTIFY_PLAYER.get();
         boolean broadcastMilestones = Config.BROADCAST.get();
         boolean announceWorldFirst = Config.ANNOUNCE_WORLD_FIRST.get();
+        boolean announcePresetCompletion = Config.ANNOUNCE_PRESET_COMPLETION.get();
         boolean milestoneSoundEnabled = Config.MILESTONE_SOUND_ENABLED.get();
         String discordScope = Config.DISCORD_NOTIFY_SCOPE.get();
         ZoneId zone = Config.displayTimeZone();
@@ -871,7 +1191,7 @@ public final class Tracker {
         for (PendingNotifications pending : batch) {
             flushPlayerNotifications(
                     server, data, pending,
-                    notifyPlayer, broadcastMilestones, announceWorldFirst,
+                    notifyPlayer, broadcastMilestones, announceWorldFirst, announcePresetCompletion,
                     milestoneSoundEnabled, discordScope, zone);
         }
     }
@@ -883,17 +1203,22 @@ public final class Tracker {
             boolean notifyPlayer,
             boolean broadcastMilestones,
             boolean announceWorldFirst,
+            boolean announcePresetCompletion,
             boolean milestoneSoundEnabled,
             String discordScope,
             ZoneId zone) {
+        MilestoneData.PlayerData actorPd = data.playerOrNull(pending.playerId);
+        boolean postToDiscord = DiscordNotifier.shouldPostToDiscord(actorPd);
         NotificationGrouping.FlushPlan<QueuedRecord> plan = NotificationGrouping.planFlush(
                 pending.records,
+                pending.discordRecords,
                 QueuedRecord::worldFirst,
                 Comparator.comparing(QueuedRecord::key),
                 notifyPlayer,
                 broadcastMilestones,
                 announceWorldFirst,
                 milestoneSoundEnabled,
+                postToDiscord,
                 discordScope);
 
         ServerPlayer onlineActor = server.getPlayerList().getPlayer(pending.playerId);
@@ -917,12 +1242,37 @@ public final class Tracker {
             playMilestoneSound(onlineActor);
         }
 
-        // 4. F5 preset completion chat notifications will be flushed here when F5 is implemented.
+        // 4. F5 preset completion chat notifications (sent per preset, never grouped)
+        if (!pending.presetCompletions.isEmpty()) {
+            for (QueuedPresetCompletion completed : pending.presetCompletions) {
+                sendPresetCompletionChat(
+                        server,
+                        data,
+                        pending.playerId,
+                        actorDisplayName,
+                        onlineActor,
+                        completed.preset(),
+                        announcePresetCompletion,
+                        notifyPlayer);
+            }
+        }
 
         // 5. Discord record notifications (still sent even if player went offline)
-        sendDiscordChannel(pending.playerName, plan.discord());
+        if (postToDiscord) {
+            sendDiscordChannel(actorPd, pending.playerName, plan.discord());
+        }
 
-        // 6. F19 Discord preset completion notifications will be sent here when F19 is implemented.
+        // 6. F19 Discord preset completion notifications (still sent even if player went offline;
+        //    gated by DiscordNotifier.shouldPostToDiscord)
+        if (postToDiscord && !pending.discordPresetCompletions.isEmpty()) {
+            for (QueuedPresetCompletion completed : pending.discordPresetCompletions) {
+                notifyDiscordPresetCompletion(
+                        actorPd,
+                        pending.playerName,
+                        completed.preset(),
+                        completed.epochMillis());
+            }
+        }
     }
 
     private static void sendPlayerChannel(
@@ -1028,6 +1378,7 @@ public final class Tracker {
     }
 
     private static void sendDiscordChannel(
+            @Nullable MilestoneData.PlayerData playerData,
             String playerName,
             NotificationGrouping.ChannelPlan<QueuedRecord> channel) {
         if (channel.mode() == NotificationGrouping.SendMode.NONE) {
@@ -1035,7 +1386,7 @@ public final class Tracker {
         }
         if (channel.mode() == NotificationGrouping.SendMode.INDIVIDUAL) {
             for (QueuedRecord q : channel.items()) {
-                DiscordNotifier.notifyMilestone(playerName, q.key(), q.record(), q.worldFirst());
+                DiscordNotifier.notifyMilestone(playerData, playerName, q.key(), q.record(), q.worldFirst());
             }
             return;
         }
@@ -1043,7 +1394,7 @@ public final class Tracker {
         for (QueuedRecord q : channel.items()) {
             entries.add(new DiscordNotifier.MilestoneEntry(q.key(), q.record(), q.worldFirst()));
         }
-        DiscordNotifier.notifyMilestonesGrouped(playerName, entries);
+        DiscordNotifier.notifyMilestonesGrouped(playerData, playerName, entries);
     }
 
     private static MutableComponent buildTargetListComponent(
