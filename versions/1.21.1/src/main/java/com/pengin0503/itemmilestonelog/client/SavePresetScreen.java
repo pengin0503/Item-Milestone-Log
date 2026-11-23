@@ -2,6 +2,7 @@ package com.pengin0503.itemmilestonelog.client;
 
 import com.pengin0503.itemmilestonelog.Presets;
 import com.pengin0503.itemmilestonelog.network.MilestoneActionPayload;
+import com.pengin0503.itemmilestonelog.network.PresetEntry;
 import com.pengin0503.itemmilestonelog.network.SyncMilestonesPayload;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
@@ -9,6 +10,8 @@ import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
+
+import javax.annotation.Nullable;
 
 /**
  * Simple name-input screen to save the player's current personal targets as a custom preset.
@@ -26,6 +29,7 @@ public final class SavePresetScreen extends Screen {
 
     public void updateParentData(SyncMilestonesPayload payload) {
         this.parent.updateData(payload);
+        updateSaveButtonState();
     }
 
     @Override
@@ -48,9 +52,7 @@ public final class SavePresetScreen extends Screen {
         nameBox.setValue(currentName);
         nameBox.setResponder(val -> {
             this.currentName = val;
-            if (saveButton != null) {
-                saveButton.active = Presets.isValidId(val.trim());
-            }
+            updateSaveButtonState();
         });
         setInitialFocus(nameBox);
 
@@ -64,7 +66,7 @@ public final class SavePresetScreen extends Screen {
                         btn -> submit())
                 .bounds(startX, btnY, btnWidth, 20)
                 .build());
-        saveButton.active = Presets.isValidId(currentName.trim());
+        updateSaveButtonState();
 
         addRenderableWidget(Button.builder(
                         CommonComponents.GUI_CANCEL,
@@ -73,9 +75,40 @@ public final class SavePresetScreen extends Screen {
                 .build());
     }
 
+    @Nullable
+    private PresetEntry findMatchingPreset(String trimmedId) {
+        if (trimmedId.isEmpty()) {
+            return null;
+        }
+        for (PresetEntry entry : this.parent.getParent().getData().presets()) {
+            if (entry.id().equals(trimmedId)) {
+                return entry;
+            }
+        }
+        return null;
+    }
+
+    private static boolean isBuiltinMatch(String trimmedId, @Nullable PresetEntry matched) {
+        return Presets.isBuiltin(trimmedId) || (matched != null && matched.builtin());
+    }
+
+    private void updateSaveButtonState() {
+        if (saveButton == null) {
+            return;
+        }
+        String trimmed = currentName.trim();
+        PresetEntry matched = findMatchingPreset(trimmed);
+        boolean valid = Presets.isValidId(trimmed) && !isBuiltinMatch(trimmed, matched);
+        saveButton.active = valid;
+        boolean overwrite = valid && matched != null && !matched.builtin();
+        saveButton.setMessage(Component.translatable(
+                overwrite ? "gui.itemmilestonelog.save_preset.overwrite" : "gui.itemmilestonelog.save_preset.save"));
+    }
+
     private void submit() {
         String trimmed = currentName.trim();
-        if (trimmed.isEmpty()) {
+        PresetEntry matched = findMatchingPreset(trimmed);
+        if (!Presets.isValidId(trimmed) || isBuiltinMatch(trimmed, matched)) {
             return;
         }
         ClientMilestoneHandler.sendAction(MilestoneActionPayload.Action.SAVE_PRESET, trimmed);
@@ -94,9 +127,26 @@ public final class SavePresetScreen extends Screen {
         super.render(guiGraphics, mouseX, mouseY, partialTick);
 
         guiGraphics.drawCenteredString(this.font, this.title, this.width / 2, this.height / 2 - 44, 0xFFFFFF);
-        guiGraphics.drawCenteredString(this.font,
-                Component.translatable("gui.itemmilestonelog.save_preset.name_label"),
-                this.width / 2, this.height / 2 - 26, 0xD0D0D0);
+
+        String trimmed = currentName.trim();
+        PresetEntry matched = findMatchingPreset(trimmed);
+        Component label;
+        if (Presets.isValidId(trimmed) && matched != null && !matched.builtin()) {
+            String rawName = matched.displayName();
+            String existingDisplayName = (rawName == null || rawName.isEmpty()) ? matched.id() : rawName;
+            label = Component.translatable(
+                    "gui.itemmilestonelog.save_preset.overwrite_notice",
+                    Component.literal(existingDisplayName));
+        } else {
+            label = Component.translatable("gui.itemmilestonelog.save_preset.name_label");
+        }
+        int maxWidth = Math.max(40, this.width - 20);
+        if (this.font.width(label) > maxWidth) {
+            String trimmedLabel = this.font.plainSubstrByWidth(label.getString(), maxWidth);
+            guiGraphics.drawCenteredString(this.font, trimmedLabel, this.width / 2, this.height / 2 - 26, 0xD0D0D0);
+        } else {
+            guiGraphics.drawCenteredString(this.font, label, this.width / 2, this.height / 2 - 26, 0xD0D0D0);
+        }
     }
 
     @Override

@@ -38,6 +38,8 @@ class TrackerTest {
                 "minecraft:stone#0",
                 "minecraft:stone#1000001",
                 "minecraft:bad id",
+                "#c:ingots/iron",
+                "#c:ingots/iron#10",
                 "",
                 null
         );
@@ -262,5 +264,26 @@ class TrackerTest {
         assertEquals(Tracker.RecordOutcome.RECORDED_WORLD_FIRST,
                 Tracker.applyRecord(data, PLAYER_B, "Bob", diamond64, recB));
         assertEquals(PLAYER_B, data.worldFirstOrNull(diamond64).playerUuid());
+    }
+
+    @Test
+    void applyRecordSkipsNewWorldFirstWhenWorldFirstDisabledWhilePreservingExisting() {
+        MilestoneData data = new MilestoneData();
+        TargetKey emerald = TargetKey.of("minecraft:emerald", 1);
+        TargetKey diamond = TargetKey.of("minecraft:diamond", 1);
+        MilestoneRecord recA = new MilestoneRecord(1000, 2L, 1_700_000_000_000L);
+        MilestoneRecord recB = new MilestoneRecord(2000, 4L, 1_700_000_100_000L);
+
+        // Pre-existing world first recorded while enabled
+        assertEquals(Tracker.RecordOutcome.RECORDED_WORLD_FIRST,
+                Tracker.applyRecord(data, PLAYER_A, "Alice", emerald, recA, true));
+        assertNotNull(data.worldFirstOrNull(emerald));
+
+        // Recording a new item while worldFirstEnabled == false records for player without creating world first
+        assertEquals(Tracker.RecordOutcome.RECORDED,
+                Tracker.applyRecord(data, PLAYER_B, "Bob", diamond, recB, false));
+        assertEquals(recB, data.playerOrNull(PLAYER_B).records.get(diamond));
+        assertNull(data.worldFirstOrNull(diamond));
+        assertNotNull(data.worldFirstOrNull(emerald));
     }
 }

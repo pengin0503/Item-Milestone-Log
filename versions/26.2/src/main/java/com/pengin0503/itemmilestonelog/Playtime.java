@@ -35,10 +35,19 @@ public final class Playtime {
     }
 
     public static String formatDate(long epochMillis) {
-        return DATE_FORMATTER.withZone(ZoneId.systemDefault()).format(Instant.ofEpochMilli(epochMillis));
+        return formatDate(epochMillis, ZoneId.systemDefault());
+    }
+
+    public static String formatDate(long epochMillis, ZoneId zone) {
+        ZoneId effectiveZone = zone != null ? zone : ZoneId.systemDefault();
+        return DATE_FORMATTER.withZone(effectiveZone).format(Instant.ofEpochMilli(epochMillis));
     }
 
     public static String formatRecord(MilestoneRecord record) {
+        return formatRecord(record, ZoneId.systemDefault());
+    }
+
+    public static String formatRecord(MilestoneRecord record, ZoneId zone) {
         String base = format(record.playTicks());
         boolean hasDay = record.hasDay();
         boolean hasEpoch = record.hasEpoch();
@@ -53,7 +62,7 @@ public final class Playtime {
             }
         }
         if (hasEpoch) {
-            sb.append(formatDate(record.epochMillis()));
+            sb.append(formatDate(record.epochMillis(), zone));
         }
         sb.append(')');
         return sb.toString();

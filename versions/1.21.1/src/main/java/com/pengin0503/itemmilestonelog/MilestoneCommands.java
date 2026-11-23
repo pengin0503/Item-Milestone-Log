@@ -27,6 +27,7 @@ import javax.annotation.Nullable;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
@@ -73,9 +74,16 @@ public final class MilestoneCommands {
     }
 
     private static LiteralArgumentBuilder<CommandSourceStack> root(CommandBuildContext buildContext) {
-        SuggestionProvider<CommandSourceStack> presetSuggestions = (ctx, builder) ->
-                SharedSuggestionProvider.suggest(Presets.names(), builder);
+        SuggestionProvider<CommandSourceStack> presetSuggestions = (ctx, builder) -> {
+            if (!Config.PRESETS_ENABLED.get()) {
+                return builder.buildFuture();
+            }
+            return SharedSuggestionProvider.suggest(Presets.names(), builder);
+        };
         SuggestionProvider<CommandSourceStack> customPresetSuggestions = (ctx, builder) -> {
+            if (!Config.PRESETS_ENABLED.get()) {
+                return builder.buildFuture();
+            }
             List<String> custom = Presets.all().stream()
                     .filter(p -> !p.builtin())
                     .map(Presets.PresetDefinition::id)
@@ -138,6 +146,9 @@ public final class MilestoneCommands {
             return SharedSuggestionProvider.suggest(countsForItem(MilestoneData.get(server).worldFirsts().keySet(), itemId), builder);
         };
         SuggestionProvider<CommandSourceStack> exportFileSuggestions = (ctx, builder) -> {
+            if (!Config.EXPORT_IMPORT_ENABLED.get()) {
+                return builder.buildFuture();
+            }
             MinecraftServer server = ctx.getSource().getServer();
             if (server == null) {
                 return builder.buildFuture();
@@ -396,9 +407,10 @@ public final class MilestoneCommands {
         entries.sort(Comparator.comparingInt((Map.Entry<TargetKey, MilestoneRecord> e) -> e.getValue().playTicks())
                 .thenComparing(Map.Entry::getKey));
         ctx.getSource().sendSuccess(() -> ServerLang.tr(player, "message.itemmilestonelog.records_header", entries.size()), false);
+        ZoneId zone = Config.displayTimeZone();
         for (var e : entries) {
             Component line = ServerLang.tr(player, "message.itemmilestonelog.target_done",
-                    MilestoneService.targetDisplayName(e.getKey()), Playtime.formatRecord(e.getValue()));
+                    MilestoneService.targetDisplayName(e.getKey()), Playtime.formatRecord(e.getValue(), zone));
             ctx.getSource().sendSuccess(() -> line, false);
         }
         return entries.size();
@@ -410,6 +422,9 @@ public final class MilestoneCommands {
 
     private static int presetList(CommandContext<CommandSourceStack> ctx) {
         CommandSourceStack source = ctx.getSource();
+        if (!Config.PRESETS_ENABLED.get()) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.feature_disabled"));
+        }
         List<Presets.PresetDefinition> all = Presets.all();
         source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.presets_header", all.size()), false);
         for (Presets.PresetDefinition p : all) {
@@ -425,7 +440,10 @@ public final class MilestoneCommands {
 
     private static int presetSaveMissingName(CommandContext<CommandSourceStack> ctx) {
         CommandSourceStack source = ctx.getSource();
-        if (!MilestoneService.canManagePresets(source)) {
+        if (!Config.PRESETS_ENABLED.get()) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.feature_disabled"));
+        }
+        if (!MilestoneService.isPrivileged(source)) {
             return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_no_permission"));
         }
         return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_invalid_name", ""));
@@ -433,7 +451,10 @@ public final class MilestoneCommands {
 
     private static int presetDeleteMissingName(CommandContext<CommandSourceStack> ctx) {
         CommandSourceStack source = ctx.getSource();
-        if (!MilestoneService.canManagePresets(source)) {
+        if (!Config.PRESETS_ENABLED.get()) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.feature_disabled"));
+        }
+        if (!MilestoneService.isPrivileged(source)) {
             return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_no_permission"));
         }
         return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_unknown",
@@ -464,7 +485,10 @@ public final class MilestoneCommands {
 
     private static int presetReload(CommandContext<CommandSourceStack> ctx) {
         CommandSourceStack source = ctx.getSource();
-        if (!MilestoneService.canManagePresets(source)) {
+        if (!Config.PRESETS_ENABLED.get()) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.feature_disabled"));
+        }
+        if (!MilestoneService.isPrivileged(source)) {
             return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_no_permission"));
         }
         int custom = Presets.reload();
@@ -496,6 +520,7 @@ public final class MilestoneCommands {
                 .thenComparingInt(WorldFirstRecord::playTicks)
                 .thenComparing(WorldFirstRecord::targetKey));
         source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.firsts_header", sorted.size()), false);
+        ZoneId zone = Config.displayTimeZone();
         for (WorldFirstRecord wf : sorted) {
             String playerName = (wf.playerName() == null || wf.playerName().isEmpty())
                     ? wf.playerUuid().toString()
@@ -503,7 +528,7 @@ public final class MilestoneCommands {
             source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.firsts_entry",
                     MilestoneService.targetDisplayName(wf.targetKey()),
                     playerName,
-                    Playtime.formatRecord(wf.toMilestoneRecord())), false);
+                    Playtime.formatRecord(wf.toMilestoneRecord(), zone)), false);
         }
         return sorted.size();
     }
@@ -511,11 +536,14 @@ public final class MilestoneCommands {
     private static int firstsReset(CommandContext<CommandSourceStack> ctx, String itemId, int count) {
         CommandSourceStack source = ctx.getSource();
         MilestoneData data = MilestoneData.get(source.getServer());
-        TargetKey key = new TargetKey(itemId, count);
+        TargetKey key = TargetKey.normalize(itemId, count);
+        if (key == null) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.invalid_item", String.valueOf(itemId)));
+        }
         if (data.removeWorldFirst(key)) {
             return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.firsts_reset_done", MilestoneService.targetDisplayName(key)));
         }
-        if (!MilestoneService.isValidItemId(itemId)) {
+        if (!MilestoneService.isValidItemId(key.itemId())) {
             return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.invalid_item", itemId));
         }
         return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.firsts_not_recorded", MilestoneService.targetDisplayName(key)));
@@ -531,6 +559,9 @@ public final class MilestoneCommands {
 
     private static int exportSelf(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
         ServerPlayer player = player(ctx);
+        if (!Config.EXPORT_IMPORT_ENABLED.get()) {
+            return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.feature_disabled"));
+        }
         MilestoneData data = MilestoneData.get(player.server);
         MilestoneData.PlayerData pd = data.playerOrNull(player.getUUID());
         String playerName = player.getGameProfile().getName();
@@ -546,6 +577,9 @@ public final class MilestoneCommands {
 
     private static int importSelf(CommandContext<CommandSourceStack> ctx, String fileName) throws CommandSyntaxException {
         ServerPlayer player = player(ctx);
+        if (!Config.EXPORT_IMPORT_ENABLED.get()) {
+            return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.feature_disabled"));
+        }
         if (!MilestoneExport.isSafeFileName(fileName)) {
             return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.import_invalid_name", fileName));
         }
@@ -577,6 +611,9 @@ public final class MilestoneCommands {
 
     private static int exportAll(CommandContext<CommandSourceStack> ctx) {
         CommandSourceStack source = ctx.getSource();
+        if (!Config.EXPORT_IMPORT_ENABLED.get()) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.feature_disabled"));
+        }
         MinecraftServer server = source.getServer();
         MilestoneData data = MilestoneData.get(server);
         Path dir = MilestoneExport.exportsDir(server);
@@ -705,9 +742,10 @@ public final class MilestoneCommands {
         entries.sort(Comparator.comparingInt((Map.Entry<TargetKey, MilestoneRecord> e) -> e.getValue().playTicks())
                 .thenComparing(Map.Entry::getKey));
         source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.admin_records_header", name, entries.size()), false);
+        ZoneId zone = Config.displayTimeZone();
         for (var e : entries) {
             source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.target_done",
-                    MilestoneService.targetDisplayName(e.getKey()), Playtime.formatRecord(e.getValue())), false);
+                    MilestoneService.targetDisplayName(e.getKey()), Playtime.formatRecord(e.getValue(), zone)), false);
         }
         return entries.size();
     }
@@ -745,7 +783,10 @@ public final class MilestoneCommands {
         }
         String name = displayNameFor(target.getKey(), target.getValue());
         MilestoneData data = MilestoneData.get(source.getServer());
-        TargetKey key = new TargetKey(itemId, count);
+        TargetKey key = TargetKey.normalize(itemId, count);
+        if (key == null) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.invalid_item", String.valueOf(itemId)));
+        }
         if (target.getValue().records.remove(key) != null) {
             data.setDirty();
             ServerPlayer online = source.getServer().getPlayerList().getPlayer(target.getKey());
@@ -754,7 +795,7 @@ public final class MilestoneCommands {
             }
             return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.admin_reset_done", name, MilestoneService.targetDisplayName(key)));
         }
-        if (!MilestoneService.isValidItemId(itemId)) {
+        if (!MilestoneService.isValidItemId(key.itemId())) {
             return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.invalid_item", itemId));
         }
         return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.admin_not_recorded", name, MilestoneService.targetDisplayName(key)));

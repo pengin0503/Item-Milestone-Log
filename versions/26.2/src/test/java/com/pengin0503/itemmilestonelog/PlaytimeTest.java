@@ -3,6 +3,8 @@ package com.pengin0503.itemmilestonelog;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.TimeZone;
 
@@ -53,5 +55,42 @@ class PlaytimeTest {
         int ticks = 90 * 20;
         assertEquals("0h 01m 30s", Playtime.formatRecord(MilestoneRecord.legacy(ticks)));
         assertEquals("0h 01m 30s (Day 1)", Playtime.formatRecord(new MilestoneRecord(ticks, 0L, 0L)));
+        assertEquals("0h 01m 30s", Playtime.formatRecord(MilestoneRecord.legacy(ticks), ZoneId.of("Asia/Tokyo")));
+    }
+
+    @Test
+    void formatsDateAndRecordInSpecifiedTimeZoneWhileGuiOverloadUsesSystemDefault() {
+        TimeZone originalTz = TimeZone.getDefault();
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone(ZoneOffset.UTC));
+            int ticks = (27 * 3600 + 15 * 60 + 30) * 20;
+            // 2026-11-25T20:00:00Z is 2026-11-25 in UTC / -05:00, and 2026-11-26 in Asia/Tokyo (+09:00).
+            long lateUtc = Instant.parse("2026-11-25T20:00:00Z").toEpochMilli();
+            MilestoneRecord lateRec = new MilestoneRecord(ticks, 11L, lateUtc);
+
+            assertEquals("2026-11-25", Playtime.formatDate(lateUtc, ZoneOffset.UTC));
+            assertEquals("2026-11-26", Playtime.formatDate(lateUtc, ZoneId.of("Asia/Tokyo")));
+            assertEquals("2026-11-26", Playtime.formatDate(lateUtc, ZoneId.of("+09:00")));
+            assertEquals("2026-11-25", Playtime.formatDate(lateUtc, ZoneId.of("-05:00")));
+            assertEquals("2026-11-25", Playtime.formatDate(lateUtc, null));
+
+            assertEquals("27h 15m 30s (Day 12, 2026-11-25)", Playtime.formatRecord(lateRec, ZoneOffset.UTC));
+            assertEquals("27h 15m 30s (Day 12, 2026-11-26)", Playtime.formatRecord(lateRec, ZoneId.of("Asia/Tokyo")));
+            assertEquals("27h 15m 30s (Day 12, 2026-11-26)", Playtime.formatRecord(lateRec, ZoneId.of("+09:00")));
+
+            // 2026-11-25T02:00:00Z is 2026-11-24 in -05:00 and 2026-11-25 in UTC.
+            long earlyUtc = Instant.parse("2026-11-25T02:00:00Z").toEpochMilli();
+            assertEquals("2026-11-24", Playtime.formatDate(earlyUtc, ZoneId.of("-05:00")));
+            assertEquals("2026-11-25", Playtime.formatDate(earlyUtc, ZoneOffset.UTC));
+
+            // No-zone GUI overload continues to reflect ZoneId.systemDefault().
+            assertEquals("2026-11-25", Playtime.formatDate(lateUtc));
+            assertEquals("27h 15m 30s (Day 12, 2026-11-25)", Playtime.formatRecord(lateRec));
+            TimeZone.setDefault(TimeZone.getTimeZone("Asia/Tokyo"));
+            assertEquals("2026-11-26", Playtime.formatDate(lateUtc));
+            assertEquals("27h 15m 30s (Day 12, 2026-11-26)", Playtime.formatRecord(lateRec));
+        } finally {
+            TimeZone.setDefault(originalTz);
+        }
     }
 }

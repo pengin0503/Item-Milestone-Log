@@ -4,6 +4,7 @@ import com.pengin0503.itemmilestonelog.api.TargetKey;
 import net.minecraft.resources.Identifier;
 import net.neoforged.neoforge.common.ModConfigSpec;
 
+import java.time.ZoneId;
 import java.util.List;
 
 public final class Config {
@@ -58,21 +59,40 @@ public final class Config {
             .comment("Show a one-time chat tip when a player joins for the first time.")
             .define("showFirstJoinHint", true);
 
+    public static final ModConfigSpec.BooleanValue PRESETS_ENABLED = BUILDER
+            .comment("Enable preset commands and preset management in the GUI (existing preset files are never deleted).")
+            .define("presetsEnabled", true);
+
+    public static final ModConfigSpec.BooleanValue EXPORT_IMPORT_ENABLED = BUILDER
+            .comment("Enable milestone export and import commands (applies to OPs as well).")
+            .define("exportImportEnabled", true);
+
+    public static final ModConfigSpec.BooleanValue WORLD_FIRST_ENABLED = BUILDER
+            .comment("Record new server-wide world-first milestones (existing world-first records are kept and viewable).")
+            .define("worldFirstEnabled", true);
+
+    public static final ModConfigSpec.ConfigValue<String> DISPLAY_TIME_ZONE = BUILDER
+            .comment("Timezone ID used for server-formatted dates (chat, server log, Discord, exports).",
+                    "Leave empty to use the server's default timezone. Examples: \"UTC\", \"Asia/Tokyo\", \"+09:00\".",
+                    "The client GUI always uses the player's local timezone.")
+            .define("displayTimeZone", "", Config::validateDisplayTimeZone);
+
     static final ModConfigSpec SPEC = BUILDER.build();
 
     private Config() {
     }
 
     static boolean validateTargetEntry(Object obj) {
-        if (!(obj instanceof String s)) {
-            return false;
-        }
-        TargetKey parsed = TargetKey.tryParseEncoded(s);
-        if (parsed == null || !parsed.itemId().contains(":")) {
-            return false;
-        }
-        Identifier id = Identifier.tryParse(parsed.itemId());
-        return id != null && !"minecraft:air".equals(id.toString());
+        return obj instanceof String s && TargetKey.tryParseNormalized(s, true, true) != null;
+    }
+
+    static boolean validateDisplayTimeZone(Object obj) {
+        return DisplayTimeZone.isValidConfigValue(obj);
+    }
+
+    /** Resolves {@link #DISPLAY_TIME_ZONE}, falling back to the server's default timezone when empty or invalid. */
+    public static ZoneId displayTimeZone() {
+        return DisplayTimeZone.resolve(DISPLAY_TIME_ZONE.get());
     }
 
     private static boolean validateSoundId(Object obj) {

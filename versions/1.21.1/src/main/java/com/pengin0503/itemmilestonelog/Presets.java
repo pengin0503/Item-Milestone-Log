@@ -8,7 +8,6 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonPrimitive;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
-import net.minecraft.resources.ResourceLocation;
 import net.neoforged.fml.loading.FMLPaths;
 
 import java.io.IOException;
@@ -167,6 +166,29 @@ public final class Presets {
         return TargetKey.tryParseCount(raw);
     }
 
+    private static String extractDisplayName(JsonObject root, String fallbackId) {
+        if (root.has("name") && root.get("name").isJsonPrimitive() && root.get("name").getAsJsonPrimitive().isString()) {
+            String rawName = root.get("name").getAsString().trim();
+            if (!rawName.isEmpty()) {
+                // Cap to the 256-char sync limit so a hand-written preset cannot break the sync payload for clients.
+                return TextEscaping.truncateUtf16(rawName, 256);
+            }
+        }
+        return fallbackId;
+    }
+
+    private static String readExistingDisplayName(Path file, String id) {
+        try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+            JsonElement el = JsonParser.parseReader(reader);
+            if (el.isJsonObject()) {
+                return extractDisplayName(el.getAsJsonObject(), id);
+            }
+        } catch (Exception ignored) {
+            // Corrupt or unreadable existing file: fall back to the preset ID.
+        }
+        return id;
+    }
+
     private static PresetDefinition parsePresetFile(Path file, String fileName, String id) {
         JsonObject root;
         try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
@@ -186,23 +208,7 @@ public final class Presets {
             return null;
         }
 
-        String displayName = id;
-        if (root.has("name") && root.get("name").isJsonPrimitive() && root.get("name").getAsJsonPrimitive().isString()) {
-            String rawName = root.get("name").getAsString().trim();
-            if (!rawName.isEmpty()) {
-                // Cap to the 256-char sync limit so a hand-written preset cannot break the sync payload for clients.
-                // Never split a UTF-16 surrogate pair at the cut (would leave a malformed string).
-                int limit = 256;
-                if (rawName.length() > limit) {
-                    if (Character.isHighSurrogate(rawName.charAt(limit - 1))) {
-                        limit--;
-                    }
-                    displayName = rawName.substring(0, limit);
-                } else {
-                    displayName = rawName;
-                }
-            }
-        }
+        String displayName = extractDisplayName(root, id);
 
         Set<TargetKey> deduped = new LinkedHashSet<>();
         JsonArray arr = root.getAsJsonArray("items");
@@ -212,14 +218,9 @@ public final class Presets {
                 if (rawItem.isEmpty()) {
                     continue;
                 }
-                TargetKey parsedKey = TargetKey.tryParseEncoded(rawItem);
-                if (parsedKey == null) {
-                    ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid item '{}' in preset {}", rawItem, fileName);
-                    continue;
-                }
-                ResourceLocation rl = ResourceLocation.tryParse(parsedKey.itemId());
-                if (rl != null && !"minecraft:air".equals(rl.toString())) {
-                    deduped.add(new TargetKey(rl.toString(), parsedKey.count()));
+                TargetKey normalized = TargetKey.tryParseNormalized(rawItem, false, true);
+                if (normalized != null) {
+                    deduped.add(normalized);
                 } else {
                     ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid item '{}' in preset {}", rawItem, fileName);
                 }
@@ -230,8 +231,8 @@ public final class Presets {
                     continue;
                 }
                 String rawItem = obj.get("item").getAsString().trim();
-                ResourceLocation rl = ResourceLocation.tryParse(rawItem);
-                if (rl == null || rl.getPath().isEmpty() || rl.getNamespace().isEmpty() || "minecraft:air".equals(rl.toString())) {
+                String normalizedId = TargetKey.normalizeItemId(rawItem, false);
+                if (normalizedId == null || "minecraft:air".equals(normalizedId)) {
                     ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid item '{}' in preset {}", rawItem, fileName);
                     continue;
                 }
@@ -243,7 +244,10 @@ public final class Presets {
                         continue;
                     }
                 }
-                deduped.add(new TargetKey(rl.toString(), count));
+                TargetKey normalized = TargetKey.normalize(normalizedId, count, false, true);
+                if (normalized != null) {
+                    deduped.add(normalized);
+                }
             }
         }
 
@@ -271,15 +275,16 @@ public final class Presets {
         Files.createDirectories(dir);
         Path target = dir.resolve(id + ".json");
         boolean existed = Files.exists(target);
+        String displayName = existed ? readExistingDisplayName(target, id) : id;
 
         Set<TargetKey> deduped = new LinkedHashSet<>();
         for (TargetKey key : items) {
             if (key == null) {
                 continue;
             }
-            ResourceLocation rl = ResourceLocation.tryParse(key.itemId());
-            if (rl != null && !"minecraft:air".equals(rl.toString())) {
-                deduped.add(new TargetKey(rl.toString(), key.count()));
+            TargetKey normalized = TargetKey.normalize(key.itemId(), key.count(), false, true);
+            if (normalized != null) {
+                deduped.add(normalized);
             }
         }
         if (deduped.isEmpty()) {
@@ -287,7 +292,7 @@ public final class Presets {
         }
 
         JsonObject json = new JsonObject();
-        json.addProperty("name", id);
+        json.addProperty("name", displayName);
         JsonArray arr = new JsonArray();
         for (TargetKey key : deduped) {
             if (key.count() > TargetKey.MIN_COUNT) {
@@ -320,7 +325,7 @@ public final class Presets {
         }
 
         Map<String, PresetDefinition> next = new TreeMap<>(loadedPresets);
-        next.put(id, new PresetDefinition(id, id, List.copyOf(deduped), false));
+        next.put(id, new PresetDefinition(id, displayName, List.copyOf(deduped), false));
         loadedPresets = Collections.unmodifiableMap(new LinkedHashMap<>(next));
         return existed;
     }

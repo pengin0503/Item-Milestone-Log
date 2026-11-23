@@ -41,11 +41,22 @@ class MilestoneServiceTest {
     }
 
     @Test
-    void canManagePresetsAllowsIntegratedAndDedicatedAdminsOnly() {
-        assertTrue(MilestoneService.canManagePresets(false, false));
-        assertTrue(MilestoneService.canManagePresets(false, true));
-        assertFalse(MilestoneService.canManagePresets(true, false));
-        assertTrue(MilestoneService.canManagePresets(true, true));
+    void isPrivilegedRestrictsLanGuestsWithoutCheatsWhileAllowingHostAndAdmins() {
+        // Integrated server: host allowed without cheats, LAN guest rejected unless level >= 2
+        assertTrue(PrivilegePolicy.isPrivileged(false, true, true, false));
+        assertTrue(PrivilegePolicy.isPrivileged(false, true, true, true));
+        assertFalse(PrivilegePolicy.isPrivileged(false, true, false, false));
+        assertTrue(PrivilegePolicy.isPrivileged(false, true, false, true));
+
+        // Dedicated server: admin permission required
+        assertFalse(PrivilegePolicy.isPrivileged(true, true, false, false));
+        assertTrue(PrivilegePolicy.isPrivileged(true, true, false, true));
+
+        // Non-player sources (console/RCON/command block): admin permission required
+        assertFalse(PrivilegePolicy.isPrivileged(false, false, false, false));
+        assertTrue(PrivilegePolicy.isPrivileged(false, false, false, true));
+        assertFalse(PrivilegePolicy.isPrivileged(true, false, false, false));
+        assertTrue(PrivilegePolicy.isPrivileged(true, false, false, true));
     }
 
     @Test
@@ -345,5 +356,44 @@ class MilestoneServiceTest {
         assertFalse(custom.builtin());
         assertEquals("My Custom Display", custom.displayName());
         assertEquals(1, custom.itemCount());
+    }
+
+    @Test
+    void presetsDisabledRejectsPresetOperationsAndHidesPresetsInSyncPayload(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("my_custom.json"), """
+                {
+                  "name": "My Custom",
+                  "items": ["minecraft:diamond"]
+                }
+                """);
+        Presets.reloadFrom(dir);
+
+        MilestoneData data = new MilestoneData();
+        MilestoneData.PlayerData pd = data.player(PLAYER_A);
+        pd.targets.add(TargetKey.of("minecraft:iron_ingot"));
+        Set<String> knownItems = Set.of("minecraft:diamond", "minecraft:iron_ingot");
+
+        MilestoneService.ActionResult applyRes = MilestoneService.applyPreset(
+                data, PLAYER_A, null, "my_custom", knownItems::contains, false);
+        assertFalse(applyRes.success());
+        assertEquals("This feature is disabled on this server.", applyRes.message().getString());
+        assertFalse(pd.targets.contains(TargetKey.of("minecraft:diamond")));
+
+        MilestoneService.ActionResult saveRes = MilestoneService.savePreset(
+                data, PLAYER_A, null, true, "new_preset", () -> dir, false);
+        assertFalse(saveRes.success());
+        assertEquals("This feature is disabled on this server.", saveRes.message().getString());
+        assertFalse(Files.exists(dir.resolve("new_preset.json")));
+
+        MilestoneService.ActionResult deleteRes = MilestoneService.deletePreset(
+                null, true, "my_custom", () -> dir, false);
+        assertFalse(deleteRes.success());
+        assertEquals("This feature is disabled on this server.", deleteRes.message().getString());
+        assertTrue(Files.isRegularFile(dir.resolve("my_custom.json")));
+
+        SyncMilestonesPayload disabledSync = MilestoneService.buildSyncPayload(
+                pd, Set.of(), Set.of(), ids -> Map.of(), 100, true, true, null, false);
+        assertTrue(disabledSync.presets().isEmpty());
+        assertFalse(disabledSync.canManagePresets());
     }
 }

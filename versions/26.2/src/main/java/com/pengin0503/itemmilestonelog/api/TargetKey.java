@@ -45,6 +45,116 @@ public record TargetKey(String itemId, int count) implements Comparable<TargetKe
         return count >= MIN_COUNT && count <= MAX_COUNT;
     }
 
+    /**
+     * Validates and normalizes a target item ID according to Minecraft's resource location rules.
+     *
+     * <p>In 1.1.0, only item IDs are accepted ({@code #}-prefixed tag IDs return {@code null}).
+     * When {@code requireNamespace} is {@code false}, an ID without {@code ':'} is normalized to
+     * the {@code minecraft:} namespace. Returns {@code null} if {@code raw} is null, empty,
+     * contains invalid characters, or lacks a required namespace.
+     */
+    @Nullable
+    public static String normalizeItemId(@Nullable String raw, boolean requireNamespace) {
+        if (raw == null || raw.isEmpty()) {
+            return null;
+        }
+        int colon = raw.indexOf(':');
+        String namespace;
+        String path;
+        if (colon < 0) {
+            if (requireNamespace) {
+                return null;
+            }
+            namespace = "minecraft";
+            path = raw;
+        } else {
+            if (colon == 0 || colon == raw.length() - 1) {
+                return null;
+            }
+            namespace = raw.substring(0, colon);
+            path = raw.substring(colon + 1);
+        }
+        if (!isValidNamespace(namespace) || !isValidPath(path)) {
+            return null;
+        }
+        return namespace + ":" + path;
+    }
+
+    /** Convenience overload allowing the implicit {@code minecraft:} namespace. */
+    @Nullable
+    public static String normalizeItemId(@Nullable String raw) {
+        return normalizeItemId(raw, false);
+    }
+
+    /**
+     * Normalizes an {@code (itemId, count)} pair into a {@link TargetKey}, or returns {@code null}
+     * if {@code rawItemId} is invalid, {@code count} is out of range, or {@code rejectAir} is
+     * {@code true} and the normalized ID is {@code minecraft:air}.
+     */
+    @Nullable
+    public static TargetKey normalize(@Nullable String rawItemId, int count, boolean requireNamespace, boolean rejectAir) {
+        if (!isValidCount(count)) {
+            return null;
+        }
+        String normalizedId = normalizeItemId(rawItemId, requireNamespace);
+        if (normalizedId == null || (rejectAir && "minecraft:air".equals(normalizedId))) {
+            return null;
+        }
+        return new TargetKey(normalizedId, count);
+    }
+
+    /** Convenience overload allowing implicit {@code minecraft:} namespace and permitting {@code minecraft:air}. */
+    @Nullable
+    public static TargetKey normalize(@Nullable String rawItemId, int count) {
+        return normalize(rawItemId, count, false, false);
+    }
+
+    /**
+     * Parses and normalizes an encoded target string ({@code itemId} or {@code itemId#count}).
+     * Leading/trailing whitespace is trimmed. Returns {@code null} if malformed, invalid, missing
+     * a required namespace, or {@code minecraft:air} when {@code rejectAir} is {@code true}.
+     */
+    @Nullable
+    public static TargetKey tryParseNormalized(@Nullable String raw, boolean requireNamespace, boolean rejectAir) {
+        TargetKey parsed = tryParseEncoded(raw);
+        if (parsed == null) {
+            return null;
+        }
+        return normalize(parsed.itemId(), parsed.count(), requireNamespace, rejectAir);
+    }
+
+    /** Convenience overload allowing implicit {@code minecraft:} namespace and rejecting {@code minecraft:air}. */
+    @Nullable
+    public static TargetKey tryParseNormalized(@Nullable String raw) {
+        return tryParseNormalized(raw, false, true);
+    }
+
+    private static boolean isValidNamespace(String namespace) {
+        if (namespace.isEmpty()) {
+            return false;
+        }
+        for (int i = 0; i < namespace.length(); i++) {
+            char c = namespace.charAt(i);
+            if (!(c == '_' || c == '-' || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.')) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean isValidPath(String path) {
+        if (path.isEmpty()) {
+            return false;
+        }
+        for (int i = 0; i < path.length(); i++) {
+            char c = path.charAt(i);
+            if (!(c == '_' || c == '-' || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '/' || c == '.')) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public static TargetKey of(String itemId) {
         return new TargetKey(itemId, MIN_COUNT);
     }

@@ -69,12 +69,9 @@ public final class Tracker {
     static Set<TargetKey> parseDefaultTargets(List<? extends String> rawEntries) {
         Set<TargetKey> result = new LinkedHashSet<>();
         for (String raw : rawEntries) {
-            TargetKey parsed = TargetKey.tryParseEncoded(raw);
-            Identifier id = (parsed != null && parsed.itemId().contains(":"))
-                    ? Identifier.tryParse(parsed.itemId())
-                    : null;
-            if (id != null && !"minecraft:air".equals(id.toString())) {
-                result.add(new TargetKey(id.toString(), parsed.count()));
+            TargetKey normalized = TargetKey.tryParseNormalized(raw, true, true);
+            if (normalized != null) {
+                result.add(normalized);
             } else if (raw != null && WARNED_DEFAULT_TARGETS.add(raw)) {
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Ignoring invalid defaultTargets entry '{}'", raw);
             }
@@ -479,6 +476,11 @@ public final class Tracker {
 
     static RecordOutcome applyRecord(MilestoneData data, UUID playerId, @Nullable String playerName,
                                      TargetKey key, MilestoneRecord rec) {
+        return applyRecord(data, playerId, playerName, key, rec, true);
+    }
+
+    static RecordOutcome applyRecord(MilestoneData data, UUID playerId, @Nullable String playerName,
+                                     TargetKey key, MilestoneRecord rec, boolean worldFirstEnabled) {
         MilestoneData.PlayerData pd = data.player(playerId);
         if (pd.records.containsKey(key)) {
             return RecordOutcome.ALREADY_RECORDED;
@@ -487,7 +489,7 @@ public final class Tracker {
             pd.lastKnownName = playerName;
         }
         pd.records.put(key, rec);
-        boolean worldFirst = data.recordWorldFirstIfAbsent(key, playerId, playerName, rec);
+        boolean worldFirst = worldFirstEnabled && data.recordWorldFirstIfAbsent(key, playerId, playerName, rec);
         data.setDirty();
         return worldFirst ? RecordOutcome.RECORDED_WORLD_FIRST : RecordOutcome.RECORDED;
     }
@@ -504,14 +506,16 @@ public final class Tracker {
         MilestoneRecord rec = new MilestoneRecord(ticks, day, epochMillis);
 
         String playerName = player.getGameProfile().name();
-        RecordOutcome outcome = applyRecord(data, player.getUUID(), playerName, key, rec);
+        RecordOutcome outcome = applyRecord(data, player.getUUID(), playerName, key, rec,
+                Config.WORLD_FIRST_ENABLED.get());
         if (outcome == RecordOutcome.ALREADY_RECORDED) {
             return false;
         }
         boolean worldFirst = outcome == RecordOutcome.RECORDED_WORLD_FIRST;
+        String formattedRecord = Playtime.formatRecord(rec, Config.displayTimeZone());
 
         ItemMilestoneLog.LOGGER.info("[ItemMilestoneLog] {} first obtained {} at playtime {} ({} ticks)",
-                playerName, key.formatDisplayId(), Playtime.formatRecord(rec), ticks);
+                playerName, key.formatDisplayId(), formattedRecord, ticks);
 
         Component displayName = MilestoneService.targetDisplayName(key);
 
@@ -535,7 +539,6 @@ public final class Tracker {
             }
         }
         if (worldFirst && Config.ANNOUNCE_WORLD_FIRST.get()) {
-            String formattedRecord = Playtime.formatRecord(rec);
             for (ServerPlayer recipient : server.getPlayerList().getPlayers()) {
                 MilestoneData.PlayerData recPd = data.playerOrNull(recipient.getUUID());
                 if (recipient != player && recPd != null && recPd.muteBroadcasts) {
