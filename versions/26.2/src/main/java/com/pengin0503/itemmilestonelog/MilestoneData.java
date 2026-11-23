@@ -20,7 +20,6 @@ import javax.annotation.Nullable;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -217,31 +216,27 @@ public class MilestoneData extends SavedData {
         var storage = server.getDataStorage();
         MilestoneData data = storage.get(TYPE);
         if (data == null) {
-            Path legacyFile = server.getWorldPath(LevelResource.ROOT).resolve(LEGACY_FILE);
-            data = readLegacy(legacyFile);
-            boolean imported = data != null;
-            if (data == null) {
+            Path newFormatFile = server.getWorldPath(LevelResource.ROOT)
+                    .resolve("data/" + ItemMilestoneLog.MOD_ID + "/milestones.dat");
+            if (Files.isRegularFile(newFormatFile)) {
+                // New-format data exists but failed to load: importing the legacy file now would resurrect stale records.
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] The new-format data file {} exists but could not be loaded; "
+                        + "the legacy data in {} is NOT being re-imported (to avoid resurrecting stale records). "
+                        + "Starting with empty data.", newFormatFile, LEGACY_FILE);
                 data = new MilestoneData();
             } else {
-                data.setDirty();
-                ItemMilestoneLog.LOGGER.info("[ItemMilestoneLog] Imported the records of {} player(s) from {}",
-                        data.players.size(), LEGACY_FILE);
+                data = readLegacy(server.getWorldPath(LevelResource.ROOT).resolve(LEGACY_FILE));
+                if (data == null) {
+                    data = new MilestoneData();
+                } else {
+                    data.setDirty();
+                    ItemMilestoneLog.LOGGER.info("[ItemMilestoneLog] Imported the records of {} player(s) from {}",
+                            data.players.size(), LEGACY_FILE);
+                }
             }
             storage.set(TYPE, data);
-            if (imported) {
-                markLegacyMigrated(legacyFile);
-            }
         }
         return data;
-    }
-
-    /** Renames the imported legacy file so it is never imported again; failure only logs a warning. */
-    static void markLegacyMigrated(Path file) {
-        try {
-            Files.move(file, file.resolveSibling(file.getFileName() + ".migrated"), StandardCopyOption.REPLACE_EXISTING);
-        } catch (IOException | RuntimeException e) {
-            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Could not rename the imported legacy file {}", file, e);
-        }
     }
 
     static MilestoneData readLegacy(Path file) {
