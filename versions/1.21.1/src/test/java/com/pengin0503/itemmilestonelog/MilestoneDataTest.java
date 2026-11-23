@@ -163,9 +163,17 @@ class MilestoneDataTest {
         wf.putLong("epoch", 1795600000000L);
         CompoundTag wfNoTicks = new CompoundTag();
         wfNoTicks.putString("uuid", playerA.toString());
+        CompoundTag wfNegTicks = new CompoundTag();
+        wfNegTicks.putString("uuid", playerA.toString());
+        wfNegTicks.putInt("ticks", -5);
+        CompoundTag wfBadUuid = new CompoundTag();
+        wfBadUuid.putString("uuid", "not-a-uuid");
+        wfBadUuid.putInt("ticks", 100);
         CompoundTag worldFirsts = new CompoundTag();
         worldFirsts.put("minecraft:diamond", wf);
         worldFirsts.put("minecraft:gold_ingot", wfNoTicks);
+        worldFirsts.put("minecraft:iron_ingot", wfNegTicks);
+        worldFirsts.put("minecraft:lapis_lazuli", wfBadUuid);
 
         CompoundTag root = new CompoundTag();
         root.put("players", players);

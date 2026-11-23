@@ -23,6 +23,7 @@ import net.neoforged.neoforge.event.entity.player.ItemEntityPickupEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.tick.PlayerTickEvent;
 
+import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -60,8 +61,14 @@ public final class Tracker {
         if (current == cache.source()) {
             return cache.targets();
         }
+        Set<TargetKey> immutable = parseDefaultTargets(current);
+        defaultTargetsCache = new DefaultTargetsCache(current, immutable);
+        return immutable;
+    }
+
+    static Set<TargetKey> parseDefaultTargets(List<? extends String> rawEntries) {
         Set<TargetKey> result = new LinkedHashSet<>();
-        for (String raw : current) {
+        for (String raw : rawEntries) {
             TargetKey parsed = TargetKey.tryParseEncoded(raw);
             Identifier id = (parsed != null && parsed.itemId().contains(":"))
                     ? Identifier.tryParse(parsed.itemId())
@@ -72,13 +79,15 @@ public final class Tracker {
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Ignoring invalid defaultTargets entry '{}'", raw);
             }
         }
-        Set<TargetKey> immutable = Collections.unmodifiableSet(new LinkedHashSet<>(result));
-        defaultTargetsCache = new DefaultTargetsCache(current, immutable);
-        return immutable;
+        return Collections.unmodifiableSet(new LinkedHashSet<>(result));
     }
 
     public static Set<TargetKey> effectiveTargets(MilestoneData.PlayerData pd) {
-        Set<TargetKey> all = new LinkedHashSet<>(defaultTargets());
+        return effectiveTargets(defaultTargets(), pd);
+    }
+
+    static Set<TargetKey> effectiveTargets(Set<TargetKey> defaults, @Nullable MilestoneData.PlayerData pd) {
+        Set<TargetKey> all = new LinkedHashSet<>(defaults);
         if (pd != null) {
             all.addAll(pd.targets);
         }
@@ -130,15 +139,14 @@ public final class Tracker {
         if (player instanceof FakePlayer) {
             return;
         }
-        Map<String, Integer> pendingCrafts = PENDING_CRAFT_CHECKS.remove(player.getUUID());
+        Map<String, Integer> pendingCrafts = takePendingCraftChecks(player.getUUID());
         if (pendingCrafts != null) {
             for (Map.Entry<String, Integer> entry : pendingCrafts.entrySet()) {
                 tryRecordForItem(player, entry.getKey(), entry.getValue(), true);
             }
         }
         int interval = Config.SCAN_INTERVAL_TICKS.get();
-        int phase = Math.floorMod(player.getUUID().hashCode(), interval);
-        if ((player.tickCount + phase) % interval != 0) {
+        if (!shouldScanOnTick(player.getUUID(), player.tickCount, interval)) {
             return;
         }
         if (recordingPaused(player)) {
@@ -155,12 +163,7 @@ public final class Tracker {
             return;
         }
 
-        Set<String> neededItemIds = new HashSet<>();
-        for (TargetKey key : pending) {
-            if (!carried.contains(key.itemId())) {
-                neededItemIds.add(key.itemId());
-            }
-        }
+        Set<String> neededItemIds = pendingItemIdsToCount(pending, carried);
 
         Map<String, Integer> counts = new HashMap<>();
         Set<String> stillCarried = new HashSet<>();
@@ -175,24 +178,16 @@ public final class Tracker {
             accumulateStack(craftStack, carried, stillCarried, neededItemIds, counts);
         }
 
-        if (!counts.isEmpty()) {
-            List<TargetKey> achieved = new ArrayList<>();
-            for (TargetKey key : pending) {
-                if (!carried.contains(key.itemId()) && counts.getOrDefault(key.itemId(), 0) >= key.count()) {
-                    achieved.add(key);
+        List<TargetKey> achieved = findAchievedTargets(pending, carried, counts);
+        if (!achieved.isEmpty()) {
+            boolean anyRecorded = false;
+            for (TargetKey key : achieved) {
+                if (record(player, data, key, false)) {
+                    anyRecorded = true;
                 }
             }
-            if (!achieved.isEmpty()) {
-                achieved.sort(TargetKey::compareTo);
-                boolean anyRecorded = false;
-                for (TargetKey key : achieved) {
-                    if (record(player, data, key, false)) {
-                        anyRecorded = true;
-                    }
-                }
-                if (anyRecorded) {
-                    MilestoneService.syncPlayerIfOpen(player);
-                }
+            if (anyRecorded) {
+                MilestoneService.syncPlayerIfOpen(player);
             }
         }
 
@@ -201,16 +196,49 @@ public final class Tracker {
         }
     }
 
+    static boolean shouldScanOnTick(UUID playerId, int tickCount, int interval) {
+        int phase = Math.floorMod(playerId.hashCode(), interval);
+        return (tickCount + phase) % interval == 0;
+    }
+
+    static Set<String> pendingItemIdsToCount(Set<TargetKey> pending, Set<String> carried) {
+        Set<String> neededItemIds = new HashSet<>();
+        for (TargetKey key : pending) {
+            if (!carried.contains(key.itemId())) {
+                neededItemIds.add(key.itemId());
+            }
+        }
+        return neededItemIds;
+    }
+
+    static List<TargetKey> findAchievedTargets(Set<TargetKey> pending, Set<String> carried, Map<String, Integer> counts) {
+        if (counts.isEmpty()) {
+            return List.of();
+        }
+        List<TargetKey> achieved = new ArrayList<>();
+        for (TargetKey key : pending) {
+            if (!carried.contains(key.itemId()) && counts.getOrDefault(key.itemId(), 0) >= key.count()) {
+                achieved.add(key);
+            }
+        }
+        achieved.sort(TargetKey::compareTo);
+        return achieved;
+    }
+
     private static void accumulateStack(ItemStack stack, Set<String> carried, Set<String> stillCarried,
                                         Set<String> neededItemIds, Map<String, Integer> counts) {
         if (stack.isEmpty()) {
             return;
         }
-        String id = itemId(stack);
+        accumulateItem(itemId(stack), stack.getCount(), carried, stillCarried, neededItemIds, counts);
+    }
+
+    static void accumulateItem(String id, int stackCount, Set<String> carried, Set<String> stillCarried,
+                               Set<String> neededItemIds, Map<String, Integer> counts) {
         if (carried.contains(id)) {
             stillCarried.add(id);
         } else if (neededItemIds.contains(id)) {
-            counts.merge(id, stack.getCount(), Integer::sum);
+            counts.merge(id, stackCount, Integer::sum);
         }
     }
 
@@ -220,7 +248,7 @@ public final class Tracker {
                 || !Config.IGNORE_CREATIVE_AND_SPECTATOR.get()) {
             return;
         }
-        if (!isCreativeOrSpectator(event.getCurrentGameMode()) || isCreativeOrSpectator(event.getNewGameMode())) {
+        if (!isLeavingCreativeOrSpectator(event.getCurrentGameMode(), event.getNewGameMode())) {
             return;
         }
         Set<String> carried = new LinkedHashSet<>();
@@ -269,8 +297,17 @@ public final class Tracker {
     }
 
     private static void queueCraftCheck(ServerPlayer player, String itemId, int eventCount) {
-        PENDING_CRAFT_CHECKS.computeIfAbsent(player.getUUID(), k -> new HashMap<>())
+        queueCraftCheck(player.getUUID(), itemId, eventCount);
+    }
+
+    static void queueCraftCheck(UUID playerId, String itemId, int eventCount) {
+        PENDING_CRAFT_CHECKS.computeIfAbsent(playerId, k -> new HashMap<>())
                 .merge(itemId, eventCount, Math::max);
+    }
+
+    @Nullable
+    static Map<String, Integer> takePendingCraftChecks(UUID playerId) {
+        return PENDING_CRAFT_CHECKS.remove(playerId);
     }
 
     @SubscribeEvent
@@ -290,7 +327,15 @@ public final class Tracker {
     }
 
     static boolean recordingPaused(ServerPlayer player) {
-        return Config.IGNORE_CREATIVE_AND_SPECTATOR.get() && (player.isCreative() || player.isSpectator());
+        return isRecordingPaused(Config.IGNORE_CREATIVE_AND_SPECTATOR.get(), player.isCreative(), player.isSpectator());
+    }
+
+    static boolean isRecordingPaused(boolean ignoreCreativeAndSpectator, boolean isCreative, boolean isSpectator) {
+        return ignoreCreativeAndSpectator && (isCreative || isSpectator);
+    }
+
+    static boolean isLeavingCreativeOrSpectator(GameType currentMode, GameType newMode) {
+        return isCreativeOrSpectator(currentMode) && !isCreativeOrSpectator(newMode);
     }
 
     private static boolean isCreativeOrSpectator(GameType mode) {
@@ -298,7 +343,11 @@ public final class Tracker {
     }
 
     public static Set<String> carriedFromCreative(MilestoneData.PlayerData pd) {
-        if (pd == null || !Config.IGNORE_CREATIVE_AND_SPECTATOR.get()) {
+        return carriedFromCreative(pd, Config.IGNORE_CREATIVE_AND_SPECTATOR.get());
+    }
+
+    static Set<String> carriedFromCreative(@Nullable MilestoneData.PlayerData pd, boolean ignoreCreativeAndSpectator) {
+        if (pd == null || !ignoreCreativeAndSpectator) {
             return Set.of();
         }
         return pd.carriedFromCreative;
@@ -347,6 +396,49 @@ public final class Tracker {
         return counts;
     }
 
+    record ItemAcquisitionOutcome(boolean clearedCreativeCarry, List<TargetKey> achieved) {
+    }
+
+    static ItemAcquisitionOutcome evaluateItemAcquisition(
+            String itemId,
+            int totalInPossession,
+            int minCountFromEvent,
+            boolean alreadyAddedToInventory,
+            Set<TargetKey> effectiveTargets,
+            @Nullable MilestoneData.PlayerData pd,
+            Set<String> carried) {
+        boolean clearedCreativeCarry = false;
+        if (carried.contains(itemId)) {
+            int priorCount = alreadyAddedToInventory ? totalInPossession - minCountFromEvent : totalInPossession;
+            if (priorCount <= 0) {
+                clearedCreativeCarry = true;
+            } else {
+                return new ItemAcquisitionOutcome(false, List.of());
+            }
+        }
+        List<TargetKey> pendingForItem = new ArrayList<>();
+        for (TargetKey key : effectiveTargets) {
+            if (key.itemId().equals(itemId) && (pd == null || !pd.records.containsKey(key))) {
+                pendingForItem.add(key);
+            }
+        }
+        if (pendingForItem.isEmpty()) {
+            return new ItemAcquisitionOutcome(clearedCreativeCarry, List.of());
+        }
+        // When the event amount is already reflected in possession (pickup, or the deferred craft/smelt
+        // check one tick later when the crafted stack sits in the inventory or cursor), possession is the
+        // ground truth: a Q-dropped result stack is on the ground by then and is correctly not counted.
+        int total = alreadyAddedToInventory ? totalInPossession : Math.max(totalInPossession, minCountFromEvent);
+        pendingForItem.sort(TargetKey::compareTo);
+        List<TargetKey> achieved = new ArrayList<>();
+        for (TargetKey key : pendingForItem) {
+            if (total >= key.count()) {
+                achieved.add(key);
+            }
+        }
+        return new ItemAcquisitionOutcome(clearedCreativeCarry, achieved);
+    }
+
     private static void tryRecordForItem(ServerPlayer player, String itemId, int minCountFromEvent,
                                          boolean alreadyAddedToInventory) {
         if (recordingPaused(player)) {
@@ -356,42 +448,48 @@ public final class Tracker {
         MilestoneData.PlayerData pd = data.playerOrNull(player.getUUID());
         int totalInPossession = countItemInPossession(player, itemId);
         Set<String> carried = carriedFromCreative(pd);
-        if (carried.contains(itemId)) {
-            int priorCount = alreadyAddedToInventory ? totalInPossession - minCountFromEvent : totalInPossession;
-            if (priorCount <= 0) {
-                if (pd != null) {
-                    pd.carriedFromCreative.remove(itemId);
-                }
-                data.setDirty();
-            } else {
-                return;
+        ItemAcquisitionOutcome outcome = evaluateItemAcquisition(
+                itemId, totalInPossession, minCountFromEvent, alreadyAddedToInventory,
+                effectiveTargets(pd), pd, carried);
+        if (outcome.clearedCreativeCarry()) {
+            if (pd != null) {
+                pd.carriedFromCreative.remove(itemId);
             }
+            data.setDirty();
         }
-        List<TargetKey> pendingForItem = new ArrayList<>();
-        for (TargetKey key : effectiveTargets(pd)) {
-            if (key.itemId().equals(itemId) && (pd == null || !pd.records.containsKey(key))) {
-                pendingForItem.add(key);
-            }
-        }
-        if (pendingForItem.isEmpty()) {
+        if (outcome.achieved().isEmpty()) {
             return;
         }
-        // When the event amount is already reflected in possession (pickup, or the deferred craft/smelt
-        // check one tick later when the crafted stack sits in the inventory or cursor), possession is the
-        // ground truth: a Q-dropped result stack is on the ground by then and is correctly not counted.
-        int total = alreadyAddedToInventory ? totalInPossession : Math.max(totalInPossession, minCountFromEvent);
-        pendingForItem.sort(TargetKey::compareTo);
         boolean anyRecorded = false;
-        for (TargetKey key : pendingForItem) {
-            if (total >= key.count()) {
-                if (record(player, data, key, false)) {
-                    anyRecorded = true;
-                }
+        for (TargetKey key : outcome.achieved()) {
+            if (record(player, data, key, false)) {
+                anyRecorded = true;
             }
         }
         if (anyRecorded) {
             MilestoneService.syncPlayerIfOpen(player);
         }
+    }
+
+    enum RecordOutcome {
+        ALREADY_RECORDED,
+        RECORDED,
+        RECORDED_WORLD_FIRST
+    }
+
+    static RecordOutcome applyRecord(MilestoneData data, UUID playerId, @Nullable String playerName,
+                                     TargetKey key, MilestoneRecord rec) {
+        MilestoneData.PlayerData pd = data.player(playerId);
+        if (pd.records.containsKey(key)) {
+            return RecordOutcome.ALREADY_RECORDED;
+        }
+        if (playerName != null && !playerName.equals(pd.lastKnownName)) {
+            pd.lastKnownName = playerName;
+        }
+        pd.records.put(key, rec);
+        boolean worldFirst = data.recordWorldFirstIfAbsent(key, playerId, playerName, rec);
+        data.setDirty();
+        return worldFirst ? RecordOutcome.RECORDED_WORLD_FIRST : RecordOutcome.RECORDED;
     }
 
     private static boolean record(ServerPlayer player, MilestoneData data, TargetKey key, boolean syncImmediately) {
@@ -406,12 +504,11 @@ public final class Tracker {
         MilestoneRecord rec = new MilestoneRecord(ticks, day, epochMillis);
 
         String playerName = player.getGameProfile().name();
-        if (playerName != null && !playerName.equals(pd.lastKnownName)) {
-            pd.lastKnownName = playerName;
+        RecordOutcome outcome = applyRecord(data, player.getUUID(), playerName, key, rec);
+        if (outcome == RecordOutcome.ALREADY_RECORDED) {
+            return false;
         }
-        pd.records.put(key, rec);
-        boolean worldFirst = data.recordWorldFirstIfAbsent(key, player.getUUID(), playerName, rec);
-        data.setDirty();
+        boolean worldFirst = outcome == RecordOutcome.RECORDED_WORLD_FIRST;
 
         ItemMilestoneLog.LOGGER.info("[ItemMilestoneLog] {} first obtained {} at playtime {} ({} ticks)",
                 playerName, key.formatDisplayId(), Playtime.formatRecord(rec), ticks);
