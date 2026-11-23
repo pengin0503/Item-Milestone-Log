@@ -114,7 +114,7 @@ public final class ModNetworking {
         }
         context.enqueueWork(() -> {
             ItemMilestoneLog.LOGGER.debug("[ItemMilestoneLog] Received RequestSyncPayload from {}",
-                    player.getGameProfile().getName());
+                    player.getGameProfile().name());
             SyncMilestonesPayload sync = MilestoneService.createSyncPayload(player, true, null);
             PacketDistributor.sendToPlayer(player, sync);
         });
