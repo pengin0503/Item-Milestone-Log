@@ -86,7 +86,8 @@ public final class CommandHelp {
     }
 
     /**
-     * Complete ordered table of {@code /milestonelog} commands for v1.1.0 (spec F29).
+     * Complete ordered table of {@code /milestonelog} commands (spec F29; v1.2.0 adds the F8b
+     * tag commands {@code addtag} / {@code removetag} / {@code resettag} and F13 {@code toptag}).
      * {@code MilestoneCommandsHelpTest} verifies that every registered subcommand appears here
      * and every entry has both English and Japanese descriptions.
      */
@@ -95,7 +96,9 @@ public final class CommandHelp {
             new Entry("playtime", true, Gate.NONE),
             new Entry("add", true, Gate.NONE),
             new Entry("addhand", true, Gate.NONE),
+            new Entry("addtag", true, Gate.NONE),
             new Entry("remove", true, Gate.NONE),
+            new Entry("removetag", true, Gate.NONE),
             new Entry("removeall", true, Gate.NONE),
             new Entry("targets", true, Gate.NONE),
             new Entry("list", true, Gate.NONE),
@@ -103,10 +106,12 @@ public final class CommandHelp {
             new Entry("presetremove", true, Gate.PRESETS),
             new Entry("presetprogress", true, Gate.PRESETS),
             new Entry("reset", true, Gate.NONE),
+            new Entry("resettag", true, Gate.NONE),
             new Entry("resetall", true, Gate.NONE),
             new Entry("undo", true, Gate.NONE),
             new Entry("firsts", false, Gate.NONE),
             new Entry("top", false, Gate.LOOKUP),
+            new Entry("toptag", false, Gate.LOOKUP),
             new Entry("recent", false, Gate.LOOKUP),
             new Entry("stats", false, Gate.LOOKUP),
             new Entry("lookup", false, Gate.LOOKUP),

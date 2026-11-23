@@ -6,6 +6,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -40,9 +41,15 @@ class ItemMilestoneLogApiTest {
     }
 
     @Test
-    void tagKeysCannotBeRepresentedIn110() {
-        // Tag keys are rejected by TargetKey itself, so the write API can never receive one in 1.1.0.
-        assertThrows(IllegalArgumentException.class, () -> new TargetKey("#minecraft:logs", 1));
-        assertNull(TargetKey.normalize("#minecraft:logs", 1));
+    void tagKeysAreRepresentedWithIsTagAndTagId() {
+        TargetKey logs = new TargetKey("#minecraft:logs", 1);
+        assertTrue(logs.isTag());
+        assertEquals("minecraft:logs", logs.tagId());
+        assertEquals(logs, TargetKey.normalize("#minecraft:logs", 1));
+        assertFalse(DIAMOND.isTag());
+        assertNull(DIAMOND.tagId());
+
+        assertThrows(IllegalArgumentException.class, () -> new TargetKey("##minecraft:logs", 1));
+        assertNull(TargetKey.normalize("#:logs", 1));
     }
 }

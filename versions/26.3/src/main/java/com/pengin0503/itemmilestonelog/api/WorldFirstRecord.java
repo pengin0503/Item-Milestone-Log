@@ -5,7 +5,8 @@ import java.util.UUID;
 /**
  * Immutable record of the first player to obtain an item target (item + quantity) in the world.
  *
- * @param itemId      registry item ID
+ * @param itemId      registry item ID, or {@code '#'}-prefixed tag ID (e.g. {@code "#c:ingots/iron"});
+ *                    check {@link TargetKey#isTag()} via {@link #targetKey()} before treating as an {@code Identifier} / {@code ResourceLocation}
  * @param count       required quantity (1..1,000,000)
  * @param playerUuid  UUID of the player who achieved the world first
  * @param playerName  player name at the time of recording

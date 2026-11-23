@@ -54,7 +54,7 @@ public class MilestoneRecordedEvent extends Event {
      * Creates an event for a confirmed milestone record with {@code cause = RecordCause.GAMEPLAY}.
      *
      * @param player      the player whose milestone was recorded
-     * @param itemId      normalized target item ID
+     * @param itemId      normalized target item ID, or {@code '#'}-prefixed tag ID (e.g. {@code "#c:ingots/iron"})
      * @param count       target quantity ({@code 1..1,000,000})
      * @param playTicks   player's cumulative playtime ticks at recording
      * @param day         in-game overworld day index, or {@link MilestoneRecord#UNKNOWN_DAY} if unknown
@@ -76,7 +76,7 @@ public class MilestoneRecordedEvent extends Event {
      * Creates an event for a confirmed milestone record with an explicit {@link RecordCause}.
      *
      * @param player      the player whose milestone was recorded
-     * @param itemId      normalized target item ID
+     * @param itemId      normalized target item ID, or {@code '#'}-prefixed tag ID (e.g. {@code "#c:ingots/iron"})
      * @param count       target quantity ({@code 1..1,000,000})
      * @param playTicks   player's cumulative playtime ticks at recording
      * @param day         in-game overworld day index, or {@link MilestoneRecord#UNKNOWN_DAY} if unknown
@@ -108,7 +108,14 @@ public class MilestoneRecordedEvent extends Event {
         return player;
     }
 
-    /** Returns the normalized target item ID. */
+    /**
+     * Returns the normalized target ID.
+     *
+     * <p>This value may start with {@code '#'} for item tag targets (e.g. {@code "#c:ingots/iron"}).
+     * Callers should check {@link TargetKey#isTag()} (via {@link #getTargetKey()}) or
+     * {@link TargetKey#isTagId(String)} before treating the returned string as a Minecraft
+     * {@code Identifier} / {@code ResourceLocation}.
+     */
     public String getItemId() {
         return itemId;
     }

@@ -52,10 +52,10 @@ IDENTICAL_ALL_4=(
 
 # Files that differ in 1.21.1 (ResourceLocation, NBT SavedData, player.server,
 # mods.toml loaderVersion, etc.) but must be byte-identical across 26.1.2, 26.2,
-# and 26.3. Together with the 8 src/main/java files in IDENTICAL_ALL_4, this
-# covers all 22 src/main/java files that are identical across 26.x.
+# and 26.3. Together with the 13 src/main/java files in IDENTICAL_ALL_4, this
+# covers all 28 src/main/java files that are identical across 26.x.
 IDENTICAL_26_X=(
-  # src/main/java (15 files; +11 from IDENTICAL_ALL_4 = 26 src/main/java files)
+  # src/main/java (15 files; +13 from IDENTICAL_ALL_4 = 28 src/main/java files)
   "src/main/java/com/pengin0503/itemmilestonelog/Config.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestoneCommands.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestoneData.java"
@@ -64,7 +64,7 @@ IDENTICAL_26_X=(
   "src/main/java/com/pengin0503/itemmilestonelog/Playtime.java"
   "src/main/java/com/pengin0503/itemmilestonelog/Presets.java"
   "src/main/java/com/pengin0503/itemmilestonelog/ServerLang.java"
-  "src/main/java/com/pengin0503/itemmilestonelog/Tracker.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/TagTargets.java"
   "src/main/java/com/pengin0503/itemmilestonelog/gametest/MilestoneGameTestRegistration.java"
   "src/main/java/com/pengin0503/itemmilestonelog/network/MilestoneActionPayload.java"
   "src/main/java/com/pengin0503/itemmilestonelog/network/ModNetworking.java"
@@ -90,6 +90,11 @@ IDENTICAL_26_X=(
 #     ItemPickerScreen,MilestoneScreen,PresetListScreen,SavePresetScreen}.java:
 #     1.21.1 uses GuiGraphics / Screen.render; 26.1.2 uses GuiGraphicsExtractor
 #     + mc.screen / mc.setScreen; 26.2 and 26.3 use mc.gui.screen() / mc.gui.setScreen().
+# - src/main/java/.../Tracker.java:
+#     NeoForge 26.3 removed TagsUpdatedEvent#getUpdateCause()/UpdateCause, so 26.3's
+#     onTagsUpdated gates the defaultTargets tag warning on shouldUpdateStaticData()
+#     instead of UpdateCause.SERVER_DATA_LOAD. 1.21.1 differs as well (ResourceLocation,
+#     player.server, GameProfile#getName); 26.1.2 and 26.2 are still identical to each other but are no longer checked.
 # - src/test/java/.../ServerLangTest.java:
 #     Fallback source directory path embeds each project's own Minecraft version.
 

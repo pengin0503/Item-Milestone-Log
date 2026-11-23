@@ -483,7 +483,9 @@ public final class MilestoneExport {
     }
 
     private static String resolveItemDisplayName(String itemId) {
-        if (!MilestoneService.isValidItemId(itemId)) {
+        // F8b: tag names always resolve (translation, or the "#ns:path" fallback), even for tags
+        // that are currently missing or empty.
+        if (!TargetKey.isTagId(itemId) && !MilestoneService.isValidItemId(itemId)) {
             return "";
         }
         return MilestoneService.itemName(itemId).getString();
@@ -857,7 +859,7 @@ public final class MilestoneExport {
                     continue;
                 }
                 int count = keyFromMap.count();
-                boolean keyHadExplicitCount = rawKey.indexOf('#') >= 0;
+                boolean keyHadExplicitCount = rawKey.trim().lastIndexOf('#') >= 1;
                 if (recObj.has("count")) {
                     int parsedCount = parseStrictJsonCount(recObj.get("count"));
                     if (parsedCount < TargetKey.MIN_COUNT || (keyHadExplicitCount && parsedCount != count)) {

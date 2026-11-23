@@ -1527,4 +1527,15 @@ class MilestoneServiceTest {
                 "3 人分のデータを消しました。",
                 ServerLang.trForLang("ja_jp", "message.itemmilestonelog.prunedata_done", 3).getString());
     }
+
+    @Test
+    void tagCommandHelpersBuildTagKeysAndPickTheTagErrorMessage() {
+        assertEquals("#c:ingots/iron", MilestoneService.tagKeyId("c:ingots/iron"));
+        assertEquals("message.itemmilestonelog.invalid_tag", MilestoneService.invalidTargetKey("#c:ingots/iron"));
+        assertEquals("message.itemmilestonelog.invalid_item", MilestoneService.invalidTargetKey("minecraft:diamond"));
+        assertEquals("message.itemmilestonelog.invalid_item", MilestoneService.invalidTargetKey(null));
+        assertEquals(
+                "Invalid, unknown or empty item tag: #c:none",
+                ServerLang.trForLang("en_us", "message.itemmilestonelog.invalid_tag", "#c:none").getString());
+    }
 }

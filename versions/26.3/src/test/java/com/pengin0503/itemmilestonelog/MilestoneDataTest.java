@@ -912,4 +912,80 @@ class MilestoneDataTest {
         assertTrue(loadedA.records.isEmpty());
         assertEquals(1795800000000L, loadedA.lastSeen);
     }
+
+    @Test
+    void roundTripsTagKeysAcrossTargetsRecordsWorldFirstsAndProgressNotified(@TempDir Path dir) throws IOException {
+        TargetKey ironTag1 = TargetKey.of("#c:ingots/iron");
+        TargetKey ironTag100 = TargetKey.of("#c:ingots/iron", 100);
+        TargetKey logsTag64 = TargetKey.of("#minecraft:logs", 64);
+        MilestoneRecord rec1 = new MilestoneRecord(1200, 2L, 1795600000000L);
+        MilestoneRecord rec100 = new MilestoneRecord(48000, 15L, 1795700000000L);
+
+        MilestoneData original = new MilestoneData();
+        MilestoneData.PlayerData pd = original.player(PLAYER_A);
+        pd.lastKnownName = "Alice";
+        pd.targets.add(ironTag1);
+        pd.targets.add(ironTag100);
+        pd.targets.add(logsTag64);
+        pd.records.put(ironTag1, rec1);
+        pd.records.put(ironTag100, rec100);
+        pd.progressNotified.put(logsTag64, 50);
+        assertTrue(original.recordWorldFirstIfAbsent(ironTag1, PLAYER_A, "Alice", rec1));
+        assertTrue(original.recordWorldFirstIfAbsent(ironTag100, PLAYER_A, "Alice", rec100));
+
+        CompoundTag encoded = (CompoundTag) MilestoneData.CODEC.encodeStart(NbtOps.INSTANCE, original).getOrThrow();
+        CompoundTag encodedPlayer = encoded.getCompoundOrEmpty("players").getCompoundOrEmpty(PLAYER_A.toString());
+        ListTag encodedTargets = encodedPlayer.getListOrEmpty("targets");
+        assertEquals(List.of("#c:ingots/iron", "#c:ingots/iron#100", "#minecraft:logs#64"),
+                List.of(encodedTargets.getStringOr(0, ""), encodedTargets.getStringOr(1, ""), encodedTargets.getStringOr(2, "")));
+        assertTrue(encodedPlayer.getCompoundOrEmpty("records").contains("#c:ingots/iron"));
+        assertEquals(50, encodedPlayer.getCompoundOrEmpty("progressNotified").getIntOr("#minecraft:logs#64", -1));
+        assertTrue(encoded.getCompoundOrEmpty("worldFirsts").contains("#c:ingots/iron"));
+
+        // Inject malformed tag entries to confirm lenient per-entry skipping
+        encodedTargets.add(StringTag.valueOf("#"));
+        encodedTargets.add(StringTag.valueOf("##c:x"));
+        encodedTargets.add(StringTag.valueOf("#c:x#0"));
+        encodedTargets.add(StringTag.valueOf("#:x"));
+        encodedTargets.add(StringTag.valueOf("#c:"));
+        encodedPlayer.getCompoundOrEmpty("progressNotified").putInt("#c:x#abc", 50);
+
+        MilestoneData loaded = MilestoneData.CODEC.parse(NbtOps.INSTANCE, encoded).getOrThrow();
+        MilestoneData.PlayerData loadedPd = loaded.playerOrNull(PLAYER_A);
+        assertNotNull(loadedPd);
+        assertEquals(List.of(ironTag1, ironTag100, logsTag64), List.copyOf(loadedPd.targets));
+        assertEquals(Map.of(ironTag1, rec1, ironTag100, rec100), loadedPd.records);
+        assertEquals(Map.of(logsTag64, 50), loadedPd.progressNotified);
+
+        WorldFirstRecord wf1 = loaded.worldFirstOrNull(ironTag1);
+        assertNotNull(wf1);
+        assertEquals(ironTag1, wf1.targetKey());
+        assertTrue(wf1.targetKey().isTag());
+        assertEquals("c:ingots/iron", wf1.targetKey().tagId());
+        assertEquals(1200, wf1.playTicks());
+
+        WorldFirstRecord wf100 = loaded.worldFirstOrNull(ironTag100);
+        assertNotNull(wf100);
+        assertEquals(ironTag100, wf100.targetKey());
+        assertEquals(100, wf100.count());
+        assertEquals(48000, wf100.playTicks());
+
+        // 1.21.1 legacy file carrying tag keys migrates cleanly via readLegacy
+        CompoundTag legacyRoot = new CompoundTag();
+        legacyRoot.put("data", encoded);
+        legacyRoot.putInt("DataVersion", 3955);
+        Path legacyFile = dir.resolve(MilestoneData.LEGACY_FILE);
+        Files.createDirectories(legacyFile.getParent());
+        NbtIo.writeCompressed(legacyRoot, legacyFile);
+
+        MilestoneData migrated = MilestoneData.readLegacy(legacyFile);
+        assertNotNull(migrated);
+        MilestoneData.PlayerData migratedPd = migrated.playerOrNull(PLAYER_A);
+        assertNotNull(migratedPd);
+        assertEquals(List.of(ironTag1, ironTag100, logsTag64), List.copyOf(migratedPd.targets));
+        assertEquals(Map.of(ironTag1, rec1, ironTag100, rec100), migratedPd.records);
+        assertEquals(Map.of(logsTag64, 50), migratedPd.progressNotified);
+        assertEquals(wf1, migrated.worldFirstOrNull(ironTag1));
+        assertEquals(wf100, migrated.worldFirstOrNull(ironTag100));
+    }
 }

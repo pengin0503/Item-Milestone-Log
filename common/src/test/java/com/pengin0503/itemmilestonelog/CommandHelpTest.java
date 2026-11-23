@@ -25,9 +25,10 @@ class CommandHelpTest {
     @Test
     void entriesFollowSpecOrderWithUniqueNamesAndExpectedCommands() {
         List<String> expectedOrder = List.of(
-                "summary", "playtime", "add", "addhand", "remove", "removeall", "targets", "list",
-                "preset", "presetremove", "presetprogress", "reset", "resetall", "undo",
-                "firsts", "top", "recent", "stats", "lookup",
+                "summary", "playtime", "add", "addhand", "addtag", "remove", "removetag", "removeall",
+                "targets", "list",
+                "preset", "presetremove", "presetprogress", "reset", "resettag", "resetall", "undo",
+                "firsts", "top", "toptag", "recent", "stats", "lookup",
                 "privacy", "mutebroadcast", "muteprogress", "discordoptout",
                 "export", "exporthtml", "exportcsv", "import",
                 "exportall", "exporthtmlall", "exportcsvall", "importall",
@@ -57,7 +58,7 @@ class CommandHelpTest {
         List<String> visible = namesOf(CommandHelp.visibleEntries(console, e -> true));
 
         assertEquals(List.of(
-                "preset", "firsts", "top", "recent", "stats", "lookup",
+                "preset", "firsts", "top", "toptag", "recent", "stats", "lookup",
                 "exportall", "exporthtmlall", "exportcsvall", "importall",
                 "admin", "prunedata", "discordtest", "help"
         ), visible);

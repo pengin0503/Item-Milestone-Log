@@ -58,15 +58,46 @@ public final class MilestoneService {
     private MilestoneService() {
     }
 
+    /**
+     * Whether {@code itemId} names a registered item, or (F8b) a {@code '#'}-prefixed item tag that
+     * exists and is not empty.
+     */
     public static boolean isValidItemId(String itemId) {
         if (itemId == null || itemId.isEmpty()) {
             return false;
+        }
+        if (TargetKey.isTagId(itemId)) {
+            return TagTargets.isNonEmptyTag(itemId);
         }
         ResourceLocation rl = ResourceLocation.tryParse(itemId);
         return rl != null && BuiltInRegistries.ITEM.containsKey(rl);
     }
 
+    /** F8b: {@code "#" + tagId} for a tag ID written without {@code '#'} (as in the tag commands). */
+    public static String tagKeyId(String tagId) {
+        return "#" + tagId;
+    }
+
+    /** {@code invalid_tag} for a {@code '#'}-prefixed ID (F8b), {@code invalid_item} otherwise. */
+    static Component invalidTargetMessage(@Nullable ServerPlayer player, @Nullable String rawId) {
+        return ServerLang.tr(player, invalidTargetKey(rawId), String.valueOf(rawId));
+    }
+
+    /** Lang key for an invalid/unknown target ID: {@code invalid_tag} for tags (F8b), else {@code invalid_item}. */
+    public static String invalidTargetKey(@Nullable String rawId) {
+        return TargetKey.isTagId(rawId)
+                ? "message.itemmilestonelog.invalid_tag"
+                : "message.itemmilestonelog.invalid_item";
+    }
+
+    /**
+     * Display name of a target ID. F8b: tag IDs use
+     * {@code Component.translatableWithFallback(Tags.getTagTranslationKey(tag), "#ns:path")}.
+     */
     public static Component itemName(String itemId) {
+        if (TargetKey.isTagId(itemId)) {
+            return TagTargets.displayName(itemId);
+        }
         ResourceLocation rl = ResourceLocation.tryParse(itemId);
         if (rl != null && BuiltInRegistries.ITEM.containsKey(rl)) {
             Item item = BuiltInRegistries.ITEM.get(rl);
@@ -145,7 +176,14 @@ public final class MilestoneService {
         return isPrivileged(player);
     }
 
+    /**
+     * Whether {@code normalizedId} is a registered non-air item, or (F8b) an existing non-empty item tag.
+     * Used for adding targets (incl. the F32 API), applying presets, and the F5 / F16 R(S) judgment.
+     */
     static boolean isKnownNonAirItem(String normalizedId) {
+        if (TargetKey.isTagId(normalizedId)) {
+            return TagTargets.isNonEmptyTag(normalizedId);
+        }
         ResourceLocation rl = ResourceLocation.tryParse(normalizedId);
         return rl != null && BuiltInRegistries.ITEM.containsKey(rl) && BuiltInRegistries.ITEM.get(rl) != Items.AIR;
     }
@@ -204,8 +242,7 @@ public final class MilestoneService {
         return switch (outcome.status()) {
             case INVALID_COUNT -> new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_count",
                     TargetKey.MIN_COUNT, TargetKey.MAX_COUNT));
-            case INVALID_ITEM -> new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_item",
-                    String.valueOf(itemId)));
+            case INVALID_ITEM -> new ActionResult(false, invalidTargetMessage(player, itemId));
             case ALREADY_TARGET -> new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.already_target",
                     displayName.apply(outcome.key())));
             case LIMIT_REACHED -> new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.targets_limit_reached",
@@ -246,8 +283,7 @@ public final class MilestoneService {
         return switch (outcome.status()) {
             case INVALID_COUNT -> new ActionResult(false, ServerLang.tr(executor, "message.itemmilestonelog.invalid_count",
                     TargetKey.MIN_COUNT, TargetKey.MAX_COUNT));
-            case INVALID_ITEM -> new ActionResult(false, ServerLang.tr(executor, "message.itemmilestonelog.invalid_item",
-                    String.valueOf(itemId)));
+            case INVALID_ITEM -> new ActionResult(false, invalidTargetMessage(executor, itemId));
             case ALREADY_TARGET -> new ActionResult(false, ServerLang.tr(executor, "message.itemmilestonelog.admin_already_target",
                     literalName, displayName.apply(outcome.key())));
             case LIMIT_REACHED -> new ActionResult(false, ServerLang.tr(executor, "message.itemmilestonelog.targets_limit_reached",
@@ -341,8 +377,7 @@ public final class MilestoneService {
         return switch (outcome.status()) {
             case INVALID_COUNT -> new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_count",
                     TargetKey.MIN_COUNT, TargetKey.MAX_COUNT));
-            case INVALID_ITEM -> new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_item",
-                    String.valueOf(itemId)));
+            case INVALID_ITEM -> new ActionResult(false, invalidTargetMessage(player, itemId));
             case NOT_TARGET -> new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.not_target",
                     displayName.apply(outcome.key())));
             case REMOVED -> new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.removed",
@@ -376,8 +411,7 @@ public final class MilestoneService {
         return switch (outcome.status()) {
             case INVALID_COUNT -> new ActionResult(false, ServerLang.tr(executor, "message.itemmilestonelog.invalid_count",
                     TargetKey.MIN_COUNT, TargetKey.MAX_COUNT));
-            case INVALID_ITEM -> new ActionResult(false, ServerLang.tr(executor, "message.itemmilestonelog.invalid_item",
-                    String.valueOf(itemId)));
+            case INVALID_ITEM -> new ActionResult(false, invalidTargetMessage(executor, itemId));
             case NOT_TARGET -> new ActionResult(false, ServerLang.tr(executor, "message.itemmilestonelog.admin_not_target",
                     literalName, displayName.apply(outcome.key())));
             case REMOVED -> new ActionResult(true, ServerLang.tr(executor, "message.itemmilestonelog.admin_removed",
@@ -884,7 +918,7 @@ public final class MilestoneService {
                     TargetKey.MIN_COUNT, TargetKey.MAX_COUNT));
         }
         if (!TargetKey.isValidItemId(itemId)) {
-            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_item", String.valueOf(itemId)));
+            return new ActionResult(false, invalidTargetMessage(player, itemId));
         }
         String normalized = TargetKey.normalizeItemId(itemId);
         String normalizedId = normalized != null ? normalized : itemId;
@@ -916,7 +950,7 @@ public final class MilestoneService {
             }
         }
         if (!isKnownItem.test(normalizedId)) {
-            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_item", itemId));
+            return new ActionResult(false, invalidTargetMessage(player, itemId));
         }
         return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.not_recorded", displayName.apply(key)));
     }
