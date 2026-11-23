@@ -15,9 +15,24 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# identical-files ─────────────────────────────────┐
 # build ──┬── server-test ──┬── release-check ── release (tags only)
-#         └── migration ────┘
+#         ├── migration ────┤
+#         └── compat-test ──┘
 jobs:
+  identical-files:
+    # Verifies that source/test/template files expected to remain byte-identical across
+    # Minecraft versions have not drifted out of sync (docs/FEATURE_SPEC_1.1.0.md §3.2 (a)).
+    name: Check identical files across versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Check identical files
+        run: .github/scripts/check-identical-files.sh
+
   build:
     # Compiles and unit-tests every Minecraft version against both NeoForge versions.
     # "min" is the NeoForge version the release jar is compiled against (and the lowest
@@ -290,10 +305,119 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  compat-test:
+    # Verifies network compatibility between the current development version and the
+    # released 1.0.1 mod jar using a real Minecraft client on Xvfb (Mesa llvmpipe) and
+    # a production NeoForge dedicated server (docs/FEATURE_SPEC_1.1.0.md §3.1).
+    # Runs in parallel with server-test and migration, sharing the NeoForm and NeoForge
+    # server caches. Starts with 1.21.1 and 26.1.2 (26.2/26.3 will follow after client
+    # launch verification).
+    name: Client/Server Compat MC ${{ matrix.mc }}
+    needs: build
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Final 1.0.1 code commit (PR #49; no v1.0.1 tag/release exists yet).
+      # Note: spec §3.1 cited 12763d2 (PR #24), which predates PR #27 (quantity targets)
+      # and has an older SyncMilestonesPayload wire format; 4c16aa2 is the released 1.0.1 code.
+      BASELINE_1_0_1_REF: '4c16aa24429350a936f876b13a064e03ffbde012'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mc: '1.21.1'
+            java: '21'
+          - mc: '26.1.2'
+            java: '25'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Checkout 1.0.1 baseline commit
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ env.BASELINE_1_0_1_REF }}
+          path: build/baseline-1.0.1
+
+      - name: Setup JDK ${{ matrix.java }}
+        uses: actions/setup-java@v5
+        with:
+          java-version: ${{ matrix.java }}
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: true
+          gradle-home-cache-excludes: caches/neoformruntime
+
+      - name: Restore the NeoForm cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.gradle/caches/neoformruntime
+          key: neoform-v1-${{ runner.os }}-${{ matrix.mc }}-${{ hashFiles(format('versions/{0}/gradle.properties', matrix.mc), format('versions/{0}/*.gradle', matrix.mc)) }}
+          restore-keys: neoform-v1-${{ runner.os }}-${{ matrix.mc }}-
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: .github/integration/package-lock.json
+
+      - name: Select NeoForge version
+        id: neo
+        run: .github/scripts/neoforge-version.sh ${{ matrix.mc }} min
+
+      - name: Download the development release jar
+        uses: actions/download-artifact@v7
+        with:
+          name: itemmilestonelog-${{ matrix.mc }}
+          path: versions/${{ matrix.mc }}/build/libs
+
+      - name: Restore the NeoForge server
+        uses: actions/cache@v5
+        with:
+          path: build/server/${{ matrix.mc }}-${{ steps.neo.outputs.version }}/libraries
+          key: neoforge-server-v1-${{ runner.os }}-${{ matrix.mc }}-${{ steps.neo.outputs.version }}
+
+      - name: Install Xvfb, xdotool and software OpenGL packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb xdotool libgl1-mesa-dri libglx-mesa0 libgl1 libglu1-mesa libopenal1
+
+      - name: Install integration test client (for RCON /stop)
+        run: npm ci --prefix .github/integration --no-audit --no-fund
+
+      - name: Create development client launch script
+        run: ./gradlew -p versions/${{ matrix.mc }} createClientLaunchScript -Pneo_version=${{ steps.neo.outputs.version }} --console=plain
+
+      - name: Build 1.0.1 jar and client launch script
+        run: ./build/baseline-1.0.1/gradlew -p build/baseline-1.0.1/versions/${{ matrix.mc }} jar createClientLaunchScript -Pneo_version=${{ steps.neo.outputs.version }} --console=plain
+
+      - name: Run client/server version compatibility scenarios
+        run: .github/scripts/run-compat-test.sh ${{ matrix.mc }} ${{ steps.neo.outputs.version }} build/baseline-1.0.1
+
+      - name: Upload compatibility test logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: compat-logs-${{ matrix.mc }}
+          path: |
+            build/compat-logs/
+            build/server/*/logs/
+            versions/${{ matrix.mc }}/run/logs/
+            build/baseline-1.0.1/versions/${{ matrix.mc }}/run/logs/
+          if-no-files-found: ignore
+          retention-days: 7
+
   release-check:
     # Runs on every build, so a broken release is found before the tag is pushed.
     name: Check the release files
-    needs: [build, server-test, migration]
+    needs: [identical-files, build, server-test, migration, compat-test]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

@@ -15,6 +15,16 @@ sourceSets.main.resources {
     exclude("src/generated/**/.cache")
 }
 
+sourceSets.main.java {
+    // Pure-Java logic shared across all Minecraft versions (must remain Java 21 compatible).
+    srcDir('../../common/src/main/java')
+}
+
+sourceSets.test.java {
+    // Unit tests for pure-Java logic shared across all Minecraft versions.
+    srcDir('../../common/src/test/java')
+}
+
 repositories {
 }
 
