@@ -3,6 +3,7 @@ package com.pengin0503.itemmilestonelog;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecordedEvent;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
+import com.pengin0503.itemmilestonelog.network.ModNetworking;
 import com.pengin0503.itemmilestonelog.network.SyncMilestonesPayload;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
@@ -52,8 +53,11 @@ public final class Tracker {
         Set<TargetKey> result = new LinkedHashSet<>();
         for (String raw : current) {
             TargetKey parsed = TargetKey.tryParseEncoded(raw);
-            if (parsed != null && parsed.itemId().contains(":") && ResourceLocation.tryParse(parsed.itemId()) != null) {
-                result.add(parsed);
+            ResourceLocation rl = (parsed != null && parsed.itemId().contains(":"))
+                    ? ResourceLocation.tryParse(parsed.itemId())
+                    : null;
+            if (rl != null && !"minecraft:air".equals(rl.toString())) {
+                result.add(new TargetKey(rl.toString(), parsed.count()));
             } else if (raw != null && WARNED_DEFAULT_TARGETS.add(raw)) {
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Ignoring invalid defaultTargets entry '{}'", raw);
             }
@@ -94,6 +98,11 @@ public final class Tracker {
                     : "message.itemmilestonelog.join_hint_vanilla";
             player.sendSystemMessage(ServerLang.tr(player, key));
         }
+    }
+
+    @SubscribeEvent
+    public static void onPlayerLoggedOut(PlayerEvent.PlayerLoggedOutEvent event) {
+        ModNetworking.removeRateLimit(event.getEntity().getUUID());
     }
 
     @SubscribeEvent
@@ -138,6 +147,9 @@ public final class Tracker {
         if (player.containerMenu != null) {
             accumulateStack(player.containerMenu.getCarried(), carried, stillCarried, neededItemIds, counts);
         }
+        for (ItemStack craftStack : player.inventoryMenu.getCraftSlots().getItems()) {
+            accumulateStack(craftStack, carried, stillCarried, neededItemIds, counts);
+        }
 
         if (!counts.isEmpty()) {
             List<TargetKey> achieved = new ArrayList<>();
@@ -148,8 +160,14 @@ public final class Tracker {
             }
             if (!achieved.isEmpty()) {
                 achieved.sort(TargetKey::compareTo);
+                boolean anyRecorded = false;
                 for (TargetKey key : achieved) {
-                    record(player, data, key);
+                    if (record(player, data, key, false)) {
+                        anyRecorded = true;
+                    }
+                }
+                if (anyRecorded) {
+                    MilestoneService.syncPlayerIfOpen(player);
                 }
             }
         }
@@ -197,25 +215,15 @@ public final class Tracker {
         if (player.containerMenu != null && !player.containerMenu.getCarried().isEmpty()) {
             carried.add(itemId(player.containerMenu.getCarried()));
         }
-        MilestoneData data = MilestoneData.get(player.server);
-        MilestoneData.PlayerData existing = data.playerOrNull(player.getUUID());
-        if (existing != null) {
-            Set<TargetKey> effective = effectiveTargets(existing);
-            Set<String> itemsWithPendingTargets = new HashSet<>();
-            for (TargetKey key : effective) {
-                if (!existing.records.containsKey(key)) {
-                    itemsWithPendingTargets.add(key.itemId());
-                }
+        for (ItemStack craftStack : player.inventoryMenu.getCraftSlots().getItems()) {
+            if (!craftStack.isEmpty()) {
+                carried.add(itemId(craftStack));
             }
-            Set<String> recordedItems = new HashSet<>();
-            for (TargetKey key : existing.records.keySet()) {
-                recordedItems.add(key.itemId());
-            }
-            carried.removeIf(id -> recordedItems.contains(id) && !itemsWithPendingTargets.contains(id));
         }
         if (carried.isEmpty()) {
             return;
         }
+        MilestoneData data = MilestoneData.get(player.server);
         if (data.player(player.getUUID()).carriedFromCreative.addAll(carried)) {
             data.setDirty();
         }
@@ -226,7 +234,7 @@ public final class Tracker {
         if (event.getEntity() instanceof ServerPlayer player) {
             ItemStack stack = event.getCrafting();
             if (!stack.isEmpty()) {
-                tryRecordForItem(player, itemId(stack), stack.getCount());
+                tryRecordForItem(player, itemId(stack), stack.getCount(), false);
             }
         }
     }
@@ -236,7 +244,7 @@ public final class Tracker {
         if (event.getEntity() instanceof ServerPlayer player) {
             ItemStack stack = event.getSmelting();
             if (!stack.isEmpty()) {
-                tryRecordForItem(player, itemId(stack), stack.getCount());
+                tryRecordForItem(player, itemId(stack), stack.getCount(), false);
             }
         }
     }
@@ -251,7 +259,7 @@ public final class Tracker {
         if (before.isEmpty() || pickedUp <= 0) {
             return;
         }
-        tryRecordForItem(player, itemId(before), pickedUp);
+        tryRecordForItem(player, itemId(before), pickedUp, true);
     }
 
     /** True while nothing is recorded for the player: creative or spectator mode, if so configured. */
@@ -264,7 +272,7 @@ public final class Tracker {
     }
 
     /** The player's items carried out of creative mode, or an empty set if they don't count. */
-    private static Set<String> carriedFromCreative(MilestoneData.PlayerData pd) {
+    public static Set<String> carriedFromCreative(MilestoneData.PlayerData pd) {
         if (pd == null || !Config.IGNORE_CREATIVE_AND_SPECTATOR.get()) {
             return Set.of();
         }
@@ -275,13 +283,13 @@ public final class Tracker {
         return BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
     }
 
-    /** Counts total simultaneous possession of {@code targetItemId} in inventory, offhand, and cursor. */
+    /** Counts total simultaneous possession of {@code targetItemId} in inventory, offhand, cursor, and 2x2 craft grid. */
     private static int countItemInPossession(ServerPlayer player, String targetItemId) {
         return countItemsInPossession(player, Set.of(targetItemId)).getOrDefault(targetItemId, 0);
     }
 
     /**
-     * Counts total simultaneous possession (main inventory + armor + offhand + cursor stack)
+     * Counts total simultaneous possession (main inventory + armor + offhand + cursor stack + 2x2 craft grid)
      * for only the requested {@code itemIds}.
      */
     public static Map<String, Integer> countItemsInPossession(ServerPlayer player, Set<String> itemIds) {
@@ -308,17 +316,36 @@ public final class Tracker {
                 }
             }
         }
+        for (ItemStack craftStack : player.inventoryMenu.getCraftSlots().getItems()) {
+            if (!craftStack.isEmpty()) {
+                String id = itemId(craftStack);
+                if (itemIds.contains(id)) {
+                    counts.merge(id, craftStack.getCount(), Integer::sum);
+                }
+            }
+        }
         return counts;
     }
 
-    private static void tryRecordForItem(ServerPlayer player, String itemId, int minCountFromEvent) {
+    private static void tryRecordForItem(ServerPlayer player, String itemId, int minCountFromEvent,
+                                         boolean alreadyAddedToInventory) {
         if (recordingPaused(player)) {
             return;
         }
         MilestoneData data = MilestoneData.get(player.server);
         MilestoneData.PlayerData pd = data.playerOrNull(player.getUUID());
-        if (carriedFromCreative(pd).contains(itemId)) {
-            return;
+        int totalInPossession = countItemInPossession(player, itemId);
+        Set<String> carried = carriedFromCreative(pd);
+        if (carried.contains(itemId)) {
+            int priorCount = alreadyAddedToInventory ? totalInPossession - minCountFromEvent : totalInPossession;
+            if (priorCount <= 0) {
+                if (pd != null) {
+                    pd.carriedFromCreative.remove(itemId);
+                }
+                data.setDirty();
+            } else {
+                return;
+            }
         }
         List<TargetKey> pendingForItem = new ArrayList<>();
         for (TargetKey key : effectiveTargets(pd)) {
@@ -329,19 +356,25 @@ public final class Tracker {
         if (pendingForItem.isEmpty()) {
             return;
         }
-        int total = Math.max(countItemInPossession(player, itemId), minCountFromEvent);
+        int total = Math.max(totalInPossession, minCountFromEvent);
         pendingForItem.sort(TargetKey::compareTo);
+        boolean anyRecorded = false;
         for (TargetKey key : pendingForItem) {
             if (total >= key.count()) {
-                record(player, data, key);
+                if (record(player, data, key, false)) {
+                    anyRecorded = true;
+                }
             }
+        }
+        if (anyRecorded) {
+            MilestoneService.syncPlayerIfOpen(player);
         }
     }
 
-    private static void record(ServerPlayer player, MilestoneData data, TargetKey key) {
+    private static boolean record(ServerPlayer player, MilestoneData data, TargetKey key, boolean syncImmediately) {
         MilestoneData.PlayerData pd = data.player(player.getUUID());
         if (pd.records.containsKey(key)) {
-            return;
+            return false;
         }
         int ticks = Playtime.currentTicks(player);
         long day = Playtime.currentDay(player.server);
@@ -397,7 +430,10 @@ public final class Tracker {
 
         NeoForge.EVENT_BUS.post(new MilestoneRecordedEvent(player, key.itemId(), key.count(), ticks, day, epochMillis));
         DiscordNotifier.notifyMilestone(playerName != null ? playerName : "", key, rec, worldFirst);
-        MilestoneService.syncPlayerIfOpen(player);
+        if (syncImmediately) {
+            MilestoneService.syncPlayerIfOpen(player);
+        }
+        return true;
     }
 
     private static void playMilestoneSound(ServerPlayer player) {

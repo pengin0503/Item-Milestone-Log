@@ -12,6 +12,7 @@ import java.util.function.Consumer;
  * Non-pausing confirmation dialog for record resets and custom preset deletion.
  */
 public final class ConfirmResetScreen extends ConfirmScreen {
+    private final Screen parentScreen;
     private final Consumer<SyncMilestonesPayload> onSyncUpdate;
 
     public ConfirmResetScreen(
@@ -40,11 +41,22 @@ public final class ConfirmResetScreen extends ConfirmScreen {
             }
             Minecraft.getInstance().setScreen(parent);
         }, title, message, confirmButton, cancelButton);
+        this.parentScreen = parent;
         this.onSyncUpdate = onSyncUpdate;
     }
 
     public void updateParentData(SyncMilestonesPayload payload) {
         this.onSyncUpdate.accept(payload);
+    }
+
+    @Override
+    public void tick() {
+        super.tick();
+        if (parentScreen instanceof MilestoneScreen ms) {
+            ms.tickPlaytime();
+        } else if (parentScreen instanceof PresetListScreen pls) {
+            pls.getParent().tickPlaytime();
+        }
     }
 
     @Override

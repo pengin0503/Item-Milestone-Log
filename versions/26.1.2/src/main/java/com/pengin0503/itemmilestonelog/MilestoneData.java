@@ -149,7 +149,7 @@ public class MilestoneData extends SavedData {
         }
         for (Map.Entry<String, Map<String, MilestoneRecord>> itemEntry : records.entrySet()) {
             String itemId = itemEntry.getKey();
-            if (itemId == null || itemId.isEmpty() || itemId.indexOf('#') >= 0) {
+            if (!TargetKey.isValidItemId(itemId)) {
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid record item key '{}' in SavedData", itemId);
                 continue;
             }
@@ -160,7 +160,18 @@ public class MilestoneData extends SavedData {
                             countEntry.getKey(), itemId);
                     continue;
                 }
-                pd.records.put(new TargetKey(itemId, count), countEntry.getValue());
+                MilestoneRecord rec = countEntry.getValue();
+                if (rec == null) {
+                    ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping null record for '{}#{}' in SavedData",
+                            itemId, countEntry.getKey());
+                    continue;
+                }
+                if (rec.playTicks() < 0) {
+                    ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping record for '{}#{}' with negative ticks {} in SavedData",
+                            itemId, countEntry.getKey(), rec.playTicks());
+                    continue;
+                }
+                pd.records.put(new TargetKey(itemId, count), rec);
             }
         }
         pd.carriedFromCreative.addAll(carriedFromCreative);
@@ -194,6 +205,7 @@ public class MilestoneData extends SavedData {
             if (data == null) {
                 data = new MilestoneData();
             } else {
+                data.setDirty();
                 ItemMilestoneLog.LOGGER.info("[ItemMilestoneLog] Imported the records of {} player(s) from {}",
                         data.players.size(), LEGACY_FILE);
             }
@@ -208,7 +220,14 @@ public class MilestoneData extends SavedData {
         }
         try {
             CompoundTag root = NbtIo.readCompressed(file, NbtAccounter.unlimitedHeap());
-            return CODEC.parse(NbtOps.INSTANCE, root.getCompoundOrEmpty("data"))
+            if (!root.contains("data")) {
+                return null;
+            }
+            CompoundTag dataTag = root.getCompoundOrEmpty("data");
+            if (dataTag.isEmpty() && !root.getCompound("data").isPresent()) {
+                return null;
+            }
+            return CODEC.parse(NbtOps.INSTANCE, dataTag)
                     .resultOrPartial(error -> ItemMilestoneLog.LOGGER.warn(
                             "[ItemMilestoneLog] Problem reading {}: {}", file, error))
                     .orElse(null);
@@ -324,13 +343,15 @@ public class MilestoneData extends SavedData {
             try {
                 uuid = UUID.fromString(e.getKey());
             } catch (IllegalArgumentException ignored) {
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping player entry with invalid UUID '{}' in SavedData", e.getKey());
                 continue;
             }
             data.players.put(uuid, e.getValue());
         }
         for (Map.Entry<String, Map<String, WorldFirstEntry>> itemEntry : rawFirsts.entrySet()) {
             String itemId = itemEntry.getKey();
-            if (itemId == null || itemId.isEmpty() || itemId.indexOf('#') >= 0) {
+            if (!TargetKey.isValidItemId(itemId)) {
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid worldFirst item key '{}' in SavedData", itemId);
                 continue;
             }
             for (Map.Entry<String, WorldFirstEntry> countEntry : itemEntry.getValue().entrySet()) {
@@ -341,10 +362,22 @@ public class MilestoneData extends SavedData {
                     continue;
                 }
                 WorldFirstEntry wf = countEntry.getValue();
+                if (wf == null) {
+                    ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping null worldFirst for '{}#{}' in SavedData",
+                            itemId, countEntry.getKey());
+                    continue;
+                }
+                if (wf.ticks() < 0) {
+                    ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping worldFirst '{}#{}' with negative ticks {} in SavedData",
+                            itemId, countEntry.getKey(), wf.ticks());
+                    continue;
+                }
                 UUID uuid;
                 try {
                     uuid = UUID.fromString(wf.uuid());
                 } catch (IllegalArgumentException ignored) {
+                    ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping worldFirst '{}#{}' with invalid player UUID '{}' in SavedData",
+                            itemId, countEntry.getKey(), wf.uuid());
                     continue;
                 }
                 TargetKey key = new TargetKey(itemId, count);

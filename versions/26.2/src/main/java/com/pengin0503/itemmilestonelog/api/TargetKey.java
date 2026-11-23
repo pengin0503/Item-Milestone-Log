@@ -16,12 +16,25 @@ public record TargetKey(String itemId, int count) implements Comparable<TargetKe
     public static final int MAX_COUNT = 1_000_000;
 
     public TargetKey {
-        if (itemId == null || itemId.isEmpty() || itemId.indexOf('#') >= 0) {
+        if (!isValidItemId(itemId)) {
             throw new IllegalArgumentException("Invalid itemId: " + itemId);
         }
         if (!isValidCount(count)) {
             throw new IllegalArgumentException("Count out of range [" + MIN_COUNT + ", " + MAX_COUNT + "]: " + count);
         }
+    }
+
+    public static boolean isValidItemId(@Nullable String itemId) {
+        if (itemId == null || itemId.isEmpty()) {
+            return false;
+        }
+        for (int i = 0; i < itemId.length(); i++) {
+            char c = itemId.charAt(i);
+            if (c == '#' || Character.isWhitespace(c) || Character.isISOControl(c)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public static boolean isValidCount(int count) {
@@ -73,10 +86,10 @@ public record TargetKey(String itemId, int count) implements Comparable<TargetKe
         }
         int hash = trimmed.indexOf('#');
         if (hash < 0) {
-            return new TargetKey(trimmed, MIN_COUNT);
+            return isValidItemId(trimmed) ? new TargetKey(trimmed, MIN_COUNT) : null;
         }
         String id = trimmed.substring(0, hash);
-        if (id.isEmpty()) {
+        if (!isValidItemId(id)) {
             return null;
         }
         int parsedCount = tryParseCount(trimmed.substring(hash + 1));

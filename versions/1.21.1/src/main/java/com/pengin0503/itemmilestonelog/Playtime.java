@@ -34,7 +34,7 @@ public final class Playtime {
 
     /** Formats playtime ticks as e.g. "27h 15m 30s" (hours are total hours, not wrapped at 24). */
     public static String format(int ticks) {
-        long totalSeconds = ticks / 20L;
+        long totalSeconds = Math.max(0, ticks) / 20L;
         long hours = totalSeconds / 3600;
         long minutes = (totalSeconds % 3600) / 60;
         long seconds = totalSeconds % 60;

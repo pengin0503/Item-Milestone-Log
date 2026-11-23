@@ -3,16 +3,18 @@ package com.pengin0503.itemmilestonelog;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import org.junit.jupiter.api.Test;
 
-import java.time.Instant;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
+import java.time.ZoneOffset;
+import java.util.TimeZone;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class PlaytimeTest {
     @Test
-    void formatsZeroTicks() {
+    void formatsZeroAndNegativeTicks() {
         assertEquals("0h 00m 00s", Playtime.format(0));
+        assertEquals("0h 00m 00s", Playtime.format(-1));
+        assertEquals("0h 00m 00s", Playtime.format(-1000));
+        assertEquals("0h 00m 00s", Playtime.format(Integer.MIN_VALUE));
     }
 
     @Test
@@ -33,13 +35,17 @@ class PlaytimeTest {
     }
 
     @Test
-    void formatsRecordWithDayAndDate() {
-        int ticks = (27 * 3600 + 15 * 60 + 30) * 20;
-        long epoch = 1795600000000L;
-        String expectedDate = DateTimeFormatter.ISO_LOCAL_DATE.withZone(ZoneId.systemDefault())
-                .format(Instant.ofEpochMilli(epoch));
-        assertEquals("27h 15m 30s (Day 12, " + expectedDate + ")",
-                Playtime.formatRecord(new MilestoneRecord(ticks, 11L, epoch)));
+    void formatsRecordWithDayAndDateDeterministically() {
+        TimeZone originalTz = TimeZone.getDefault();
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone(ZoneOffset.UTC));
+            int ticks = (27 * 3600 + 15 * 60 + 30) * 20;
+            // 1795600000000L in UTC is 2026-11-25T09:46:40Z -> 2026-11-25
+            assertEquals("27h 15m 30s (Day 12, 2026-11-25)",
+                    Playtime.formatRecord(new MilestoneRecord(ticks, 11L, 1795600000000L)));
+        } finally {
+            TimeZone.setDefault(originalTz);
+        }
     }
 
     @Test

@@ -81,6 +81,7 @@
   "message.itemmilestonelog.import_invalid_format": "Invalid or unsupported export format in %s",
   "message.itemmilestonelog.import_invalid_name": "Invalid export file name: %s",
   "message.itemmilestonelog.import_not_found": "Export file not found: %s",
+  "message.itemmilestonelog.import_not_owner": "Cannot import %s: this export belongs to another player.",
   "message.itemmilestonelog.invalid_count": "Quantity must be between %s and %s.",
   "message.itemmilestonelog.invalid_item": "Invalid or unknown item ID: %s",
   "message.itemmilestonelog.join_hint_mod": "Tip: Bind a key to \"Open Milestone Log\" under Controls to open the Milestone Log GUI, or use /milestonelog commands.",
@@ -121,5 +122,6 @@
   "message.itemmilestonelog.target_pending": "… %s — not yet obtained",
   "message.itemmilestonelog.target_progress": "%s (current: %s)",
   "message.itemmilestonelog.targets_header": "Target items (%s):",
+  "message.itemmilestonelog.targets_limit_reached": "Personal target limit reached (%s).",
   "message.itemmilestonelog.world_first_recorded": "★ World First! %s first obtained %s at %s"
 }

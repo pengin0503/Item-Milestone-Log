@@ -1,8 +1,12 @@
 package com.pengin0503.itemmilestonelog;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
 import net.minecraft.resources.Identifier;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -19,6 +23,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PresetsTest {
+    @BeforeEach
+    void initCleanPresets(@TempDir Path emptyDir) {
+        Presets.reloadFrom(emptyDir);
+    }
+
     @AfterEach
     void resetPresets(@TempDir Path emptyDir) {
         Presets.reloadFrom(emptyDir);
@@ -51,6 +60,7 @@ class PresetsTest {
                   "items": [
                     "minecraft:diamond",
                     {"item": "minecraft:diamond", "count": 100},
+                    "minecraft:emerald#50",
                     "othermod:custom_item",
                     "minecraft:diamond",
                     {"item": "minecraft:iron_ingot", "count": 0},
@@ -78,12 +88,18 @@ class PresetsTest {
         assertEquals(List.of(
                 TargetKey.of("minecraft:diamond"),
                 TargetKey.of("minecraft:diamond", 100),
+                TargetKey.of("minecraft:emerald", 50),
                 TargetKey.of("othermod:custom_item")
         ), custom.items());
 
         assertNull(Presets.get("broken"));
         assertNull(Presets.get("empty"));
-        assertTrue(Presets.get("atm_star").builtin());
+        Presets.PresetDefinition atmStar = Presets.get("atm_star");
+        assertNotNull(atmStar);
+        assertTrue(atmStar.builtin());
+        assertEquals("atm_star", atmStar.displayName());
+        assertEquals(10, atmStar.items().size());
+        assertFalse(atmStar.items().contains(TargetKey.of("minecraft:dirt")));
 
         // Reset back to clean dir
         Presets.reloadFrom(dir.resolve("clean"));
@@ -93,18 +109,33 @@ class PresetsTest {
     void savesOverwritesAndDeletesCustomPresetsWithQuantityFormat(@TempDir Path dir) throws Exception {
         Presets.reloadFrom(dir);
 
-        assertFalse(Presets.saveCustomTo(dir, "starter_set", List.of(
+        List<TargetKey> initialItems = List.of(
                 TargetKey.of("minecraft:oak_log"),
-                TargetKey.of("minecraft:cobblestone", 64))));
+                TargetKey.of("minecraft:cobblestone", 64));
+        assertFalse(Presets.saveCustomTo(dir, "starter_set", initialItems));
         Path savedPath = dir.resolve("starter_set.json");
         assertTrue(Files.isRegularFile(savedPath));
-        String jsonText = Files.readString(savedPath);
-        assertTrue(jsonText.contains("\"minecraft:oak_log\""), jsonText);
-        assertTrue(jsonText.contains("\"item\": \"minecraft:cobblestone\""), jsonText);
-        assertTrue(jsonText.contains("\"count\": 64"), jsonText);
+        JsonObject parsedJson = JsonParser.parseString(Files.readString(savedPath)).getAsJsonObject();
+        JsonArray itemsArr = parsedJson.getAsJsonArray("items");
+        assertEquals(2, itemsArr.size());
+        assertTrue(itemsArr.get(0).isJsonPrimitive() && itemsArr.get(0).getAsJsonPrimitive().isString());
+        assertEquals("minecraft:oak_log", itemsArr.get(0).getAsString());
+        assertTrue(itemsArr.get(1).isJsonObject());
+        assertEquals("minecraft:cobblestone", itemsArr.get(1).getAsJsonObject().get("item").getAsString());
+        assertEquals(64, itemsArr.get(1).getAsJsonObject().get("count").getAsInt());
         assertNotNull(Presets.get("starter_set"));
 
+        // Round-trip reload from disk
+        Presets.reloadFrom(dir);
+        assertEquals(initialItems, Presets.get("starter_set").items());
+
         assertTrue(Presets.saveCustomTo(dir, "starter_set", List.of(TargetKey.of("minecraft:diamond"))));
+        assertEquals(List.of(TargetKey.of("minecraft:diamond")), Presets.get("starter_set").items());
+        JsonObject overwrittenJson = JsonParser.parseString(Files.readString(savedPath)).getAsJsonObject();
+        JsonArray overwrittenArr = overwrittenJson.getAsJsonArray("items");
+        assertEquals(1, overwrittenArr.size());
+        assertEquals("minecraft:diamond", overwrittenArr.get(0).getAsString());
+        Presets.reloadFrom(dir);
         assertEquals(List.of(TargetKey.of("minecraft:diamond")), Presets.get("starter_set").items());
 
         assertThrows(IllegalArgumentException.class, () -> Presets.saveCustomTo(dir, "atm_star", List.of(TargetKey.of("minecraft:dirt"))));

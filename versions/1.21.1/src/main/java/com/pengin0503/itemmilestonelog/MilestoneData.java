@@ -130,8 +130,15 @@ public class MilestoneData extends SavedData {
 
     // ------------------------------------------------------------------ NBT
 
+    @Nullable
     private static MilestoneRecord readRecordTag(CompoundTag recTag) {
+        if (!recTag.contains("ticks", Tag.TAG_ANY_NUMERIC)) {
+            return null;
+        }
         int ticks = recTag.getInt("ticks");
+        if (ticks < 0) {
+            return null;
+        }
         long day = recTag.contains("day", Tag.TAG_ANY_NUMERIC)
                 ? recTag.getLong("day")
                 : MilestoneRecord.UNKNOWN_DAY;
@@ -142,14 +149,24 @@ public class MilestoneData extends SavedData {
     }
 
     private static void readWorldFirstTag(Map<TargetKey, WorldFirstRecord> out, String itemId, int count, CompoundTag wfTag) {
+        if (!wfTag.contains("ticks", Tag.TAG_ANY_NUMERIC)) {
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping worldFirst '{}' without ticks in SavedData", itemId);
+            return;
+        }
+        int ticks = wfTag.getInt("ticks");
+        if (ticks < 0) {
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping worldFirst '{}' with negative ticks {} in SavedData", itemId, ticks);
+            return;
+        }
         UUID uuid;
         try {
             uuid = UUID.fromString(wfTag.getString("uuid"));
         } catch (IllegalArgumentException ignored) {
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping worldFirst '{}' with invalid player UUID '{}' in SavedData",
+                    itemId, wfTag.getString("uuid"));
             return;
         }
         String name = wfTag.getString("name");
-        int ticks = wfTag.getInt("ticks");
         long day = wfTag.contains("day", Tag.TAG_ANY_NUMERIC)
                 ? wfTag.getLong("day")
                 : MilestoneRecord.UNKNOWN_DAY;
@@ -168,6 +185,7 @@ public class MilestoneData extends SavedData {
             try {
                 uuid = UUID.fromString(uuidKey);
             } catch (IllegalArgumentException ignored) {
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping player entry with invalid UUID '{}' in SavedData", uuidKey);
                 continue;
             }
             CompoundTag entry = all.getCompound(uuidKey);
@@ -184,15 +202,22 @@ public class MilestoneData extends SavedData {
             }
             CompoundTag records = entry.getCompound("records");
             for (String itemId : records.getAllKeys()) {
-                if (itemId.isEmpty() || itemId.indexOf('#') >= 0) {
+                if (!TargetKey.isValidItemId(itemId)) {
                     ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid record item key '{}' in SavedData", itemId);
                     continue;
                 }
                 if (records.contains(itemId, Tag.TAG_COMPOUND)) {
                     CompoundTag itemTag = records.getCompound(itemId);
-                    if (itemTag.contains("ticks", Tag.TAG_ANY_NUMERIC)) {
+                    if (itemTag.contains("ticks", Tag.TAG_ANY_NUMERIC) || itemTag.contains("day", Tag.TAG_ANY_NUMERIC)
+                            || itemTag.contains("epoch", Tag.TAG_ANY_NUMERIC)) {
                         // Backward compatibility: early 1.0.1 stored itemId -> {ticks, day, epoch} (count = 1).
-                        pd.records.put(TargetKey.of(itemId), readRecordTag(itemTag));
+                        MilestoneRecord rec = readRecordTag(itemTag);
+                        if (rec != null) {
+                            pd.records.put(TargetKey.of(itemId), rec);
+                        } else {
+                            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping record for '{}' with missing or negative ticks in SavedData",
+                                    itemId);
+                        }
                     } else {
                         // Quantity format: itemId -> { "<count>": {ticks, day, epoch}, ... }.
                         for (String countKey : itemTag.getAllKeys()) {
@@ -202,12 +227,24 @@ public class MilestoneData extends SavedData {
                                         countKey, itemId);
                                 continue;
                             }
-                            pd.records.put(new TargetKey(itemId, count), readRecordTag(itemTag.getCompound(countKey)));
+                            MilestoneRecord rec = readRecordTag(itemTag.getCompound(countKey));
+                            if (rec != null) {
+                                pd.records.put(new TargetKey(itemId, count), rec);
+                            } else {
+                                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping record for '{}#{}' with missing or negative ticks in SavedData",
+                                        itemId, countKey);
+                            }
                         }
                     }
                 } else if (records.contains(itemId, Tag.TAG_ANY_NUMERIC)) {
                     // Backward compatibility: 1.0.0 stored records as plain integers (count = 1).
-                    pd.records.put(TargetKey.of(itemId), MilestoneRecord.legacy(records.getInt(itemId)));
+                    int ticks = records.getInt(itemId);
+                    if (ticks >= 0) {
+                        pd.records.put(TargetKey.of(itemId), MilestoneRecord.legacy(ticks));
+                    } else {
+                        ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping legacy record for '{}' with negative ticks {} in SavedData",
+                                itemId, ticks);
+                    }
                 }
             }
             for (Tag t : entry.getList("carriedFromCreative", Tag.TAG_STRING)) {
@@ -227,7 +264,8 @@ public class MilestoneData extends SavedData {
 
         CompoundTag firsts = tag.getCompound("worldFirsts");
         for (String itemId : firsts.getAllKeys()) {
-            if (itemId.isEmpty() || itemId.indexOf('#') >= 0 || !firsts.contains(itemId, Tag.TAG_COMPOUND)) {
+            if (!TargetKey.isValidItemId(itemId) || !firsts.contains(itemId, Tag.TAG_COMPOUND)) {
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid worldFirst item key '{}' in SavedData", itemId);
                 continue;
             }
             CompoundTag itemTag = firsts.getCompound(itemId);

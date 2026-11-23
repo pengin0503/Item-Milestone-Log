@@ -13,12 +13,16 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.level.storage.LevelResource;
 
+import javax.annotation.Nullable;
 import java.io.IOException;
 import java.io.Reader;
 import java.io.Writer;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -35,7 +39,17 @@ public final class MilestoneExport {
     private static final Pattern SAFE_FILENAME = Pattern.compile("^[a-zA-Z0-9._-]+$");
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
-    public record ImportPayload(List<TargetKey> targets, Map<TargetKey, MilestoneRecord> records) {
+    public record ImportPayload(@Nullable UUID ownerUuid, List<TargetKey> targets, Map<TargetKey, MilestoneRecord> records) {
+        public ImportPayload(List<TargetKey> targets, Map<TargetKey, MilestoneRecord> records) {
+            this(null, targets, records);
+        }
+    }
+
+    public static boolean canImport(ImportPayload payload, UUID importerUuid, boolean isPrivileged) {
+        if (isPrivileged) {
+            return true;
+        }
+        return payload.ownerUuid() != null && payload.ownerUuid().equals(importerUuid);
     }
 
     public record ImportMergeStats(int addedTargets, int updatedRecords) {
@@ -77,9 +91,30 @@ public final class MilestoneExport {
                     .filter(name -> name.endsWith(".json") && isSafeFileName(name))
                     .sorted()
                     .forEach(names::add);
-        } catch (IOException ignored) {
+        } catch (IOException e) {
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Could not list exports directory {}: {}", dir, e.getMessage());
         }
         return names;
+    }
+
+    private static void writeJsonAtomically(Path dir, String prefix, Path target, JsonObject root) throws IOException {
+        Path temp = Files.createTempFile(dir, prefix + ".", ".tmp");
+        try {
+            try (Writer writer = Files.newBufferedWriter(temp, StandardCharsets.UTF_8)) {
+                GSON.toJson(root, writer);
+            }
+            try {
+                Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } catch (IOException e) {
+            try {
+                Files.deleteIfExists(temp);
+            } catch (IOException ignored) {
+            }
+            throw e;
+        }
     }
 
     public static String exportPlayer(Path dir, UUID uuid, String playerName, MilestoneData.PlayerData pd) throws IOException {
@@ -92,9 +127,7 @@ public final class MilestoneExport {
 
         JsonObject root = buildPlayerObject(uuid, playerName, pd);
         root.addProperty("format", FORMAT_VERSION);
-        try (Writer writer = Files.newBufferedWriter(target, StandardCharsets.UTF_8)) {
-            GSON.toJson(root, writer);
-        }
+        writeJsonAtomically(dir, fileName, target, root);
         return ItemMilestoneLog.MOD_ID + "/exports/" + fileName;
     }
 
@@ -112,9 +145,7 @@ public final class MilestoneExport {
         }
         root.add("players", playersArr);
 
-        try (Writer writer = Files.newBufferedWriter(target, StandardCharsets.UTF_8)) {
-            GSON.toJson(root, writer);
-        }
+        writeJsonAtomically(dir, fileName, target, root);
         return ItemMilestoneLog.MOD_ID + "/exports/" + fileName;
     }
 
@@ -159,6 +190,38 @@ public final class MilestoneExport {
         return root;
     }
 
+    @Nullable
+    private static Integer parseStrictJsonInt(@Nullable JsonElement el) {
+        if (el == null || !el.isJsonPrimitive()) {
+            return null;
+        }
+        JsonPrimitive prim = el.getAsJsonPrimitive();
+        if (!prim.isNumber()) {
+            return null;
+        }
+        try {
+            return new BigDecimal(prim.getAsString()).intValueExact();
+        } catch (NumberFormatException | ArithmeticException e) {
+            return null;
+        }
+    }
+
+    @Nullable
+    private static Long parseStrictJsonLong(@Nullable JsonElement el) {
+        if (el == null || !el.isJsonPrimitive()) {
+            return null;
+        }
+        JsonPrimitive prim = el.getAsJsonPrimitive();
+        if (!prim.isNumber()) {
+            return null;
+        }
+        try {
+            return new BigDecimal(prim.getAsString()).longValueExact();
+        } catch (NumberFormatException | ArithmeticException e) {
+            return null;
+        }
+    }
+
     private static int parseStrictJsonCount(JsonElement countEl) {
         if (countEl == null || !countEl.isJsonPrimitive()) {
             return -1;
@@ -184,14 +247,33 @@ public final class MilestoneExport {
             throw new IllegalArgumentException("invalid_format", e);
         }
 
-        if (!root.has("format") || !root.get("format").isJsonPrimitive() || !root.get("format").getAsJsonPrimitive().isNumber()) {
-            throw new IllegalArgumentException("invalid_format");
-        }
-        if (root.get("format").getAsInt() != FORMAT_VERSION) {
+        Integer format = parseStrictJsonInt(root.get("format"));
+        if (format == null || format != FORMAT_VERSION) {
             throw new IllegalArgumentException("invalid_format");
         }
         if (root.has("players") && !root.has("targets") && !root.has("records")) {
             throw new IllegalArgumentException("invalid_format");
+        }
+
+        UUID ownerUuid = null;
+        if (root.has("player")) {
+            if (!root.get("player").isJsonObject()) {
+                throw new IllegalArgumentException("invalid_format");
+            }
+            JsonObject playerObj = root.getAsJsonObject("player");
+            if (playerObj.has("uuid")) {
+                if (!playerObj.get("uuid").isJsonPrimitive() || !playerObj.get("uuid").getAsJsonPrimitive().isString()) {
+                    throw new IllegalArgumentException("invalid_format");
+                }
+                String rawUuid = playerObj.get("uuid").getAsString().trim();
+                if (!rawUuid.isEmpty()) {
+                    try {
+                        ownerUuid = UUID.fromString(rawUuid);
+                    } catch (IllegalArgumentException e) {
+                        throw new IllegalArgumentException("invalid_format", e);
+                    }
+                }
+            }
         }
 
         List<TargetKey> targets = new ArrayList<>();
@@ -248,10 +330,11 @@ public final class MilestoneExport {
                 if (!entry.getValue().isJsonObject()) {
                     continue;
                 }
-                TargetKey keyFromMap = TargetKey.tryParseEncoded(entry.getKey());
+                String rawKey = entry.getKey();
+                TargetKey keyFromMap = TargetKey.tryParseEncoded(rawKey);
                 if (keyFromMap == null) {
                     ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid record key '{}' in export file {}",
-                            entry.getKey(), file.getFileName());
+                            rawKey, file.getFileName());
                     continue;
                 }
                 Identifier rl = Identifier.tryParse(keyFromMap.itemId());
@@ -259,40 +342,47 @@ public final class MilestoneExport {
                     continue;
                 }
                 JsonObject recObj = entry.getValue().getAsJsonObject();
-                if (!recObj.has("ticks") || !recObj.get("ticks").isJsonPrimitive() || !recObj.get("ticks").getAsJsonPrimitive().isNumber()) {
-                    continue;
-                }
-                int ticks = recObj.get("ticks").getAsInt();
-                if (ticks < 0) {
+                Integer ticks = parseStrictJsonInt(recObj.get("ticks"));
+                if (ticks == null || ticks < 0) {
                     continue;
                 }
                 int count = keyFromMap.count();
+                boolean keyHadExplicitCount = rawKey.indexOf('#') >= 0;
                 if (recObj.has("count")) {
                     int parsedCount = parseStrictJsonCount(recObj.get("count"));
-                    if (parsedCount < TargetKey.MIN_COUNT) {
-                        ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping record '{}' with invalid count in export file {}",
-                                entry.getKey(), file.getFileName());
+                    if (parsedCount < TargetKey.MIN_COUNT || (keyHadExplicitCount && parsedCount != count)) {
+                        ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping record '{}' with invalid or conflicting count in export file {}",
+                                rawKey, file.getFileName());
                         continue;
                     }
                     count = parsedCount;
                 }
-                long day = recObj.has("day") && recObj.get("day").isJsonPrimitive() && recObj.get("day").getAsJsonPrimitive().isNumber()
-                        ? recObj.get("day").getAsLong()
-                        : MilestoneRecord.UNKNOWN_DAY;
-                long epoch = recObj.has("epoch") && recObj.get("epoch").isJsonPrimitive() && recObj.get("epoch").getAsJsonPrimitive().isNumber()
-                        ? recObj.get("epoch").getAsLong()
-                        : MilestoneRecord.UNKNOWN_EPOCH;
-                records.put(new TargetKey(rl.toString(), count), new MilestoneRecord(ticks, day, epoch));
+                Long parsedDay = recObj.has("day") ? parseStrictJsonLong(recObj.get("day")) : null;
+                long day = parsedDay != null ? parsedDay : MilestoneRecord.UNKNOWN_DAY;
+                Long parsedEpoch = recObj.has("epoch") ? parseStrictJsonLong(recObj.get("epoch")) : null;
+                long epoch = parsedEpoch != null ? parsedEpoch : MilestoneRecord.UNKNOWN_EPOCH;
+                TargetKey normalizedKey = new TargetKey(rl.toString(), count);
+                MilestoneRecord incoming = new MilestoneRecord(ticks, day, epoch);
+                MilestoneRecord existing = records.get(normalizedKey);
+                if (existing == null || incoming.playTicks() < existing.playTicks()) {
+                    records.put(normalizedKey, incoming);
+                }
             }
         }
 
-        return new ImportPayload(targets, records);
+        return new ImportPayload(ownerUuid, targets, records);
     }
 
     public static ImportMergeStats mergeInto(MilestoneData data, UUID uuid, ImportPayload payload) {
         MilestoneData.PlayerData pd = data.player(uuid);
         int addedTargets = 0;
         for (TargetKey target : payload.targets()) {
+            if (pd.targets.contains(target)) {
+                continue;
+            }
+            if (pd.targets.size() >= MilestoneService.MAX_PERSONAL_TARGETS) {
+                break;
+            }
             if (pd.targets.add(target)) {
                 addedTargets++;
             }

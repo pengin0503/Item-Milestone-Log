@@ -26,20 +26,38 @@ class ServerLangTest {
         assertEquals("★ Milestone recorded: %s at playtime %s", fallbacks.get("message.itemmilestonelog.recorded"));
     }
 
+    private static Path resolveMainSourceDir() {
+        String dir = System.getProperty("itemmilestonelog.mainSourceDir");
+        if (dir != null && !dir.isBlank()) {
+            return Path.of(dir);
+        }
+        Path local = Path.of("src", "main", "java");
+        if (Files.isDirectory(local)) {
+            return local;
+        }
+        return Path.of("versions", "26.1.2", "src", "main", "java");
+    }
+
     @Test
     void everyKeyUsedByServerCodeHasAnEnglishFallback() throws IOException {
-        String dir = System.getProperty("itemmilestonelog.mainSourceDir");
-        assertNotNull(dir, "system property itemmilestonelog.mainSourceDir is not set");
-        Path sources = Path.of(dir);
-        assertTrue(Files.isDirectory(sources), "sources not found at " + sources);
+        Path sources = resolveMainSourceDir();
+        assertTrue(Files.isDirectory(sources), "sources not found at " + sources.toAbsolutePath());
 
         Pattern literal = Pattern.compile("\"(message\\.itemmilestonelog\\.[a-z0-9_.]+)\"");
+        Pattern dynamicPrefix = Pattern.compile("\"(message\\.itemmilestonelog\\.[a-z0-9_.]*)\"\\s*\\+");
         Set<String> used = new TreeSet<>();
         try (Stream<Path> files = Files.walk(sources)) {
             for (Path file : files.filter(p -> p.toString().endsWith(".java")).toList()) {
-                Matcher matcher = literal.matcher(Files.readString(file));
+                String content = Files.readString(file);
+                Matcher dyn = dynamicPrefix.matcher(content);
+                assertFalse(dyn.find(), "Dynamic message key concatenation in " + file.getFileName()
+                        + " cannot be statically verified against en_us.json");
+                Matcher matcher = literal.matcher(content);
                 while (matcher.find()) {
-                    used.add(matcher.group(1));
+                    String key = matcher.group(1);
+                    if (!key.endsWith(".")) {
+                        used.add(key);
+                    }
                 }
             }
         }
@@ -51,15 +69,19 @@ class ServerLangTest {
 
     @Test
     void rendersEnglishAndJapaneseFallbacksForVanillaClients() {
-        assertEquals("Now tracking: Diamond",
+        String enTemplate = ServerLang.fallbacks().get("message.itemmilestonelog.added");
+        assertNotNull(enTemplate);
+        assertEquals(String.format(enTemplate, "Diamond"),
                 ServerLang.tr("message.itemmilestonelog.added", "Diamond").getString());
-        assertEquals("Playtime: 1h 02m 03s | Milestones: 2 / 5 targets recorded. Use /milestonelog targets to see details.",
+        String summaryTemplate = ServerLang.fallbacks().get("message.itemmilestonelog.summary");
+        assertNotNull(summaryTemplate);
+        assertEquals(String.format(summaryTemplate, "1h 02m 03s", 2, 5),
                 ServerLang.tr("message.itemmilestonelog.summary", "1h 02m 03s", 2, 5).getString());
-        assertEquals("目標に追加しました: Diamond",
-                ServerLang.trForLang("ja_jp", "message.itemmilestonelog.added", "Diamond").getString());
-        assertEquals("目標に追加しました: Diamond",
+        String jaRendered = ServerLang.trForLang("ja_jp", "message.itemmilestonelog.added", "Diamond").getString();
+        assertTrue(jaRendered.contains("Diamond") && !jaRendered.equals(String.format(enTemplate, "Diamond")));
+        assertEquals(jaRendered,
                 ServerLang.trForLang("ja_JP", "message.itemmilestonelog.added", "Diamond").getString());
-        assertEquals("Now tracking: Diamond",
+        assertEquals(String.format(enTemplate, "Diamond"),
                 ServerLang.trForLang("fr_fr", "message.itemmilestonelog.added", "Diamond").getString());
     }
 

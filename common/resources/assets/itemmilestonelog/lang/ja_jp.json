@@ -81,6 +81,7 @@
   "message.itemmilestonelog.import_invalid_format": "%s のフォーマットが不正または未対応です",
   "message.itemmilestonelog.import_invalid_name": "無効なファイル名です: %s",
   "message.itemmilestonelog.import_not_found": "ファイルが見つかりません: %s",
+  "message.itemmilestonelog.import_not_owner": "%s は他のプレイヤーのエクスポートファイルのためインポートできません。",
   "message.itemmilestonelog.invalid_count": "個数は %s〜%s の範囲で指定してください。",
   "message.itemmilestonelog.invalid_item": "無効または不明なアイテムIDです: %s",
   "message.itemmilestonelog.join_hint_mod": "ヒント: 操作設定の「マイルストーンログを開く」にキーを割り当てると GUI を開けます。/milestonelog コマンドも利用できます。",
@@ -121,5 +122,6 @@
   "message.itemmilestonelog.target_pending": "… %s — 未取得",
   "message.itemmilestonelog.target_progress": "%s (現在 %s)",
   "message.itemmilestonelog.targets_header": "目標アイテム（%s件）:",
+  "message.itemmilestonelog.targets_limit_reached": "個人目標の登録上限（%s件）に達しています。",
   "message.itemmilestonelog.world_first_recorded": "★ 世界初！%s が %s を %s にワールド初取得しました"
 }

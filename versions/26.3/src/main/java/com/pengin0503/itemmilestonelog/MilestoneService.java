@@ -30,6 +30,8 @@ import java.util.Set;
  * {@link MilestoneCommands} and network handlers for the GUI.
  */
 public final class MilestoneService {
+    public static final int MAX_PERSONAL_TARGETS = 1024;
+
     public record ActionResult(boolean success, Component message) {
     }
 
@@ -104,9 +106,13 @@ public final class MilestoneService {
         TargetKey key = new TargetKey(id.toString(), count);
         MilestoneData data = MilestoneData.get(player.level().getServer());
         MilestoneData.PlayerData pd = data.player(player.getUUID());
-        if (!pd.targets.add(key)) {
+        if (pd.targets.contains(key)) {
             return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.already_target", targetDisplayName(key)));
         }
+        if (pd.targets.size() >= MAX_PERSONAL_TARGETS) {
+            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.targets_limit_reached", MAX_PERSONAL_TARGETS));
+        }
+        pd.targets.add(key);
         data.setDirty();
         return new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.added", targetDisplayName(key)));
     }
@@ -133,17 +139,19 @@ public final class MilestoneService {
             return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_count",
                     TargetKey.MIN_COUNT, TargetKey.MAX_COUNT));
         }
-        if (itemId == null || itemId.isEmpty() || itemId.indexOf('#') >= 0) {
+        if (!TargetKey.isValidItemId(itemId)) {
             return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_item", String.valueOf(itemId)));
         }
-        TargetKey key = new TargetKey(itemId, count);
+        Identifier id = Identifier.tryParse(itemId);
+        String normalizedId = id != null ? id.toString() : itemId;
+        TargetKey key = new TargetKey(normalizedId, count);
         MilestoneData data = MilestoneData.get(player.level().getServer());
         MilestoneData.PlayerData pd = data.playerOrNull(player.getUUID());
-        if (pd != null && pd.targets.remove(key)) {
+        if (pd != null && (pd.targets.remove(key) || (!normalizedId.equals(itemId) && pd.targets.remove(new TargetKey(itemId, count))))) {
             data.setDirty();
             return new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.removed", targetDisplayName(key)));
         }
-        if (!isValidItemId(itemId)) {
+        if (!isValidItemId(normalizedId)) {
             return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_item", itemId));
         }
         return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.not_target", targetDisplayName(key)));
@@ -167,6 +175,12 @@ public final class MilestoneService {
                 continue;
             }
             TargetKey normalized = new TargetKey(id.toString(), entry.count());
+            if (pd.targets.contains(normalized)) {
+                continue;
+            }
+            if (pd.targets.size() >= MAX_PERSONAL_TARGETS) {
+                break;
+            }
             if (pd.targets.add(normalized)) {
                 added++;
                 if (normalized.count() > TargetKey.MIN_COUNT) {
@@ -245,17 +259,20 @@ public final class MilestoneService {
             return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_count",
                     TargetKey.MIN_COUNT, TargetKey.MAX_COUNT));
         }
-        if (itemId == null || itemId.isEmpty() || itemId.indexOf('#') >= 0) {
+        if (!TargetKey.isValidItemId(itemId)) {
             return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_item", String.valueOf(itemId)));
         }
-        TargetKey key = new TargetKey(itemId, count);
+        Identifier id = Identifier.tryParse(itemId);
+        String normalizedId = id != null ? id.toString() : itemId;
+        TargetKey key = new TargetKey(normalizedId, count);
         MilestoneData data = MilestoneData.get(player.level().getServer());
         MilestoneData.PlayerData pd = data.playerOrNull(player.getUUID());
-        if (pd != null && pd.records.remove(key) != null) {
+        if (pd != null && (pd.records.remove(key) != null
+                || (!normalizedId.equals(itemId) && pd.records.remove(new TargetKey(itemId, count)) != null))) {
             data.setDirty();
             return new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.reset_done", targetDisplayName(key)));
         }
-        if (!isValidItemId(itemId)) {
+        if (!isValidItemId(normalizedId)) {
             return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.invalid_item", itemId));
         }
         return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.not_recorded", targetDisplayName(key)));
@@ -307,19 +324,21 @@ public final class MilestoneService {
             records.putAll(pd.records);
         }
 
+        Set<String> carried = Tracker.carriedFromCreative(pd);
         Set<String> progressItemIds = new java.util.HashSet<>();
         for (TargetKey key : sortedTargets) {
-            if (key.count() > TargetKey.MIN_COUNT && !records.containsKey(key)) {
+            if (key.count() > TargetKey.MIN_COUNT && !records.containsKey(key) && !carried.contains(key.itemId())) {
                 progressItemIds.add(key.itemId());
             }
         }
         Map<TargetKey, Integer> progress = new LinkedHashMap<>();
-        if (!progressItemIds.isEmpty()) {
-            Map<String, Integer> counts = Tracker.countItemsInPossession(player, progressItemIds);
-            for (TargetKey key : sortedTargets) {
-                if (key.count() > TargetKey.MIN_COUNT && !records.containsKey(key)) {
-                    progress.put(key, counts.getOrDefault(key.itemId(), 0));
-                }
+        Map<String, Integer> counts = progressItemIds.isEmpty()
+                ? Map.of()
+                : Tracker.countItemsInPossession(player, progressItemIds);
+        for (TargetKey key : sortedTargets) {
+            if (key.count() > TargetKey.MIN_COUNT && !records.containsKey(key)) {
+                int current = carried.contains(key.itemId()) ? 0 : counts.getOrDefault(key.itemId(), 0);
+                progress.put(key, current);
             }
         }
 

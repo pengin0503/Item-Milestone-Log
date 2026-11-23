@@ -45,6 +45,7 @@ public final class MilestoneScreen extends Screen {
     private Component feedbackMessage;
     private int elapsedTicks = 0;
     private int feedbackY = 0;
+    private long cachedAchievedCount = 0;
 
     private MilestoneListWidget listWidget;
     private Button targetsTabButton;
@@ -55,6 +56,17 @@ public final class MilestoneScreen extends Screen {
         super(Component.translatable("gui.itemmilestonelog.title"));
         this.data = initialData;
         this.feedbackMessage = initialData.feedback();
+        this.cachedAchievedCount = computeAchievedCount(initialData);
+    }
+
+    private static long computeAchievedCount(SyncMilestonesPayload payload) {
+        long count = 0;
+        for (TargetEntry t : payload.targets()) {
+            if (payload.records().containsKey(t.key())) {
+                count++;
+            }
+        }
+        return count;
     }
 
     public SyncMilestonesPayload getData() {
@@ -70,10 +82,15 @@ public final class MilestoneScreen extends Screen {
     }
 
     public void updateData(SyncMilestonesPayload newData) {
+        updateData(newData, true);
+    }
+
+    public void updateData(SyncMilestonesPayload newData, boolean adoptFeedback) {
         double prevScroll = listWidget != null ? listWidget.scrollAmount() : 0.0;
         this.data = newData;
         this.elapsedTicks = 0;
-        if (newData.feedback() != null) {
+        this.cachedAchievedCount = computeAchievedCount(newData);
+        if (adoptFeedback && newData.feedback() != null) {
             this.feedbackMessage = newData.feedback();
         }
         if (this.minecraft != null && this.minecraft.gui.screen() == this) {
@@ -84,12 +101,16 @@ public final class MilestoneScreen extends Screen {
         }
     }
 
-    @Override
-    public void tick() {
-        super.tick();
+    public void tickPlaytime() {
         if (this.minecraft != null && !this.minecraft.isPaused()) {
             this.elapsedTicks++;
         }
+    }
+
+    @Override
+    public void tick() {
+        super.tick();
+        tickPlaytime();
     }
 
     @Override
@@ -102,6 +123,7 @@ public final class MilestoneScreen extends Screen {
                         Component.translatable("gui.itemmilestonelog.button.add"),
                         btn -> {
                             if (this.minecraft != null) {
+                                this.feedbackMessage = null;
                                 this.minecraft.gui.setScreen(new ItemPickerScreen(this));
                             }
                         },
@@ -117,6 +139,7 @@ public final class MilestoneScreen extends Screen {
                         Component.translatable("gui.itemmilestonelog.button.presets"),
                         btn -> {
                             if (this.minecraft != null) {
+                                this.feedbackMessage = null;
                                 this.minecraft.gui.setScreen(new PresetListScreen(this));
                             }
                         },
@@ -211,6 +234,7 @@ public final class MilestoneScreen extends Screen {
     private void switchView(ViewMode mode) {
         if (this.viewMode != mode) {
             this.viewMode = mode;
+            this.feedbackMessage = null;
             rebuildWidgets();
         }
     }
@@ -284,13 +308,10 @@ public final class MilestoneScreen extends Screen {
 
         graphics.centeredText(this.font, this.title, this.width / 2, 8, 0xFFFFFFFF);
 
-        long achievedCount = data.targets().stream()
-                .filter(t -> data.records().containsKey(t.key()))
-                .count();
         Component header = Component.translatable(
                 "gui.itemmilestonelog.header",
                 Playtime.format(data.currentPlaytimeTicks() + elapsedTicks),
-                achievedCount,
+                cachedAchievedCount,
                 data.targets().size()
         );
         graphics.centeredText(this.font, header, this.width / 2, 22, 0xFFD0D0D0);

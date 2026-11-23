@@ -26,7 +26,7 @@ public final class Playtime {
     }
 
     public static String format(int ticks) {
-        long totalSeconds = ticks / 20L;
+        long totalSeconds = Math.max(0, ticks) / 20L;
         long hours = totalSeconds / 3600;
         long minutes = (totalSeconds % 3600) / 60;
         long seconds = totalSeconds % 60;

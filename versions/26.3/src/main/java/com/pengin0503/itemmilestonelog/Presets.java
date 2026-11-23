@@ -15,8 +15,10 @@ import java.io.IOException;
 import java.io.Reader;
 import java.io.Writer;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -198,9 +200,16 @@ public final class Presets {
                 if (rawItem.isEmpty()) {
                     continue;
                 }
-                Identifier rl = Identifier.tryParse(rawItem);
+                TargetKey parsedKey = TargetKey.tryParseEncoded(rawItem);
+                if (parsedKey == null) {
+                    ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid item '{}' in preset {}", rawItem, fileName);
+                    continue;
+                }
+                Identifier rl = Identifier.tryParse(parsedKey.itemId());
                 if (rl != null && !"minecraft:air".equals(rl.toString())) {
-                    deduped.add(TargetKey.of(rl.toString()));
+                    deduped.add(new TargetKey(rl.toString(), parsedKey.count()));
+                } else {
+                    ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid item '{}' in preset {}", rawItem, fileName);
                 }
             } else if (elem.isJsonObject()) {
                 JsonObject obj = elem.getAsJsonObject();
@@ -211,6 +220,7 @@ public final class Presets {
                 String rawItem = obj.get("item").getAsString().trim();
                 Identifier rl = Identifier.tryParse(rawItem);
                 if (rl == null || "minecraft:air".equals(rl.toString())) {
+                    ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid item '{}' in preset {}", rawItem, fileName);
                     continue;
                 }
                 int count = TargetKey.MIN_COUNT;
@@ -279,8 +289,22 @@ public final class Presets {
         }
         json.add("items", arr);
 
-        try (Writer writer = Files.newBufferedWriter(target, StandardCharsets.UTF_8)) {
-            GSON.toJson(json, writer);
+        Path temp = Files.createTempFile(dir, "preset-" + id + ".", ".tmp");
+        try {
+            try (Writer writer = Files.newBufferedWriter(temp, StandardCharsets.UTF_8)) {
+                GSON.toJson(json, writer);
+            }
+            try {
+                Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } catch (IOException e) {
+            try {
+                Files.deleteIfExists(temp);
+            } catch (IOException ignored) {
+            }
+            throw e;
         }
 
         Map<String, PresetDefinition> next = new TreeMap<>(loadedPresets);
