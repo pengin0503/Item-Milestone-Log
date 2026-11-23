@@ -1,141 +1,467 @@
-name: Publish to CurseForge and Modrinth
-
-# Manual-only publishing (spec docs/FEATURE_SPEC_1.1.0.md §4.1, candidate P53).
-# Publishing is hard to undo, so this workflow NEVER runs automatically:
-# no tag-push or release triggers, only workflow_dispatch with a release tag.
-#
-# Required repository secrets (registered by the repository owner):
-#   MODRINTH_TOKEN    - Modrinth personal access token (project A4mCJN2v)
-#   CURSEFORGE_TOKEN  - CurseForge API token (project 1822783)
-# Tokens are passed only via env and are never echoed.
-#
-# No third-party actions are used at all (only the preinstalled gh/git/jq/curl),
-# so there is nothing to pin by SHA.
+name: Build
 
 on:
+  push:
+    branches: [main]
+    # A version tag (v1.0.0) also publishes a GitHub Release with the four jars.
+    tags: ['v*']
+  pull_request:
   workflow_dispatch:
-    inputs:
-      tag:
-        description: "Existing GitHub Release tag to publish (e.g. v1.1.0)"
-        required: true
-        type: string
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# identical-files ─────────────────────────────────┐
+# build ──┬── server-test ──┬── release-check ── release (tags only)
+#         ├── migration ────┤
+#         └── compat-test ──┘
 jobs:
-  publish:
-    name: Upload the release jars to CurseForge and Modrinth
+  identical-files:
+    # Verifies that source/test/template files expected to remain byte-identical across
+    # Minecraft versions have not drifted out of sync (docs/FEATURE_SPEC_1.1.0.md §3.2 (a)).
+    name: Check identical files across versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Check identical files
+        run: .github/scripts/check-identical-files.sh
+
+  build:
+    # Compiles and unit-tests every Minecraft version against both NeoForge versions.
+    # "min" is the NeoForge version the release jar is compiled against (and the lowest
+    # version the mod declares support for); "latest" is the newest NeoForge build listed
+    # in gradle.properties (neo_version_latest). The "min" job uploads the release jar,
+    # which server-test then runs on a production server of both NeoForge versions.
+    #
+    # setup-gradle keys its cache on the workflow name, this job's id and its matrix:
+    # renaming either or changing the matrix makes every job miss its Gradle cache once.
+    name: Build MC ${{ matrix.mc }} / NeoForge ${{ matrix.neo }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # Whether this job writes its Minecraft version's NeoForm cache entry (see "Restore
+      # the NeoForm cache"): the "latest" job does, on pushes to main.
+      SAVES_NEOFORM_CACHE: ${{ matrix.neo == 'latest' && github.ref == 'refs/heads/main' }}
+    strategy: &versions
+      fail-fast: false
+      matrix:
+        mc: ['1.21.1', '26.1.2', '26.2', '26.3']
+        neo: [min, latest]
+        include:
+          # bot (used by server-test): a vanilla-protocol client (mineflayer) joins the
+          # server. mineflayer supports 1.21.1 and 26.1.x, not 26.2/26.3 yet; those get
+          # RCON checks only.
+          - mc: '1.21.1'
+            java: '21'
+            bot: true
+          - mc: '26.1.2'
+            java: '25'
+            bot: true
+          - mc: '26.2'
+            java: '25'
+            bot: false
+          - mc: '26.3'
+            java: '25'
+            bot: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup JDK ${{ matrix.java }}
+        uses: actions/setup-java@v5
+        with:
+          java-version: ${{ matrix.java }}
+          distribution: 'temurin'
+
+      # The builds run through the Gradle wrapper, so gradle/wrapper/gradle-wrapper.properties
+      # is the one place the Gradle version is set.
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          # Only pushes to main write the Gradle cache; pull requests and tags only read it.
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+          # Has a cache entry of its own (see below). setup-gradle deletes this directory
+          # right after restoring its own entry and before saving it.
+          gradle-home-cache-excludes: caches/neoformruntime
+
+      # ModDevGradle runs NeoForm Runtime, which keeps Minecraft (downloaded and patched
+      # with NeoForge) and the game assets in ~/.gradle/caches/neoformruntime: 0.7-1 GB per
+      # Minecraft version, most of the Gradle cache. In setup-gradle's entry it would be
+      # saved again on every push to main, once per job, and a job without an entry of its
+      # own restores another Minecraft version's, whose content then piles up in its own.
+      # Instead, each Minecraft version has one entry, keyed on the files that set the
+      # versions it depends on (Minecraft, NeoForge, Parchment, ModDevGradle), so it is
+      # written only when they change. Both jobs of a Minecraft version read it; the
+      # "latest" job writes it, because it builds against both NeoForge versions.
+      # Restored after setup-gradle, which deletes the directory (see above).
+      - name: Restore the NeoForm cache
+        id: neoform
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.gradle/caches/neoformruntime
+          key: neoform-v1-${{ runner.os }}-${{ matrix.mc }}-${{ hashFiles(format('versions/{0}/gradle.properties', matrix.mc), format('versions/{0}/*.gradle', matrix.mc)) }}
+          # On a version change: the previous entry of this Minecraft version, so that only
+          # the steps for the new version run. Its other results are deleted before saving.
+          restore-keys: neoform-v1-${{ runner.os }}-${{ matrix.mc }}-
+
+      - name: Select NeoForge version
+        id: neo
+        run: .github/scripts/neoforge-version.sh ${{ matrix.mc }} ${{ matrix.neo }}
+
+      # For "Delete the NeoForm results that the build did not use" below.
+      - name: Mark the start of the build
+        run: touch "$RUNNER_TEMP/build-start"
+
+      - name: Build and run unit tests
+        run: ./gradlew -p versions/${{ matrix.mc }} build -Pneo_version=${{ steps.neo.outputs.version }} --console=plain
+
+      - name: Run GameTests
+        run: ./gradlew -p versions/${{ matrix.mc }} runGameTestServer -Pneo_version=${{ steps.neo.outputs.version }} --console=plain
+
+      - name: Build the release jar against the minimum NeoForge
+        if: matrix.neo == 'latest'
+        run: ./gradlew -p versions/${{ matrix.mc }} jar -Pneo_version=${{ steps.neo.outputs.min }} --console=plain
+
+      - name: Check the jar contents
+        run: .github/scripts/verify-jar.sh ${{ matrix.mc }}
+
+      # Only when there is no entry for this key yet (after a version change), and only
+      # after a successful build, so a failed build saves nothing.
+      - name: Delete the NeoForm results that the build did not use
+        if: env.SAVES_NEOFORM_CACHE == 'true' && steps.neoform.outputs.cache-hit != 'true'
+        run: .github/scripts/prune-neoform-cache.sh "$RUNNER_TEMP/build-start"
+
+      - name: Save the NeoForm cache
+        if: env.SAVES_NEOFORM_CACHE == 'true' && steps.neoform.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ~/.gradle/caches/neoformruntime
+          key: ${{ steps.neoform.outputs.cache-primary-key }}
+
+      - name: Upload release jar
+        if: matrix.neo == 'min'
+        uses: actions/upload-artifact@v6
+        with:
+          name: itemmilestonelog-${{ matrix.mc }}
+          path: versions/${{ matrix.mc }}/build/libs/*.jar
+          if-no-files-found: error
+
+      - name: Upload unit test reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: unit-test-reports-${{ matrix.mc }}-${{ matrix.neo }}
+          path: versions/${{ matrix.mc }}/build/reports/tests/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  server-test:
+    # Runs the release jar (compiled against the minimum NeoForge, from the "min" build
+    # job) on a production NeoForge dedicated server of this job's NeoForge version.
+    # !cancelled(): a failed build of one version does not hold back the other versions.
+    name: Server MC ${{ matrix.mc }} / NeoForge ${{ matrix.neo }}
+    needs: build
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy: *versions
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup JDK ${{ matrix.java }}
+        uses: actions/setup-java@v5
+        with:
+          java-version: ${{ matrix.java }}
+          distribution: 'temurin'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: .github/integration/package-lock.json
+
+      - name: Select NeoForge version
+        id: neo
+        run: .github/scripts/neoforge-version.sh ${{ matrix.mc }} ${{ matrix.neo }}
+
+      - name: Download the release jar
+        uses: actions/download-artifact@v7
+        with:
+          name: itemmilestonelog-${{ matrix.mc }}
+          path: versions/${{ matrix.mc }}/build/libs
+
+      # The NeoForge installer downloads Minecraft and the libraries and patches the
+      # server; install_server (server-lib.sh) skips it when libraries/ already has this
+      # NeoForge version. The migration job uses the same cache entries.
+      - name: Restore the NeoForge server
+        uses: actions/cache@v5
+        with:
+          path: build/server/${{ matrix.mc }}-${{ steps.neo.outputs.version }}/libraries
+          key: neoforge-server-v1-${{ runner.os }}-${{ matrix.mc }}-${{ steps.neo.outputs.version }}
+
+      - name: Install integration test client
+        run: npm ci --prefix .github/integration --no-audit --no-fund
+
+      - name: Run the release jar on a NeoForge dedicated server
+        run: .github/scripts/run-server-tests.sh ${{ matrix.mc }} ${{ steps.neo.outputs.version }} ${{ matrix.bot }}
+
+      - name: Upload server logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: test-logs-${{ matrix.mc }}-${{ matrix.neo }}
+          path: |
+            build/server-logs/
+            build/server/*/logs/
+            build/server/*/config/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  migration:
+    # A 1.21.1 world, with records made by the 1.21.1 jar, opened by the 26.1.2 jar
+    # on a 26.1.2 server: the records must come over (issue #13). mineflayer joins
+    # both servers; it does not support 26.2/26.3, which share the 26.1.2 code.
+    # It only needs the jars, so it runs next to server-test.
+    name: 1.21.1 world opened on 26.1.2
+    needs: build
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
-      TAG: ${{ inputs.tag }}
-      MODRINTH_PROJECT_ID: A4mCJN2v
-      CURSEFORGE_PROJECT_ID: "1822783"
     steps:
-      - name: Download the jars and changelog for the tag
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          gh release download "$TAG" --pattern '*.jar' --dir dist
-          ls -l dist
-          count=$(ls dist/*.jar | wc -l)
-          if [ "$count" -ne 4 ]; then
-            echo "::error::Expected 4 jars in release $TAG, found $count"
-            exit 1
-          fi
-          # Extract the CHANGELOG.md section for this version (## <version> up to
-          # the next ## heading) at the tagged ref.
-          version="${TAG#v}"
-          gh api "repos/$GH_REPO/contents/CHANGELOG.md?ref=$TAG" \
-            --jq '.content' | base64 -d > CHANGELOG.full.md
-          awk -v ver="$version" '
-            $0 ~ "^## " ver "([ ]|$)" { capture=1; next }
-            capture && /^## / { exit }
-            capture { print }
-          ' CHANGELOG.full.md > changelog-section.md
-          if [ ! -s changelog-section.md ]; then
-            echo "::error::No CHANGELOG.md section found for version $version"
-            exit 1
-          fi
-          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: Checkout repository
+        uses: actions/checkout@v5
 
-      - name: Upload to Modrinth
-        env:
-          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [ -z "${MODRINTH_TOKEN:-}" ]; then
-            echo "::error::MODRINTH_TOKEN secret is not set"
-            exit 1
-          fi
-          changelog_json=$(jq -Rs . < changelog-section.md)
-          for jar in dist/*.jar; do
-            base=$(basename "$jar")
-            # Jar names look like itemmilestonelog-neoforge-<mc>-<version>.jar
-            mc=$(echo "$base" | sed -E 's/^itemmilestonelog-neoforge-([0-9]+\.[0-9]+(\.[0-9]+)?)-.*/\1/')
-            if [ -z "$mc" ] || [ "$mc" = "$base" ]; then
-              echo "::error::Cannot parse the Minecraft version from $base"
-              exit 1
-            fi
-            data=$(jq -n \
-              --arg name "Item Milestone Log $VERSION (MC $mc)" \
-              --arg version_number "$VERSION" \
-              --argjson changelog "$changelog_json" \
-              --arg project_id "$MODRINTH_PROJECT_ID" \
-              --arg mc "$mc" \
-              '{name: $name, version_number: $version_number, changelog: $changelog,
-                dependencies: [], version_type: "release", loaders: ["neoforge"],
-                featured: false, project_id: $project_id,
-                game_versions: [$mc], file_parts: ["file"]}')
-            echo "Uploading $base to Modrinth (MC $mc)..."
-            curl -sS -f -X POST "https://api.modrinth.com/v2/version" \
-              -H "Authorization: $MODRINTH_TOKEN" \
-              -H "User-Agent: pengin0503/Item-Milestone-Log publish workflow" \
-              -F "data=$data" \
-              -F "file=@$jar" > /dev/null
-          done
+      - name: Setup JDK 21 and 25
+        uses: actions/setup-java@v5
+        with:
+          java-version: |
+            21
+            25
+          distribution: 'temurin'
 
-      - name: Upload to CurseForge
-        env:
-          CURSEFORGE_TOKEN: ${{ secrets.CURSEFORGE_TOKEN }}
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: .github/integration/package-lock.json
+
+      - name: Select NeoForge versions
+        id: neo
         run: |
-          set -euo pipefail
-          if [ -z "${CURSEFORGE_TOKEN:-}" ]; then
-            echo "::error::CURSEFORGE_TOKEN secret is not set"
-            exit 1
-          fi
-          # Resolve the game version ids once: the Minecraft version entries and
-          # the NeoForge loader entry, via the CurseForge versions API.
-          curl -sS -f "https://minecraft.curseforge.com/api/game/versions" \
-            -H "X-Api-Token: $CURSEFORGE_TOKEN" > cf-versions.json
-          neoforge_id=$(jq -r '.[] | select(.name == "NeoForge") | .id' cf-versions.json | head -1)
-          if [ -z "$neoforge_id" ]; then
-            echo "::error::NeoForge game version id not found in the CurseForge versions list"
-            exit 1
-          fi
-          changelog_text=$(cat changelog-section.md)
-          for jar in dist/*.jar; do
-            base=$(basename "$jar")
-            mc=$(echo "$base" | sed -E 's/^itemmilestonelog-neoforge-([0-9]+\.[0-9]+(\.[0-9]+)?)-.*/\1/')
-            mc_id=$(jq -r --arg mc "$mc" '.[] | select(.name == $mc) | .id' cf-versions.json | head -1)
-            if [ -z "$mc_id" ]; then
-              echo "::error::CurseForge game version id not found for Minecraft $mc"
-              exit 1
-            fi
-            metadata=$(jq -n \
-              --arg changelog "$changelog_text" \
-              --arg displayName "Item Milestone Log $VERSION (MC $mc)" \
-              --argjson gameVersions "[${mc_id}, ${neoforge_id}]" \
-              '{changelog: $changelog, changelogType: "markdown",
-                displayName: $displayName, gameVersions: $gameVersions,
-                releaseType: "release"}')
-            echo "Uploading $base to CurseForge (MC $mc)..."
-            curl -sS -f -X POST \
-              "https://minecraft.curseforge.com/api/projects/$CURSEFORGE_PROJECT_ID/upload-file" \
-              -H "X-Api-Token: $CURSEFORGE_TOKEN" \
-              -F "metadata=$metadata" \
-              -F "file=@$jar" > /dev/null
-          done
+          latest() { grep -E '^neo_version_latest=' "versions/$1/gradle.properties" | cut -d= -f2-; }
+          old="$(latest 1.21.1)"
+          new="$(latest 26.1.2)"
+          echo "NeoForge $old (1.21.1) and $new (26.1.2)"
+          echo "old=$old" >> "$GITHUB_OUTPUT"
+          echo "new=$new" >> "$GITHUB_OUTPUT"
+
+      - name: Download the 1.21.1 release jar
+        uses: actions/download-artifact@v7
+        with:
+          name: itemmilestonelog-1.21.1
+          path: versions/1.21.1/build/libs
+
+      - name: Download the 26.1.2 release jar
+        uses: actions/download-artifact@v7
+        with:
+          name: itemmilestonelog-26.1.2
+          path: versions/26.1.2/build/libs
+
+      - name: Restore the NeoForge 1.21.1 server
+        uses: actions/cache@v5
+        with:
+          path: build/server/1.21.1-${{ steps.neo.outputs.old }}/libraries
+          key: neoforge-server-v1-${{ runner.os }}-1.21.1-${{ steps.neo.outputs.old }}
+
+      - name: Restore the NeoForge 26.1.2 server
+        uses: actions/cache@v5
+        with:
+          path: build/server/26.1.2-${{ steps.neo.outputs.new }}/libraries
+          key: neoforge-server-v1-${{ runner.os }}-26.1.2-${{ steps.neo.outputs.new }}
+
+      - name: Install integration test client
+        run: npm ci --prefix .github/integration --no-audit --no-fund
+
+      - name: Open a 1.21.1 world on a 26.1.2 server
+        run: .github/scripts/run-migration-test.sh ${{ steps.neo.outputs.old }} ${{ steps.neo.outputs.new }}
+
+      - name: Upload server logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: test-logs-migration
+          path: |
+            build/server-logs/
+            build/server/*/logs/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  compat-test:
+    # Verifies network compatibility between the current development version and the
+    # released 1.0.1 mod jar using a real Minecraft client on Xvfb (Mesa llvmpipe) and
+    # a production NeoForge dedicated server (docs/FEATURE_SPEC_1.1.0.md §3.1).
+    # Runs in parallel with server-test and migration, sharing the NeoForm and NeoForge
+    # server caches. Starts with 1.21.1 and 26.1.2 (26.2/26.3 will follow after client
+    # launch verification).
+    name: Client/Server Compat MC ${{ matrix.mc }}
+    needs: build
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Final 1.0.1 code commit (PR #49; no v1.0.1 tag/release exists yet).
+      # Note: spec §3.1 cited 12763d2 (PR #24), which predates PR #27 (quantity targets)
+      # and has an older SyncMilestonesPayload wire format; 4c16aa2 is the released 1.0.1 code.
+      BASELINE_1_0_1_REF: '4c16aa24429350a936f876b13a064e03ffbde012'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mc: '1.21.1'
+            java: '21'
+          - mc: '26.1.2'
+            java: '25'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Checkout 1.0.1 baseline commit
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ env.BASELINE_1_0_1_REF }}
+          path: build/baseline-1.0.1
+
+      - name: Setup JDK ${{ matrix.java }}
+        uses: actions/setup-java@v5
+        with:
+          java-version: ${{ matrix.java }}
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: true
+          gradle-home-cache-excludes: caches/neoformruntime
+
+      - name: Restore the NeoForm cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.gradle/caches/neoformruntime
+          key: neoform-v1-${{ runner.os }}-${{ matrix.mc }}-${{ hashFiles(format('versions/{0}/gradle.properties', matrix.mc), format('versions/{0}/*.gradle', matrix.mc)) }}
+          restore-keys: neoform-v1-${{ runner.os }}-${{ matrix.mc }}-
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: .github/integration/package-lock.json
+
+      - name: Select NeoForge version
+        id: neo
+        run: .github/scripts/neoforge-version.sh ${{ matrix.mc }} min
+
+      - name: Download the development release jar
+        uses: actions/download-artifact@v7
+        with:
+          name: itemmilestonelog-${{ matrix.mc }}
+          path: versions/${{ matrix.mc }}/build/libs
+
+      - name: Restore the NeoForge server
+        uses: actions/cache@v5
+        with:
+          path: build/server/${{ matrix.mc }}-${{ steps.neo.outputs.version }}/libraries
+          key: neoforge-server-v1-${{ runner.os }}-${{ matrix.mc }}-${{ steps.neo.outputs.version }}
+
+      - name: Install Xvfb, xdotool and software OpenGL packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb xdotool libgl1-mesa-dri libglx-mesa0 libgl1 libglu1-mesa libopenal1
+
+      - name: Install integration test client (for RCON /stop)
+        run: npm ci --prefix .github/integration --no-audit --no-fund
+
+      - name: Create development client launch script
+        run: ./gradlew -p versions/${{ matrix.mc }} createClientLaunchScript -Pneo_version=${{ steps.neo.outputs.version }} --console=plain
+
+      - name: Build 1.0.1 jar and client launch script
+        run: ./build/baseline-1.0.1/gradlew -p build/baseline-1.0.1/versions/${{ matrix.mc }} jar createClientLaunchScript -Pneo_version=${{ steps.neo.outputs.version }} --console=plain
+
+      - name: Run client/server version compatibility scenarios
+        run: .github/scripts/run-compat-test.sh ${{ matrix.mc }} ${{ steps.neo.outputs.version }} build/baseline-1.0.1
+
+      - name: Upload compatibility test logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: compat-logs-${{ matrix.mc }}
+          path: |
+            build/compat-logs/
+            build/server/*/logs/
+            versions/${{ matrix.mc }}/run/logs/
+            build/baseline-1.0.1/versions/${{ matrix.mc }}/run/logs/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  release-check:
+    # Runs on every build, so a broken release is found before the tag is pushed.
+    name: Check the release files
+    needs: [identical-files, build, server-test, migration, compat-test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Download the release jars
+        uses: actions/download-artifact@v7
+        with:
+          pattern: itemmilestonelog-*
+          merge-multiple: true
+          path: dist
+
+      - name: Check the jars and write the release notes
+        run: .github/scripts/check-release.sh dist "${{ github.ref_type == 'tag' && github.ref_name || '' }}" build/release-notes.md
+
+  release:
+    name: Publish the GitHub Release
+    needs: release-check
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Download the release jars
+        uses: actions/download-artifact@v7
+        with:
+          pattern: itemmilestonelog-*
+          merge-multiple: true
+          path: dist
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          .github/scripts/check-release.sh dist "$TAG" build/release-notes.md
+          gh release create "$TAG" dist/*.jar --verify-tag \
+            --title "Item Milestone Log ${TAG#v}" --notes-file build/release-notes.md
