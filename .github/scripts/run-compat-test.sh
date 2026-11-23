@@ -80,29 +80,28 @@ find_client_script() {
 
 write_server_log4j_config() {
   local config_path="$1"
-  cat > "$config_path" <<'EOF'
+  # NeoForge merges this with its own log4j2 config (composite configuration).
+  # Appender names must not collide with the built-in ones ("Console",
+  # "DebugFile", ...): a collision on "DebugFile" (both pointing at
+  # logs/debug.log) made the composite config drop the mod logger's debug
+  # level in the first CI run, so the debug lines never reached the log.
+  # Use one uniquely named console appender and no <Root> (the built-in
+  # root stays in charge of everything else).
+  cat > "$config_path" <<'XEOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <Configuration status="warn">
   <Appenders>
-    <Console name="Console" target="SYSTEM_OUT">
+    <Console name="CompatConsole" target="SYSTEM_OUT">
       <PatternLayout pattern="[%d{HH:mm:ss}] [%t/%level] [%logger]: %msg%n%xEx"/>
     </Console>
-    <File name="DebugFile" fileName="logs/debug.log" append="false">
-      <PatternLayout pattern="[%d{HH:mm:ss.SSS}] [%t/%level] [%logger]: %msg%n%xEx"/>
-    </File>
   </Appenders>
   <Loggers>
     <Logger name="com.pengin0503.itemmilestonelog" level="debug" additivity="false">
-      <AppenderRef ref="Console"/>
-      <AppenderRef ref="DebugFile"/>
+      <AppenderRef ref="CompatConsole"/>
     </Logger>
-    <Root level="info">
-      <AppenderRef ref="Console"/>
-      <AppenderRef ref="DebugFile"/>
-    </Root>
   </Loggers>
 </Configuration>
-EOF
+XEOF
 }
 
 # The version line matters: without it the client treats options.txt as a
