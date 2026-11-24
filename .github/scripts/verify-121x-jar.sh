@@ -61,7 +61,7 @@ case "$SEGMENT" in
       'HoverEvent$Action'
       'GameTestHolder'
       'PrefixGameTestTemplate'
-      'playNotifySound'
+      'ServerPlayer.playNotifySound'
       'net/minecraft/server/players/NameAndId'
     )
     ;;&
