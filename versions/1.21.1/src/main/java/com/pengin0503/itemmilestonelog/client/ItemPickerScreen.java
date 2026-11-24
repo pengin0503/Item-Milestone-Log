@@ -1,6 +1,7 @@
 package com.pengin0503.itemmilestonelog.client;
 
 import com.pengin0503.itemmilestonelog.api.TargetKey;
+import com.pengin0503.itemmilestonelog.compat.McCompat;
 import com.pengin0503.itemmilestonelog.network.MilestoneActionPayload;
 import com.pengin0503.itemmilestonelog.network.SyncMilestonesPayload;
 import net.minecraft.client.Minecraft;
@@ -88,7 +89,7 @@ public final class ItemPickerScreen extends Screen {
             }
             ResourceLocation rl = BuiltInRegistries.ITEM.getKey(item);
             String id = rl.toString();
-            Component name = item.getDescription();
+            Component name = McCompat.registries().itemName(item);
             String nameStr = name.getString();
             catalog.add(new CatalogItem(
                     id,
@@ -314,7 +315,7 @@ public final class ItemPickerScreen extends Screen {
             return Math.min(440, ItemPickerScreen.this.width - 32);
         }
 
-        @Override
+        // No @Override: the supertype method was removed in MC 1.21.4; this still overrides it on 1.21-1.21.3.
         protected int getScrollbarPosition() {
             return this.getX() + this.width / 2 + getRowWidth() / 2 + 6;
         }

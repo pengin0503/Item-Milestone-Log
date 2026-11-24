@@ -5,6 +5,8 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
 
+import java.util.Set;
+
 /**
  * 1.21 / 1.21.1 {@link NbtCompat}: direct calls to the legacy {@link CompoundTag} accessors,
  * which already implement the default semantics documented on {@link NbtCompat}
@@ -44,5 +46,30 @@ public final class NbtCompatImpl implements NbtCompat {
     @Override
     public boolean contains(CompoundTag tag, String key) {
         return tag.contains(key);
+    }
+
+    @Override
+    public boolean containsTyped(CompoundTag tag, String key, byte type) {
+        return tag.contains(key, type);
+    }
+
+    @Override
+    public ListTag getStringList(CompoundTag tag, String key) {
+        return tag.getList(key, Tag.TAG_STRING);
+    }
+
+    @Override
+    public Set<String> keys(CompoundTag tag) {
+        return tag.getAllKeys();
+    }
+
+    @Override
+    public byte listElementType(ListTag list) {
+        return list.getElementType();
+    }
+
+    @Override
+    public String listString(ListTag list, int index) {
+        return list.getString(index);
     }
 }

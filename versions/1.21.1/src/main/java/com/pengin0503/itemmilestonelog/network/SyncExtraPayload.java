@@ -3,6 +3,7 @@ package com.pengin0503.itemmilestonelog.network;
 import com.pengin0503.itemmilestonelog.ItemMilestoneLog;
 import com.pengin0503.itemmilestonelog.Presets;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
+import com.pengin0503.itemmilestonelog.compat.McCompat;
 import io.netty.buffer.ByteBuf;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
@@ -95,11 +96,11 @@ public record SyncExtraPayload(
             return EMPTY;
         }
         Set<TargetKey> worldFirsts = new LinkedHashSet<>();
-        if (tag.contains(KEY_WORLD_FIRSTS, Tag.TAG_LIST)) {
-            ListTag list = tag.getList(KEY_WORLD_FIRSTS, Tag.TAG_STRING);
+        if (McCompat.nbt().containsTyped(tag, KEY_WORLD_FIRSTS, Tag.TAG_LIST)) {
+            ListTag list = McCompat.nbt().getStringList(tag, KEY_WORLD_FIRSTS);
             int limit = Math.min(list.size(), MAX_LIST_ENTRIES);
             for (int i = 0; i < limit; i++) {
-                TargetKey parsed = TargetKey.tryParseEncoded(list.getString(i));
+                TargetKey parsed = TargetKey.tryParseEncoded(McCompat.nbt().listString(list, i));
                 if (parsed != null) {
                     worldFirsts.add(parsed);
                 }
@@ -107,11 +108,11 @@ public record SyncExtraPayload(
         }
 
         Set<String> readOnlyPresets = new LinkedHashSet<>();
-        if (tag.contains(KEY_READ_ONLY_PRESETS, Tag.TAG_LIST)) {
-            ListTag list = tag.getList(KEY_READ_ONLY_PRESETS, Tag.TAG_STRING);
+        if (McCompat.nbt().containsTyped(tag, KEY_READ_ONLY_PRESETS, Tag.TAG_LIST)) {
+            ListTag list = McCompat.nbt().getStringList(tag, KEY_READ_ONLY_PRESETS);
             int limit = Math.min(list.size(), MAX_LIST_ENTRIES);
             for (int i = 0; i < limit; i++) {
-                String presetId = list.getString(i);
+                String presetId = McCompat.nbt().listString(list, i);
                 if (Presets.isValidId(presetId)) {
                     readOnlyPresets.add(presetId);
                 }

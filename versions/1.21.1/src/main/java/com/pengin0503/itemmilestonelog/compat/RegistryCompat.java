@@ -1,5 +1,6 @@
 package com.pengin0503.itemmilestonelog.compat;
 
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.world.item.Item;
@@ -18,4 +19,10 @@ public interface RegistryCompat {
     /** The sound event registered as {@code id}, or {@code null} when absent. */
     @Nullable
     SoundEvent soundOrNull(ResourceLocation id);
+
+    /**
+     * The display name of {@code item}. {@code Item#getDescription()} was removed in 1.21.2;
+     * 1.21.2+ uses {@code item.getName(new ItemStack(item))}.
+     */
+    Component itemName(Item item);
 }

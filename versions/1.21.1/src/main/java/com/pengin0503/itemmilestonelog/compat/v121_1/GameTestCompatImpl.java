@@ -11,4 +11,9 @@ public final class GameTestCompatImpl implements GameTestCompat {
     public void assertTrue(GameTestHelper helper, boolean condition, String message) {
         helper.assertTrue(condition, message);
     }
+
+    @Override
+    public void assertFalse(GameTestHelper helper, boolean condition, String message) {
+        helper.assertFalse(condition, message);
+    }
 }

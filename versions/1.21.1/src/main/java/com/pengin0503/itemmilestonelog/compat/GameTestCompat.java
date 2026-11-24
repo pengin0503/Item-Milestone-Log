@@ -8,4 +8,6 @@ import net.minecraft.gametest.framework.GameTestHelper;
  */
 public interface GameTestCompat {
     void assertTrue(GameTestHelper helper, boolean condition, String message);
+
+    void assertFalse(GameTestHelper helper, boolean condition, String message);
 }
