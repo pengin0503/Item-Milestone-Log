@@ -1,0 +1,290 @@
+[13:22:04] [main/WARN]: [ItemMilestoneLog] Skipping milestone command for player '@a' (11111111-1111-1111-1111-111111111111) on minecraft:diamond: player name does not match ^[A-Za-z0-9_.*+-]{1,20}$
+[13:22:04] [main/WARN]: [ItemMilestoneLog] Skipping milestone command for player 'aaaaaaaaaaaaaaaaaaaaa' (11111111-1111-1111-1111-111111111111) on minecraft:diamond ×2: player name does not match ^[A-Za-z0-9_.*+-]{1,20}$
+[13:22:04] [main/WARN]: [ItemMilestoneLog] Unexpected error executing milestone command for minecraft:diamond (11111111-1111-1111-1111-111111111111)
+java.lang.RuntimeException: boom
+	at com.pengin0503.itemmilestonelog.MilestoneCommandRunnerTest.lambda$executeBatchIsolatesExceptionsSoSubsequentCommandsStillRun$0(MilestoneCommandRunnerTest.java:73)
+	at com.pengin0503.itemmilestonelog.MilestoneCommandRunner.executeBatch(MilestoneCommandRunner.java:139)
+	at com.pengin0503.itemmilestonelog.MilestoneCommandRunnerTest.executeBatchIsolatesExceptionsSoSubsequentCommandsStillRun(MilestoneCommandRunnerTest.java:70)
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:565)
+	at org.junit.platform.commons.util.ReflectionUtils.invokeMethod(ReflectionUtils.java:767)
+	at org.junit.jupiter.engine.execution.MethodInvocation.proceed(MethodInvocation.java:60)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain$ValidatingInvocation.proceed(InvocationInterceptorChain.java:131)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.intercept(TimeoutExtension.java:156)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.interceptTestableMethod(TimeoutExtension.java:147)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.interceptTestMethod(TimeoutExtension.java:86)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker$ReflectiveInterceptorCall.lambda$ofVoidMethod$0(InterceptingExecutableInvoker.java:103)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.lambda$invoke$0(InterceptingExecutableInvoker.java:93)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain$InterceptedInvocation.proceed(InvocationInterceptorChain.java:106)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.proceed(InvocationInterceptorChain.java:64)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.chainAndInvoke(InvocationInterceptorChain.java:45)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.invoke(InvocationInterceptorChain.java:37)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.invoke(InterceptingExecutableInvoker.java:92)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.invoke(InterceptingExecutableInvoker.java:86)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.lambda$invokeTestMethod$8(TestMethodTestDescriptor.java:217)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.invokeTestMethod(TestMethodTestDescriptor.java:213)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.execute(TestMethodTestDescriptor.java:138)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.execute(TestMethodTestDescriptor.java:68)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:156)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:146)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:144)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:143)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:100)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1604)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.invokeAll(SameThreadHierarchicalTestExecutorService.java:41)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:160)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:146)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:144)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:143)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:100)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1604)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.invokeAll(SameThreadHierarchicalTestExecutorService.java:41)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:160)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:146)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:144)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:143)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:100)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.submit(SameThreadHierarchicalTestExecutorService.java:35)
+	at org.junit.platform.engine.support.hierarchical.HierarchicalTestExecutor.execute(HierarchicalTestExecutor.java:57)
+	at org.junit.platform.engine.support.hierarchical.HierarchicalTestEngine.execute(HierarchicalTestEngine.java:54)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:198)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:169)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:93)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.lambda$execute$0(EngineExecutionOrchestrator.java:58)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.withInterceptedStreams(EngineExecutionOrchestrator.java:141)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:57)
+	at org.junit.platform.launcher.core.DefaultLauncher.execute(DefaultLauncher.java:103)
+	at org.junit.platform.launcher.core.DefaultLauncher.execute(DefaultLauncher.java:85)
+	at org.junit.platform.launcher.core.DelegatingLauncher.execute(DelegatingLauncher.java:47)
+	at org.junit.platform.launcher.core.SessionPerRequestLauncher.execute(SessionPerRequestLauncher.java:63)
+	at RunTests2.main(RunTests2.java:25)
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid target entry '#' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid target entry '##c:x' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid target entry '#c:x#0' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid target entry '#:x' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid target entry '#c:' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid progressNotified key '#c:x#abc' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid target entry '#' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid target entry '##c:x' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid target entry '#c:x#0' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid target entry '#:x' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid target entry '#c:' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid progressNotified key '#c:x#abc' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid completedPresets entry '' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid completedPresets entry 'Bad Name' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid completedPresets entry 'list' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid completedPresets entry '' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid completedPresets entry '' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid completedPresets entry 'Bad Name' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid completedPresets entry 'list' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid completedPresets entry '' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid record count 'day' for 'minecraft:gold_ingot' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping record for 'minecraft:iron_ingot#1' with negative ticks -5 in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping record for 'minecraft:coal#10' with negative ticks -1 in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid record count '0' for 'minecraft:copper_ingot' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid record count 'abc' for 'minecraft:copper_ingot' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping record for 'minecraft:copper_ingot#30' with negative ticks -5 in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping record for 'minecraft:copper_ingot#10' with negative ticks -1 in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid worldFirst count 'uuid' for 'minecraft:gold_ingot' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping worldFirst 'minecraft:iron_ingot#1' with negative ticks -1 in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping worldFirst 'minecraft:coal#30' with negative ticks -1 in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping worldFirst 'minecraft:coal#10' with negative ticks -1 in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping worldFirst 'minecraft:lapis_lazuli#1' with invalid player UUID 'not-a-uuid' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Could not read /tmp/junit-3389057448575122191/data/itemmilestonelog_data.dat; starting without its records
+java.util.zip.ZipException: Not in GZIP format
+	at java.base/java.util.zip.GZIPInputStream.readHeader(GZIPInputStream.java:231)
+	at java.base/java.util.zip.GZIPInputStream.<init>(GZIPInputStream.java:86)
+	at java.base/java.util.zip.GZIPInputStream.<init>(GZIPInputStream.java:118)
+	at net.minecraft.nbt.NbtIo.createDecompressorStream(NbtIo.java:44)
+	at net.minecraft.nbt.NbtIo.readCompressed(NbtIo.java:53)
+	at net.minecraft.nbt.NbtIo.readCompressed(NbtIo.java:37)
+	at com.pengin0503.itemmilestonelog.MilestoneData.readLegacy(MilestoneData.java:363)
+	at com.pengin0503.itemmilestonelog.MilestoneDataTest.unreadableLegacyFileIsSkipped(MilestoneDataTest.java:243)
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:565)
+	at org.junit.platform.commons.util.ReflectionUtils.invokeMethod(ReflectionUtils.java:767)
+	at org.junit.jupiter.engine.execution.MethodInvocation.proceed(MethodInvocation.java:60)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain$ValidatingInvocation.proceed(InvocationInterceptorChain.java:131)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.intercept(TimeoutExtension.java:156)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.interceptTestableMethod(TimeoutExtension.java:147)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.interceptTestMethod(TimeoutExtension.java:86)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker$ReflectiveInterceptorCall.lambda$ofVoidMethod$0(InterceptingExecutableInvoker.java:103)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.lambda$invoke$0(InterceptingExecutableInvoker.java:93)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain$InterceptedInvocation.proceed(InvocationInterceptorChain.java:106)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.proceed(InvocationInterceptorChain.java:64)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.chainAndInvoke(InvocationInterceptorChain.java:45)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.invoke(InvocationInterceptorChain.java:37)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.invoke(InterceptingExecutableInvoker.java:92)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.invoke(InterceptingExecutableInvoker.java:86)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.lambda$invokeTestMethod$8(TestMethodTestDescriptor.java:217)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.invokeTestMethod(TestMethodTestDescriptor.java:213)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.execute(TestMethodTestDescriptor.java:138)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.execute(TestMethodTestDescriptor.java:68)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:156)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:146)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:144)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:143)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:100)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1604)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.invokeAll(SameThreadHierarchicalTestExecutorService.java:41)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:160)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:146)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:144)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:143)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:100)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1604)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.invokeAll(SameThreadHierarchicalTestExecutorService.java:41)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:160)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:146)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:144)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:143)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:100)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.submit(SameThreadHierarchicalTestExecutorService.java:35)
+	at org.junit.platform.engine.support.hierarchical.HierarchicalTestExecutor.execute(HierarchicalTestExecutor.java:57)
+	at org.junit.platform.engine.support.hierarchical.HierarchicalTestEngine.execute(HierarchicalTestEngine.java:54)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:198)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:169)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:93)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.lambda$execute$0(EngineExecutionOrchestrator.java:58)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.withInterceptedStreams(EngineExecutionOrchestrator.java:141)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:57)
+	at org.junit.platform.launcher.core.DefaultLauncher.execute(DefaultLauncher.java:103)
+	at org.junit.platform.launcher.core.DefaultLauncher.execute(DefaultLauncher.java:85)
+	at org.junit.platform.launcher.core.DelegatingLauncher.execute(DelegatingLauncher.java:47)
+	at org.junit.platform.launcher.core.SessionPerRequestLauncher.execute(SessionPerRequestLauncher.java:63)
+	at RunTests2.main(RunTests2.java:25)
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid target entry 'minecraft:emerald#0' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid target entry 'minecraft:stone #5' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping record for 'minecraft:dirt#1' with negative ticks -50 in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping player entry with invalid UUID 'not-a-valid-uuid' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping negative lastDigestEpoch value -100 in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping negative lastSeen value -100 in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping negative lastSeen value -100 in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid target entry 'minecraft:emerald#0' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid record count 'day' for 'minecraft:gold_ingot' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping record for 'minecraft:iron_ingot#1' with negative ticks -5 in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping record for 'minecraft:dirt#1' with negative ticks -10 in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping record for 'minecraft:coal#20' with negative ticks -5 in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping record for 'minecraft:coal#10' with negative ticks -1 in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid worldFirst count 'uuid' for 'minecraft:gold_ingot' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping worldFirst 'minecraft:iron_ingot#1' with negative ticks -2 in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping out-of-range progressNotified value '100' for 'minecraft:gold_ingot#100' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid progressNotified key 'minecraft:emerald#0' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping out-of-range progressNotified value '-1' for 'minecraft:redstone#100' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid progressNotified key 'bad key' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping out-of-range progressNotified value '-1' for 'minecraft:coal#100' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping out-of-range progressNotified value '100' for 'minecraft:gold_ingot#100' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid progressNotified key 'minecraft:emerald#0' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping out-of-range progressNotified value '-1' for 'minecraft:redstone#100' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid progressNotified key 'bad key' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping out-of-range progressNotified value '-1' for 'minecraft:coal#100' in SavedData
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping player entry without UUID in export file mixed-all.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping player entry without UUID in export file mixed-all.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping player entry without UUID in export file mixed-all.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid player entry in export file mixed-all.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid player entry in export file mixed-all.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping non-object player entry in export file mixed-all.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping non-object player entry in export file mixed-all.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid player entry in export file mixed-all.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping record 'minecraft:emerald#10' with invalid or conflicting count in export file edge_records.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping player entry without UUID in export file mixed-world-firsts.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping worldFirst 'minecraft:iron_ingot' with invalid uuid 'bad-uuid' during importall
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping non-object worldFirst entry during importall
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping non-array worldFirsts field in export file bad-wf-field.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid target 'minecraft:gold_ingot#0' in export file Mixed.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping target 'minecraft:iron_ingot' with invalid count in export file Mixed.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid record key 'minecraft:gold_ingot#0' in export file Mixed.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping record 'minecraft:iron_ingot#10' with invalid or conflicting count in export file Mixed.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid target '#' in export file TagsAndShortIds.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid target '##c:x' in export file TagsAndShortIds.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid target '#c:x#0' in export file TagsAndShortIds.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping record '#c:ingots/copper#10' with invalid or conflicting count in export file TagsAndShortIds.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid record key '##c:x' in export file TagsAndShortIds.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping non-object worldFirst entry during importall
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping non-object worldFirst entry during importall
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping worldFirst entry with missing or non-string key during importall
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping worldFirst entry with invalid key '##c:x' during importall
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping worldFirst entry with invalid key 'minecraft:air' during importall
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping worldFirst entry with invalid key 'minecraft:stone#0' during importall
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping worldFirst 'minecraft:stone' with invalid uuid 'not-a-uuid' during importall
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping worldFirst 'minecraft:stone' with missing or non-string uuid during importall
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping worldFirst 'minecraft:stone' with non-string name during importall
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping worldFirst 'minecraft:stone' with missing or invalid ticks during importall
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping worldFirst 'minecraft:stone' with missing or invalid ticks during importall
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping worldFirst 'minecraft:stone' with missing or invalid ticks during importall
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping worldFirst 'minecraft:stone' with invalid day during importall
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping worldFirst 'minecraft:stone' with invalid epoch during importall
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Ignoring preset file atm_star.json because 'atm_star' is a built-in preset
+[13:22:05] [main/ERROR]: [ItemMilestoneLog] Failed to parse preset file broken.json: com.google.gson.stream.MalformedJsonException: Expected ':' at line 1 column 8 path $.not
+See https://github.com/google/gson/blob/main/Troubleshooting.md#malformed-json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping preset file empty.json: 0 valid item IDs
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping item 'minecraft:iron_ingot' with invalid count in preset my_pack.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping item 'minecraft:gold_ingot' with invalid count in preset my_pack.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid item 'not valid id' in preset my_pack.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Ignoring datapack preset zzz_mod:itemmilestonelog/presets/clash.json because preset 'clash' is already provided by namespace 'aaa_mod' (lexicographically first namespace wins)
+[13:22:05] [main/ERROR]: [ItemMilestoneLog] Failed to parse preset file aaa_mod:itemmilestonelog/presets/shared.json: com.google.gson.stream.MalformedJsonException: Expected ':' at line 1 column 8 path $.not
+See https://github.com/google/gson/blob/main/Troubleshooting.md#malformed-json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Ignoring datapack preset bbb_mod:itemmilestonelog/presets/shared.json because preset 'shared' is already provided by namespace 'aaa_mod' (lexicographically first namespace wins)
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Ignoring datapack preset 'ro_pack' because 'ro_pack' is already provided by a config-folder file preset
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Ignoring datapack preset 'ro_pack' because 'ro_pack' is already provided by a config-folder file preset
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Ignoring datapack preset pack_mod:itemmilestonelog/presets/atm_star.json because 'atm_star' is a built-in preset
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Ignoring datapack preset 'shared_id' because 'shared_id' is already provided by a config-folder file preset
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid item '#' in preset tag_pack.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid item '##c:x' in preset tag_pack.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid item '#c:x#' in preset tag_pack.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid item '#c:x#0' in preset tag_pack.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid item '#c:x#abc' in preset tag_pack.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid item '#:x' in preset tag_pack.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid item '#c:' in preset tag_pack.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid item 'c:x#1#2' in preset tag_pack.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping item '#nonexistentmod:bad_count' with invalid count in preset tag_pack.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid item '#' in preset tag_pack.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid item '##c:x' in preset tag_pack.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid item '#c:x#' in preset tag_pack.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid item '#c:x#0' in preset tag_pack.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid item '#c:x#abc' in preset tag_pack.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid item '#:x' in preset tag_pack.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid item '#c:' in preset tag_pack.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping invalid item 'c:x#1#2' in preset tag_pack.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Skipping item '#nonexistentmod:bad_count' with invalid count in preset tag_pack.json
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Ignoring datapack preset bad_mod:itemmilestonelog/presets/Bad-ID.json (file name must match [a-z0-9_-]{1,32} and must not be a reserved word)
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Ignoring datapack preset bad_mod:itemmilestonelog/presets/list.json (file name must match [a-z0-9_-]{1,32} and must not be a reserved word)
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Ignoring datapack preset bad_mod:itemmilestonelog/presets/way_too_long_preset_id_name_over_32_chars.json (file name must match [a-z0-9_-]{1,32} and must not be a reserved word)
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Ignoring datapack preset builtin_mod:itemmilestonelog/presets/atm_star.json because 'atm_star' is a built-in preset
+[13:22:05] [main/WARN]: [ItemMilestoneLog] Ignoring datapack preset nested_mod:itemmilestonelog/presets/deep/inner.json (files in subfolders are ignored; use a flat file name)
+[13:22:06] [main/WARN]: [ItemMilestoneLog] scoreboardObjective and scoreboardWorldFirstObjective are both set to 'iml_same'; ignoring scoreboardWorldFirstObjective
+[13:22:06] [main/WARN]: [ItemMilestoneLog] Ignoring invalid defaultTargets entry 'minecraft:air'
+[13:22:06] [main/WARN]: [ItemMilestoneLog] Ignoring invalid defaultTargets entry 'minecraft:air#5'
+[13:22:06] [main/WARN]: [ItemMilestoneLog] Ignoring invalid defaultTargets entry 'diamond'
+[13:22:06] [main/WARN]: [ItemMilestoneLog] Ignoring invalid defaultTargets entry 'minecraft:stone#0'
+[13:22:06] [main/WARN]: [ItemMilestoneLog] Ignoring invalid defaultTargets entry 'minecraft:stone#1000001'
+[13:22:06] [main/WARN]: [ItemMilestoneLog] Ignoring invalid defaultTargets entry 'minecraft:bad id'
+[13:22:06] [main/WARN]: [ItemMilestoneLog] Ignoring invalid defaultTargets entry '#'
+[13:22:06] [main/WARN]: [ItemMilestoneLog] Ignoring invalid defaultTargets entry '##c:x'
+[13:22:06] [main/WARN]: [ItemMilestoneLog] Ignoring invalid defaultTargets entry '#c:x#'
+[13:22:06] [main/WARN]: [ItemMilestoneLog] Ignoring invalid defaultTargets entry '#c:x#0'
+[13:22:06] [main/WARN]: [ItemMilestoneLog] Ignoring invalid defaultTargets entry '#c:x#abc'
+[13:22:06] [main/WARN]: [ItemMilestoneLog] Ignoring invalid defaultTargets entry '#:x'
+[13:22:06] [main/WARN]: [ItemMilestoneLog] Ignoring invalid defaultTargets entry '#c:'
+[13:22:06] [main/WARN]: [ItemMilestoneLog] Ignoring invalid defaultTargets entry 'c:x#1#2'
+[13:22:06] [main/WARN]: [ItemMilestoneLog] Ignoring invalid defaultTargets entry ''

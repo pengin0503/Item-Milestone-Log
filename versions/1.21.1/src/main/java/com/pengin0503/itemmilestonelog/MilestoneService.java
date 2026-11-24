@@ -4,6 +4,7 @@ import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
 import com.pengin0503.itemmilestonelog.api.WorldFirstRecord;
 import com.pengin0503.itemmilestonelog.network.PresetEntry;
+import com.pengin0503.itemmilestonelog.network.SyncExtraPayload;
 import com.pengin0503.itemmilestonelog.network.SyncMilestonesPayload;
 import com.pengin0503.itemmilestonelog.network.TargetEntry;
 import net.minecraft.commands.CommandSourceStack;
@@ -159,30 +160,38 @@ public final class MilestoneService {
     }
 
     /**
-     * Resolves a preset's display name for {@code recipient} (F5):
+     * F54: the receiving player's client language code (e.g. {@code ja_jp}), or null when
+     * {@code player} is null (console / RCON) — preset names then resolve with {@code en_us}
+     * priority.
+     */
+    @Nullable
+    public static String clientLanguage(@Nullable ServerPlayer player) {
+        if (player == null) {
+            return null;
+        }
+        return player.clientInformation() != null ? player.clientInformation().language() : null;
+    }
+
+    /**
+     * Resolves a preset's display name for {@code recipient} (F5 / F54):
      * built-in presets translate {@code gui.itemmilestonelog.preset.<id>} per recipient,
-     * while custom presets embed their JSON {@code name} (or ID fallback) as a literal
+     * while custom presets resolve their JSON {@code name} (a plain string, or F54 per-language
+     * entries, with the ID as fallback) in the recipient's language and embed it as a literal
      * component (§1 constraint 12).
      */
     public static Component presetDisplayName(@Nullable ServerPlayer recipient, Presets.PresetDefinition preset) {
         if (preset.builtin()) {
             return ServerLang.tr(recipient, "gui.itemmilestonelog.preset." + preset.id());
         }
-        return customPresetLiteralName(preset);
+        return Component.literal(preset.resolveDisplayName(clientLanguage(recipient)));
     }
 
+    /** Same as {@link #presetDisplayName} for a language code instead of a player (F54). */
     public static Component presetDisplayNameForLang(@Nullable String language, Presets.PresetDefinition preset) {
         if (preset.builtin()) {
             return ServerLang.trForLang(language, "gui.itemmilestonelog.preset." + preset.id());
         }
-        return customPresetLiteralName(preset);
-    }
-
-    private static Component customPresetLiteralName(Presets.PresetDefinition preset) {
-        String display = (preset.displayName() != null && !preset.displayName().isEmpty())
-                ? preset.displayName()
-                : preset.id();
-        return Component.literal(display != null ? display : "");
+        return Component.literal(preset.resolveDisplayName(language));
     }
 
     public static boolean isPrivileged(CommandSourceStack source) {
@@ -866,6 +875,11 @@ public final class MilestoneService {
         if (Presets.isBuiltin(name)) {
             return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.preset_builtin_protected", name));
         }
+        // F21: IDs that exist only as a data pack preset are read-only; save under a new ID or
+        // hand-place a config-folder file with the same ID to shadow the data pack one.
+        if (Presets.isDatapack(name)) {
+            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.preset_datapack_protected", name));
+        }
         MilestoneData.PlayerData pd = data.playerOrNull(playerId);
         if (pd == null || pd.targets.isEmpty()) {
             return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.preset_no_personal_targets"));
@@ -900,6 +914,10 @@ public final class MilestoneService {
         }
         if (Presets.isBuiltin(name)) {
             return new ActionResult(false, ServerLang.tr(source, "message.itemmilestonelog.preset_builtin_protected", name));
+        }
+        // F21: data pack presets cannot be deleted from in-game either.
+        if (Presets.isDatapack(name)) {
+            return new ActionResult(false, ServerLang.tr(source, "message.itemmilestonelog.preset_datapack_protected", name));
         }
         if (!Presets.isValidId(name) || Presets.get(name) == null) {
             return new ActionResult(false, ServerLang.tr(source, "message.itemmilestonelog.preset_unknown",
@@ -1492,10 +1510,31 @@ public final class MilestoneService {
         return new RenameOutcome(new ActionResult(true, message), oldNorm, newNorm, counts);
     }
 
-    public static void syncPlayerIfOpen(ServerPlayer player) {
-        if (player.connection != null && player.connection.hasChannel(SyncMilestonesPayload.TYPE)) {
-            PacketDistributor.sendToPlayer(player, createSyncPayload(player, false, null));
+    /**
+     * F25: sends the optional {@link SyncExtraPayload} (only when the client supports its channel)
+     * followed immediately by {@link SyncMilestonesPayload}, so the extra metadata arrives before
+     * the client opens or refreshes the screen.
+     */
+    public static void sendSync(ServerPlayer player, boolean openScreen, @Nullable Component feedback) {
+        if (player.connection == null || !player.connection.hasChannel(SyncMilestonesPayload.TYPE)) {
+            return;
         }
+        if (player.connection.hasChannel(SyncExtraPayload.TYPE)) {
+            SyncExtraPayload extra = createSyncExtraPayload(player);
+            ItemMilestoneLog.LOGGER.debug(
+                    "[ItemMilestoneLog] Sending SyncExtraPayload to {} (worldFirsts={}, readOnlyPresets={})",
+                    player.getUUID(), extra.worldFirsts().size(), extra.readOnlyPresets().size());
+            PacketDistributor.sendToPlayer(player, extra);
+        } else {
+            ItemMilestoneLog.LOGGER.debug(
+                    "[ItemMilestoneLog] Not sending SyncExtraPayload to {}: client does not support the channel",
+                    player.getUUID());
+        }
+        PacketDistributor.sendToPlayer(player, createSyncPayload(player, openScreen, feedback));
+    }
+
+    public static void syncPlayerIfOpen(ServerPlayer player) {
+        sendSync(player, false, null);
     }
 
     public static void syncAllOnlineGuiPlayers(MinecraftServer server, @Nullable ServerPlayer exclude) {
@@ -1507,7 +1546,46 @@ public final class MilestoneService {
     }
 
     /**
+     * F25: builds the optional {@link SyncExtraPayload} for {@code player}.
+     * When {@link Config#GUI_WORLD_FIRST_MARK} is false, {@code worldFirsts} is sent empty while
+     * {@code readOnlyPresets} (F21: IDs that currently resolve to data pack presets) is still sent.
+     */
+    public static SyncExtraPayload createSyncExtraPayload(ServerPlayer player) {
+        MilestoneData data = MilestoneData.get(player.server);
+        return buildSyncExtraPayload(data, player.getUUID(), Config.guiWorldFirstMark(), Presets.datapackPresetIds());
+    }
+
+    static SyncExtraPayload buildSyncExtraPayload(
+            @Nullable MilestoneData data,
+            @Nullable UUID playerId,
+            boolean guiWorldFirstMark,
+            @Nullable Collection<String> readOnlyPresetIds) {
+        Set<TargetKey> heldWorldFirsts = new LinkedHashSet<>();
+        if (guiWorldFirstMark && data != null && playerId != null) {
+            for (Map.Entry<TargetKey, WorldFirstRecord> e : data.worldFirsts().entrySet()) {
+                WorldFirstRecord wf = e.getValue();
+                if (wf != null && playerId.equals(wf.playerUuid())) {
+                    heldWorldFirsts.add(e.getKey());
+                }
+            }
+        }
+        Set<String> readOnly = new LinkedHashSet<>();
+        if (readOnlyPresetIds != null) {
+            for (String id : readOnlyPresetIds) {
+                if (Presets.isValidId(id)) {
+                    readOnly.add(id);
+                }
+            }
+        }
+        if (heldWorldFirsts.isEmpty() && readOnly.isEmpty()) {
+            return SyncExtraPayload.EMPTY;
+        }
+        return new SyncExtraPayload(heldWorldFirsts, readOnly);
+    }
+
+    /**
      * Builds a complete snapshot of the player's milestone state to send to the client GUI.
+     * F54: custom preset names are resolved in the receiving player's language.
      */
     public static SyncMilestonesPayload createSyncPayload(ServerPlayer player, boolean openScreen, @Nullable Component feedback) {
         MilestoneData data = MilestoneData.get(player.server);
@@ -1521,7 +1599,8 @@ public final class MilestoneService {
                 isPrivileged(player),
                 openScreen,
                 feedback,
-                Config.PRESETS_ENABLED.get()
+                Config.PRESETS_ENABLED.get(),
+                clientLanguage(player)
         );
     }
 
@@ -1535,7 +1614,7 @@ public final class MilestoneService {
             boolean openScreen,
             @Nullable Component feedback) {
         return buildSyncPayload(pd, defaultSet, carried, possessionCounter, currentPlaytime,
-                canManagePresets, openScreen, feedback, true);
+                canManagePresets, openScreen, feedback, true, null);
     }
 
     static SyncMilestonesPayload buildSyncPayload(
@@ -1548,6 +1627,25 @@ public final class MilestoneService {
             boolean openScreen,
             @Nullable Component feedback,
             boolean presetsEnabled) {
+        return buildSyncPayload(pd, defaultSet, carried, possessionCounter, currentPlaytime,
+                canManagePresets, openScreen, feedback, presetsEnabled, null);
+    }
+
+    /**
+     * F54: {@code language} is the receiving player's client language code; null resolves
+     * custom preset names with {@code en_us} priority.
+     */
+    static SyncMilestonesPayload buildSyncPayload(
+            @Nullable MilestoneData.PlayerData pd,
+            Set<TargetKey> defaultSet,
+            Set<String> carried,
+            Function<Set<String>, Map<String, Integer>> possessionCounter,
+            int currentPlaytime,
+            boolean canManagePresets,
+            boolean openScreen,
+            @Nullable Component feedback,
+            boolean presetsEnabled,
+            @Nullable String language) {
         Set<TargetKey> personalSet = pd != null ? pd.targets : Set.of();
 
         Set<TargetKey> effective = Tracker.effectiveTargets(defaultSet, pd);
@@ -1586,9 +1684,11 @@ public final class MilestoneService {
         List<PresetEntry> presetEntries = new ArrayList<>();
         if (presetsEnabled) {
             for (Presets.PresetDefinition p : Presets.all()) {
+                // F54: custom presets resolve their name in the receiving player's language;
+                // built-ins still travel empty (the client translates them via their lang key).
                 presetEntries.add(new PresetEntry(
                         p.id(),
-                        p.builtin() ? "" : p.displayName(),
+                        p.builtin() ? "" : p.resolveDisplayName(language),
                         p.items().size(),
                         p.builtin()
                 ));

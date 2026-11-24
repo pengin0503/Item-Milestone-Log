@@ -88,8 +88,14 @@ public final class SavePresetScreen extends Screen {
         return null;
     }
 
-    private static boolean isBuiltinMatch(String trimmedId, @Nullable PresetEntry matched) {
-        return Presets.isBuiltin(trimmedId) || (matched != null && matched.builtin());
+    /**
+     * F21: built-in IDs and data pack preset IDs (read-only via {@code sync_extra}) can never be
+     * saved over, exactly like built-in IDs.
+     */
+    private static boolean isProtectedMatch(String trimmedId, @Nullable PresetEntry matched) {
+        return Presets.isBuiltin(trimmedId)
+                || ClientMilestoneHandler.isReadOnlyPreset(trimmedId)
+                || (matched != null && matched.builtin());
     }
 
     private void updateSaveButtonState() {
@@ -98,7 +104,7 @@ public final class SavePresetScreen extends Screen {
         }
         String trimmed = currentName.trim();
         PresetEntry matched = findMatchingPreset(trimmed);
-        boolean valid = Presets.isValidId(trimmed) && !isBuiltinMatch(trimmed, matched);
+        boolean valid = Presets.isValidId(trimmed) && !isProtectedMatch(trimmed, matched);
         saveButton.active = valid;
         boolean overwrite = valid && matched != null && !matched.builtin();
         saveButton.setMessage(Component.translatable(
@@ -108,7 +114,7 @@ public final class SavePresetScreen extends Screen {
     private void submit() {
         String trimmed = currentName.trim();
         PresetEntry matched = findMatchingPreset(trimmed);
-        if (!Presets.isValidId(trimmed) || isBuiltinMatch(trimmed, matched)) {
+        if (!Presets.isValidId(trimmed) || isProtectedMatch(trimmed, matched)) {
             return;
         }
         ClientMilestoneHandler.sendAction(MilestoneActionPayload.Action.SAVE_PRESET, trimmed);
@@ -131,7 +137,8 @@ public final class SavePresetScreen extends Screen {
         String trimmed = currentName.trim();
         PresetEntry matched = findMatchingPreset(trimmed);
         Component label;
-        if (Presets.isValidId(trimmed) && matched != null && !matched.builtin()) {
+        if (Presets.isValidId(trimmed) && matched != null && !matched.builtin()
+                && !ClientMilestoneHandler.isReadOnlyPreset(trimmed)) {
             String rawName = matched.displayName();
             String existingDisplayName = (rawName == null || rawName.isEmpty()) ? matched.id() : rawName;
             label = Component.translatable(

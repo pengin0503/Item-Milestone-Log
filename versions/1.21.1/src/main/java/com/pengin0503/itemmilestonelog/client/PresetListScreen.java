@@ -188,10 +188,17 @@ public final class PresetListScreen extends Screen {
 
         public PresetRow(PresetEntry entry) {
             this.displayName = resolveDisplayName(entry);
+            boolean readOnly = !entry.builtin() && ClientMilestoneHandler.isReadOnlyPreset(entry.id());
             Component countText = Component.translatable("gui.itemmilestonelog.presets.count", entry.itemCount());
-            Component typeText = Component.translatable(entry.builtin()
-                    ? "gui.itemmilestonelog.presets.type.builtin"
-                    : "gui.itemmilestonelog.presets.type.file");
+            String typeKey;
+            if (entry.builtin()) {
+                typeKey = "gui.itemmilestonelog.presets.type.builtin";
+            } else if (readOnly) {
+                typeKey = "gui.itemmilestonelog.presets.type.datapack";
+            } else {
+                typeKey = "gui.itemmilestonelog.presets.type.file";
+            }
+            Component typeText = Component.translatable(typeKey);
             this.metaLine = Component.translatable("gui.itemmilestonelog.presets.row_meta", countText, typeText);
 
             this.applyButton = Button.builder(
@@ -207,7 +214,7 @@ public final class PresetListScreen extends Screen {
                     .build();
             this.rowButtons.add(this.applyButton);
 
-            if (!entry.builtin() && data.canManagePresets()) {
+            if (!entry.builtin() && !readOnly && data.canManagePresets()) {
                 this.deleteButton = Button.builder(
                                 Component.translatable("gui.itemmilestonelog.presets.delete"),
                                 btn -> openConfirmDelete(entry, this.displayName))

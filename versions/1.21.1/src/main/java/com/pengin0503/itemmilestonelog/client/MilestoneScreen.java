@@ -500,7 +500,10 @@ public final class MilestoneScreen extends Screen {
             Component statusComponent;
             int statusColor;
             if (recordedRecord != null) {
-                statusComponent = Component.translatable("gui.itemmilestonelog.status.recorded",
+                String statusKey = ClientMilestoneHandler.isWorldFirst(targetKey)
+                        ? "gui.itemmilestonelog.status.recorded_world_first"
+                        : "gui.itemmilestonelog.status.recorded";
+                statusComponent = Component.translatable(statusKey,
                         Playtime.formatRecordComponent(recordedRecord, java.time.ZoneId.systemDefault(), Playtime.CLIENT));
                 statusColor = 0x55FF55;
             } else {

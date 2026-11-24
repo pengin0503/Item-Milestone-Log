@@ -46,6 +46,7 @@ Assign a key to **Open Milestone Log** under *Options → Controls → Key Binds
 - Remove personal targets (server default targets are marked and cannot be removed)
 - Open **Presets...** to browse built-in and custom presets, apply them with one click, and (when permitted) save your current personal targets as a custom preset or delete custom presets
 - Reset individual records or all records (with confirmation dialogs; targets are kept)
+- A ★ in a recorded row's status (`✔ ★ …`) means **you hold the world first** for that milestone (requires a 1.2.0+ server; the server can turn it off with `guiWorldFirstMark = false`)
 
 > **Note:** Opening the GUI requires the mod to be installed on the **client** as well as the server. On a dedicated server, vanilla clients without the mod can still join normally and use all commands below.
 
@@ -144,11 +145,11 @@ Example (`config/itemmilestonelog/presets/my_pack.json`):
 }
 ```
 
-- `name` (optional): display name shown in the GUI and `/milestonelog preset list` (defaults to the file ID).
+- `name` (optional): display name shown in the GUI, `/milestonelog preset list`, preset completion messages, and Discord notifications. Either a single string used for every language (`"name": "Starter Kit"`), or an object mapping a language code to a name (`"name": {"en_us": "Starter Kit", "ja_jp": "スターターキット"}`). Language keys are matched case-insensitively; entries with blank keys or blank/non-string values are ignored, and each name is capped at 256 characters. For each viewer the mod picks the entry matching their client language, then `"en_us"`, then the first entry in file order, and finally the file ID (console/RCON resolve with `en_us` priority; Discord notifications use `discordLanguage`). An object with no valid entry behaves like a missing `name`. **Compatibility:** 1.0.1 and 1.1.0 cannot read the object form — they fall back to the file ID as the display name (the file itself still loads fine).
 - `items` (required): array of item IDs (`"namespace:path"` for quantity 1) or objects (`{"item": "namespace:path", "count": 100}`, count 1–1,000,000). IDs from mods that are not currently installed are preserved in the preset and simply skipped when applied, so modpack presets work across packs.
 - Preset IDs (`<id>`) must be 1–32 characters using `a-z`, `0-9`, `_`, or `-`. Files matching built-in preset IDs (`atm_star`, `vanilla_endgame`) are ignored.
 - Because `list`, `save`, `delete`, and `reload` are subcommands under `/milestonelog preset`, a custom preset literally named `list`, `save`, `delete`, or `reload` cannot be applied via `/milestonelog preset <name>` (use the GUI or a different ID).
-- **Overwriting custom presets:** When you overwrite an existing custom preset via `/milestonelog preset save <name>` or the GUI, its existing JSON `name` display field is preserved (any other unknown JSON fields are not preserved). The GUI Save Preset screen changes the button to **Overwrite** with a notice when matching an existing custom preset ID, and disables saving over built-in preset IDs.
+- **Overwriting custom presets:** When you overwrite an existing custom preset via `/milestonelog preset save <name>` or the GUI, its existing JSON `name` display field is preserved — a plain string or a per-language object alike (any other unknown JSON fields are not preserved). The GUI Save Preset screen changes the button to **Overwrite** with a notice when matching an existing custom preset ID, and disables saving over built-in preset IDs.
 - **Preset completion:** Completing all resolvable targets of any built-in or custom preset is tracked per player by preset ID (`completedPresets`). Editing, deleting, or recreating a custom preset with the same ID does not un-complete it; `/milestonelog resetall` clears `completedPresets`, while a single `/milestonelog reset` does not.
 - **Trade-off**: Presets live in the `config/` folder rather than world SavedData, so they are shared across all worlds on that client/server and do not travel automatically if you copy only a world folder to another server.
 
