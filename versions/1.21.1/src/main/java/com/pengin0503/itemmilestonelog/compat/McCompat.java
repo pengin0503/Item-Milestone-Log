@@ -1,6 +1,7 @@
 package com.pengin0503.itemmilestonelog.compat;
 
 import com.pengin0503.itemmilestonelog.compat.client.ScrollCompat;
+import com.pengin0503.itemmilestonelog.compat.client.TooltipCompat;
 
 /**
  * N252: single access point for the version-specific compat implementations of the
@@ -56,6 +57,11 @@ public final class McCompat {
         return ClientHolder.SCROLL;
     }
 
+    /** Client-only, lazily loaded like {@link #scroll()}. */
+    public static TooltipCompat tooltip() {
+        return ClientHolder.TOOLTIP;
+    }
+
     private static <T> T load(Class<T> iface, String simpleName) {
         return load(iface, "", simpleName);
     }
@@ -73,5 +79,6 @@ public final class McCompat {
 
     private static final class ClientHolder {
         private static final ScrollCompat SCROLL = load(ScrollCompat.class, "client.", "ScrollCompatImpl");
+        private static final TooltipCompat TOOLTIP = load(TooltipCompat.class, "client.", "TooltipCompatImpl");
     }
 }

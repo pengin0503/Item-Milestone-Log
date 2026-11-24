@@ -276,7 +276,7 @@ public final class ItemPickerScreen extends Screen {
         }
 
         if (hoveredIconStack != null) {
-            guiGraphics.renderTooltip(this.font, hoveredIconStack, mouseX, mouseY);
+            McCompat.tooltip().renderItemTooltip(guiGraphics, this.font, hoveredIconStack, mouseX, mouseY);
         }
     }
 

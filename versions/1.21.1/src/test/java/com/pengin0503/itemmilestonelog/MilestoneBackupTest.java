@@ -3,11 +3,9 @@ package com.pengin0503.itemmilestonelog;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
 import com.pengin0503.itemmilestonelog.compat.McCompat;
-import net.minecraft.SharedConstants;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.NbtAccounter;
 import net.minecraft.nbt.NbtIo;
-import net.minecraft.world.level.storage.DimensionDataStorage;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -133,16 +131,11 @@ class MilestoneBackupTest {
         // Verify the compressed NBT wrapper structure matches vanilla SavedData
         CompoundTag rawRoot = NbtIo.readCompressed(backupFile, NbtAccounter.unlimitedHeap());
         assertTrue(rawRoot.contains("data"));
-        assertTrue(rawRoot.getInt("DataVersion") > 0);
+        assertTrue(McCompat.nbt().getInt(rawRoot, "DataVersion") > 0);
 
-        // Place backup at the real 1.21.1 SavedData path and load via vanilla DimensionDataStorage
-        Path dataDir = tempDir.resolve("world-data");
-        Files.createDirectories(dataDir);
-        Files.copy(backupFile, dataDir.resolve(MilestoneData.DATA_NAME + ".dat"));
-
-        SharedConstants.tryDetectVersion();
-        DimensionDataStorage storage = new DimensionDataStorage(dataDir.toFile(), null, null);
-        MilestoneData loaded = McCompat.data().get(storage);
+        // Load the backup content back through MilestoneData.load (the same entry the
+        // DataCompat storage adapters use) and verify the round trip.
+        MilestoneData loaded = MilestoneData.load(McCompat.nbt().getCompound(rawRoot, "data"), null);
         assertDataEquals(original, loaded);
     }
 

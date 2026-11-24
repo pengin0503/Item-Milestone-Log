@@ -16,8 +16,10 @@ public enum McVersion {
     V121_2(2, "v121_2"),
     /** 1.21.4. */
     V121_4(4, "v121_4"),
-    /** 1.21.5 - 1.21.10. */
+    /** 1.21.5. */
     V121_5(5, "v121_5"),
+    /** 1.21.6 - 1.21.10. */
+    V121_6(6, "v121_6"),
     /** 1.21.11. */
     V121_11(11, "v121_11");
 
@@ -44,7 +46,7 @@ public enum McVersion {
     private static McVersion detect() {
         String name;
         try {
-            name = SharedConstants.getCurrentVersion().getName();
+            name = SharedConstants.VERSION_STRING;
         } catch (RuntimeException | LinkageError e) {
             return V121_1;
         }
