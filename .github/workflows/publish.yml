@@ -72,6 +72,14 @@ jobs:
             exit 1
           fi
           changelog_json=$(jq -Rs . < changelog-section.md)
+          # Idempotency: game versions that already have this version_number
+          # on Modrinth are skipped, so re-running after a partial failure
+          # does not create duplicates.
+          existing=$(curl -sS "https://api.modrinth.com/v2/project/$MODRINTH_PROJECT_ID/version" \
+            -H "Authorization: $MODRINTH_TOKEN" \
+            -H "User-Agent: pengin0503/Item-Milestone-Log publish workflow" \
+            | jq -r --arg v "$VERSION" '.[] | select(.version_number == $v) | .game_versions[]')
+          echo "Already on Modrinth for $VERSION: $existing"
           for jar in dist/*.jar; do
             base=$(basename "$jar")
             # Jar names look like itemmilestonelog-neoforge-<mc>-<version>.jar
@@ -79,6 +87,10 @@ jobs:
             if [ -z "$mc" ] || [ "$mc" = "$base" ]; then
               echo "::error::Cannot parse the Minecraft version from $base"
               exit 1
+            fi
+            if echo "$existing" | grep -qx "$mc"; then
+              echo "Skipping $base: $VERSION for MC $mc is already on Modrinth"
+              continue
             fi
             jq -n \
               --arg name "Item Milestone Log $VERSION (MC $mc)" \
@@ -131,18 +143,19 @@ jobs:
               echo "::error::CurseForge game version id not found for Minecraft $mc"
               exit 1
             fi
-            metadata=$(jq -n \
+            jq -n \
               --arg changelog "$changelog_text" \
               --arg displayName "Item Milestone Log $VERSION (MC $mc)" \
               --argjson gameVersions "[${mc_id}, ${neoforge_id}]" \
               '{changelog: $changelog, changelogType: "markdown",
                 displayName: $displayName, gameVersions: $gameVersions,
-                releaseType: "release"}')
+                releaseType: "release"}' > metadata.json
+            jq -e . metadata.json > /dev/null
             echo "Uploading $base to CurseForge (MC $mc)..."
             code=$(curl -sS -X POST \
               "https://minecraft.curseforge.com/api/projects/$CURSEFORGE_PROJECT_ID/upload-file" \
               -H "X-Api-Token: $CURSEFORGE_TOKEN" \
-              -F "metadata=$metadata" \
+              -F "metadata=@metadata.json;type=application/json" \
               -F "file=@$jar" -o resp.json -w "%{http_code}")
             cat resp.json
             if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
