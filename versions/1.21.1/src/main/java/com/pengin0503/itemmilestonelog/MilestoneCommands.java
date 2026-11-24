@@ -13,6 +13,7 @@ import com.mojang.brigadier.tree.CommandNode;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
 import com.pengin0503.itemmilestonelog.api.WorldFirstRecord;
+import com.pengin0503.itemmilestonelog.compat.McCompat;
 import net.minecraft.commands.CommandBuildContext;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.SharedSuggestionProvider;
@@ -855,17 +856,17 @@ public final class MilestoneCommands {
         return ServerLang.tr(source, langKey)
                 .withStyle(style -> style
                         .withUnderlined(true)
-                        .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, command)));
+                        .withClickEvent(McCompat.chat().runCommand(command)));
     }
 
     private static ClickEvent suggestCommandEvent(String command) {
-        return new ClickEvent(ClickEvent.Action.SUGGEST_COMMAND, command);
+        return McCompat.chat().suggestCommand(command);
     }
 
     /** Package-private test helper for inspecting the SUGGEST_COMMAND payload across MC versions. */
     @Nullable
     static String suggestCommandValue(@Nullable ClickEvent event) {
-        return event != null && event.getAction() == ClickEvent.Action.SUGGEST_COMMAND ? event.getValue() : null;
+        return McCompat.chat().suggestCommandValue(event);
     }
 
     static MutableComponent clickableHelpCommand(CommandHelp.Entry entry) {

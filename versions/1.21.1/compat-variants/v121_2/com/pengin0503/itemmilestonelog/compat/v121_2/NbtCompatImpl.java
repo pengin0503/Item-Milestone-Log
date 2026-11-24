@@ -72,4 +72,9 @@ public final class NbtCompatImpl implements NbtCompat {
     public String listString(ListTag list, int index) {
         return list.getString(index);
     }
+
+    @Override
+    public String tagAsString(Tag tag) {
+        return tag.getAsString();
+    }
 }

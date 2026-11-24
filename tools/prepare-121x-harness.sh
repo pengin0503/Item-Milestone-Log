@@ -79,5 +79,15 @@ print("DimensionDataStorage constructor patched:", p)
 PYEOF
 fi
 
-# 6. Done.
+# 6. File overrides: some profiles need whole shared source files replaced (e.g. the
+#    GameTest registration, whose API changed completely in 1.21.5). Files under
+#    compat-variants/<profile>/overrides/ mirror src/main/java/ and replace the
+#    generated project's copies wholesale for that profile.
+overrides="$ROOT/versions/1.21.1/compat-variants/$profile/overrides"
+if [[ -d "$overrides" ]]; then
+  cp -R "$overrides/." "$dest/src/main/java/"
+  echo "File overrides applied from: $overrides"
+fi
+
+# 7. Done.
 echo "Harness project ($mc, profile $profile, neo $neo_version): $dest"

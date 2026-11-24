@@ -150,7 +150,7 @@ public final class MilestoneService {
             return name;
         }
         ItemStack stack = new ItemStack(McCompat.registries().itemOrAir(ResourceLocation.parse(hoverId)));
-        HoverEvent hover = new HoverEvent(HoverEvent.Action.SHOW_ITEM, new HoverEvent.ItemStackInfo(stack));
+        HoverEvent hover = McCompat.chat().showItem(stack);
         return name.copy().withStyle(style -> style.withHoverEvent(hover));
     }
 

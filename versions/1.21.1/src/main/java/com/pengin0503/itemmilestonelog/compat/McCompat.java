@@ -14,6 +14,8 @@ public final class McCompat {
     private static final NbtCompat NBT = load(NbtCompat.class, "NbtCompatImpl");
     private static final GameTestCompat GAME_TEST = load(GameTestCompat.class, "GameTestCompatImpl");
     private static final ReloadCompat RELOAD = load(ReloadCompat.class, "ReloadCompatImpl");
+    private static final DataCompat DATA = load(DataCompat.class, "DataCompatImpl");
+    private static final ChatCompat CHAT = load(ChatCompat.class, "ChatCompatImpl");
 
     private McCompat() {
     }
@@ -36,6 +38,14 @@ public final class McCompat {
 
     public static ReloadCompat reload() {
         return RELOAD;
+    }
+
+    public static DataCompat data() {
+        return DATA;
+    }
+
+    public static ChatCompat chat() {
+        return CHAT;
     }
 
     /**

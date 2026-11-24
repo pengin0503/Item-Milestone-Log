@@ -63,7 +63,7 @@ public final class NbtCompatImpl implements NbtCompat {
         if (t == null) {
             return false;
         }
-        if (type == Tag.TAG_ANY_NUMERIC) {
+        if (type == NbtCompat.ANY_NUMERIC) {
             return t instanceof NumericTag;
         }
         return t.getId() == type;
@@ -91,5 +91,10 @@ public final class NbtCompatImpl implements NbtCompat {
     @Override
     public String listString(ListTag list, int index) {
         return list.getStringOr(index, "");
+    }
+
+    @Override
+    public String tagAsString(Tag tag) {
+        return tag instanceof StringTag stringTag ? stringTag.value() : "";
     }
 }
