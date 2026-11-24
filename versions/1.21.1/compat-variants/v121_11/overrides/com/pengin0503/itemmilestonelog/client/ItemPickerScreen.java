@@ -189,7 +189,7 @@ public final class ItemPickerScreen extends Screen {
         this.currentCountText = text;
         this.parsedCount = parseCountInput(text);
         if (countBox != null) {
-            countBox.setTextColor(this.parsedCount >= TargetKey.MIN_COUNT ? 0xE0E0E0 : 0xFF5555);
+            countBox.setTextColor(this.parsedCount >= TargetKey.MIN_COUNT ? 0xFFE0E0E0 : 0xFFFF5555);
         }
     }
 
@@ -243,14 +243,14 @@ public final class ItemPickerScreen extends Screen {
         this.hoveredIconStack = null;
         super.render(guiGraphics, mouseX, mouseY, partialTick);
 
-        guiGraphics.drawCenteredString(this.font, this.title, this.width / 2, 8, 0xFFFFFF);
+        guiGraphics.drawCenteredString(this.font, this.title, this.width / 2, 8, 0xFFFFFFFF);
 
         Component countText = matchedCount > displayedCount
                 ? Component.translatable("gui.itemmilestonelog.picker.count_capped", displayedCount, matchedCount)
                 : Component.translatable("gui.itemmilestonelog.picker.count", matchedCount, allItems.size());
         int backLeft = Math.min((this.width - 120) / 2, this.countBoxX - 124);
         if (backLeft - 16 >= this.font.width(countText)) {
-            guiGraphics.drawString(this.font, countText, 12, this.height - 20, 0xB0B0B0, false);
+            guiGraphics.drawString(this.font, countText, 12, this.height - 20, 0xFFB0B0B0, false);
         }
 
         // Quantity label to the left of the count box (uses short "×" if narrow).
@@ -258,9 +258,9 @@ public final class ItemPickerScreen extends Screen {
         Component fullQtyLabel = Component.translatable("gui.itemmilestonelog.picker.quantity");
         int fullWidth = this.font.width(fullQtyLabel);
         if (countBoxX - backRight >= fullWidth + 10) {
-            guiGraphics.drawString(this.font, fullQtyLabel, countBoxX - fullWidth - 4, countBoxY + 6, 0xB0B0B0, false);
+            guiGraphics.drawString(this.font, fullQtyLabel, countBoxX - fullWidth - 4, countBoxY + 6, 0xFFB0B0B0, false);
         } else if (countBoxX - backRight >= this.font.width("×") + 6) {
-            guiGraphics.drawString(this.font, "×", countBoxX - this.font.width("×") - 3, countBoxY + 6, 0xB0B0B0, false);
+            guiGraphics.drawString(this.font, "×", countBoxX - this.font.width("×") - 3, countBoxY + 6, 0xFFB0B0B0, false);
         }
 
         if (feedbackMessage != null) {
@@ -273,7 +273,7 @@ public final class ItemPickerScreen extends Screen {
             int centerY = listWidget.getY() + listWidget.getHeight() / 2 - 4;
             guiGraphics.drawCenteredString(this.font,
                     Component.translatable("gui.itemmilestonelog.picker.no_results"),
-                    this.width / 2, centerY, 0xA0A0A0);
+                    this.width / 2, centerY, 0xFFA0A0A0);
         }
 
         if (hoveredIconStack != null) {
@@ -378,10 +378,10 @@ public final class ItemPickerScreen extends Screen {
 
             String trimmedName = ItemPickerScreen.this.font.plainSubstrByWidth(item.displayName.getString(), maxTextWidth);
             guiGraphics.drawString(ItemPickerScreen.this.font, trimmedName, textX, top + 1,
-                    alreadyTracked ? 0xB0B0B0 : 0xFFFFFF, false);
+                    alreadyTracked ? 0xFFB0B0B0 : 0xFFFFFFFF, false);
 
             String trimmedId = ItemPickerScreen.this.font.plainSubstrByWidth(item.id, maxTextWidth);
-            guiGraphics.drawString(ItemPickerScreen.this.font, trimmedId, textX, top + 12, 0x909090, false);
+            guiGraphics.drawString(ItemPickerScreen.this.font, trimmedId, textX, top + 12, 0xFF909090, false);
         }
 
         @Override

@@ -138,13 +138,13 @@ public final class PresetListScreen extends Screen {
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
         super.render(guiGraphics, mouseX, mouseY, partialTick);
 
-        guiGraphics.drawCenteredString(this.font, this.title, this.width / 2, 8, 0xFFFFFF);
+        guiGraphics.drawCenteredString(this.font, this.title, this.width / 2, 8, 0xFFFFFFFF);
 
         if (listWidget != null && listWidget.children().isEmpty()) {
             int centerY = listWidget.getY() + listWidget.getHeight() / 2 - 4;
             guiGraphics.drawCenteredString(this.font,
                     Component.translatable("gui.itemmilestonelog.presets.empty"),
-                    this.width / 2, centerY, 0xA0A0A0);
+                    this.width / 2, centerY, 0xFFA0A0A0);
         }
 
         if (feedbackMessage != null) {
@@ -250,10 +250,10 @@ public final class PresetListScreen extends Screen {
             int maxTextWidth = Math.max(40, rightEdge - textX - 4);
 
             String trimmedName = PresetListScreen.this.font.plainSubstrByWidth(displayName.getString(), maxTextWidth);
-            guiGraphics.drawString(PresetListScreen.this.font, trimmedName, textX, top + 4, 0xFFFFFF, false);
+            guiGraphics.drawString(PresetListScreen.this.font, trimmedName, textX, top + 4, 0xFFFFFFFF, false);
 
             String trimmedMeta = PresetListScreen.this.font.plainSubstrByWidth(metaLine.getString(), maxTextWidth);
-            guiGraphics.drawString(PresetListScreen.this.font, trimmedMeta, textX, top + 15, 0xA0A0A0, false);
+            guiGraphics.drawString(PresetListScreen.this.font, trimmedMeta, textX, top + 15, 0xFFA0A0A0, false);
         }
 
         @Override
