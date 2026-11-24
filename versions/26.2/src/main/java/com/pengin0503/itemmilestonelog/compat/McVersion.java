@@ -37,7 +37,7 @@ public enum McVersion {
     private static McVersion detect() {
         String name;
         try {
-            name = SharedConstants.getCurrentVersion().getName();
+            name = SharedConstants.getCurrentVersion().name();
         } catch (RuntimeException e) {
             return UNKNOWN;
         }
