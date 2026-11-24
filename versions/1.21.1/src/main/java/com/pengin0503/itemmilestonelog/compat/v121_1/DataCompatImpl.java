@@ -5,6 +5,8 @@ import com.pengin0503.itemmilestonelog.compat.DataCompat;
 import net.minecraft.world.level.saveddata.SavedData;
 import net.minecraft.world.level.storage.DimensionDataStorage;
 
+import javax.annotation.Nullable;
+
 /**
  * 1.21 - 1.21.4 {@link DataCompat}: the legacy {@link SavedData.Factory} lookup.
  */
@@ -15,5 +17,11 @@ public final class DataCompatImpl implements DataCompat {
     @Override
     public MilestoneData getOrCreate(DimensionDataStorage storage) {
         return storage.computeIfAbsent(FACTORY, MilestoneData.DATA_NAME);
+    }
+
+    @Override
+    @Nullable
+    public MilestoneData get(DimensionDataStorage storage) {
+        return storage.get(FACTORY, MilestoneData.DATA_NAME);
     }
 }

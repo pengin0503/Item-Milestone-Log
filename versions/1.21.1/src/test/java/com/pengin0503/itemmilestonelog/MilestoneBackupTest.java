@@ -2,6 +2,7 @@ package com.pengin0503.itemmilestonelog;
 
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
+import com.pengin0503.itemmilestonelog.compat.McCompat;
 import net.minecraft.SharedConstants;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.NbtAccounter;
@@ -141,7 +142,7 @@ class MilestoneBackupTest {
 
         SharedConstants.tryDetectVersion();
         DimensionDataStorage storage = new DimensionDataStorage(dataDir.toFile(), null, null);
-        MilestoneData loaded = storage.get(MilestoneData.FACTORY, MilestoneData.DATA_NAME);
+        MilestoneData loaded = McCompat.data().get(storage);
         assertDataEquals(original, loaded);
     }
 

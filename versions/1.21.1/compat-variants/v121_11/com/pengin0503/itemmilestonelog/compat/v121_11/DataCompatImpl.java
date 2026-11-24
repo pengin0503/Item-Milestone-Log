@@ -10,6 +10,8 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.level.saveddata.SavedDataType;
 import net.minecraft.world.level.storage.DimensionDataStorage;
 
+import javax.annotation.Nullable;
+
 /**
  * 1.21.5+ {@link DataCompat}: {@code SavedData.Factory} was removed in 1.21.5 in favour of
  * {@link SavedDataType}, whose codec here round-trips through the existing NBT
@@ -42,5 +44,11 @@ public final class DataCompatImpl implements DataCompat {
     @Override
     public MilestoneData getOrCreate(DimensionDataStorage storage) {
         return storage.computeIfAbsent(TYPE);
+    }
+
+    @Override
+    @Nullable
+    public MilestoneData get(DimensionDataStorage storage) {
+        return storage.get(TYPE);
     }
 }

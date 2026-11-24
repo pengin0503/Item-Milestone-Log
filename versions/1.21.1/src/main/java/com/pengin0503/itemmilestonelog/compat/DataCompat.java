@@ -3,6 +3,8 @@ package com.pengin0503.itemmilestonelog.compat;
 import com.pengin0503.itemmilestonelog.MilestoneData;
 import net.minecraft.world.level.storage.DimensionDataStorage;
 
+import javax.annotation.Nullable;
+
 /**
  * N252: obtains the mod's {@link MilestoneData} from a {@link DimensionDataStorage}.
  * {@code SavedData.Factory} was replaced by {@code SavedDataType} in MC 1.21.5, so the
@@ -11,4 +13,8 @@ import net.minecraft.world.level.storage.DimensionDataStorage;
 public interface DataCompat {
     /** The stored {@link MilestoneData}, created (empty) on first access. */
     MilestoneData getOrCreate(DimensionDataStorage storage);
+
+    /** Loads the existing {@link MilestoneData} from the storage, or {@code null} when none is stored. */
+    @Nullable
+    MilestoneData get(DimensionDataStorage storage);
 }
