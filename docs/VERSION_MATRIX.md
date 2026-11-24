@@ -19,7 +19,7 @@
 | 1.21.8 | 1.21.x | 21.8.9 / 21.8.57 | 21 | コンパイルOK | stage 2b: プロファイル V121_8、JAR B。ハーネスビルド + 単体テスト 479 件（検証配置由来の LangFilesTest を除き成功）。PacketDistributor.sendToServer 削除 → ClientPacketDistributor（NetworkCompat）。stage 1 時点メモ: 1.21.6 と同一プロファイル（stage 2b で独立プロファイルに変更） |
 | 1.21.9 | 1.21.x | 21.9.0-beta / 21.9.16-beta | 21 | コンパイルOK | stage 2b: プロファイル V121_9、JAR B。ハーネスビルド + 単体テスト 479 件全件成功。ServerPlayer.getServer() 削除 → level().getServer()（共有書き換え 48 箇所）、GameProfile の record 化（PlayerCompat）、リスト Entry の render → renderContent + MouseButtonEvent（3 画面のファイル差し替え）、KeyMapping.Category 等（ItemMilestoneLogClient のファイル差し替え）、SharedConstants.VERSION_STRING 削除。この系統はベータのみ。stage 1 時点メモ: 1.21.6 と同一プロファイル（stage 2b で独立プロファイルに変更） |
 | 1.21.10 | 1.21.x | 21.10.63 / 21.10.64 | 21 | コンパイルOK | stage 2b: プロファイル V121_9（1.21.9 と同一）、JAR B（上端）。ハーネスビルド + 単体テスト 479 件全件成功。stage 1 時点メモ: 1.21.6 と同一プロファイル（stage 2b で V121_9 に変更） |
-| 1.21.11 | 1.21.x | 21.11.42 / 21.11.48 | 21 | 検証中 | stage 2b: プロファイル V121_11。ResourceLocation → Identifier / ResourceLocationArgument → IdentifierArgument のバイナリ非互換リネームにより JAR B に収録不可、独立 JAR が必要（1.3.0 で出荷するかは pen の判断待ち）。プロトタイプ作成済み・未検証。stage 1 時点メモ: 1.21.6 の差分 + advancement criterion パッケージ移動（MilestoneRecordedTrigger、26.2 と同種の移動） |
+| 1.21.11 | 1.21.x | 21.11.42 / 21.11.48 | 21 | コンパイルOK | stage 2b: プロファイル V121_11、JAR C（単独）。ハーネスビルド + 単体テスト 479 件全件成功（2026-11-25）。ResourceLocation → Identifier / ResourceLocationArgument → IdentifierArgument のバイナリ非互換リネームにより JAR B に収録不可、独立 JAR が必要。当初は 1.3.0 で出荷するか pen の判断待ちだったが、2026-11-25 に pen が 1.3.0 への収録を決定。リネームは `tools/prepare-121x-harness.sh` が生成プロジェクトに機械適用（リポジトリのソースはリネームなし）。残る適応は PermissionCompat・PlayerCompat.playNotifySound・DataCompatImpl（v121_11）の 3 点。stage 1 時点メモ: 1.21.6 の差分 + advancement criterion パッケージ移動（MilestoneRecordedTrigger、26.2 と同種の移動） |
 
 ## N252 stage 1 検証結果（2026-11-24）
 
@@ -28,14 +28,14 @@
 - 差分は 2 つのセグメントに集約される:
   - セグメント A（1.21–1.21.4）: レジストリ参照の Optional 化が主差分（+ 1.21.4 の @Override 不一致）。
   - セグメント B（1.21.5–1.21.11）【stage 2b で更新: セグメント B は 1.21.5–1.21.10 に縮小し、1.21.11 は別扱い。下記「N252 stage 2b 検証結果」参照】: NBT アクセサの Optional 化が主差分（+ 1.21.6 の ServerPlayer.server 非公開化、1.21.11 のトリガーパッケージ移動。GameTest の Component 化はテスト側のみ）。
-- 【stage 2b で更新: JAR B の範囲は [1.21.5, 1.21.10] に変更。1.21.11 は ResourceLocation → Identifier のバイナリ非互換リネームのため JAR B に含められず、独立 JAR が必要（1.3.0 での出荷は pen の判断待ち）。以下は stage 1 時点の記述として残す】
+- 【stage 2b で更新: JAR B の範囲は [1.21.5, 1.21.10] に変更。1.21.11 は ResourceLocation → Identifier のバイナリ非互換リネームのため JAR B に含められず、独立 JAR が必要（1.3.0 での出荷は pen の判断待ちだったが、2026-11-25 に収録を決定し JAR C = [1.21.11] とした。配布物は計 4 JAR）。以下は stage 1 時点の記述として残す】
   - **分割判断（DESIGN §4.3）: 1.21.5 を境界に 2 JAR へ分割する。** 根拠: 分割しない場合、セグメント B の範囲内に NbtCompat と TriggerCompat（1.21.11）が重なり、さらに RegistryCompat も全域で必要となるため、基準 (b)「1 セグメント内に新規 compat システム ≥2」に該当する。分割後は JAR A = [1.21, 1.21.4]（RegistryCompat 主体）、JAR B = [1.21.5, 1.21.11]（NbtCompat 主体 + 1.21.11 のトリガー変種）となり、各 JAR の compat 負担は N251 の 26.x 統合 JAR（4 系統）以下に収まる。配布物は 26.x 統合 JAR と合わせて計 3 JAR になる。
 - LangFilesTest の失敗は検証配置に起因するもので製品コードの非互換ではない（`resolveLangDir` が作業ディレクトリからの `../..` を前提とするため）。stage 2 では通常配置の実プロジェクトで再確認する。
 
 ## N252 stage 2b 検証結果（2026-11-25）
 
 - 検証方法: GCE 上で `tools/prepare-121x-harness.sh` + N150 検証プロジェクトによるハーネスビルドと単体テスト 479 件の実行。
-- 結果: **1.21、1.21.1（基準）、1.21.2、1.21.3、1.21.4、1.21.5、1.21.6、1.21.7、1.21.8、1.21.9、1.21.10 でビルド成功・テスト 479 件実行。** これまでに観測された失敗は `LangFilesTest.bundledLanguagesMatchLangDirectoryFiles` のみで、これは検証プロジェクト配置（lang ディレクトリを `../..` で解決）に起因する検証環境側の事象であり、MC の非互換ではない。1.21.9 / 1.21.10 は全件成功。1.21.11 はプロトタイプのみで未検証（出荷判断待ち）。
+- 結果: **1.21、1.21.1（基準）、1.21.2、1.21.3、1.21.4、1.21.5、1.21.6、1.21.7、1.21.8、1.21.9、1.21.10 でビルド成功・テスト 479 件実行。** これまでに観測された失敗は `LangFilesTest.bundledLanguagesMatchLangDirectoryFiles` のみで、これは検証プロジェクト配置（lang ディレクトリを `../..` で解決）に起因する検証環境側の事象であり、MC の非互換ではない。1.21.9 / 1.21.10 は全件成功。1.21.11 は当初プロトタイプのみで未検証（出荷判断待ち）だったが、2026-11-25 に pen が 1.3.0 への収録を決定し、同日ハーネス検証を完了した（BUILD SUCCESSFUL、テスト 479 件、失敗なし）。これにより **1.21.x 系 1.21–1.21.11 の全バージョンが検証済み**となった。
 
 ### compat プロファイル
 
@@ -50,12 +50,12 @@
 | V121_6 | 1.21.6 – 1.21.7 |
 | V121_8 | 1.21.8 |
 | V121_9 | 1.21.9 – 1.21.10 |
-| V121_11 | 1.21.11（後述） |
+| V121_11 | 1.21.11（JAR C。Identifier リネームはハーネスが生成プロジェクトに適用、後述） |
 
 ### 配布 JAR（stage 1 の分割判断を更新）
 
-- 1.21.x 系の配布 JAR は **JAR A = [1.21, 1.21.4]、JAR B = [1.21.5, 1.21.10]**。26.x 統合 JAR と合わせて計 3 JAR。
-- 1.21.11 は独立 JAR が必要（後述のリネームのため）。1.3.0 で出荷するかは pen の判断待ち。
+- 1.21.x 系の配布 JAR は **JAR A = [1.21, 1.21.4]、JAR B = [1.21.5, 1.21.10]、JAR C = [1.21.11]**。26.x 統合 JAR と合わせて**計 4 JAR**。
+- 1.21.11 は独立 JAR が必要（後述のリネームのため）。当初は 1.3.0 で出荷するか pen の判断待ちとしていたが、2026-11-25 に pen が 1.3.0 への収録を決定し、JAR C として出荷する。
 - stage 1 で計画した JAR B = [1.21.5, 1.21.11] はこれにより置き換えられる。
 
 ### バージョン別の API 破壊と吸収方法
@@ -68,7 +68,7 @@
 - **1.21.6**: `WorldVersion` の record アクセサ化。バージョン検出は反射で行う（McVersion.versionName）。`renderTooltip(Font, ItemStack, …)` 削除 → `setTooltipForNextFrame`（TooltipCompat）。テキスト描画が色のアルファを反映するようになったため、共有クライアントコードの GUI 文字色はすべてアルファ付き（0xFF……）にした。
 - **1.21.8**: `PacketDistributor.sendToServer` 削除 → `ClientPacketDistributor`（NetworkCompat）。
 - **1.21.9**: `ServerPlayer.getServer()` 削除 → `level().getServer()`（共有書き換え、48 箇所）。GameProfile の record 化 — `name()` と `NameAndId`（PlayerCompat、isSingleplayerOwner を含む）。リスト Entry の `render` → `renderContent` + `MouseButtonEvent`（3 画面のファイル差し替え）。`KeyMapping.Category` + `registerCategory` + `InputConstants.getKey(KeyEvent)`（ItemMilestoneLogClient のファイル差し替え）。`SharedConstants.VERSION_STRING` 削除（検出は反射でフォールバック）。
-- **1.21.11**: `ResourceLocation` → `Identifier`、`ResourceLocationArgument` → `IdentifierArgument`（バイナリ非互換のリネームで、1 つの JAR で 1.21.10 ↔ 1.21.11 をまたげない）。ソースツリー全体を機械的にリネームしたプロトタイプでは、残る適応は小規模な 3 点のみ: 権限 API（`CommandSourceStack.hasPermission` / `hasPermissions` 削除）、`SavedData.Context.levelOrThrow()` 削除、`playNotifySound` の署名変更。1.21.11 JAR を作る場合は、セグメント B のソースをリネームしたコピーから V121_11 プロファイルでビルドする。
+- **1.21.11**: `ResourceLocation` → `Identifier`、`ResourceLocationArgument` → `IdentifierArgument`（バイナリ非互換のリネームで、1 つの JAR で 1.21.10 ↔ 1.21.11 をまたげない）。リネームは機械的なもので、`tools/prepare-121x-harness.sh` がプロファイル v121_11 のときに生成プロジェクトへ適用する（リポジトリのソースはリネームなしのまま）。残る適応は 3 点: (1) 権限 — `PermissionCompat`（従来は `hasPermission` / `hasPermissions`、1.21.11 では `permissions()` に対して `Commands.LEVEL_*` の PermissionCheck で判定）、(2) サウンド — `PlayerCompat.playNotifySound` は 1.21.11 では `player.connection` 経由で `ClientboundSoundPacket` を送信、(3) `SavedDataType.Factory` が 1.21.11 では `ServerLevel` を直接受け取る（v121_11 の DataCompatImpl のみ）。また `Commands.LEVEL_GAMEMASTERS` の型が 1.21.11 で int → PermissionCheck に変わるため、この定数を参照していた唯一の箇所は PermissionCompat にリテラルのレベル 2 を渡す形に変更した。プロトタイプ段階（pen の判断待ち）を経て、2026-11-25 にハーネスビルド + 単体テスト 479 件全件成功を確認（検証済み）。
 
 ### 実クライアントでの後日確認事項
 
