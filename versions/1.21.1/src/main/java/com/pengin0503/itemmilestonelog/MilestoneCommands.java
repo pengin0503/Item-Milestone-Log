@@ -195,7 +195,7 @@ public final class MilestoneCommands {
     private static LiteralArgumentBuilder<CommandSourceStack> root(
             CommandBuildContext buildContext,
             CommandDispatcher<CommandSourceStack> dispatcher) {
-        return buildCommandTree(() -> ItemArgument.item(buildContext), src -> src.hasPermission(2), dispatcher);
+        return buildCommandTree(() -> ItemArgument.item(buildContext), src -> McCompat.permissions().sourceHasPermission(src, 2), dispatcher);
     }
 
     /** Package-private so unit tests can inspect the real registered Brigadier command tree without a registry. */
@@ -302,7 +302,7 @@ public final class MilestoneCommands {
             List<String> files = MilestoneExport.listExportFiles(server);
             CommandSourceStack source = ctx.getSource();
             if (MilestonePermissions.check(source, MilestonePermissions.IMPORT_ALL,
-                    source.hasPermission(2))) {
+                    McCompat.permissions().sourceHasPermission(source, 2))) {
                 return SharedSuggestionProvider.suggest(files, builder);
             }
             ServerPlayer sp = ctx.getSource().getPlayer();
@@ -1322,7 +1322,7 @@ public final class MilestoneCommands {
             CommandSourceStack source = ctx.getSource();
             if (!MilestoneExport.canImport(payload, player.getUUID(),
                     MilestonePermissions.check(source, MilestonePermissions.IMPORT_ALL,
-                            source.hasPermission(2)))) {
+                            McCompat.permissions().sourceHasPermission(source, 2)))) {
                 return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.import_not_owner", fileName));
             }
             MilestoneData data = MilestoneData.get(player.level().getServer());

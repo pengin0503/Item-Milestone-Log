@@ -73,5 +73,14 @@ if [[ -d "$overrides" ]]; then
   echo "File overrides applied from: $overrides"
 fi
 
-# 6. Done.
+# 6. 1.21.11 only: ResourceLocation was renamed to Identifier in MC 1.21.11.
+#    Apply the mechanical rename to the generated project's sources.
+if [[ "$profile" == "v121_11" ]]; then
+  find "$dest/src" -name '*.java' -exec sed -i \
+    -e 's/ResourceLocationArgument/IdentifierArgument/g' \
+    -e 's/\bResourceLocation\b/Identifier/g' {} +
+  echo "ResourceLocation -> Identifier rename applied under: $dest/src"
+fi
+
+# 7. Done.
 echo "Harness project ($mc, profile $profile, neo $neo_version): $dest"

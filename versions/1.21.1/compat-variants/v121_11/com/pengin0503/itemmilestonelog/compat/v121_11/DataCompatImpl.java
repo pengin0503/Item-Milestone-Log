@@ -21,13 +21,15 @@ import javax.annotation.Nullable;
  * {@link MilestoneData#save} / {@link MilestoneData#load}. The codec preserves the legacy
  * {@code "data"} wrapper on disk (encoding writes {@code {"data": ...}}; decoding also
  * accepts an unwrapped root), so world files stay interchangeable across the whole 1.21.x
- * line in both directions.
+ * line in both directions. In 1.21.11 the {@code SavedDataType} factories receive the
+ * {@code ServerLevel} directly (no {@code SavedData.Context}), so the codec's registry lookup
+ * comes from {@code level.registryAccess()}.
  */
 public final class DataCompatImpl implements DataCompat {
     private static final SavedDataType<MilestoneData> TYPE = new SavedDataType<MilestoneData>(
             MilestoneData.DATA_NAME,
-            context -> new MilestoneData(),
-            context -> codec(context.levelOrThrow().registryAccess()));
+            level -> new MilestoneData(),
+            level -> codec(level.registryAccess()));
 
     private static Codec<MilestoneData> codec(HolderLookup.Provider provider) {
         Encoder<MilestoneData> encoder = new Encoder<>() {

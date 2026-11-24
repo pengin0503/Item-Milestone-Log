@@ -1,7 +1,7 @@
 package com.pengin0503.itemmilestonelog;
 
+import com.pengin0503.itemmilestonelog.compat.McCompat;
 import net.minecraft.commands.CommandSourceStack;
-import net.minecraft.commands.Commands;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.neoforge.server.permission.PermissionAPI;
 import net.neoforged.neoforge.server.permission.events.PermissionGatherEvent;
@@ -29,7 +29,7 @@ import java.util.List;
 public final class MilestonePermissions {
     private static final PermissionNode.PermissionResolver<Boolean> DEFAULT_RESOLVER =
             (player, playerUuid, context) -> player != null
-                    && player.hasPermissions(Commands.LEVEL_GAMEMASTERS);
+                    && McCompat.permissions().playerHasPermission(player, 2); // 2 == Commands.LEVEL_GAMEMASTERS (an int up to 1.21.10, a PermissionCheck object from 1.21.11)
 
     public static final PermissionNode<Boolean> ADMIN = node(MilestonePermissionLogic.ADMIN);
     public static final PermissionNode<Boolean> FIRSTS_RESET = node(MilestonePermissionLogic.FIRSTS_RESET);
