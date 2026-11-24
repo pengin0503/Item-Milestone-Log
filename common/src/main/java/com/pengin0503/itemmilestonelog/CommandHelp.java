@@ -31,7 +31,7 @@ public final class CommandHelp {
         PRESETS,
         /** Requires {@code exportImportEnabled == true}. */
         EXPORT_IMPORT,
-        /** Requires {@code allowLookup == true} or {@code MilestoneService.isPrivileged(source)}. */
+        /** Requires {@code allowLookup == true} or the F43 viewhidden privilege. */
         LOOKUP,
         /** Requires {@code allowDiscordOptOut == true}. */
         DISCORD_OPT_OUT
@@ -77,6 +77,7 @@ public final class CommandHelp {
     /** Snapshot of the caller and server config switches used to filter visible help entries. */
     public record Context(
             boolean isPlayer,
+            /** Whether the source may view hidden records: legacy privilege OR the F43 viewhidden node. */
             boolean privileged,
             boolean presetsEnabled,
             boolean exportImportEnabled,
@@ -87,7 +88,8 @@ public final class CommandHelp {
 
     /**
      * Complete ordered table of {@code /milestonelog} commands (spec F29; v1.2.0 adds the F8b
-     * tag commands {@code addtag} / {@code removetag} / {@code resettag} and F13 {@code toptag}).
+     * tag commands {@code addtag} / {@code removetag} / {@code resettag}, F13 {@code toptag},
+     * and F51 {@code info}).
      * {@code MilestoneCommandsHelpTest} verifies that every registered subcommand appears here
      * and every entry has both English and Japanese descriptions.
      */
@@ -110,6 +112,7 @@ public final class CommandHelp {
             new Entry("resetall", true, Gate.NONE),
             new Entry("undo", true, Gate.NONE),
             new Entry("firsts", false, Gate.NONE),
+            new Entry("info", true, Gate.NONE),
             new Entry("top", false, Gate.LOOKUP),
             new Entry("toptag", false, Gate.LOOKUP),
             new Entry("recent", false, Gate.LOOKUP),

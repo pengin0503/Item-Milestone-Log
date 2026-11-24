@@ -214,11 +214,11 @@ public final class MilestoneService {
     }
 
     public static boolean canManagePresets(CommandSourceStack source) {
-        return isPrivileged(source);
+        return MilestonePermissions.check(source, MilestonePermissions.PRESETS_MANAGE, isPrivileged(source));
     }
 
     public static boolean canManagePresets(ServerPlayer player) {
-        return isPrivileged(player);
+        return MilestonePermissions.check(player, MilestonePermissions.PRESETS_MANAGE, isPrivileged(player));
     }
 
     /**
@@ -853,7 +853,7 @@ public final class MilestoneService {
 
     public static ActionResult savePreset(ServerPlayer player, String rawName) {
         return savePreset(MilestoneData.get(player.level().getServer()), player.getUUID(), player,
-                isPrivileged(player), rawName, Presets::presetsDir, Config.PRESETS_ENABLED.get());
+                canManagePresets(player), rawName, Presets::presetsDir, Config.PRESETS_ENABLED.get());
     }
 
     static ActionResult savePreset(MilestoneData data, UUID playerId, @Nullable ServerPlayer player,
@@ -897,7 +897,7 @@ public final class MilestoneService {
     }
 
     public static ActionResult deletePreset(CommandSourceStack source, String name) {
-        return deletePreset(source, isPrivileged(source), name, Presets::presetsDir, Config.PRESETS_ENABLED.get());
+        return deletePreset(source, canManagePresets(source), name, Presets::presetsDir, Config.PRESETS_ENABLED.get());
     }
 
     static ActionResult deletePreset(@Nullable CommandSourceStack source, boolean allowed,
@@ -1600,7 +1600,7 @@ public final class MilestoneService {
                 Tracker.carriedFromCreative(pd),
                 itemIds -> Tracker.countItemsInPossession(player, itemIds),
                 Playtime.currentTicks(player),
-                isPrivileged(player),
+                canManagePresets(player),
                 openScreen,
                 feedback,
                 Config.PRESETS_ENABLED.get(),

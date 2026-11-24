@@ -221,6 +221,13 @@ public final class Config {
                     "Treat this URL as a secret; it is never printed to logs or chat.")
             .define("discordWorldFirstWebhookUrl", "");
 
+    /** F52: send a chat summary of world firsts recorded while the player was away at login. */
+    public static final ModConfigSpec.BooleanValue LOGIN_WORLD_FIRST_SUMMARY = BUILDER
+            .comment("Send a chat summary when a player logs in, listing world firsts recorded while they were away.",
+                    "Requires a stored lastSeen time (1.1.0+) and is skipped while the player has muteBroadcasts enabled.",
+                    "Shows at most 5 entries plus the remaining count.")
+            .define("loginWorldFirstSummary", false);
+
     /** F53: send normal (non-world-first) milestone record posts to Discord silently (SUPPRESS_NOTIFICATIONS flag). */
     public static final ModConfigSpec.BooleanValue DISCORD_SILENT_RECORDS = BUILDER
             .comment("Send normal (non-world-first) milestone record posts to Discord without triggering notifications (flags: 4096).",
@@ -382,6 +389,18 @@ public final class Config {
     public static boolean discordSilentRecords() {
         try {
             return DISCORD_SILENT_RECORDS.get();
+        } catch (IllegalStateException notLoaded) {
+            return false;
+        }
+    }
+
+    /**
+     * F52: {@link #LOGIN_WORLD_FIRST_SUMMARY}, or {@code false} while the config is not loaded yet
+     * (plain unit tests).
+     */
+    public static boolean loginWorldFirstSummary() {
+        try {
+            return LOGIN_WORLD_FIRST_SUMMARY.get();
         } catch (IllegalStateException notLoaded) {
             return false;
         }

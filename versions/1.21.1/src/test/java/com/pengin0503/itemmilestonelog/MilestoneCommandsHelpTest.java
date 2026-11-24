@@ -25,6 +25,7 @@ import java.util.function.Predicate;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -86,6 +87,30 @@ class MilestoneCommandsHelpTest {
                 com.pengin0503.itemmilestonelog.api.TargetKey.of("#c:ingots/iron"),
                 com.pengin0503.itemmilestonelog.api.TargetKey.of("#c:ingots/iron", 10),
                 com.pengin0503.itemmilestonelog.api.TargetKey.of("minecraft:diamond"))));
+    }
+
+    @Test
+    void infoIsRegisteredForPlayersWithItemHandAndOptionalCount() {
+        CommandDispatcher<CommandSourceStack> dispatcher = buildDispatcher(src -> false);
+        CommandNode<CommandSourceStack> root = dispatcher.getRoot().getChild("milestonelog");
+        assertNotNull(root);
+        CommandNode<CommandSourceStack> info = root.getChild("info");
+        assertNotNull(info, "info must be registered (F51)");
+        assertNull(info.getCommand(), "bare /milestonelog info must not execute");
+        CommandNode<CommandSourceStack> hand = info.getChild("hand");
+        assertNotNull(hand, "info hand must be registered");
+        assertNotNull(hand.getCommand(), "info hand must execute");
+        CommandNode<CommandSourceStack> item = info.getChild("item");
+        assertNotNull(item, "info must take <item>");
+        assertNotNull(item.getCommand(), "info <item> must execute with the default count of 1");
+        CommandNode<CommandSourceStack> count = item.getChild("count");
+        assertNotNull(count, "info <item> must take an optional <count>");
+        assertNotNull(count.getCommand(), "info <item> <count> must execute");
+        // No .requires: the command tree itself is open to every source; the handler requires a
+        // player (the F29 help row is player-only).
+        assertTrue(MilestoneCommands.canUseHelpEntry(dispatcher, null, entryByName("info")));
+        assertEquals(List.of("/milestonelog info <item> [<count>]", "/milestonelog info hand"),
+                MilestoneCommands.helpUsages(dispatcher, null, entryByName("info")));
     }
 
     @Test

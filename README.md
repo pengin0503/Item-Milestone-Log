@@ -17,6 +17,7 @@ Detection is possession-based, not crafting-based, so items produced by machines
 - Per-player target items with optional **quantities (1–1,000,000)**: track e.g. `minecraft:diamond` ×1 and ×100 as separate milestones (simultaneous inventory possession), with configurable **progress alerts** (default 50% and 90% for quantities ≥ 10; opt out with `/milestonelog muteprogress`)
 - Records cumulative playtime (`minecraft:play_time`), in-game overworld Day, and real-world date (`yyyy-MM-dd`) at first obtainment, stored per world, with configurable server display timezone (`displayTimeZone`)
 - **World-first records**: tracks who first obtained each item (and quantity) across the whole world (`/milestonelog firsts`, showing current usernames with `(was <old name>)` after renames, with optional server-wide announcement)
+- **Away summary**: on login, optionally list the world firsts recorded while you were away (`loginWorldFirstSummary`, default `false`; newest 5 plus a remaining count, skipped if you muted broadcasts)
 - **Lookup, rankings & server stats**: inspect other players (`/milestonelog lookup`), browse leaderboards (`/milestonelog top`, `/milestonelog recent`) and server statistics (`/milestonelog stats`), with per-player privacy opt-out (`/milestonelog privacy`)
 - **In-game GUI** (assign a key under Controls; there is no default key): view playtime and progress, browse targets and recorded milestones, search and add items (with quantity input), add your held item, browse/apply/save/delete presets (with overwrite warning), and reset records with confirmation
 - Chat notification, simultaneous-record grouping (`groupSimultaneousRecords`), and configurable sound effect (`milestoneSound`) the moment a milestone is recorded
@@ -25,7 +26,7 @@ Detection is possession-based, not crafting-based, so items produced by machines
 - **Export / Import** in JSON, standalone HTML, and CSV per world, plus OP `exportall` (including world-firsts), `exporthtmlall`, `exportcsvall`, and `importall`
 - **Custom presets & starter presets**: define presets as JSON files under `config/itemmilestonelog/presets/`, save your current targets in-game, check progress (`/milestonelog presetprogress`), bulk-remove targets (`/milestonelog presetremove`, `removeall`), and distribute removable starter targets on first join (`firstJoinPresets`)
 - **Safety & navigation**: 10-minute `/milestonelog undo` for personal resets and bulk removals, optional `[<page>]` pagination with clickable navigation, and `/milestonelog help [<subcommand>]`
-- **OP admin & maintenance commands** to inspect, add/remove targets, apply presets, grant milestones, reset, purge, or prune long-absent empty player data (`prunedata`)
+- **OP admin & maintenance commands** to inspect, add/remove targets, apply presets, grant milestones, reset, purge, or prune long-absent empty player data (`prunedata`), with optional NeoForge **permission nodes** so non-OP staff can be granted only the commands they need (1.2.0)
 - Nothing is recorded in creative or spectator mode (configurable), with in-chat notices when items carried out of creative mode are temporarily skipped
 - Built-in presets: `atm_star` (All the Mods 10 endgame) and `vanilla_endgame`
 - Server-wide default targets via config file, plus top-level switches to disable presets, export/import, or world-first recording
@@ -94,11 +95,33 @@ Assign a key to **Open Milestone Log** under *Options → Controls → Key Binds
 >
 > **Undo notes:** `/milestonelog undo` holds one in-memory snapshot per player for **10 minutes** (cleared when the server stops; empty/failed operations do not overwrite a previous snapshot). It restores records (keeping the smaller playtime if re-recorded in the meantime), `completedPresets`, `progressNotified`, or bulk-removed personal targets without re-firing events or notifications. Admin resets cannot be undone with `/milestonelog undo`.
 >
-> **Privacy & world-first name notes:** `/milestonelog privacy` hides you from non-privileged players in `lookup` (and its tab-completions), `top`, `recent`, and `stats`. It does **not** hide your data from yourself, OPs / the singleplayer or LAN host, `admin` commands, `exportall` / `exporthtmlall` / `exportcsvall`, broadcasts, world-first announcements, `firsts`, or Discord (use `/milestonelog discordoptout` separately for Discord). In `/milestonelog firsts`, each holder is shown with their current known username — formatted as `<current name> (was <old name>)` after a rename — while saved world-first records, exports, and `WorldFirstRecord.playerName` retain the original name; because Minecraft usernames are public, rename history in `firsts` is not covered by `/milestonelog privacy`.
+> **Privacy & world-first name notes:** `/milestonelog privacy` hides you from non-privileged players in `lookup` (and its tab-completions), `top`, `recent`, and `stats`. It does **not** hide your data from yourself, OPs / the singleplayer or LAN host / holders of `itemmilestonelog.viewhidden`, `admin` commands, `exportall` / `exporthtmlall` / `exportcsvall`, broadcasts, world-first announcements, `firsts`, or Discord (use `/milestonelog discordoptout` separately for Discord). In `/milestonelog firsts`, each holder is shown with their current known username — formatted as `<current name> (was <old name>)` after a rename — while saved world-first records, exports, and `WorldFirstRecord.playerName` retain the original name; because Minecraft usernames are public, rename history in `firsts` is not covered by `/milestonelog privacy`.
 
 #### Preset management & OP commands
 
-Preset management (`preset save`, `preset delete`, `preset reload`) requires **permission level 2 (OP)** on a dedicated server, and is allowed for the **host** (or players with cheats/OP) in singleplayer and LAN — LAN guests without cheats cannot save, delete, or reload presets. All `firsts reset*`, `export*all`, `importall`, `prunedata`, `discordtest`, and `admin` commands require **permission level 2 (OP)**.
+Preset management (`preset save`, `preset delete`, `preset reload`) requires **permission level 2 (OP)** on a dedicated server, and is allowed for the **host** (or players with cheats/OP) in singleplayer and LAN — LAN guests without cheats cannot save, delete, or reload presets unless a permission node below grants it. All `firsts reset*`, `export*all`, `importall`, importing another player's file with `import`, `prunedata`, `renameitem`, `discordtest`, and `admin` commands require **permission level 2 (OP)** unless the matching permission node is granted.
+
+#### Permission nodes (NeoForge permission API, 1.2.0)
+
+Admin commands also accept NeoForge boolean permission nodes, so a permission mod (LuckPerms and similar) can grant individual commands without giving OP. Every node defaults to **"the player has permission level 2"**, so behavior on a server without a permission mod is unchanged.
+
+| Node | Grants |
+|---|---|
+| `itemmilestonelog.admin` | Everything under `/milestonelog admin` (including F33 and `admin <player> resettag`) |
+| `itemmilestonelog.firsts.reset` | `firsts reset`, `firsts resetall`, `firsts resettag` |
+| `itemmilestonelog.export.all` | `exportall`, `exporthtmlall`, `exportcsvall` |
+| `itemmilestonelog.import.all` | `importall`, and importing another player's export file with `import` |
+| `itemmilestonelog.prunedata` | `prunedata` |
+| `itemmilestonelog.renameitem` | `renameitem` |
+| `itemmilestonelog.discordtest` | `discordtest` (including `discordtest worldfirst`) |
+| `itemmilestonelog.presets.manage` | Saving/deleting (and reloading) custom presets on a dedicated server (G1, including the GUI) |
+| `itemmilestonelog.viewhidden` | Using `lookup`, `top`, `recent`, `stats`, and the recorder count/rank line of `info` when `allowLookup = false`; viewing records hidden with `/milestonelog privacy` |
+
+- The check is **legacy OR node**: OP / permission level 2 (or the singleplayer/LAN host) keeps access even if a permission mod denies a node. A node can only add access; it cannot take OP access away.
+- **Console, RCON, command blocks and functions** keep using the vanilla permission-level check only. The NeoForge permission API needs an online `ServerPlayer`, so it is never queried for them.
+- To use a permission mod, set NeoForge's own `permissionHandler` setting to that mod's handler (the default is `neoforge:default_handler`); follow the permission mod's instructions for the exact value. On 1.21.1, 26.1.2, and 26.2 this is the per-world server config `neoforge-server.toml` (world `serverconfig/`, with the global `config/` file as fallback). On 26.3 it is NeoForge's synced config `neoforge-synced.toml` (world `syncedconfig/`, with the global `config/` file as fallback). No configuration is needed without a permission mod.
+- Command completion uses the same checks and the command tree is sent to clients around login. A permission change may not show up in tab completion until the player rejoins; execution is checked when the command runs, so it takes effect immediately. Whether a permission mod refreshes the tree is up to that mod.
+- `/milestonelog help` uses the same checks, so a command appears there only when the player can use it.
 
 | Command | Description |
 |---|---|
@@ -201,6 +224,7 @@ config type). On a dedicated server, edit the file on the server.
 - `milestoneSoundEnabled` — play a sound to the player on record, independent of `notifyPlayer` (default `true`)
 - `milestoneSound` — vanilla sound event ID to play on record (default `"minecraft:ui.toast.challenge_complete"`)
 - `announceWorldFirst` — announce server-wide world-first records to all online players (default `false`)
+- `loginWorldFirstSummary` — send a chat summary of world firsts recorded while a player was away when they log in (default `false`; newest 5 plus `...and N more`, skipped when the player has `muteBroadcasts` enabled or no stored `lastSeen`). If the server crashes before the logout `lastSeen` is saved, world firsts since the previous login can be included again; the duplicate is harmless.
 - `showFirstJoinHint` — show a one-time usage tip when a player first joins a world (default `true`)
 - `presetsEnabled` — enable built-in and custom presets in commands and GUI (default `true`; disabling does not delete existing preset files)
 - `exportImportEnabled` — enable all export and import commands, including for OPs (default `true`)
@@ -211,7 +235,7 @@ config type). On a dedicated server, edit the file on the server.
 - `progressAlertMinCount` — minimum target quantity required for progress alerts (`2–1,000,000`, default `10`)
 - `groupSimultaneousRecords` — group notifications per channel when 3 or more milestones are recorded for the same player in the same tick (default `true`; set to `false` for 1.0.1 per-record messages)
 - `announcePresetCompletion` — announce preset completions to all online players instead of only the completing player (default `false`)
-- `allowLookup` — allow all players to use `lookup`, `top`, `recent`, and `stats` (default `true`; when `false`, restricted to OPs and the singleplayer/LAN host, though looking up yourself always works)
+- `allowLookup` — allow all players to use `lookup`, `top`, `recent`, and `stats` (default `true`; when `false`, restricted to OPs, the singleplayer/LAN host, and holders of the `itemmilestonelog.viewhidden` permission node, though looking up yourself always works)
 - `firstJoinPresets` — list of preset IDs automatically applied as removable personal targets on a player's very first join (default `[]` = disabled). Only applies when a player has no saved data yet — existing players (or players created by `importall`) are unaffected (use `/milestonelog admin <player> preset <name>` for them); players removed by `prunedata` or `admin <player> purge` receive these presets again on rejoin.
 - `discordWebhookUrl` — optional Discord Webhook URL for asynchronous notifications (default `""`; treated as a secret and never logged). Supports `"env:VAR_NAME"` to read the URL from an environment variable.
 - `discordNotifyScope` — Discord notification scope: `"all"` or `"world_first"` (default `"all"`)

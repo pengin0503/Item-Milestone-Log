@@ -220,9 +220,11 @@ public final class Tracker {
         }
         MilestoneData data = MilestoneData.get(player.server);
         MilestoneData.PlayerData existingPd = data.playerOrNull(player.getUUID());
+        long previousLastSeen = existingPd != null ? existingPd.lastSeen : 0L;
         String previousName = existingPd != null ? existingPd.lastKnownName : null;
         boolean hasMod = player.connection != null
                 && player.connection.hasChannel(SyncMilestonesPayload.TYPE);
+        long nowMillis = System.currentTimeMillis();
         List<Component> messages = processPlayerLogin(
                 data,
                 player.getUUID(),
@@ -234,10 +236,11 @@ public final class Tracker {
                 Config.SHOW_FIRST_JOIN_HINT.get(),
                 hasMod,
                 player,
-                System.currentTimeMillis());
+                nowMillis);
         for (Component msg : messages) {
             player.sendSystemMessage(msg);
         }
+        sendLoginWorldFirstSummary(player, data, existingPd, previousLastSeen, nowMillis);
         ScoreboardSync.removeStaleNameScores(player.server, player.getUUID(), previousName);
         ScoreboardSync.refreshScores(player.server, player.getUUID());
         triggerExistingRecords(player, data, Config.WORLD_FIRST_ENABLED.get());
@@ -359,6 +362,51 @@ public final class Tracker {
             messages.add(ServerLang.tr(player, key));
         }
         return messages;
+    }
+
+    /**
+     * F52: sends the world-first summary for records created while the player was away.
+     * The caller must pass the stored {@code lastSeen} value captured before this login
+     * overwrote it, plus that login's timestamp.
+     */
+    private static void sendLoginWorldFirstSummary(
+            ServerPlayer player,
+            MilestoneData data,
+            @Nullable MilestoneData.PlayerData previousData,
+            long previousLastSeen,
+            long nowMillis) {
+        if (!Config.loginWorldFirstSummary() || previousLastSeen <= 0L) {
+            return;
+        }
+        if (previousData != null && previousData.muteBroadcasts) {
+            return;
+        }
+        LoginWorldFirstSummaryLogic.Selection selection = LoginWorldFirstSummaryLogic.select(
+                data.worldFirsts(), player.getUUID(), previousLastSeen, nowMillis);
+        if (selection.isEmpty()) {
+            return;
+        }
+        ZoneId zone = Config.displayTimeZone();
+        player.sendSystemMessage(ServerLang.tr(player,
+                "message.itemmilestonelog.login_world_first_header", selection.totalCount()));
+        for (WorldFirstRecord worldFirst : selection.entries()) {
+            // F47: prefer the holder's current (last known) name; stored data is unchanged.
+            MilestoneData.PlayerData holder = data.playerOrNull(worldFirst.playerUuid());
+            WorldFirstNames.Choice choice = WorldFirstNames.choose(worldFirst.playerUuid(), worldFirst.playerName(),
+                    holder != null, holder != null ? holder.lastKnownName : null);
+            Component holderName = choice.renamed()
+                    ? ServerLang.tr(player, "message.itemmilestonelog.firsts_name_renamed",
+                            Component.literal(choice.name()), Component.literal(choice.recordedName()))
+                    : Component.literal(choice.name());
+            player.sendSystemMessage(ServerLang.tr(player, "message.itemmilestonelog.login_world_first_entry",
+                    holderName,
+                    MilestoneService.targetDisplayName(worldFirst.targetKey()),
+                    Playtime.formatRecordComponent(player, worldFirst.toMilestoneRecord(), zone)));
+        }
+        if (selection.remainingCount() > 0) {
+            player.sendSystemMessage(ServerLang.tr(player,
+                    "message.itemmilestonelog.login_world_first_more", selection.remainingCount()));
+        }
     }
 
     @SubscribeEvent
