@@ -3,9 +3,11 @@ package com.pengin0503.itemmilestonelog.compat.v121_2;
 import com.pengin0503.itemmilestonelog.compat.RegistryCompat;
 import net.minecraft.core.Holder;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 
 import javax.annotation.Nullable;
@@ -26,5 +28,10 @@ public final class RegistryCompatImpl implements RegistryCompat {
     @Nullable
     public SoundEvent soundOrNull(ResourceLocation id) {
         return BuiltInRegistries.SOUND_EVENT.get(id).map(Holder::value).orElse(null);
+    }
+
+    @Override
+    public Component itemName(Item item) {
+        return item.getName(new ItemStack(item));
     }
 }

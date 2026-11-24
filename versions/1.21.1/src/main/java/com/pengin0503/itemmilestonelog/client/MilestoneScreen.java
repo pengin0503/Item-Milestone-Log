@@ -416,7 +416,7 @@ public final class MilestoneScreen extends Screen {
             } else if (rl != null && BuiltInRegistries.ITEM.containsKey(rl)) {
                 Item item = McCompat.registries().itemOrAir(rl);
                 this.iconStack = new ItemStack(item);
-                baseName = item.getDescription();
+                baseName = McCompat.registries().itemName(item);
             } else {
                 this.iconStack = new ItemStack(Items.BARRIER);
                 baseName = Component.literal(targetKey.itemId());

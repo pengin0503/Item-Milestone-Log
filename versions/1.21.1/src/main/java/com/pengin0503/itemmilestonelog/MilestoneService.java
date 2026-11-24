@@ -109,7 +109,7 @@ public final class MilestoneService {
         ResourceLocation rl = ResourceLocation.tryParse(itemId);
         if (rl != null && BuiltInRegistries.ITEM.containsKey(rl)) {
             Item item = McCompat.registries().itemOrAir(rl);
-            return item.getDescription();
+            return McCompat.registries().itemName(item);
         }
         return Component.literal(itemId == null ? "" : itemId);
     }
