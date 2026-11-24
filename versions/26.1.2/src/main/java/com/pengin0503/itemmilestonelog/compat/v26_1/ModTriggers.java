@@ -1,5 +1,6 @@
-package com.pengin0503.itemmilestonelog;
+package com.pengin0503.itemmilestonelog.compat.v26_1;
 
+import com.pengin0503.itemmilestonelog.ItemMilestoneLog;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
 import net.minecraft.advancements.CriterionTrigger;
 import net.minecraft.core.registries.Registries;

@@ -1,15 +1,16 @@
-package com.pengin0503.itemmilestonelog.compat;
+package com.pengin0503.itemmilestonelog.compat.v26_1;
 
-import com.pengin0503.itemmilestonelog.ModTriggers;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
+import com.pengin0503.itemmilestonelog.compat.TriggerCompat;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.bus.api.IEventBus;
 
 import javax.annotation.Nullable;
 
 /**
- * Default {@link TriggerCompat}: delegates to {@link ModTriggers}, whose registered
- * trigger classes are version-specific even though this delegation is not.
+ * Per-version {@link TriggerCompat}: delegates to this version's {@link ModTriggers},
+ * whose registered trigger classes differ per 26.x version. Loaded reflectively by
+ * {@code McCompat}; only the running version's variant is ever loaded.
  */
 public final class TriggerCompatImpl implements TriggerCompat {
     @Override

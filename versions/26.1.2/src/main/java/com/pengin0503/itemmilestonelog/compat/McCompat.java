@@ -2,12 +2,12 @@ package com.pengin0503.itemmilestonelog.compat;
 
 /**
  * N251: single access point for the version-specific compat implementations.
- * Implementations whose bodies differ per version live in {@code compat.v26_*}
- * packages and are loaded reflectively by name, so a class compiled against
- * another version's API is only ever loaded on that version.
+ * All implementations live in {@code compat.v26_*} packages and are loaded
+ * reflectively by name, so a class compiled against another version's API is
+ * only ever loaded on that version (docs/DESIGN_1.3.0.md).
  */
 public final class McCompat {
-    private static final TriggerCompat TRIGGERS = new TriggerCompatImpl();
+    private static final TriggerCompat TRIGGERS = load(TriggerCompat.class, "TriggerCompatImpl");
     private static final TagEventCompat TAG_EVENTS = load(TagEventCompat.class, "TagEventCompatImpl");
     private static final ConfigCompat CONFIG = load(ConfigCompat.class, "ConfigCompatImpl");
 
