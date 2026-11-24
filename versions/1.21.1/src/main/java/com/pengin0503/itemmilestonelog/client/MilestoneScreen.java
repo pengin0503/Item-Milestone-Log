@@ -4,6 +4,7 @@ import com.pengin0503.itemmilestonelog.Playtime;
 import com.pengin0503.itemmilestonelog.TagTargets;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
+import com.pengin0503.itemmilestonelog.compat.McCompat;
 import com.pengin0503.itemmilestonelog.network.MilestoneActionPayload;
 import com.pengin0503.itemmilestonelog.network.SyncMilestonesPayload;
 import com.pengin0503.itemmilestonelog.network.TargetEntry;
@@ -409,11 +410,11 @@ public final class MilestoneScreen extends Screen {
             ResourceLocation rl = iconItemId != null ? ResourceLocation.tryParse(iconItemId) : null;
             if (targetKey.isTag()) {
                 this.iconStack = (rl != null && BuiltInRegistries.ITEM.containsKey(rl))
-                        ? new ItemStack(BuiltInRegistries.ITEM.get(rl))
+                        ? new ItemStack(McCompat.registries().itemOrAir(rl))
                         : new ItemStack(Items.BARRIER);
                 baseName = TagTargets.displayName(targetKey.itemId());
             } else if (rl != null && BuiltInRegistries.ITEM.containsKey(rl)) {
-                Item item = BuiltInRegistries.ITEM.get(rl);
+                Item item = McCompat.registries().itemOrAir(rl);
                 this.iconStack = new ItemStack(item);
                 baseName = item.getDescription();
             } else {

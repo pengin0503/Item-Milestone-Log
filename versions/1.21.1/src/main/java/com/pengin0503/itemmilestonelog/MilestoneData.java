@@ -3,6 +3,7 @@ package com.pengin0503.itemmilestonelog;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
 import com.pengin0503.itemmilestonelog.api.WorldFirstRecord;
+import com.pengin0503.itemmilestonelog.compat.McCompat;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
@@ -180,15 +181,15 @@ public class MilestoneData extends SavedData {
         if (!recTag.contains("ticks", Tag.TAG_ANY_NUMERIC)) {
             return null;
         }
-        int ticks = recTag.getInt("ticks");
+        int ticks = McCompat.nbt().getInt(recTag, "ticks");
         if (ticks < 0) {
             return null;
         }
         long day = recTag.contains("day", Tag.TAG_ANY_NUMERIC)
-                ? recTag.getLong("day")
+                ? McCompat.nbt().getLong(recTag, "day")
                 : MilestoneRecord.UNKNOWN_DAY;
         long epoch = recTag.contains("epoch", Tag.TAG_ANY_NUMERIC)
-                ? recTag.getLong("epoch")
+                ? McCompat.nbt().getLong(recTag, "epoch")
                 : MilestoneRecord.UNKNOWN_EPOCH;
         return new MilestoneRecord(ticks, day, epoch);
     }
@@ -198,25 +199,25 @@ public class MilestoneData extends SavedData {
             ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping worldFirst '{}' without ticks in SavedData", itemId);
             return;
         }
-        int ticks = wfTag.getInt("ticks");
+        int ticks = McCompat.nbt().getInt(wfTag, "ticks");
         if (ticks < 0) {
             ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping worldFirst '{}' with negative ticks {} in SavedData", itemId, ticks);
             return;
         }
         UUID uuid;
         try {
-            uuid = UUID.fromString(wfTag.getString("uuid"));
+            uuid = UUID.fromString(McCompat.nbt().getString(wfTag, "uuid"));
         } catch (IllegalArgumentException ignored) {
             ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping worldFirst '{}' with invalid player UUID '{}' in SavedData",
-                    itemId, wfTag.getString("uuid"));
+                    itemId, McCompat.nbt().getString(wfTag, "uuid"));
             return;
         }
-        String name = wfTag.getString("name");
+        String name = McCompat.nbt().getString(wfTag, "name");
         long day = wfTag.contains("day", Tag.TAG_ANY_NUMERIC)
-                ? wfTag.getLong("day")
+                ? McCompat.nbt().getLong(wfTag, "day")
                 : MilestoneRecord.UNKNOWN_DAY;
         long epoch = wfTag.contains("epoch", Tag.TAG_ANY_NUMERIC)
-                ? wfTag.getLong("epoch")
+                ? McCompat.nbt().getLong(wfTag, "epoch")
                 : MilestoneRecord.UNKNOWN_EPOCH;
         TargetKey key = new TargetKey(itemId, count);
         out.put(key, new WorldFirstRecord(itemId, count, uuid, name, ticks, day, epoch));
@@ -224,7 +225,7 @@ public class MilestoneData extends SavedData {
 
     public static MilestoneData load(CompoundTag tag, HolderLookup.Provider provider) {
         MilestoneData data = new MilestoneData();
-        CompoundTag all = tag.getCompound("players");
+        CompoundTag all = McCompat.nbt().getCompound(tag, "players");
         for (String uuidKey : all.getAllKeys()) {
             UUID uuid;
             try {
@@ -233,7 +234,7 @@ public class MilestoneData extends SavedData {
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping player entry with invalid UUID '{}' in SavedData", uuidKey);
                 continue;
             }
-            CompoundTag entry = all.getCompound(uuidKey);
+            CompoundTag entry = McCompat.nbt().getCompound(all, uuidKey);
             PlayerData pd = new PlayerData();
             ListTag targets = entry.getList("targets", Tag.TAG_STRING);
             for (Tag t : targets) {
@@ -245,14 +246,14 @@ public class MilestoneData extends SavedData {
                     ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid target entry '{}' in SavedData", raw);
                 }
             }
-            CompoundTag records = entry.getCompound("records");
+            CompoundTag records = McCompat.nbt().getCompound(entry, "records");
             for (String itemId : records.getAllKeys()) {
                 if (!TargetKey.isValidItemId(itemId)) {
                     ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid record item key '{}' in SavedData", itemId);
                     continue;
                 }
                 if (records.contains(itemId, Tag.TAG_COMPOUND)) {
-                    CompoundTag itemTag = records.getCompound(itemId);
+                    CompoundTag itemTag = McCompat.nbt().getCompound(records, itemId);
                     if (itemTag.contains("ticks", Tag.TAG_ANY_NUMERIC) || itemTag.contains("day", Tag.TAG_ANY_NUMERIC)
                             || itemTag.contains("epoch", Tag.TAG_ANY_NUMERIC)) {
                         // Backward compatibility: early 1.0.1 stored itemId -> {ticks, day, epoch} (count = 1).
@@ -272,7 +273,7 @@ public class MilestoneData extends SavedData {
                                         countKey, itemId);
                                 continue;
                             }
-                            MilestoneRecord rec = readRecordTag(itemTag.getCompound(countKey));
+                            MilestoneRecord rec = readRecordTag(McCompat.nbt().getCompound(itemTag, countKey));
                             if (rec != null) {
                                 pd.records.put(new TargetKey(itemId, count), rec);
                             } else {
@@ -283,7 +284,7 @@ public class MilestoneData extends SavedData {
                     }
                 } else if (records.contains(itemId, Tag.TAG_ANY_NUMERIC)) {
                     // Backward compatibility: 1.0.0 stored records as plain integers (count = 1).
-                    int ticks = records.getInt(itemId);
+                    int ticks = McCompat.nbt().getInt(records, itemId);
                     if (ticks >= 0) {
                         pd.records.put(TargetKey.of(itemId), MilestoneRecord.legacy(ticks));
                     } else {
@@ -296,41 +297,41 @@ public class MilestoneData extends SavedData {
                 pd.carriedFromCreative.add(t.getAsString());
             }
             if (entry.contains("lastKnownName", Tag.TAG_STRING)) {
-                pd.lastKnownName = entry.getString("lastKnownName");
+                pd.lastKnownName = McCompat.nbt().getString(entry, "lastKnownName");
             }
-            if (entry.contains("firstJoinHintShown")) {
-                pd.firstJoinHintShown = entry.getBoolean("firstJoinHintShown");
+            if (McCompat.nbt().contains(entry, "firstJoinHintShown")) {
+                pd.firstJoinHintShown = McCompat.nbt().getBoolean(entry, "firstJoinHintShown");
             }
-            if (entry.contains("muteBroadcasts")) {
-                pd.muteBroadcasts = entry.getBoolean("muteBroadcasts");
+            if (McCompat.nbt().contains(entry, "muteBroadcasts")) {
+                pd.muteBroadcasts = McCompat.nbt().getBoolean(entry, "muteBroadcasts");
             }
             if (entry.contains("muteProgressAlerts", Tag.TAG_ANY_NUMERIC)) {
-                pd.muteProgressAlerts = entry.getBoolean("muteProgressAlerts");
-            } else if (entry.contains("muteProgressAlerts")) {
+                pd.muteProgressAlerts = McCompat.nbt().getBoolean(entry, "muteProgressAlerts");
+            } else if (McCompat.nbt().contains(entry, "muteProgressAlerts")) {
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed muteProgressAlerts tag in SavedData");
             }
             if (entry.contains("excludeFromDiscord", Tag.TAG_ANY_NUMERIC)) {
-                pd.excludeFromDiscord = entry.getBoolean("excludeFromDiscord");
-            } else if (entry.contains("excludeFromDiscord")) {
+                pd.excludeFromDiscord = McCompat.nbt().getBoolean(entry, "excludeFromDiscord");
+            } else if (McCompat.nbt().contains(entry, "excludeFromDiscord")) {
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed excludeFromDiscord tag in SavedData");
             }
             if (entry.contains("hideFromLookup", Tag.TAG_ANY_NUMERIC)) {
-                pd.hideFromLookup = entry.getBoolean("hideFromLookup");
-            } else if (entry.contains("hideFromLookup")) {
+                pd.hideFromLookup = McCompat.nbt().getBoolean(entry, "hideFromLookup");
+            } else if (McCompat.nbt().contains(entry, "hideFromLookup")) {
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed hideFromLookup tag in SavedData");
             }
             if (entry.contains("lastSeen", Tag.TAG_ANY_NUMERIC)) {
-                long lastSeen = entry.getLong("lastSeen");
+                long lastSeen = McCompat.nbt().getLong(entry, "lastSeen");
                 if (lastSeen > 0L) {
                     pd.lastSeen = lastSeen;
                 } else if (lastSeen < 0L) {
                     ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping negative lastSeen value {} in SavedData", lastSeen);
                 }
-            } else if (entry.contains("lastSeen")) {
+            } else if (McCompat.nbt().contains(entry, "lastSeen")) {
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed lastSeen tag in SavedData");
             }
             if (entry.contains("progressNotified", Tag.TAG_COMPOUND)) {
-                CompoundTag progressTag = entry.getCompound("progressNotified");
+                CompoundTag progressTag = McCompat.nbt().getCompound(entry, "progressNotified");
                 for (String rawKey : progressTag.getAllKeys()) {
                     TargetKey parsed = TargetKey.tryParseEncoded(rawKey);
                     if (parsed == null) {
@@ -341,7 +342,7 @@ public class MilestoneData extends SavedData {
                         ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping non-numeric progressNotified value for '{}' in SavedData", rawKey);
                         continue;
                     }
-                    int threshold = progressTag.getInt(rawKey);
+                    int threshold = McCompat.nbt().getInt(progressTag, rawKey);
                     if (!ProgressAlertLogic.isValidStoredThreshold(threshold)) {
                         ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping out-of-range progressNotified value {} for '{}' in SavedData",
                                 threshold, rawKey);
@@ -349,7 +350,7 @@ public class MilestoneData extends SavedData {
                     }
                     pd.progressNotified.put(parsed, threshold);
                 }
-            } else if (entry.contains("progressNotified")) {
+            } else if (McCompat.nbt().contains(entry, "progressNotified")) {
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed progressNotified tag in SavedData");
             }
             if (entry.contains("completedPresets", Tag.TAG_LIST)) {
@@ -366,19 +367,19 @@ public class MilestoneData extends SavedData {
                         }
                     }
                 }
-            } else if (entry.contains("completedPresets")) {
+            } else if (McCompat.nbt().contains(entry, "completedPresets")) {
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed completedPresets tag in SavedData");
             }
             data.players.put(uuid, pd);
         }
 
-        CompoundTag firsts = tag.getCompound("worldFirsts");
+        CompoundTag firsts = McCompat.nbt().getCompound(tag, "worldFirsts");
         for (String itemId : firsts.getAllKeys()) {
             if (!TargetKey.isValidItemId(itemId) || !firsts.contains(itemId, Tag.TAG_COMPOUND)) {
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid worldFirst item key '{}' in SavedData", itemId);
                 continue;
             }
-            CompoundTag itemTag = firsts.getCompound(itemId);
+            CompoundTag itemTag = McCompat.nbt().getCompound(firsts, itemId);
             if (itemTag.contains("ticks", Tag.TAG_ANY_NUMERIC) || itemTag.contains("uuid", Tag.TAG_STRING)) {
                 // Backward compatibility: early 1.0.1 stored itemId -> {uuid, name, ticks, day, epoch} (count = 1).
                 readWorldFirstTag(data.worldFirsts, itemId, TargetKey.MIN_COUNT, itemTag);
@@ -390,19 +391,19 @@ public class MilestoneData extends SavedData {
                                 countKey, itemId);
                         continue;
                     }
-                    readWorldFirstTag(data.worldFirsts, itemId, count, itemTag.getCompound(countKey));
+                    readWorldFirstTag(data.worldFirsts, itemId, count, McCompat.nbt().getCompound(itemTag, countKey));
                 }
             }
         }
 
         if (tag.contains("lastDigestEpoch", Tag.TAG_ANY_NUMERIC)) {
-            long lastDigest = tag.getLong("lastDigestEpoch");
+            long lastDigest = McCompat.nbt().getLong(tag, "lastDigestEpoch");
             if (lastDigest > 0L) {
                 data.lastDigestEpochMillis = lastDigest;
             } else if (lastDigest < 0L) {
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping negative lastDigestEpoch value {} in SavedData", lastDigest);
             }
-        } else if (tag.contains("lastDigestEpoch")) {
+        } else if (McCompat.nbt().contains(tag, "lastDigestEpoch")) {
             ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed lastDigestEpoch tag in SavedData");
         }
 
@@ -425,7 +426,7 @@ public class MilestoneData extends SavedData {
                 TargetKey key = r.getKey();
                 MilestoneRecord rec = r.getValue();
                 CompoundTag itemTag = records.contains(key.itemId(), Tag.TAG_COMPOUND)
-                        ? records.getCompound(key.itemId())
+                        ? McCompat.nbt().getCompound(records, key.itemId())
                         : new CompoundTag();
                 CompoundTag recTag = new CompoundTag();
                 recTag.putInt("ticks", rec.playTicks());
@@ -487,7 +488,7 @@ public class MilestoneData extends SavedData {
                 TargetKey key = e.getKey();
                 WorldFirstRecord wf = e.getValue();
                 CompoundTag itemTag = firsts.contains(key.itemId(), Tag.TAG_COMPOUND)
-                        ? firsts.getCompound(key.itemId())
+                        ? McCompat.nbt().getCompound(firsts, key.itemId())
                         : new CompoundTag();
                 CompoundTag wfTag = new CompoundTag();
                 wfTag.putString("uuid", wf.playerUuid().toString());

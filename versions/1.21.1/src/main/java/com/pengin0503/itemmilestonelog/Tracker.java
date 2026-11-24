@@ -7,6 +7,7 @@ import com.pengin0503.itemmilestonelog.api.PresetCompletedEvent;
 import com.pengin0503.itemmilestonelog.api.RecordCause;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
 import com.pengin0503.itemmilestonelog.api.WorldFirstRecord;
+import com.pengin0503.itemmilestonelog.compat.McCompat;
 import com.pengin0503.itemmilestonelog.network.ModNetworking;
 import com.pengin0503.itemmilestonelog.network.SyncMilestonesPayload;
 import net.minecraft.commands.CommandSourceStack;
@@ -305,7 +306,7 @@ public final class Tracker {
             return;
         }
         for (RetroactiveTriggerEntry entry : collectRetroactiveTriggers(data, player.getUUID(), worldFirstEnabled)) {
-            ModTriggers.trigger(player, entry.key(), entry.worldFirst(), worldFirstEnabled);
+            McCompat.triggers().trigger(player, entry.key(), entry.worldFirst(), worldFirstEnabled);
         }
     }
 
@@ -1472,7 +1473,7 @@ public final class Tracker {
             ScoreboardSync.refreshScores(server, targetId);
             if (online != null) {
                 if (result.key() != null) {
-                    ModTriggers.trigger(online, result.key(), false, Config.WORLD_FIRST_ENABLED.get());
+                    McCompat.triggers().trigger(online, result.key(), false, Config.WORLD_FIRST_ENABLED.get());
                 }
                 MilestoneService.syncPlayerIfOpen(online);
             }
@@ -1621,7 +1622,7 @@ public final class Tracker {
         }
         ScoreboardSync.refreshScores(server, player.getUUID());
         boolean worldFirst = outcome == RecordOutcome.RECORDED_WORLD_FIRST;
-        ModTriggers.trigger(player, key, worldFirst, worldFirstEnabled);
+        McCompat.triggers().trigger(player, key, worldFirst, worldFirstEnabled);
         List<Presets.PresetDefinition> completedPresets = evaluatePresetCompletions(
                 data,
                 player.getUUID(),
@@ -2095,7 +2096,7 @@ public final class Tracker {
             }
             return;
         }
-        SoundEvent event = BuiltInRegistries.SOUND_EVENT.get(rl);
+        SoundEvent event = McCompat.registries().soundOrNull(rl);
         if (event != null) {
             player.playNotifySound(event, SoundSource.PLAYERS, 1.0F, 1.0F);
         }

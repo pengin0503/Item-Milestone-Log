@@ -33,7 +33,6 @@ IDENTICAL_ALL_4=(
   "src/main/java/com/pengin0503/itemmilestonelog/api/TargetKey.java"
   "src/main/java/com/pengin0503/itemmilestonelog/api/WorldFirstRecord.java"
   "src/main/java/com/pengin0503/itemmilestonelog/client/ActionRowLayout.java"
-  "src/main/java/com/pengin0503/itemmilestonelog/gametest/MilestoneGameTests.java"
   "src/main/java/com/pengin0503/itemmilestonelog/network/TargetEntry.java"
 
   # src/test/java (20 files)
@@ -110,6 +109,11 @@ IDENTICAL_26_X=(
 )
 
 # Intentionally excluded files (differ across versions by design):
+# - src/main/java/.../gametest/MilestoneGameTests.java:
+#     Removed from IDENTICAL_ALL_4 in N252 stage 2a: the 1.21.1 copy routes
+#     GameTestHelper.assertTrue through GameTestCompat, because MC 1.21.5
+#     changed assertTrue to take a Component instead of a String. The 26.x
+#     copies keep the direct calls (their GameTestHelper still accepts String).
 # - src/main/java/.../ItemMilestoneLog.java:
 #     Only the version-specific javadoc comment differs across 26.x (the config
 #     type and trigger registration went through McCompat in N251). 1.21.1 differs

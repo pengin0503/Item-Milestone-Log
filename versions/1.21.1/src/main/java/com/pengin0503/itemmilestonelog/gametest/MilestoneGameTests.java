@@ -6,6 +6,7 @@ import com.pengin0503.itemmilestonelog.MilestoneService;
 import com.pengin0503.itemmilestonelog.Tracker;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
+import com.pengin0503.itemmilestonelog.compat.McCompat;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
@@ -35,7 +36,7 @@ public final class MilestoneGameTests {
         try {
             MilestoneService.ActionResult added = MilestoneService.addTarget(
                     player, DIAMOND_TARGET.itemId(), DIAMOND_TARGET.count());
-            helper.assertTrue(added.success(), "Expected addTarget to succeed for diamond");
+            McCompat.gameTest().assertTrue(helper, added.success(), "Expected addTarget to succeed for diamond");
             helper.assertFalse(
                     data.player(player.getUUID()).records.containsKey(DIAMOND_TARGET),
                     "Target must not be recorded before inventory scan");
@@ -44,10 +45,10 @@ public final class MilestoneGameTests {
             Tracker.scanInventory(player);
 
             MilestoneData.PlayerData pd = data.playerOrNull(player.getUUID());
-            helper.assertTrue(pd != null, "Expected PlayerData to exist after scan");
+            McCompat.gameTest().assertTrue(helper, pd != null, "Expected PlayerData to exist after scan");
             MilestoneRecord record = pd.records.get(DIAMOND_TARGET);
-            helper.assertTrue(record != null, "Expected inventory scan to record diamond milestone in MilestoneData");
-            helper.assertTrue(record.playTicks() >= 0, "Expected recorded playTicks to be non-negative");
+            McCompat.gameTest().assertTrue(helper, record != null, "Expected inventory scan to record diamond milestone in MilestoneData");
+            McCompat.gameTest().assertTrue(helper, record.playTicks() >= 0, "Expected recorded playTicks to be non-negative");
         } finally {
             cleanup(data, player, DIAMOND_TARGET);
         }
@@ -67,14 +68,14 @@ public final class MilestoneGameTests {
             player.setGameMode(GameType.CREATIVE);
             MilestoneService.ActionResult added = MilestoneService.addTarget(
                     player, EMERALD_TARGET.itemId(), EMERALD_TARGET.count());
-            helper.assertTrue(added.success(), "Expected addTarget to succeed for emerald");
+            McCompat.gameTest().assertTrue(helper, added.success(), "Expected addTarget to succeed for emerald");
 
             player.getInventory().setItem(0, new ItemStack(Items.EMERALD, 1));
             boolean modeChanged = player.setGameMode(GameType.SURVIVAL);
-            helper.assertTrue(modeChanged, "Expected transition from CREATIVE to SURVIVAL to succeed");
+            McCompat.gameTest().assertTrue(helper, modeChanged, "Expected transition from CREATIVE to SURVIVAL to succeed");
 
             MilestoneData.PlayerData pd = data.playerOrNull(player.getUUID());
-            helper.assertTrue(
+            McCompat.gameTest().assertTrue(helper,
                     pd != null && pd.carriedFromCreative.contains(EMERALD_TARGET.itemId()),
                     "Expected leaving creative mode to mark emerald in carriedFromCreative");
 
@@ -83,7 +84,7 @@ public final class MilestoneGameTests {
             helper.assertFalse(
                     pd.records.containsKey(EMERALD_TARGET),
                     "Expected inventory scan not to record an item carried from creative mode");
-            helper.assertTrue(
+            McCompat.gameTest().assertTrue(helper,
                     pd.carriedFromCreative.contains(EMERALD_TARGET.itemId()),
                     "Expected carriedFromCreative mark to remain while the item stays in inventory");
         } finally {

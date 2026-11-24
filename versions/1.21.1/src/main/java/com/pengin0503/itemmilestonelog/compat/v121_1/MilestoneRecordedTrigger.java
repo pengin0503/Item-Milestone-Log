@@ -1,7 +1,9 @@
-package com.pengin0503.itemmilestonelog;
+package com.pengin0503.itemmilestonelog.compat.v121_1;
 
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
+import com.pengin0503.itemmilestonelog.Config;
+import com.pengin0503.itemmilestonelog.MilestoneTriggerLogic;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
 import net.minecraft.advancements.critereon.ContextAwarePredicate;
 import net.minecraft.advancements.critereon.EntityPredicate;

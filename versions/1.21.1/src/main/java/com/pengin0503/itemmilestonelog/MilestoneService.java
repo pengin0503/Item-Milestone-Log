@@ -3,6 +3,7 @@ package com.pengin0503.itemmilestonelog;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
 import com.pengin0503.itemmilestonelog.api.WorldFirstRecord;
+import com.pengin0503.itemmilestonelog.compat.McCompat;
 import com.pengin0503.itemmilestonelog.network.PresetEntry;
 import com.pengin0503.itemmilestonelog.network.SyncExtraPayload;
 import com.pengin0503.itemmilestonelog.network.SyncMilestonesPayload;
@@ -107,7 +108,7 @@ public final class MilestoneService {
         }
         ResourceLocation rl = ResourceLocation.tryParse(itemId);
         if (rl != null && BuiltInRegistries.ITEM.containsKey(rl)) {
-            Item item = BuiltInRegistries.ITEM.get(rl);
+            Item item = McCompat.registries().itemOrAir(rl);
             return item.getDescription();
         }
         return Component.literal(itemId == null ? "" : itemId);
@@ -148,7 +149,7 @@ public final class MilestoneService {
         if (hoverId == null) {
             return name;
         }
-        ItemStack stack = new ItemStack(BuiltInRegistries.ITEM.get(ResourceLocation.parse(hoverId)));
+        ItemStack stack = new ItemStack(McCompat.registries().itemOrAir(ResourceLocation.parse(hoverId)));
         HoverEvent hover = new HoverEvent(HoverEvent.Action.SHOW_ITEM, new HoverEvent.ItemStackInfo(stack));
         return name.copy().withStyle(style -> style.withHoverEvent(hover));
     }
@@ -156,7 +157,7 @@ public final class MilestoneService {
     /** F12: whether {@code itemId} (not a tag) is in the item registry and is not air. */
     private static boolean isRegisteredNonAirItem(String itemId) {
         ResourceLocation rl = ResourceLocation.tryParse(itemId);
-        return rl != null && BuiltInRegistries.ITEM.containsKey(rl) && BuiltInRegistries.ITEM.get(rl) != Items.AIR;
+        return rl != null && BuiltInRegistries.ITEM.containsKey(rl) && McCompat.registries().itemOrAir(rl) != Items.AIR;
     }
 
     /**
@@ -229,7 +230,7 @@ public final class MilestoneService {
             return TagTargets.isNonEmptyTag(normalizedId);
         }
         ResourceLocation rl = ResourceLocation.tryParse(normalizedId);
-        return rl != null && BuiltInRegistries.ITEM.containsKey(rl) && BuiltInRegistries.ITEM.get(rl) != Items.AIR;
+        return rl != null && BuiltInRegistries.ITEM.containsKey(rl) && McCompat.registries().itemOrAir(rl) != Items.AIR;
     }
 
     private enum AddTargetStatus {
