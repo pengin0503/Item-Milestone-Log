@@ -1,5 +1,6 @@
 package com.pengin0503.itemmilestonelog.client;
 
+import com.pengin0503.itemmilestonelog.compat.McCompat;
 import com.pengin0503.itemmilestonelog.network.MilestoneActionPayload;
 import com.pengin0503.itemmilestonelog.network.PresetEntry;
 import com.pengin0503.itemmilestonelog.network.SyncMilestonesPayload;
@@ -39,7 +40,7 @@ public final class PresetListScreen extends Screen {
     }
 
     public void updateData(SyncMilestonesPayload newData) {
-        double prevScroll = listWidget != null ? listWidget.getScrollAmount() : 0.0;
+        double prevScroll = listWidget != null ? McCompat.scroll().getScrollAmount(listWidget) : 0.0;
         this.parent.updateData(newData, awaitingApplyFeedback);
         this.awaitingApplyFeedback = false;
         this.data = newData;
@@ -172,7 +173,7 @@ public final class PresetListScreen extends Screen {
             return Math.min(460, PresetListScreen.this.width - 32);
         }
 
-        @Override
+        // No @Override: the supertype method was removed in MC 1.21.4; this still overrides it on 1.21-1.21.3.
         protected int getScrollbarPosition() {
             return this.getX() + this.width / 2 + getRowWidth() / 2 + 6;
         }

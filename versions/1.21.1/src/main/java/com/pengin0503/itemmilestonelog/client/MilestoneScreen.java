@@ -91,7 +91,7 @@ public final class MilestoneScreen extends Screen {
     }
 
     public void updateData(SyncMilestonesPayload newData, boolean adoptFeedback) {
-        double prevScroll = listWidget != null ? listWidget.getScrollAmount() : 0.0;
+        double prevScroll = listWidget != null ? McCompat.scroll().getScrollAmount(listWidget) : 0.0;
         this.data = newData;
         this.elapsedTicks = 0;
         this.cachedAchievedCount = computeAchievedCount(newData);
@@ -374,7 +374,7 @@ public final class MilestoneScreen extends Screen {
             return Math.min(460, MilestoneScreen.this.width - 32);
         }
 
-        @Override
+        // No @Override: the supertype method was removed in MC 1.21.4; this still overrides it on 1.21-1.21.3.
         protected int getScrollbarPosition() {
             return this.getX() + this.width / 2 + getRowWidth() / 2 + 6;
         }

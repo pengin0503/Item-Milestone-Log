@@ -314,7 +314,7 @@ public final class ItemPickerScreen extends Screen {
             return Math.min(440, ItemPickerScreen.this.width - 32);
         }
 
-        @Override
+        // No @Override: the supertype method was removed in MC 1.21.4; this still overrides it on 1.21-1.21.3.
         protected int getScrollbarPosition() {
             return this.getX() + this.width / 2 + getRowWidth() / 2 + 6;
         }

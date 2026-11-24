@@ -37,7 +37,7 @@ public final class MilestoneGameTests {
             MilestoneService.ActionResult added = MilestoneService.addTarget(
                     player, DIAMOND_TARGET.itemId(), DIAMOND_TARGET.count());
             McCompat.gameTest().assertTrue(helper, added.success(), "Expected addTarget to succeed for diamond");
-            helper.assertFalse(
+            McCompat.gameTest().assertFalse(helper,
                     data.player(player.getUUID()).records.containsKey(DIAMOND_TARGET),
                     "Target must not be recorded before inventory scan");
 
@@ -81,7 +81,7 @@ public final class MilestoneGameTests {
 
             Tracker.scanInventory(player);
 
-            helper.assertFalse(
+            McCompat.gameTest().assertFalse(helper,
                     pd.records.containsKey(EMERALD_TARGET),
                     "Expected inventory scan not to record an item carried from creative mode");
             McCompat.gameTest().assertTrue(helper,

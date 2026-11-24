@@ -1,5 +1,7 @@
 package com.pengin0503.itemmilestonelog.compat;
 
+import com.pengin0503.itemmilestonelog.compat.client.ScrollCompat;
+
 /**
  * N252: single access point for the version-specific compat implementations of the
  * 1.21.x line. All implementations live in {@code compat.v121_*} packages and are loaded
@@ -11,6 +13,7 @@ public final class McCompat {
     private static final RegistryCompat REGISTRIES = load(RegistryCompat.class, "RegistryCompatImpl");
     private static final NbtCompat NBT = load(NbtCompat.class, "NbtCompatImpl");
     private static final GameTestCompat GAME_TEST = load(GameTestCompat.class, "GameTestCompatImpl");
+    private static final ReloadCompat RELOAD = load(ReloadCompat.class, "ReloadCompatImpl");
 
     private McCompat() {
     }
@@ -31,13 +34,34 @@ public final class McCompat {
         return GAME_TEST;
     }
 
+    public static ReloadCompat reload() {
+        return RELOAD;
+    }
+
+    /**
+     * Client-only: the implementation references client classes, so it is loaded lazily on
+     * first use (never during {@code McCompat} initialization on a dedicated server).
+     */
+    public static ScrollCompat scroll() {
+        return ClientHolder.SCROLL;
+    }
+
     private static <T> T load(Class<T> iface, String simpleName) {
-        String className = "com.pengin0503.itemmilestonelog.compat."
+        return load(iface, "", simpleName);
+    }
+
+    /** {@code subPackage} is empty or ends with '.', e.g. "client.". */
+    private static <T> T load(Class<T> iface, String subPackage, String simpleName) {
+        String className = "com.pengin0503.itemmilestonelog.compat." + subPackage
                 + McVersion.current().packageSuffix() + "." + simpleName;
         try {
             return iface.cast(Class.forName(className).getDeclaredConstructor().newInstance());
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException("Failed to load compat implementation " + className, e);
         }
+    }
+
+    private static final class ClientHolder {
+        private static final ScrollCompat SCROLL = load(ScrollCompat.class, "client.", "ScrollCompatImpl");
     }
 }

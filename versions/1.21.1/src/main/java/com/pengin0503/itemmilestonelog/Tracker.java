@@ -219,7 +219,7 @@ public final class Tracker {
         if (player instanceof FakePlayer) {
             return;
         }
-        MilestoneData data = MilestoneData.get(player.server);
+        MilestoneData data = MilestoneData.get(player.getServer());
         MilestoneData.PlayerData existingPd = data.playerOrNull(player.getUUID());
         long previousLastSeen = existingPd != null ? existingPd.lastSeen : 0L;
         String previousName = existingPd != null ? existingPd.lastKnownName : null;
@@ -242,8 +242,8 @@ public final class Tracker {
             player.sendSystemMessage(msg);
         }
         sendLoginWorldFirstSummary(player, data, existingPd, previousLastSeen, nowMillis);
-        ScoreboardSync.removeStaleNameScores(player.server, player.getUUID(), previousName);
-        ScoreboardSync.refreshScores(player.server, player.getUUID());
+        ScoreboardSync.removeStaleNameScores(player.getServer(), player.getUUID(), previousName);
+        ScoreboardSync.refreshScores(player.getServer(), player.getUUID());
         triggerExistingRecords(player, data, Config.WORLD_FIRST_ENABLED.get());
         if (hasMod) {
             // F42: send the player's current state on login so the client can build the item-tooltip
@@ -421,8 +421,8 @@ public final class Tracker {
             return;
         }
         UUID playerId = event.getEntity().getUUID();
-        if (event.getEntity() instanceof ServerPlayer player && player.server != null) {
-            processPlayerLogout(MilestoneData.get(player.server), playerId, System.currentTimeMillis());
+        if (event.getEntity() instanceof ServerPlayer player && player.getServer() != null) {
+            processPlayerLogout(MilestoneData.get(player.getServer()), playerId, System.currentTimeMillis());
         }
         ModNetworking.removeRateLimit(playerId);
         PENDING_CRAFT_CHECKS.remove(playerId);
@@ -468,7 +468,7 @@ public final class Tracker {
      * deterministically on mock players.
      */
     public static void scanInventory(ServerPlayer player) {
-        MilestoneData data = MilestoneData.get(player.server);
+        MilestoneData data = MilestoneData.get(player.getServer());
         MilestoneData.PlayerData pd = data.playerOrNull(player.getUUID());
         Set<TargetKey> pending = new HashSet<>(effectiveTargets(pd));
         if (pd != null) {
@@ -634,7 +634,7 @@ public final class Tracker {
         if (carried.isEmpty()) {
             return;
         }
-        MilestoneData data = MilestoneData.get(player.server);
+        MilestoneData data = MilestoneData.get(player.getServer());
         MilestoneData.PlayerData pd = data.player(player.getUUID());
         Set<String> newlyMarked = new LinkedHashSet<>();
         for (String id : carried) {
@@ -795,7 +795,7 @@ public final class Tracker {
         if (itemIds.isEmpty()) {
             return Map.of();
         }
-        MilestoneData.PlayerData pd = MilestoneData.get(player.server).playerOrNull(player.getUUID());
+        MilestoneData.PlayerData pd = MilestoneData.get(player.getServer()).playerOrNull(player.getUUID());
         return countRequestedPossession(possessedStacks(player), itemIds, carriedFromCreative(pd), TagTargets.index());
     }
 
@@ -975,7 +975,7 @@ public final class Tracker {
         if (recordingPaused(player)) {
             return;
         }
-        MilestoneData data = MilestoneData.get(player.server);
+        MilestoneData data = MilestoneData.get(player.getServer());
         MilestoneData.PlayerData pd = data.playerOrNull(player.getUUID());
         Set<String> carried = carriedFromCreative(pd);
         Set<TargetKey> defaults = defaultTargets();
@@ -1379,7 +1379,7 @@ public final class Tracker {
         if (normalized == null) {
             return false;
         }
-        MilestoneData data = MilestoneData.get(player.server);
+        MilestoneData data = MilestoneData.get(player.getServer());
         if (!canRecordNow(player instanceof FakePlayer, recordingPaused(player), defaultTargets(),
                 data.playerOrNull(player.getUUID()), normalized)) {
             return false;
@@ -1606,7 +1606,7 @@ public final class Tracker {
         if (pd.records.containsKey(key)) {
             return false;
         }
-        MinecraftServer server = player.server;
+        MinecraftServer server = player.getServer();
         int ticks = Playtime.currentTicks(player);
         long day = Playtime.currentDay(server);
         long epochMillis = System.currentTimeMillis();

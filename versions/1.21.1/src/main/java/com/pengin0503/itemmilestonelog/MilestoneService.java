@@ -206,7 +206,7 @@ public final class MilestoneService {
     }
 
     public static boolean isPrivileged(ServerPlayer player) {
-        MinecraftServer server = player.server;
+        MinecraftServer server = player.getServer();
         boolean dedicated = server == null || server.isDedicatedServer();
         boolean singleplayerOwner = server != null && server.isSingleplayerOwner(player.getGameProfile());
         boolean hasAdmin = player.hasPermissions(PrivilegePolicy.ADMIN_PERMISSION_LEVEL);
@@ -275,7 +275,7 @@ public final class MilestoneService {
     }
 
     public static ActionResult addTarget(ServerPlayer player, String itemId, int count) {
-        return addTarget(MilestoneData.get(player.server), player.getUUID(), player, itemId, count,
+        return addTarget(MilestoneData.get(player.getServer()), player.getUUID(), player, itemId, count,
                 MilestoneService::isKnownNonAirItem, MilestoneService::targetDisplayName);
     }
 
@@ -410,7 +410,7 @@ public final class MilestoneService {
     }
 
     public static ActionResult removeTarget(ServerPlayer player, String itemId, int count) {
-        return removeTarget(MilestoneData.get(player.server), player.getUUID(), player, itemId, count,
+        return removeTarget(MilestoneData.get(player.getServer()), player.getUUID(), player, itemId, count,
                 MilestoneService::isValidItemId, MilestoneService::targetDisplayName);
     }
 
@@ -564,7 +564,7 @@ public final class MilestoneService {
     }
 
     public static ActionResult applyPreset(ServerPlayer player, String name) {
-        return applyPreset(MilestoneData.get(player.server), player.getUUID(), player, name,
+        return applyPreset(MilestoneData.get(player.getServer()), player.getUUID(), player, name,
                 MilestoneService::isKnownNonAirItem, Config.PRESETS_ENABLED.get());
     }
 
@@ -729,7 +729,7 @@ public final class MilestoneService {
      */
     public static ActionResult removePresetTargets(ServerPlayer player, String name) {
         ActionResult result = removePresetTargets(
-                MilestoneData.get(player.server), player.getUUID(), player, name,
+                MilestoneData.get(player.getServer()), player.getUUID(), player, name,
                 Config.PRESETS_ENABLED.get(), UNDO_SNAPSHOTS, System.nanoTime());
         if (result.success() && result.undoable()) {
             syncPlayerIfOpen(player);
@@ -813,7 +813,7 @@ public final class MilestoneService {
      */
     public static ActionResult removeAllTargets(ServerPlayer player) {
         ActionResult result = removeAllTargets(
-                MilestoneData.get(player.server), player.getUUID(), player,
+                MilestoneData.get(player.getServer()), player.getUUID(), player,
                 UNDO_SNAPSHOTS, System.nanoTime());
         if (result.success() && result.undoable()) {
             syncPlayerIfOpen(player);
@@ -852,7 +852,7 @@ public final class MilestoneService {
     }
 
     public static ActionResult savePreset(ServerPlayer player, String rawName) {
-        return savePreset(MilestoneData.get(player.server), player.getUUID(), player,
+        return savePreset(MilestoneData.get(player.getServer()), player.getUUID(), player,
                 canManagePresets(player), rawName, Presets::presetsDir, Config.PRESETS_ENABLED.get());
     }
 
@@ -945,11 +945,11 @@ public final class MilestoneService {
     }
 
     public static ActionResult resetRecord(ServerPlayer player, String itemId, int count) {
-        ActionResult result = resetRecord(MilestoneData.get(player.server), player.getUUID(), player, itemId, count,
+        ActionResult result = resetRecord(MilestoneData.get(player.getServer()), player.getUUID(), player, itemId, count,
                 MilestoneService::isValidItemId, MilestoneService::targetDisplayName,
                 UNDO_SNAPSHOTS, System.nanoTime());
         if (result.success()) {
-            ScoreboardSync.refreshScores(player.server, player.getUUID());
+            ScoreboardSync.refreshScores(player.getServer(), player.getUUID());
         }
         return result;
     }
@@ -1014,10 +1014,10 @@ public final class MilestoneService {
     }
 
     public static ActionResult resetAllRecords(ServerPlayer player) {
-        ActionResult result = resetAllRecords(MilestoneData.get(player.server), player.getUUID(), player,
+        ActionResult result = resetAllRecords(MilestoneData.get(player.getServer()), player.getUUID(), player,
                 UNDO_SNAPSHOTS, System.nanoTime());
         if (result.success()) {
-            ScoreboardSync.refreshScores(player.server, player.getUUID());
+            ScoreboardSync.refreshScores(player.getServer(), player.getUUID());
         }
         return result;
     }
@@ -1068,10 +1068,10 @@ public final class MilestoneService {
      * re-syncs the player's GUI.
      */
     public static ActionResult undo(ServerPlayer player) {
-        ActionResult result = undo(MilestoneData.get(player.server), player.getUUID(), player,
+        ActionResult result = undo(MilestoneData.get(player.getServer()), player.getUUID(), player,
                 UNDO_SNAPSHOTS, System.nanoTime());
         if (result.success()) {
-            ScoreboardSync.refreshScores(player.server, player.getUUID());
+            ScoreboardSync.refreshScores(player.getServer(), player.getUUID());
             syncPlayerIfOpen(player);
         }
         return result;
@@ -1111,7 +1111,7 @@ public final class MilestoneService {
     }
 
     public static ActionResult toggleDiscordOptOut(ServerPlayer player) {
-        return toggleDiscordOptOut(MilestoneData.get(player.server), player.getUUID(), player,
+        return toggleDiscordOptOut(MilestoneData.get(player.getServer()), player.getUUID(), player,
                 Config.ALLOW_DISCORD_OPT_OUT.get());
     }
 
@@ -1134,7 +1134,7 @@ public final class MilestoneService {
      * non-privileged players can see (lookup, top, recent, stats); no Config switch.
      */
     public static ActionResult togglePrivacy(ServerPlayer player) {
-        return togglePrivacy(MilestoneData.get(player.server), player.getUUID(), player);
+        return togglePrivacy(MilestoneData.get(player.getServer()), player.getUUID(), player);
     }
 
     static ActionResult togglePrivacy(MilestoneData data, UUID playerId, @Nullable ServerPlayer player) {
@@ -1552,7 +1552,7 @@ public final class MilestoneService {
      * {@code readOnlyPresets} (F21: IDs that currently resolve to data pack presets) is still sent.
      */
     public static SyncExtraPayload createSyncExtraPayload(ServerPlayer player) {
-        MilestoneData data = MilestoneData.get(player.server);
+        MilestoneData data = MilestoneData.get(player.getServer());
         return buildSyncExtraPayload(data, player.getUUID(), Config.guiWorldFirstMark(), Presets.datapackPresetIds());
     }
 
@@ -1589,7 +1589,7 @@ public final class MilestoneService {
      * F54: custom preset names are resolved in the receiving player's language.
      */
     public static SyncMilestonesPayload createSyncPayload(ServerPlayer player, boolean openScreen, @Nullable Component feedback) {
-        MilestoneData data = MilestoneData.get(player.server);
+        MilestoneData data = MilestoneData.get(player.getServer());
         MilestoneData.PlayerData pd = data.playerOrNull(player.getUUID());
         return buildSyncPayload(
                 pd,
