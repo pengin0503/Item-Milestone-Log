@@ -6,6 +6,7 @@ import com.pengin0503.itemmilestonelog.api.MilestoneRecordedEvent;
 import com.pengin0503.itemmilestonelog.api.PresetCompletedEvent;
 import com.pengin0503.itemmilestonelog.api.RecordCause;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
+import com.pengin0503.itemmilestonelog.api.WorldFirstRecord;
 import com.pengin0503.itemmilestonelog.network.ModNetworking;
 import com.pengin0503.itemmilestonelog.network.SyncMilestonesPayload;
 import net.minecraft.commands.CommandSourceStack;
@@ -25,6 +26,7 @@ import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.common.util.FakePlayer;
+import net.neoforged.neoforge.event.OnDatapackSyncEvent;
 import net.neoforged.neoforge.event.TagsUpdatedEvent;
 import net.neoforged.neoforge.event.entity.player.ItemEntityPickupEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
@@ -218,6 +220,8 @@ public final class Tracker {
         }
         MinecraftServer server = player.level().getServer();
         MilestoneData data = MilestoneData.get(server);
+        MilestoneData.PlayerData existingPd = data.playerOrNull(player.getUUID());
+        String previousName = existingPd != null ? existingPd.lastKnownName : null;
         boolean hasMod = player.connection != null
                 && player.connection.hasChannel(SyncMilestonesPayload.TYPE);
         List<Component> messages = processPlayerLogin(
@@ -234,6 +238,67 @@ public final class Tracker {
                 System.currentTimeMillis());
         for (Component msg : messages) {
             player.sendSystemMessage(msg);
+        }
+        ScoreboardSync.removeStaleNameScores(server, player.getUUID(), previousName);
+        ScoreboardSync.refreshScores(server, player.getUUID());
+        triggerExistingRecords(player, data, Config.WORLD_FIRST_ENABLED.get());
+    }
+
+    /**
+     * F2: retroactive advancement criterion trigger on {@code /reload} ({@code event.getPlayer() == null})
+     * for all online players. The login case ({@code event.getPlayer() != null}) is intentionally ignored
+     * here and handled in {@link #onPlayerLoggedIn} after the player is added to the player list.
+     */
+    @SubscribeEvent
+    public static void onDatapackSync(OnDatapackSyncEvent event) {
+        if (event.getPlayer() != null) {
+            return;
+        }
+        MinecraftServer server = event.getPlayerList().getServer();
+        if (server == null) {
+            return;
+        }
+        MilestoneData data = MilestoneData.get(server);
+        boolean worldFirstEnabled = Config.WORLD_FIRST_ENABLED.get();
+        for (ServerPlayer player : List.copyOf(event.getPlayerList().getPlayers())) {
+            triggerExistingRecords(player, data, worldFirstEnabled);
+        }
+    }
+
+    record RetroactiveTriggerEntry(TargetKey key, boolean worldFirst) {
+    }
+
+    /**
+     * F2: collects every existing milestone record for {@code playerId} along with whether that
+     * player holds the world-first for the key (always {@code false} when {@code worldFirstEnabled}
+     * is {@code false}).
+     */
+    static List<RetroactiveTriggerEntry> collectRetroactiveTriggers(
+            @Nullable MilestoneData data, UUID playerId, boolean worldFirstEnabled) {
+        if (data == null || playerId == null) {
+            return List.of();
+        }
+        MilestoneData.PlayerData pd = data.playerOrNull(playerId);
+        if (pd == null || pd.records.isEmpty()) {
+            return List.of();
+        }
+        List<RetroactiveTriggerEntry> entries = new ArrayList<>(pd.records.size());
+        for (TargetKey key : pd.records.keySet()) {
+            WorldFirstRecord wf = data.worldFirstOrNull(key);
+            boolean worldFirst = MilestoneTriggerLogic.isRetroactiveWorldFirst(
+                    playerId, wf != null ? wf.playerUuid() : null, worldFirstEnabled);
+            entries.add(new RetroactiveTriggerEntry(key, worldFirst));
+        }
+        return entries;
+    }
+
+    private static void triggerExistingRecords(
+            @Nullable ServerPlayer player, @Nullable MilestoneData data, boolean worldFirstEnabled) {
+        if (player == null || player instanceof FakePlayer || data == null) {
+            return;
+        }
+        for (RetroactiveTriggerEntry entry : collectRetroactiveTriggers(data, player.getUUID(), worldFirstEnabled)) {
+            ModTriggers.trigger(player, entry.key(), entry.worldFirst(), worldFirstEnabled);
         }
     }
 
@@ -1090,10 +1155,10 @@ public final class Tracker {
 
     @SubscribeEvent
     public static void onServerTick(ServerTickEvent.Post event) {
-        if (PENDING_NOTIFICATIONS.isEmpty()) {
-            return;
+        if (!PENDING_NOTIFICATIONS.isEmpty()) {
+            flushPendingNotifications(event.getServer(), drainPendingNotifications());
         }
-        flushPendingNotifications(event.getServer(), drainPendingNotifications());
+        MilestoneCommandRunner.drainAndRun(event.getServer());
     }
 
     static void queuePendingNotification(
@@ -1341,8 +1406,14 @@ public final class Tracker {
                     }
                 },
                 event -> NeoForge.EVENT_BUS.post(event));
-        if (result.success() && online != null) {
-            MilestoneService.syncPlayerIfOpen(online);
+        if (result.success()) {
+            ScoreboardSync.refreshScores(server, targetId);
+            if (online != null) {
+                if (result.key() != null) {
+                    ModTriggers.trigger(online, result.key(), false, Config.WORLD_FIRST_ENABLED.get());
+                }
+                MilestoneService.syncPlayerIfOpen(online);
+            }
         }
         return new MilestoneService.ActionResult(result.success(), result.executorMessage());
     }
@@ -1480,12 +1551,15 @@ public final class Tracker {
 
         String playerName = player.getGameProfile().name();
         String safePlayerName = playerName != null ? playerName : "";
+        boolean worldFirstEnabled = Config.WORLD_FIRST_ENABLED.get();
         RecordOutcome outcome = applyRecord(data, player.getUUID(), playerName, key, rec,
-                Config.WORLD_FIRST_ENABLED.get());
+                worldFirstEnabled);
         if (outcome == RecordOutcome.ALREADY_RECORDED) {
             return false;
         }
+        ScoreboardSync.refreshScores(server, player.getUUID());
         boolean worldFirst = outcome == RecordOutcome.RECORDED_WORLD_FIRST;
+        ModTriggers.trigger(player, key, worldFirst, worldFirstEnabled);
         List<Presets.PresetDefinition> completedPresets = evaluatePresetCompletions(
                 data,
                 player.getUUID(),
@@ -1498,6 +1572,7 @@ public final class Tracker {
 
         ItemMilestoneLog.LOGGER.info("[ItemMilestoneLog] {} first obtained {} at playtime {} ({} ticks)",
                 playerName, key.formatDisplayId(), formattedRecord, ticks);
+        MilestoneCommandRunner.enqueue(player.getUUID(), safePlayerName, key, ticks, worldFirst);
 
         boolean postToDiscord = DiscordNotifier.shouldPostToDiscord(pd);
         if (Config.GROUP_SIMULTANEOUS_RECORDS.get()) {

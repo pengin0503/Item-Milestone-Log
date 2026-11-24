@@ -1126,7 +1126,11 @@ public final class MilestoneCommands {
         if (key == null) {
             return fail(ctx, ServerLang.tr(source, MilestoneService.invalidTargetKey(itemId), String.valueOf(itemId)));
         }
+        WorldFirstRecord removed = data.worldFirstOrNull(key);
         if (data.removeWorldFirst(key)) {
+            if (removed != null) {
+                ScoreboardSync.refreshScores(source.getServer(), removed.playerUuid());
+            }
             return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.firsts_reset_done", MilestoneService.targetDisplayName(key)));
         }
         if (!MilestoneService.isValidItemId(key.itemId())) {
@@ -1138,6 +1142,9 @@ public final class MilestoneCommands {
     private static int firstsResetAll(CommandContext<CommandSourceStack> ctx) {
         CommandSourceStack source = ctx.getSource();
         int count = MilestoneData.get(source.getServer()).clearWorldFirsts();
+        if (count > 0) {
+            ScoreboardSync.refreshAll(source.getServer());
+        }
         return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.firsts_resetall_done", count));
     }
 
@@ -1184,6 +1191,7 @@ public final class MilestoneCommands {
             }
             MilestoneData data = MilestoneData.get(player.server);
             MilestoneExport.ImportMergeStats stats = MilestoneExport.mergeInto(data, player.getUUID(), payload);
+            ScoreboardSync.refreshScores(player.server, player.getUUID());
             MilestoneService.syncPlayerIfOpen(player);
             return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.import_done",
                     fileName, stats.addedTargets(), stats.updatedRecords()));
@@ -1234,6 +1242,7 @@ public final class MilestoneCommands {
             MilestoneExport.AllPlayersImportPayload payload = MilestoneExport.parseAllPlayersExport(file);
             MilestoneData data = MilestoneData.get(server);
             MilestoneExport.ImportAllMergeStats stats = MilestoneExport.mergeAllInto(data, payload);
+            ScoreboardSync.refreshAll(server);
             MilestoneService.syncAllOnlineGuiPlayers(server, null);
             return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.importall_done",
                     fileName,
@@ -1882,6 +1891,7 @@ public final class MilestoneCommands {
         if (target.getValue().records.remove(key) != null) {
             target.getValue().progressNotified.remove(key);
             data.setDirty();
+            ScoreboardSync.refreshScores(source.getServer(), target.getKey());
             ServerPlayer online = source.getServer().getPlayerList().getPlayer(target.getKey());
             if (online != null) {
                 MilestoneService.syncPlayerIfOpen(online);
@@ -1918,6 +1928,7 @@ public final class MilestoneCommands {
         if (count > 0 || clearedProgress || clearedCompletedPresets) {
             data.setDirty();
             if (count > 0) {
+                ScoreboardSync.refreshScores(source.getServer(), target.getKey());
                 ServerPlayer online = source.getServer().getPlayerList().getPlayer(target.getKey());
                 if (online != null) {
                     MilestoneService.syncPlayerIfOpen(online);
@@ -1936,6 +1947,7 @@ public final class MilestoneCommands {
         UUID uuid = target.getKey();
         String name = displayNameFor(uuid, target.getValue());
         MilestoneData data = MilestoneData.get(source.getServer());
+        ScoreboardSync.deleteScores(source.getServer(), uuid);
         if (data.purgePlayer(uuid)) {
             ItemMilestoneLog.LOGGER.info("[ItemMilestoneLog] Admin {} purged all milestone data for {} ({})",
                     source.getTextName(), name, uuid);

@@ -1674,4 +1674,50 @@ class TrackerTest {
         assertEquals(0, Tracker.countCreativeCarriedTargetItems(
                 Set.of("othermod:iron_ingot"), effective, Set.of(ironTag), IRON_TAGS));
     }
+
+    @Test
+    void collectRetroactiveTriggersCoversAllExistingRecordsAndRespectsWorldFirstEnabled() {
+        MilestoneData data = new MilestoneData();
+        assertEquals(List.of(), Tracker.collectRetroactiveTriggers(data, PLAYER_A, true));
+
+        TargetKey diamond = TargetKey.of("minecraft:diamond");
+        TargetKey ironTag = TargetKey.of("#c:ingots/iron", 10);
+        TargetKey emerald = TargetKey.of("minecraft:emerald", 5);
+        TargetKey removedTarget = TargetKey.of("minecraft:nether_star");
+        MilestoneRecord rec = new MilestoneRecord(1000, 1L, 1_000_000L);
+
+        MilestoneData.PlayerData pd = data.player(PLAYER_A);
+        pd.targets.add(diamond);
+        pd.targets.add(ironTag);
+        pd.targets.add(emerald);
+        // Empty records -> nothing to trigger retroactively
+        assertEquals(List.of(), Tracker.collectRetroactiveTriggers(data, PLAYER_A, true));
+
+        // Player A records all four (including removedTarget, which is no longer in pd.targets)
+        pd.records.put(diamond, rec);
+        pd.records.put(ironTag, rec);
+        pd.records.put(emerald, rec);
+        pd.records.put(removedTarget, rec);
+
+        // Player A holds world first for diamond and ironTag; Player B holds emerald; nobody holds removedTarget
+        data.recordWorldFirstIfAbsent(diamond, PLAYER_A, "Alice", rec);
+        data.recordWorldFirstIfAbsent(ironTag, PLAYER_A, "Alice", rec);
+        data.recordWorldFirstIfAbsent(emerald, PLAYER_B, "Bob", rec);
+
+        // worldFirstEnabled = true: player's own world firsts are true, others are false
+        assertEquals(List.of(
+                new Tracker.RetroactiveTriggerEntry(diamond, true),
+                new Tracker.RetroactiveTriggerEntry(ironTag, true),
+                new Tracker.RetroactiveTriggerEntry(emerald, false),
+                new Tracker.RetroactiveTriggerEntry(removedTarget, false)
+        ), Tracker.collectRetroactiveTriggers(data, PLAYER_A, true));
+
+        // worldFirstEnabled = false: world_first is always false even for keys the player holds world first on
+        assertEquals(List.of(
+                new Tracker.RetroactiveTriggerEntry(diamond, false),
+                new Tracker.RetroactiveTriggerEntry(ironTag, false),
+                new Tracker.RetroactiveTriggerEntry(emerald, false),
+                new Tracker.RetroactiveTriggerEntry(removedTarget, false)
+        ), Tracker.collectRetroactiveTriggers(data, PLAYER_A, false));
+    }
 }

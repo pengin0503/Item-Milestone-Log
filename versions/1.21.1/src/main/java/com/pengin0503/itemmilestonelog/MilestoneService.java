@@ -29,6 +29,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
@@ -921,9 +922,13 @@ public final class MilestoneService {
     }
 
     public static ActionResult resetRecord(ServerPlayer player, String itemId, int count) {
-        return resetRecord(MilestoneData.get(player.server), player.getUUID(), player, itemId, count,
+        ActionResult result = resetRecord(MilestoneData.get(player.server), player.getUUID(), player, itemId, count,
                 MilestoneService::isValidItemId, MilestoneService::targetDisplayName,
                 UNDO_SNAPSHOTS, System.nanoTime());
+        if (result.success()) {
+            ScoreboardSync.refreshScores(player.server, player.getUUID());
+        }
+        return result;
     }
 
     static ActionResult resetRecord(MilestoneData data, UUID playerId, @Nullable ServerPlayer player,
@@ -986,8 +991,12 @@ public final class MilestoneService {
     }
 
     public static ActionResult resetAllRecords(ServerPlayer player) {
-        return resetAllRecords(MilestoneData.get(player.server), player.getUUID(), player,
+        ActionResult result = resetAllRecords(MilestoneData.get(player.server), player.getUUID(), player,
                 UNDO_SNAPSHOTS, System.nanoTime());
+        if (result.success()) {
+            ScoreboardSync.refreshScores(player.server, player.getUUID());
+        }
+        return result;
     }
 
     static ActionResult resetAllRecords(MilestoneData data, UUID playerId, @Nullable ServerPlayer player) {
@@ -1039,6 +1048,7 @@ public final class MilestoneService {
         ActionResult result = undo(MilestoneData.get(player.server), player.getUUID(), player,
                 UNDO_SNAPSHOTS, System.nanoTime());
         if (result.success()) {
+            ScoreboardSync.refreshScores(player.server, player.getUUID());
             syncPlayerIfOpen(player);
         }
         return result;
@@ -1140,7 +1150,8 @@ public final class MilestoneService {
                 playerDataDir,
                 System.currentTimeMillis(),
                 days,
-                confirm);
+                confirm,
+                uuid -> ScoreboardSync.deleteScores(server, uuid));
     }
 
     static int pruneInactivePlayers(
@@ -1150,6 +1161,17 @@ public final class MilestoneService {
             long nowMillis,
             int days,
             boolean confirm) {
+        return pruneInactivePlayers(data, isOnline, playerDataDir, nowMillis, days, confirm, null);
+    }
+
+    static int pruneInactivePlayers(
+            MilestoneData data,
+            Predicate<UUID> isOnline,
+            @Nullable Path playerDataDir,
+            long nowMillis,
+            int days,
+            boolean confirm,
+            @Nullable Consumer<UUID> beforePurge) {
         List<UUID> targets = new ArrayList<>();
         for (Map.Entry<UUID, MilestoneData.PlayerData> entry : data.allPlayers().entrySet()) {
             UUID uuid = entry.getKey();
@@ -1165,6 +1187,9 @@ public final class MilestoneService {
         }
         if (confirm) {
             for (UUID uuid : targets) {
+                if (beforePurge != null) {
+                    beforePurge.accept(uuid);
+                }
                 data.purgePlayer(uuid);
             }
         }

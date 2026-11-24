@@ -1,5 +1,6 @@
 package com.pengin0503.itemmilestonelog.gametest;
 
+import com.pengin0503.itemmilestonelog.MilestoneCommandRunner;
 import com.pengin0503.itemmilestonelog.MilestoneData;
 import com.pengin0503.itemmilestonelog.MilestoneService;
 import com.pengin0503.itemmilestonelog.Tracker;
@@ -96,5 +97,6 @@ public final class MilestoneGameTests {
         data.purgePlayer(player.getUUID());
         data.removeWorldFirst(target);
         Tracker.clearPendingNotifications();
+        MilestoneCommandRunner.clearPending();
     }
 }
