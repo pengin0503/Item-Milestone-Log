@@ -61,10 +61,12 @@ IDENTICAL_ALL_4=(
 
 # Files that differ in 1.21.1 (ResourceLocation, NBT SavedData, player.server,
 # mods.toml loaderVersion, etc.) but must be byte-identical across 26.1.2, 26.2,
-# and 26.3. Together with the 16 src/main/java files in IDENTICAL_ALL_4, this
-# covers all 34 src/main/java files that are identical across 26.x.
+# and 26.3. Together with the 17 src/main/java files in IDENTICAL_ALL_4, this
+# covers all 50 src/main/java files that are identical across 26.x (of 57; the
+# remaining 7 are the two javadoc-only entry points, the two trigger classes
+# behind TriggerCompat, and the three per-version compat implementations).
 IDENTICAL_26_X=(
-  # src/main/java (18 files; +16 from IDENTICAL_ALL_4 = 34 src/main/java files)
+  # src/main/java (33 files; +17 from IDENTICAL_ALL_4 = 50 src/main/java files)
   "src/main/java/com/pengin0503/itemmilestonelog/Config.java"
   "src/main/java/com/pengin0503/itemmilestonelog/DatapackPresetReloadListener.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestoneCommands.java"
@@ -76,6 +78,21 @@ IDENTICAL_26_X=(
   "src/main/java/com/pengin0503/itemmilestonelog/Presets.java"
   "src/main/java/com/pengin0503/itemmilestonelog/ServerLang.java"
   "src/main/java/com/pengin0503/itemmilestonelog/TagTargets.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/Tracker.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/client/ClientMilestoneHandler.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/client/ConfirmResetScreen.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/client/ItemPickerScreen.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/client/MilestoneScreen.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/client/PresetListScreen.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/client/SavePresetScreen.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/compat/McVersion.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/compat/McCompat.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/compat/TriggerCompat.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/compat/TriggerCompatImpl.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/compat/TagEventCompat.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/compat/ConfigCompat.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/compat/client/ScreenCompat.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/compat/client/ClientCompat.java"
   "src/main/java/com/pengin0503/itemmilestonelog/gametest/MilestoneGameTestRegistration.java"
   "src/main/java/com/pengin0503/itemmilestonelog/network/MilestoneActionPayload.java"
   "src/main/java/com/pengin0503/itemmilestonelog/network/ModNetworking.java"
@@ -95,22 +112,20 @@ IDENTICAL_26_X=(
 
 # Intentionally excluded files (differ across versions by design):
 # - src/main/java/.../ItemMilestoneLog.java:
-#     Version-specific comment; 26.3 uses ModConfig.Type.LOCAL instead of COMMON.
+#     Only the version-specific javadoc comment differs across 26.x (the config
+#     type and trigger registration went through McCompat in N251). 1.21.1 differs
+#     in substance as well.
 # - src/main/java/.../client/ItemMilestoneLogClient.java:
-#     1.21.1 uses String KeyMapping category; 26.1.2 uses mc.screen; 26.2 uses
-#     mc.gui.screen(); 26.3 uses SDL InputConstants / version-specific comment.
-# - src/main/java/.../client/{ClientMilestoneHandler,ConfirmResetScreen,
-#     ItemPickerScreen,MilestoneScreen,PresetListScreen,SavePresetScreen}.java:
-#     1.21.1 uses GuiGraphics / Screen.render; 26.1.2 uses GuiGraphicsExtractor
-#     + mc.screen / mc.setScreen; 26.2 and 26.3 use mc.gui.screen() / mc.gui.setScreen().
+#     Only the version-specific javadoc comment differs across 26.x (screen and
+#     slot access went through ClientCompat in N251). 1.21.1 uses a String
+#     KeyMapping category and differs in substance.
 # - src/main/java/.../DatapackPresetReloadListener.java:
 #     1.21.1 registers via AddReloadListenerEvent and uses ResourceLocation;
 #     26.x registers via AddServerReloadListenersEvent and uses Identifier.
-# - src/main/java/.../Tracker.java:
-#     NeoForge 26.3 removed TagsUpdatedEvent#getUpdateCause()/UpdateCause, so 26.3's
-#     onTagsUpdated gates the defaultTargets tag warning on shouldUpdateStaticData()
-#     instead of UpdateCause.SERVER_DATA_LOAD. 1.21.1 differs as well (ResourceLocation,
-#     player.server, GameProfile#getName); 26.1.2 and 26.2 are still identical to each other but are no longer checked.
+# - Tracker.java is checked across 26.x as of N251: the TagsUpdatedEvent
+#     interpretation moved behind TagEventCompat (26.3 removed getUpdateCause()),
+#     so the 26.x sources are identical again. 1.21.1 still differs
+#     (ResourceLocation, player.server, GameProfile#getName).
 # - src/main/java/.../MilestoneRecordedTrigger.java:
 #     Minecraft moved advancement packages and changed SimpleInstance#player() across versions:
 #     1.21.1 uses advancements.critereon.*; 26.1.2 uses advancements.criterion.*;
@@ -120,6 +135,10 @@ IDENTICAL_26_X=(
 # - src/main/java/.../ModTriggers.java:
 #     1.21.1 and 26.1.2 import net.minecraft.advancements.CriterionTrigger;
 #     26.2 and 26.3 import net.minecraft.advancements.triggers.CriterionTrigger.
+# - src/main/java/.../compat/{v26_1,v26_2,v26_3}/{TagEventCompatImpl,ConfigCompatImpl,client/ScreenCompatImpl}.java:
+#     Per-version compat implementations under compat/v26_1, compat/v26_2, compat/v26_3
+#     intentionally differ per version (N251, docs/DESIGN_1.3.0.md);
+#     ModTriggers/MilestoneRecordedTrigger likewise remain version-specific behind TriggerCompat.
 # - src/test/java/.../ServerLangTest.java:
 #     Fallback source directory path embeds each project's own Minecraft version.
 
