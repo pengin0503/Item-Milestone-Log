@@ -2,12 +2,14 @@
 # Installs a NeoForge dedicated server, puts the built mod jar into its mods folder
 # and runs .github/integration/server-test.mjs against it.
 #
-#   run-server-tests.sh <mc_version> <neoforge_version> <bot: true|false>
+#   run-server-tests.sh <mc_version> <neoforge_version> <bot: true|false> [mod_jar]
 #
 # The jar under test is the one in versions/<mc>/build/libs, loaded the way players
 # load it (a production server, not the development run). CI builds that jar against
 # the minimum NeoForge version, as for a release, and runs it on both the minimum and
-# the latest NeoForge.
+# the latest NeoForge. With the optional 4th argument, that exact jar file is tested
+# instead of the one in versions/<mc>/build/libs (used for the merged 26.x jar,
+# which must run on every 26.x version).
 #
 # With bot=true a vanilla-protocol client (mineflayer) joins, the server is then
 # restarted and the client checks that the saved data came back.
@@ -23,7 +25,7 @@ use_server "$1" "$2"
 trap stop_server EXIT
 
 install_server
-install_mod
+install_mod "${4:-}"
 prepare_server
 
 status=0
