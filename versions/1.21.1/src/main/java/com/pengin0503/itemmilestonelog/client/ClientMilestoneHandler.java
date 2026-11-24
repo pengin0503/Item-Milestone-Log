@@ -6,6 +6,7 @@ import com.pengin0503.itemmilestonelog.Playtime;
 import com.pengin0503.itemmilestonelog.TagTargets;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
+import com.pengin0503.itemmilestonelog.compat.McCompat;
 import com.pengin0503.itemmilestonelog.network.MilestoneActionPayload;
 import com.pengin0503.itemmilestonelog.network.RequestSyncPayload;
 import com.pengin0503.itemmilestonelog.network.SyncExtraPayload;
@@ -18,7 +19,6 @@ import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.ItemStack;
-import net.neoforged.neoforge.network.PacketDistributor;
 
 import javax.annotation.Nullable;
 import java.util.ArrayList;
@@ -86,7 +86,7 @@ public final class ClientMilestoneHandler {
             showServerNotInstalled(mc);
             return;
         }
-        PacketDistributor.sendToServer(new RequestSyncPayload());
+        McCompat.network().sendToServer(new RequestSyncPayload());
     }
 
     /**
@@ -109,7 +109,7 @@ public final class ClientMilestoneHandler {
         }
         String itemId = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
         ADD_TARGET_FEEDBACK.markSent(System.currentTimeMillis());
-        PacketDistributor.sendToServer(new MilestoneActionPayload(
+        McCompat.network().sendToServer(new MilestoneActionPayload(
                 MilestoneActionPayload.Action.ADD_TARGET, itemId, 1));
     }
 
@@ -130,7 +130,7 @@ public final class ClientMilestoneHandler {
         if (connection == null || !connection.hasChannel(MilestoneActionPayload.TYPE)) {
             return;
         }
-        PacketDistributor.sendToServer(new MilestoneActionPayload(action, argument == null ? "" : argument, count));
+        McCompat.network().sendToServer(new MilestoneActionPayload(action, argument == null ? "" : argument, count));
     }
 
     /**

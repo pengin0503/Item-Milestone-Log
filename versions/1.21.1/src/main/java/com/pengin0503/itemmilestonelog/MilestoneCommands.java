@@ -241,7 +241,7 @@ public final class MilestoneCommands {
             if (sp == null) {
                 return builder.buildFuture();
             }
-            MilestoneData.PlayerData pd = MilestoneData.get(sp.getServer()).playerOrNull(sp.getUUID());
+            MilestoneData.PlayerData pd = MilestoneData.get(sp.level().getServer()).playerOrNull(sp.getUUID());
             return SharedSuggestionProvider.suggest(pd != null ? itemIdsOf(pd.targets) : Set.of(), builder);
         };
         SuggestionProvider<CommandSourceStack> personalTargetCountSuggestions = (ctx, builder) -> {
@@ -249,7 +249,7 @@ public final class MilestoneCommands {
             if (sp == null) {
                 return builder.buildFuture();
             }
-            MilestoneData.PlayerData pd = MilestoneData.get(sp.getServer()).playerOrNull(sp.getUUID());
+            MilestoneData.PlayerData pd = MilestoneData.get(sp.level().getServer()).playerOrNull(sp.getUUID());
             if (pd == null) {
                 return builder.buildFuture();
             }
@@ -261,7 +261,7 @@ public final class MilestoneCommands {
             if (sp == null) {
                 return builder.buildFuture();
             }
-            MilestoneData.PlayerData pd = MilestoneData.get(sp.getServer()).playerOrNull(sp.getUUID());
+            MilestoneData.PlayerData pd = MilestoneData.get(sp.level().getServer()).playerOrNull(sp.getUUID());
             return SharedSuggestionProvider.suggest(pd != null ? itemIdsOf(pd.records.keySet()) : Set.of(), builder);
         };
         SuggestionProvider<CommandSourceStack> recordedCountSuggestions = (ctx, builder) -> {
@@ -269,7 +269,7 @@ public final class MilestoneCommands {
             if (sp == null) {
                 return builder.buildFuture();
             }
-            MilestoneData.PlayerData pd = MilestoneData.get(sp.getServer()).playerOrNull(sp.getUUID());
+            MilestoneData.PlayerData pd = MilestoneData.get(sp.level().getServer()).playerOrNull(sp.getUUID());
             if (pd == null) {
                 return builder.buildFuture();
             }
@@ -309,7 +309,7 @@ public final class MilestoneCommands {
             if (sp == null) {
                 return builder.buildFuture();
             }
-            String ownFile = MilestoneExport.sanitizePlayerFileName(sp.getGameProfile().getName());
+            String ownFile = MilestoneExport.sanitizePlayerFileName(McCompat.player().profileName(sp.getGameProfile()));
             return SharedSuggestionProvider.suggest(files.contains(ownFile) ? List.of(ownFile) : List.of(), builder);
         };
         SuggestionProvider<CommandSourceStack> adminPlayerSuggestions = (ctx, builder) -> {
@@ -496,7 +496,7 @@ public final class MilestoneCommands {
             if (sp == null) {
                 return builder.buildFuture();
             }
-            MilestoneData data = MilestoneData.get(sp.getServer());
+            MilestoneData data = MilestoneData.get(sp.level().getServer());
             MilestoneData.PlayerData pd = data.playerOrNull(sp.getUUID());
             return SharedSuggestionProvider.suggest(
                     ItemInfoLogic.suggestionItemIds(
@@ -512,7 +512,7 @@ public final class MilestoneCommands {
             if (sp == null) {
                 return builder.buildFuture();
             }
-            MilestoneData.PlayerData pd = MilestoneData.get(sp.getServer()).playerOrNull(sp.getUUID());
+            MilestoneData.PlayerData pd = MilestoneData.get(sp.level().getServer()).playerOrNull(sp.getUUID());
             if (pd == null) {
                 return builder.buildFuture();
             }
@@ -814,7 +814,7 @@ public final class MilestoneCommands {
 
     @Nullable
     private static MilestoneData.PlayerData dataOrNull(ServerPlayer player) {
-        return MilestoneData.get(player.getServer()).playerOrNull(player.getUUID());
+        return MilestoneData.get(player.level().getServer()).playerOrNull(player.getUUID());
     }
 
     private static String itemId(CommandContext<CommandSourceStack> ctx) {
@@ -1148,7 +1148,7 @@ public final class MilestoneCommands {
         ServerPlayer player = player(ctx);
         MilestoneService.ActionResult result = MilestoneService.savePreset(player, name);
         if (result.success()) {
-            MilestoneService.syncAllOnlineGuiPlayers(player.getServer(), null);
+            MilestoneService.syncAllOnlineGuiPlayers(player.level().getServer(), null);
             return send(ctx, result.message());
         }
         return fail(ctx, result.message());
@@ -1288,10 +1288,10 @@ public final class MilestoneCommands {
         if (!Config.EXPORT_IMPORT_ENABLED.get()) {
             return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.feature_disabled"));
         }
-        MilestoneData data = MilestoneData.get(player.getServer());
+        MilestoneData data = MilestoneData.get(player.level().getServer());
         MilestoneData.PlayerData pd = data.playerOrNull(player.getUUID());
-        String playerName = player.getGameProfile().getName();
-        Path dir = MilestoneExport.exportsDir(player.getServer());
+        String playerName = McCompat.player().profileName(player.getGameProfile());
+        Path dir = MilestoneExport.exportsDir(player.level().getServer());
         try {
             String relPath = MilestoneExport.exportPlayer(dir, player.getUUID(), playerName, pd);
             return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.export_done", relPath));
@@ -1309,7 +1309,7 @@ public final class MilestoneCommands {
         if (!MilestoneExport.isSafeFileName(fileName)) {
             return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.import_invalid_name", fileName));
         }
-        Path dir = MilestoneExport.exportsDir(player.getServer()).normalize();
+        Path dir = MilestoneExport.exportsDir(player.level().getServer()).normalize();
         Path file = dir.resolve(fileName).normalize();
         if (!file.getParent().equals(dir)) {
             return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.import_invalid_name", fileName));
@@ -1325,9 +1325,9 @@ public final class MilestoneCommands {
                             source.hasPermission(2)))) {
                 return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.import_not_owner", fileName));
             }
-            MilestoneData data = MilestoneData.get(player.getServer());
+            MilestoneData data = MilestoneData.get(player.level().getServer());
             MilestoneExport.ImportMergeStats stats = MilestoneExport.mergeInto(data, player.getUUID(), payload);
-            ScoreboardSync.refreshScores(player.getServer(), player.getUUID());
+            ScoreboardSync.refreshScores(player.level().getServer(), player.getUUID());
             MilestoneService.syncPlayerIfOpen(player);
             return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.import_done",
                     fileName, stats.addedTargets(), stats.updatedRecords()));
@@ -1400,10 +1400,10 @@ public final class MilestoneCommands {
         if (!Config.EXPORT_IMPORT_ENABLED.get()) {
             return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.feature_disabled"));
         }
-        MilestoneData data = MilestoneData.get(player.getServer());
+        MilestoneData data = MilestoneData.get(player.level().getServer());
         MilestoneData.PlayerData pd = data.playerOrNull(player.getUUID());
-        String playerName = player.getGameProfile().getName();
-        Path dir = MilestoneExport.exportsDir(player.getServer());
+        String playerName = McCompat.player().profileName(player.getGameProfile());
+        Path dir = MilestoneExport.exportsDir(player.level().getServer());
         try {
             String relPath = MilestoneExport.exportPlayerHtml(dir, player.getUUID(), playerName, pd, data);
             return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.export_done", relPath));
@@ -1436,10 +1436,10 @@ public final class MilestoneCommands {
         if (!Config.EXPORT_IMPORT_ENABLED.get()) {
             return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.feature_disabled"));
         }
-        MilestoneData data = MilestoneData.get(player.getServer());
+        MilestoneData data = MilestoneData.get(player.level().getServer());
         MilestoneData.PlayerData pd = data.playerOrNull(player.getUUID());
-        String playerName = player.getGameProfile().getName();
-        Path dir = MilestoneExport.exportsDir(player.getServer());
+        String playerName = McCompat.player().profileName(player.getGameProfile());
+        Path dir = MilestoneExport.exportsDir(player.level().getServer());
         try {
             String relPath = MilestoneExport.exportPlayerCsv(dir, player.getUUID(), playerName, pd, data);
             return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.export_done", relPath));
@@ -1471,7 +1471,7 @@ public final class MilestoneCommands {
 
     private static int muteBroadcast(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
         ServerPlayer player = player(ctx);
-        MilestoneData data = MilestoneData.get(player.getServer());
+        MilestoneData data = MilestoneData.get(player.level().getServer());
         MilestoneData.PlayerData pd = data.player(player.getUUID());
         pd.muteBroadcasts = !pd.muteBroadcasts;
         data.setDirty();
@@ -1485,7 +1485,7 @@ public final class MilestoneCommands {
 
     private static int muteProgress(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
         ServerPlayer player = player(ctx);
-        MilestoneData data = MilestoneData.get(player.getServer());
+        MilestoneData data = MilestoneData.get(player.level().getServer());
         MilestoneData.PlayerData pd = data.player(player.getUUID());
         pd.muteProgressAlerts = !pd.muteProgressAlerts;
         data.setDirty();
@@ -2107,7 +2107,7 @@ public final class MilestoneCommands {
                 }
             }
             if (online != null) {
-                String profileName = online.getGameProfile().getName();
+                String profileName = McCompat.player().profileName(online.getGameProfile());
                 String name = (profileName != null && !profileName.isBlank()) ? profileName : online.getUUID().toString();
                 return new TargetIdentity(online.getUUID(), name);
             }

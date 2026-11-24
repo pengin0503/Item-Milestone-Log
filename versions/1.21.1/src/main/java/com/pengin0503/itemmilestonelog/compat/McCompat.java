@@ -1,5 +1,6 @@
 package com.pengin0503.itemmilestonelog.compat;
 
+import com.pengin0503.itemmilestonelog.compat.client.NetworkCompat;
 import com.pengin0503.itemmilestonelog.compat.client.ScrollCompat;
 import com.pengin0503.itemmilestonelog.compat.client.TooltipCompat;
 
@@ -17,6 +18,7 @@ public final class McCompat {
     private static final ReloadCompat RELOAD = load(ReloadCompat.class, "ReloadCompatImpl");
     private static final DataCompat DATA = load(DataCompat.class, "DataCompatImpl");
     private static final ChatCompat CHAT = load(ChatCompat.class, "ChatCompatImpl");
+    private static final PlayerCompat PLAYER = load(PlayerCompat.class, "PlayerCompatImpl");
 
     private McCompat() {
     }
@@ -49,6 +51,10 @@ public final class McCompat {
         return CHAT;
     }
 
+    public static PlayerCompat player() {
+        return PLAYER;
+    }
+
     /**
      * Client-only: the implementation references client classes, so it is loaded lazily on
      * first use (never during {@code McCompat} initialization on a dedicated server).
@@ -60,6 +66,11 @@ public final class McCompat {
     /** Client-only, lazily loaded like {@link #scroll()}. */
     public static TooltipCompat tooltip() {
         return ClientHolder.TOOLTIP;
+    }
+
+    /** Client-only, lazily loaded like {@link #scroll()}. */
+    public static NetworkCompat network() {
+        return ClientHolder.NETWORK;
     }
 
     private static <T> T load(Class<T> iface, String simpleName) {
@@ -80,5 +91,6 @@ public final class McCompat {
     private static final class ClientHolder {
         private static final ScrollCompat SCROLL = load(ScrollCompat.class, "client.", "ScrollCompatImpl");
         private static final TooltipCompat TOOLTIP = load(TooltipCompat.class, "client.", "TooltipCompatImpl");
+        private static final NetworkCompat NETWORK = load(NetworkCompat.class, "client.", "NetworkCompatImpl");
     }
 }
