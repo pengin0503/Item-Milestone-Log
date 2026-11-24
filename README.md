@@ -216,6 +216,16 @@ For server migrations, `/milestonelog exportall` writes all players plus a `worl
 `config/itemmilestonelog-local.toml` (Minecraft 26.3, where NeoForge renamed the
 config type). On a dedicated server, edit the file on the server.
 
+Settings can also be changed from the mod list's **Config** screen, which uses NeoForge's
+generic configuration screen. The two webhook URLs (`discordWebhookUrl` and
+`discordWorldFirstWebhookUrl`) are deliberately not shown there, because their values
+would be exposed in screenshots and streams; edit them in the file instead.
+
+> **Multiplayer note:** the common (26.3: local) config file belongs to each PC. Changing
+> it while connected to a multiplayer server does not change the server's settings; only
+> settings the client itself uses (such as `itemTooltipStatus`) take effect locally. In
+> singleplayer the same file applies to all worlds.
+
 - `defaultTargets` — item IDs every player tracks by default (append `#<count>`, e.g. `"minecraft:diamond#100"`, for quantities > 1)
 - `scanIntervalTicks` — inventory scan interval in ticks (default `20` ticks = 1 s, `1–1200`)
 - `notifyPlayer` — chat notification on record (default `true`)

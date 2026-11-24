@@ -241,6 +241,13 @@ public final class Config {
                     "Does not affect datapack preset metadata sent in the extra sync payload.")
             .define("guiWorldFirstMark", true);
 
+    /** F42: show milestone status lines at the end of item tooltips (read from the client's own config file). */
+    public static final ModConfigSpec.BooleanValue ITEM_TOOLTIP_STATUS = BUILDER
+            .comment("Show milestone status lines at the end of item tooltips on this client.",
+                    "This is a client-side display setting: each player's own config file controls it on their client;",
+                    "the server's value is never used.")
+            .define("itemTooltipStatus", true);
+
     static final ModConfigSpec SPEC = BUILDER.build();
 
     private record ThresholdsCache(List<? extends Integer> source, List<Integer> normalized) {
@@ -413,6 +420,18 @@ public final class Config {
     public static boolean guiWorldFirstMark() {
         try {
             return GUI_WORLD_FIRST_MARK.get();
+        } catch (IllegalStateException notLoaded) {
+            return true;
+        }
+    }
+
+    /**
+     * F42: {@link #ITEM_TOOLTIP_STATUS}, or {@code true} while the config is not loaded yet
+     * (plain unit tests). The client reads its own config file here.
+     */
+    public static boolean itemTooltipStatus() {
+        try {
+            return ITEM_TOOLTIP_STATUS.get();
         } catch (IllegalStateException notLoaded) {
             return true;
         }

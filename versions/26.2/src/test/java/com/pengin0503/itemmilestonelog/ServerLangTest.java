@@ -111,6 +111,7 @@ class ServerLangTest {
     void keybindKeysHaveEnglishEntries() {
         Map<String, String> fallbacks = ServerLang.fallbacks();
         assertTrue(fallbacks.containsKey("key.itemmilestonelog.open_gui"), "missing key.itemmilestonelog.open_gui");
+        assertTrue(fallbacks.containsKey("key.itemmilestonelog.add_hovered"), "missing key.itemmilestonelog.add_hovered");
         assertTrue(fallbacks.containsKey("key.categories.itemmilestonelog"), "missing key.categories.itemmilestonelog");
         assertTrue(fallbacks.containsKey("key.category.itemmilestonelog.general"), "missing key.category.itemmilestonelog.general");
     }
