@@ -91,11 +91,16 @@ jobs:
                 featured: false, project_id: $project_id,
                 game_versions: [$mc], file_parts: ["file"]}')
             echo "Uploading $base to Modrinth (MC $mc)..."
-            curl -sS -f -X POST "https://api.modrinth.com/v2/version" \
+            code=$(curl -sS -X POST "https://api.modrinth.com/v2/version" \
               -H "Authorization: $MODRINTH_TOKEN" \
               -H "User-Agent: pengin0503/Item-Milestone-Log publish workflow" \
               -F "data=$data" \
-              -F "file=@$jar" > /dev/null
+              -F "file=@$jar" -o resp.json -w "%{http_code}")
+            cat resp.json
+            if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
+              echo "::error::Modrinth upload failed with HTTP $code"
+              exit 1
+            fi
           done
 
       - name: Upload to CurseForge
@@ -133,9 +138,14 @@ jobs:
                 displayName: $displayName, gameVersions: $gameVersions,
                 releaseType: "release"}')
             echo "Uploading $base to CurseForge (MC $mc)..."
-            curl -sS -f -X POST \
+            code=$(curl -sS -X POST \
               "https://minecraft.curseforge.com/api/projects/$CURSEFORGE_PROJECT_ID/upload-file" \
               -H "X-Api-Token: $CURSEFORGE_TOKEN" \
               -F "metadata=$metadata" \
-              -F "file=@$jar" > /dev/null
+              -F "file=@$jar" -o resp.json -w "%{http_code}")
+            cat resp.json
+            if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
+              echo "::error::CurseForge upload failed with HTTP $code"
+              exit 1
+            fi
           done
