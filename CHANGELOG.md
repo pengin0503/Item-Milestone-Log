@@ -3,6 +3,46 @@
 The section for a version is used as it is for the GitHub Release (created when a
 `v<version>` tag is pushed) and for the CurseForge file changelog.
 
+## 1.2.0
+
+### New Commands
+- **Tag targets**: Added `/milestonelog addtag <tag> [<count>]`, `/milestonelog removetag <tag> [<count>]`, `/milestonelog resettag <tag> [<count>]`, `/milestonelog firsts resettag <tag> [<count>]`, `/milestonelog admin <player> resettag <tag> [<count>]`, and `/milestonelog toptag <tag> [<count>]`. Tags are written without the leading `#` in commands, but as `#namespace:path` in `defaultTargets`, presets, and exports; possession of all items in the tag is summed.
+- **Item info**: Added `/milestonelog info <item> [<count>]` and `/milestonelog info hand` (player only). Shows your target/record status, the world-first holder and time, how many players recorded the item and your rank (when `allowLookup` permits it), and related tag targets.
+- **Item ID renaming**: Added OP `/milestonelog renameitem <oldId> <newId> [confirm]` to move targets, records, `progressNotified`, `carriedFromCreative`, and world-firsts from an old item ID to a new registered item. Without `confirm` it only previews; it writes a backup first and never edits `defaultTargets` or preset files.
+- **Discord webhook test target**: Added `/milestonelog discordtest worldfirst` to test the separate world-first webhook.
+
+### Targets, Detection & Display
+- **Item tag targets**: Tag targets work with quantity targets, progress alerts, world-firsts, presets, `defaultTargets`, command execution, scoreboard counts, and export/import. Names use NeoForge tag translations where available, falling back to `#namespace:path`; the GUI resolves the first item in the tag as its icon. Tag targets cannot be added from the GUI item picker, but can be viewed, removed, and reset there. 1.0.1/1.1.0 clients simply do not show tag entries in the GUI.
+- **Chat item hover (enabled by default, `chatItemHover`)**: Item names in the mod's chat messages now show the item on hover (`show_item`). The text itself is unchanged.
+- **Item tooltip status (enabled by default, `itemTooltipStatus`)**: On modded clients, item tooltips gain up to three gray lines showing whether the item (or one of its tag targets) is a target or already recorded, including playtime.
+- **Localized playtime and Day formatting (default behavior change)**: Chat and GUI now format playtime and Day/date through the player's language (e.g. 「27時間03分05秒（5日目、2026-11-23）」). English output is unchanged. Discord, server logs, exports, and the API deliberately keep the English format.
+- **GUI world-first mark (enabled by default, `guiWorldFirstMark`)**: Recorded rows show `✔ ★ …` when you hold the world first. The extra sync payload is only sent to 1.2.0+ clients; 1.0.1/1.1.0 clients keep the old display.
+- **Scoreboard integration (F17)**: Optional `scoreboardObjective` and `scoreboardWorldFirstObjective` mirror each player's record count and world-first count to vanilla scoreboard objectives, updated on records, resets, imports, renames, and login.
+- **Login world-first summary (F52)**: Optional `loginWorldFirstSummary` lists up to five world-firsts recorded while you were away, with a remaining count.
+- **Hovered-item key (F41)**: A new, unbound-by-default key lets you add the item under the mouse cursor as a target from inventory/container screens.
+- **Advancement trigger (F2)**: Datapacks can use the `itemmilestonelog:milestone_recorded` trigger with `player`, `item`, `count`, and `world_first` conditions. Existing records are replayed on login and `/reload`; resets do not revoke advancements.
+- **`info` command (F51)**: See a single item's personal status, world first, recorder count/rank, and related tag targets without opening the GUI.
+- **Milestone command execution (F7)**: Optional `milestoneCommand` runs a server command when a milestone is recorded, with `%player%`, `%uuid%`, `%item%`, `%count%`, `%playtime%`, and `%worldfirst%` placeholders; use `function <namespace>:<path>` for multiple commands.
+
+### Data, Safety & Administration
+- **Automatic world-data backups (enabled by default, `autoBackupEnabled`)**: `MilestoneData` is written to `<world>/itemmilestonelog/backups/milestones-YYYYMMDD-HHmmss.dat` on world save (at most once per hour) and on server stop, keeping `autoBackupGenerations` files (default 5). Backups can be restored manually by stopping the server and copying the chosen file back over the real data file.
+- **Datapack presets (F21)**: Presets can be shipped in `data/<namespace>/itemmilestonelog/presets/<id>.json` and are read on `/reload`. Precedence is built-in > config folder > datapack; datapack presets are read-only and `preset reload` only re-reads the config folder.
+- **Per-language preset names (F54)**: A preset's `name` may be an object such as `{"en_us": "Starter Kit", "ja_jp": "スターターキット"}`; each viewer gets their language, then `en_us`, then the first entry, then the preset ID.
+- **Permission nodes (F43)**: NeoForge permission nodes can grant individual admin commands to non-OP staff (`itemmilestonelog.admin`, `firsts.reset`, `export.all`, `import.all`, `prunedata`, `renameitem`, `discordtest`, `presets.manage`, `viewhidden`). Nodes can add access but cannot take OP access away.
+- **NeoForge config screen (F44)**: The mod list's **Config** screen now edits all settings except the two webhook URLs.
+- **API tag support**: `TargetKey.isTag()` and tag-aware `ItemMilestoneLogApi` helpers; `getItemId()` can return a `#` tag ID, so check `isTag()` before parsing it as an item ID.
+
+### Discord Improvements
+- **Weekly digest (F9)**: Optional `discordDigestEnabled` sends a periodic summary of new records and world-firsts using `discordDigestIntervalDays` (default 7, range 1–30). The first run only records the current time; the digest does not resend a delivery that failed with HTTP 429 and follows `discordNotifyScope`.
+- **Separate world-first webhook (F46)**: `discordWorldFirstWebhookUrl` sends world-first posts there only, while records, preset completions, and digests use `discordWebhookUrl`. Either URL can use `env:VAR_NAME`.
+- **Silent record posts (F53)**: `discordSilentRecords` adds Discord's `SUPPRESS_NOTIFICATIONS` flag (`flags: 4096`) to normal record posts and grouped posts without a world first; world-first posts, preset completions, digests, and tests still notify.
+- **World-first webhook test (F49)**: `/milestonelog discordtest worldfirst` verifies the second URL without printing it.
+
+### Compatibility & Downgrade Notes
+- Fully backward-compatible with 1.0.1 and 1.1.0 worlds and network-compatible with 1.0.1/1.1.0 clients and servers. Tag entries are invisible to 1.0.1/1.1.0 clients but do not disconnect them.
+- **Downgrading from 1.2.0 to 1.1.0 or 1.0.1**: older versions do not read tag targets/records/world-firsts or the new `lastDigestEpoch` field, so tag-target data and `lastDigestEpoch` are dropped on the next save. Make a backup (or use the automatic 1.2.0 backups) before downgrading. Downgrading from 1.1.0 to 1.0.1 additionally drops the 1.1.0 per-player fields described below.
+- New defaults worth noting: automatic backups, chat item hover, GUI world-first marks, item tooltip status, and localized playtime/Day formatting are on by default; the weekly digest, login summary, scoreboard objectives, silent Discord posts, and `milestoneCommand` are off until configured.
+
 ## 1.1.0
 
 ### New Commands

@@ -32,6 +32,7 @@ Item Milestone Log の複数バージョン対応（`1.21.1` / `26.1.2` / `26.2`
 
 ### 保存データの構造（全バージョン共通）
 - ルート: `"players"`（UUID → PlayerData）および `"worldFirsts"`（アイテムID → 数量 → `{ "uuid", "name", "ticks", "day", "epoch" }`。空なら省略）
+- ルート（**1.2.0 で追加**）: `"lastDigestEpoch"`（long、epochMillis、`0` なら省略）。F9 の Discord 週次ダイジェストの前回送信時刻。PlayerData の `lastSeen` とは別物
 - PlayerData（1.0.0 / 1.0.1）:
   - `"targets"`: エンコード済み TargetKey（`itemId` または `itemId#count`）の文字列リスト
   - `"records"`: `itemId -> { "<count>": { "ticks", "day", "epoch" } }`（1.0.0 の整数形式・初期 1.0.1 の単一コンパウンド形式も読み込み互換あり）
@@ -48,7 +49,17 @@ Item Milestone Log の複数バージョン対応（`1.21.1` / `26.1.2` / `26.2`
 | `lastSeen` | long（epochMillis） | `0`（不明） | `0` なら省略 | 最終ログイン／ログアウト時刻（F37 `prunedata`） |
 | `excludeFromDiscord` | boolean | `false` | `true` のみ | Discord 投稿からの個人除外設定（F45） |
 
+### タグキーの保存形式（1.2.0）
+
+F8 のタグターゲットは、`targets` / `records` / `worldFirsts` / `progressNotified` のキーに、先頭 `#` 付きのタグ ID をそのまま保存します（`#namespace:path` または `#namespace:path#count`）。専用の NBT キーや別ファイルは増やさず、既存の itemId 文字列の延長として扱います。`TargetKey.tryParseNormalized` が 4 バージョン共通の正規化を行い、`#` で始まるキーはタグとして検証されます。
+
+> **ダウングレード時の注意（1.2.0 → 1.1.0 / 1.0.1）**: 1.1.0 / 1.0.1 はタグ形式のキーを受け付けず、`lastDigestEpoch` も読まないため、次の保存でタグのターゲット・記録・世界初と `lastDigestEpoch` が失われます。1.2.0 に戻すと F9 のダイジェストは初回扱い（送信せず時刻だけ記録）になります。ダウングレード前にバックアップを取ってください。
+>
 > **ダウングレード時の注意（1.1.0 → 1.0.1）**: 1.0.1 は 1.1.0 で追加された上記 6 フィールドを読み捨て、次の保存で削除します。非公開・ミュート・Discord 除外設定が失われ、再び 1.1.0 に戻した際に進捗アラートやプリセット制覇通知が再発火し得ます。
+
+### 自動バックアップ（1.2.0）
+
+`autoBackupEnabled`（既定 true）で、ワールド保存時（最短1時間に1回）とサーバー停止時に、`<world>/itemmilestonelog/backups/milestones-YYYYMMDD-HHmmss.dat` へ `MilestoneData` を書き出します（`autoBackupGenerations`、既定5世代）。復元は手動で、サーバーを止めてからバックアップを上の「保存データの場所」に書かれた実ファイル名で上書きします。26.x で 1.21.1 時代のバックアップを使う場合は、`milestones.dat` が無い状態で `data/itemmilestonelog_data.dat` として置きます（既存の移行処理が読みます）。
 
 ### クリエイティブ／スペクテイター（`ignoreCreativeAndSpectator`、既定 true）
 - この2つのモードでは、スキャン・拾得・クラフト・精錬のどれでも記録しません。
