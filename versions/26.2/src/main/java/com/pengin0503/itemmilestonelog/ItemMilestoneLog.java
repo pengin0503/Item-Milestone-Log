@@ -10,7 +10,9 @@ import net.neoforged.fml.config.ModConfig;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.server.ServerStartedEvent;
 import net.neoforged.neoforge.event.server.ServerStartingEvent;
+import net.neoforged.neoforge.event.server.ServerStoppedEvent;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
+import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import org.slf4j.Logger;
 
 /**
@@ -31,7 +33,10 @@ public class ItemMilestoneLog {
         NeoForge.EVENT_BUS.register(MilestoneCommands.class);
         NeoForge.EVENT_BUS.addListener(ItemMilestoneLog::onServerStarting);
         NeoForge.EVENT_BUS.addListener(ItemMilestoneLog::onServerStarted);
+        NeoForge.EVENT_BUS.addListener(ItemMilestoneLog::onServerTick);
         NeoForge.EVENT_BUS.addListener(ItemMilestoneLog::onServerStopping);
+        NeoForge.EVENT_BUS.addListener(ItemMilestoneLog::onServerStopped);
+        NeoForge.EVENT_BUS.addListener(MilestoneBackup::onLevelSave);
 
         LOGGER.info("Item Milestone Log loaded");
     }
@@ -40,6 +45,7 @@ public class ItemMilestoneLog {
         int custom = Presets.reload();
         LOGGER.info("[ItemMilestoneLog] Loaded {} preset(s) ({} custom)", Presets.names().size(), custom);
         MilestoneService.warnUnknownFirstJoinPresets();
+        MilestoneBackup.initForServer(event.getServer());
     }
 
     private static void onServerStarted(ServerStartedEvent event) {
@@ -47,13 +53,24 @@ public class ItemMilestoneLog {
             DiscordNotifier.warnIfWebhookConfiguredInSingleplayer();
         }
         ScoreboardSync.refreshAll(event.getServer());
+        DiscordNotifier.checkDigestOnServerStart(event.getServer());
+    }
+
+    private static void onServerTick(ServerTickEvent.Post event) {
+        DiscordNotifier.tickDigest(event.getServer());
     }
 
     private static void onServerStopping(ServerStoppingEvent event) {
+        MilestoneBackup.onServerStopping(event.getServer());
         Tracker.clearPendingNotifications();
         MilestoneCommandRunner.clearPending();
         MilestoneService.UNDO_SNAPSHOTS.clear();
         ScoreboardSync.resetWarningState();
         DiscordNotifier.shutdown();
+    }
+
+    private static void onServerStopped(ServerStoppedEvent event) {
+        MilestoneBackup.resetState();
+        DiscordNotifier.resetDigestThrottler();
     }
 }

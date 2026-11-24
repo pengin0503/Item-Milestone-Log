@@ -3,9 +3,11 @@ package com.pengin0503.itemmilestonelog;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
 import com.pengin0503.itemmilestonelog.api.WorldFirstRecord;
+import net.minecraft.SharedConstants;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.NbtUtils;
 import net.minecraft.nbt.StringTag;
 import net.minecraft.nbt.Tag;
 import net.minecraft.server.MinecraftServer;
@@ -28,9 +30,9 @@ import java.util.UUID;
  * so records survive restarts and are kept per world (per server).
  */
 public class MilestoneData extends SavedData {
-    private static final String DATA_NAME = ItemMilestoneLog.MOD_ID + "_data";
+    static final String DATA_NAME = ItemMilestoneLog.MOD_ID + "_data";
 
-    private static final Factory<MilestoneData> FACTORY = new Factory<>(
+    static final Factory<MilestoneData> FACTORY = new Factory<>(
             MilestoneData::new,
             MilestoneData::load,
             null);
@@ -73,9 +75,25 @@ public class MilestoneData extends SavedData {
 
     private final Map<UUID, PlayerData> players = new LinkedHashMap<>();
     private final Map<TargetKey, WorldFirstRecord> worldFirsts = new LinkedHashMap<>();
+    /** Epoch millis of the last Discord digest (0 = never initialized/sent, F9). */
+    private long lastDigestEpochMillis = 0L;
 
     public static MilestoneData get(MinecraftServer server) {
         return server.overworld().getDataStorage().computeIfAbsent(FACTORY, DATA_NAME);
+    }
+
+    /** Returns the epoch millis of the last Discord digest, or {@code 0} if not yet recorded (F9). */
+    public long lastDigestEpochMillis() {
+        return lastDigestEpochMillis;
+    }
+
+    /** Updates the last Discord digest timestamp (clamping negative values to 0) and marks dirty when changed (F9). */
+    public void setLastDigestEpochMillis(long epochMillis) {
+        long normalized = Math.max(0L, epochMillis);
+        if (this.lastDigestEpochMillis != normalized) {
+            this.lastDigestEpochMillis = normalized;
+            setDirty();
+        }
     }
 
     public PlayerData player(UUID uuid) {
@@ -377,6 +395,17 @@ public class MilestoneData extends SavedData {
             }
         }
 
+        if (tag.contains("lastDigestEpoch", Tag.TAG_ANY_NUMERIC)) {
+            long lastDigest = tag.getLong("lastDigestEpoch");
+            if (lastDigest > 0L) {
+                data.lastDigestEpochMillis = lastDigest;
+            } else if (lastDigest < 0L) {
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping negative lastDigestEpoch value {} in SavedData", lastDigest);
+            }
+        } else if (tag.contains("lastDigestEpoch")) {
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed lastDigestEpoch tag in SavedData");
+        }
+
         return data;
     }
 
@@ -472,6 +501,28 @@ public class MilestoneData extends SavedData {
             tag.put("worldFirsts", firsts);
         }
 
+        if (lastDigestEpochMillis > 0L) {
+            tag.putLong("lastDigestEpoch", lastDigestEpochMillis);
+        }
+
         return tag;
+    }
+
+    /** Returns {@code true} when neither player entries nor world-first records exist. */
+    public boolean isEmpty() {
+        return players.isEmpty() && worldFirsts.isEmpty();
+    }
+
+    /**
+     * F10: serializes this in-memory {@link MilestoneData} into the exact root NBT wrapper
+     * ({@code {"data": ..., "DataVersion": ...}}) written by vanilla {@link SavedData}.
+     * Does not clear {@link #isDirty()}.
+     */
+    CompoundTag toSavedDataFileTag(@Nullable HolderLookup.Provider registries) {
+        CompoundTag root = new CompoundTag();
+        root.put("data", save(new CompoundTag(), registries));
+        SharedConstants.tryDetectVersion();
+        NbtUtils.addCurrentDataVersion(root);
+        return root;
     }
 }

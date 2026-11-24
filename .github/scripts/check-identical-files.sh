@@ -17,8 +17,9 @@ VERSIONS_26=(26.1.2 26.2 26.3)
 # Files that must be byte-identical across ALL four Minecraft versions
 # (1.21.1, 26.1.2, 26.2, 26.3).
 IDENTICAL_ALL_4=(
-  # src/main/java (15 files)
+  # src/main/java (16 files)
   "src/main/java/com/pengin0503/itemmilestonelog/DiscordNotifier.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/MilestoneBackup.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestoneCommandRunner.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestoneRankings.java"
   "src/main/java/com/pengin0503/itemmilestonelog/ScoreboardSync.java"
@@ -76,7 +77,8 @@ IDENTICAL_26_X=(
   "src/main/java/com/pengin0503/itemmilestonelog/network/RequestSyncPayload.java"
   "src/main/java/com/pengin0503/itemmilestonelog/network/SyncMilestonesPayload.java"
 
-  # src/test/java (2 files)
+  # src/test/java (3 files)
+  "src/test/java/com/pengin0503/itemmilestonelog/MilestoneBackupTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/MilestoneDataTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/PresetsTest.java"
 

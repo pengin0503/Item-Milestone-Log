@@ -4,6 +4,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.ParseResults;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.tree.CommandNode;
 import net.minecraft.commands.CommandSourceStack;
@@ -33,7 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class MilestoneCommandsHelpTest {
     private static final Set<String> ADMIN_ONLY = Set.of(
             "exportall", "exporthtmlall", "exportcsvall", "importall",
-            "admin", "prunedata", "discordtest");
+            "admin", "prunedata", "renameitem", "discordtest");
 
     private static CommandDispatcher<CommandSourceStack> buildDispatcher(Predicate<CommandSourceStack> adminRequirement) {
         CommandDispatcher<CommandSourceStack> dispatcher = new CommandDispatcher<>();
@@ -85,6 +86,60 @@ class MilestoneCommandsHelpTest {
                 com.pengin0503.itemmilestonelog.api.TargetKey.of("#c:ingots/iron"),
                 com.pengin0503.itemmilestonelog.api.TargetKey.of("#c:ingots/iron", 10),
                 com.pengin0503.itemmilestonelog.api.TargetKey.of("minecraft:diamond"))));
+    }
+
+    @Test
+    void renameItemIsRegisteredAtRootWithAdminRequirementAndOptionalConfirm() {
+        CommandDispatcher<CommandSourceStack> op = buildDispatcher(src -> true);
+        CommandNode<CommandSourceStack> root = op.getRoot().getChild("milestonelog");
+        assertNotNull(root);
+        CommandNode<CommandSourceStack> rename = root.getChild("renameitem");
+        assertNotNull(rename, "renameitem must be registered at root");
+        assertNotNull(rename.getChild("oldId"), "renameitem must take <oldId>");
+        CommandNode<CommandSourceStack> newId = rename.getChild("oldId").getChild("newId");
+        assertNotNull(newId, "renameitem must take <newId>");
+        assertNotNull(newId.getCommand(), "renameitem <oldId> <newId> must execute preview");
+        CommandNode<CommandSourceStack> confirm = newId.getChild("confirm");
+        assertNotNull(confirm, "renameitem must take optional confirm literal");
+        assertNotNull(confirm.getCommand(), "renameitem <oldId> <newId> confirm must execute apply");
+        assertEquals(List.of("/milestonelog renameitem <oldId> <newId> [confirm]"),
+                MilestoneCommands.helpUsages(op, null, entryByName("renameitem")));
+    }
+
+    @Test
+    void discordTestRegistersOptionalWorldFirstSubcommandWithAdminRequirement() {
+        CommandDispatcher<CommandSourceStack> regular = buildDispatcher(src -> false);
+        CommandDispatcher<CommandSourceStack> op = buildDispatcher(src -> true);
+        CommandNode<CommandSourceStack> root = op.getRoot().getChild("milestonelog");
+        assertNotNull(root);
+        CommandNode<CommandSourceStack> discordTest = root.getChild("discordtest");
+        assertNotNull(discordTest, "discordtest must be registered");
+        assertNotNull(discordTest.getCommand(), "discordtest without argument must test main webhook");
+        CommandNode<CommandSourceStack> worldFirst = discordTest.getChild("worldfirst");
+        assertNotNull(worldFirst, "discordtest worldfirst must be registered (F49 1.2.0)");
+        assertNotNull(worldFirst.getCommand(), "discordtest worldfirst must execute");
+        assertEquals(List.of("/milestonelog discordtest [worldfirst]"),
+                MilestoneCommands.helpUsages(op, null, entryByName("discordtest")));
+        assertFalse(MilestoneCommands.canUseHelpEntry(regular, null, entryByName("discordtest")));
+        assertTrue(MilestoneCommands.canUseHelpEntry(op, null, entryByName("discordtest")));
+
+        ParseResults<CommandSourceStack> opMain = op.parse("milestonelog discordtest", null);
+        assertFalse(opMain.getReader().canRead(), "OP should fully parse /milestonelog discordtest");
+        assertTrue(opMain.getExceptions().isEmpty(), "OP parse of /milestonelog discordtest should have no errors");
+        assertNotNull(opMain.getContext().getCommand(), "OP /milestonelog discordtest must resolve a command");
+
+        ParseResults<CommandSourceStack> opWorldFirst = op.parse("milestonelog discordtest worldfirst", null);
+        assertFalse(opWorldFirst.getReader().canRead(), "OP should fully parse /milestonelog discordtest worldfirst");
+        assertTrue(opWorldFirst.getExceptions().isEmpty(), "OP parse of /milestonelog discordtest worldfirst should have no errors");
+        assertNotNull(opWorldFirst.getContext().getCommand(), "OP /milestonelog discordtest worldfirst must resolve a command");
+        assertEquals(3, opWorldFirst.getContext().getNodes().size());
+        assertEquals("worldfirst", opWorldFirst.getContext().getNodes().get(2).getNode().getName());
+
+        ParseResults<CommandSourceStack> regularWorldFirst = regular.parse("milestonelog discordtest worldfirst", null);
+        assertTrue(regularWorldFirst.getReader().canRead(),
+                "Non-admin must not match /milestonelog discordtest worldfirst");
+        assertEquals(1, regularWorldFirst.getContext().getNodes().size(),
+                "Non-admin parse must stop at root milestonelog");
     }
 
     @Test

@@ -458,6 +458,7 @@ class MilestoneDataTest {
         assertFalse(player.contains("progressNotified"), player::toString);
         assertFalse(player.contains("completedPresets"), player::toString);
         assertFalse(saved.contains("worldFirsts"), saved::toString);
+        assertFalse(saved.contains("lastDigestEpoch"), saved::toString);
     }
 
     @Test
@@ -987,5 +988,64 @@ class MilestoneDataTest {
         assertEquals(Map.of(logsTag64, 50), migratedPd.progressNotified);
         assertEquals(wf1, migrated.worldFirstOrNull(ironTag1));
         assertEquals(wf100, migrated.worldFirstOrNull(ironTag100));
+    }
+
+    @Test
+    void persistsLastDigestEpochLenientlyOmitsWhenZeroRoundTripsAndMigratesFromLegacy(@TempDir Path dir) throws IOException {
+        MilestoneData original = new MilestoneData();
+        assertEquals(0L, original.lastDigestEpochMillis());
+        CompoundTag emptyEncoded = (CompoundTag) MilestoneData.CODEC.encodeStart(NbtOps.INSTANCE, original).getOrThrow();
+        assertFalse(emptyEncoded.contains("lastDigestEpoch"), emptyEncoded::toString);
+
+        // Positive timestamp marks dirty, encodes "lastDigestEpoch", and round-trips cleanly.
+        original.setLastDigestEpochMillis(1795800000000L);
+        assertTrue(original.isDirty());
+        CompoundTag encoded = (CompoundTag) MilestoneData.CODEC.encodeStart(NbtOps.INSTANCE, original).getOrThrow();
+        assertEquals(1795800000000L, encoded.getLongOr("lastDigestEpoch", 0L));
+        MilestoneData reloaded = MilestoneData.CODEC.parse(NbtOps.INSTANCE, encoded).getOrThrow();
+        assertEquals(1795800000000L, reloaded.lastDigestEpochMillis());
+
+        // Setting negative clamps to 0 and omits key when encoded.
+        original.setLastDigestEpochMillis(-50L);
+        assertEquals(0L, original.lastDigestEpochMillis());
+        CompoundTag zeroEncoded = (CompoundTag) MilestoneData.CODEC.encodeStart(NbtOps.INSTANCE, original).getOrThrow();
+        assertFalse(zeroEncoded.contains("lastDigestEpoch"), zeroEncoded::toString);
+
+        // Malformed tag (non-numeric) is skipped leniently without breaking player data.
+        CompoundTag playerATag = new CompoundTag();
+        playerATag.putString("lastKnownName", "Alice");
+        CompoundTag players = new CompoundTag();
+        players.put(PLAYER_A.toString(), playerATag);
+
+        CompoundTag malformedTag = new CompoundTag();
+        malformedTag.put("players", players.copy());
+        malformedTag.put("lastDigestEpoch", StringTag.valueOf("garbage"));
+        MilestoneData loadedMalformed = MilestoneData.CODEC.parse(NbtOps.INSTANCE, malformedTag).getOrThrow();
+        assertEquals(0L, loadedMalformed.lastDigestEpochMillis());
+        assertEquals("Alice", loadedMalformed.playerOrNull(PLAYER_A).lastKnownName);
+
+        // Negative value is skipped leniently and defaults to 0.
+        CompoundTag negativeTag = new CompoundTag();
+        negativeTag.put("players", players.copy());
+        negativeTag.putLong("lastDigestEpoch", -100L);
+        MilestoneData loadedNegative = MilestoneData.CODEC.parse(NbtOps.INSTANCE, negativeTag).getOrThrow();
+        assertEquals(0L, loadedNegative.lastDigestEpochMillis());
+        assertEquals("Alice", loadedNegative.playerOrNull(PLAYER_A).lastKnownName);
+
+        // 1.21.1 legacy file carrying "lastDigestEpoch" migrates cleanly via readLegacy.
+        CompoundTag legacyData = new CompoundTag();
+        legacyData.put("players", players.copy());
+        legacyData.putLong("lastDigestEpoch", 1795800000000L);
+        CompoundTag legacyRoot = new CompoundTag();
+        legacyRoot.put("data", legacyData);
+        legacyRoot.putInt("DataVersion", 3955);
+        Path legacyFile = dir.resolve(MilestoneData.LEGACY_FILE);
+        Files.createDirectories(legacyFile.getParent());
+        NbtIo.writeCompressed(legacyRoot, legacyFile);
+
+        MilestoneData migrated = MilestoneData.readLegacy(legacyFile);
+        assertNotNull(migrated);
+        assertEquals(1795800000000L, migrated.lastDigestEpochMillis());
+        assertEquals("Alice", migrated.playerOrNull(PLAYER_A).lastKnownName);
     }
 }

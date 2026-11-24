@@ -186,6 +186,72 @@ class NotificationGroupingTest {
         assertEquals(NotificationGrouping.SendMode.GROUPED, partialWf.playerChat().mode());
         assertEquals(NotificationGrouping.SendMode.INDIVIDUAL, partialWf.discord().mode());
         assertEquals(List.of(new StubRecord("minecraft:b", true)), partialWf.discord().items());
+        assertEquals(NotificationGrouping.SendMode.NONE, partialWf.discordWorldFirst().mode());
+    }
+
+    @Test
+    void f46SplitsDiscordBatchByDestinationBeforeApplyingGroupingThreshold() {
+        // Spec example: 2 world-firsts + 5 normal records -> WF gets 2 INDIVIDUAL, main gets 5 GROUPED (sorted)
+        List<StubRecord> twoWfFiveNormal = List.of(
+                new StubRecord("minecraft:stone", false),
+                new StubRecord("minecraft:emerald", true),
+                new StubRecord("minecraft:iron_ingot", false),
+                new StubRecord("minecraft:diamond", true),
+                new StubRecord("minecraft:gold_ingot", false),
+                new StubRecord("minecraft:coal", false),
+                new StubRecord("minecraft:copper_ingot", false));
+
+        NotificationGrouping.FlushPlan<StubRecord> bothAll = NotificationGrouping.planFlush(
+                twoWfFiveNormal, twoWfFiveNormal, StubRecord::worldFirst, BY_KEY,
+                true, true, true, true, true, "all", true, true);
+        assertEquals(NotificationGrouping.SendMode.GROUPED, bothAll.discord().mode());
+        assertEquals(List.of("minecraft:coal", "minecraft:copper_ingot", "minecraft:gold_ingot",
+                        "minecraft:iron_ingot", "minecraft:stone"),
+                bothAll.discord().items().stream().map(StubRecord::key).toList());
+        assertEquals(NotificationGrouping.SendMode.INDIVIDUAL, bothAll.discordWorldFirst().mode());
+        assertEquals(List.of("minecraft:emerald", "minecraft:diamond"),
+                bothAll.discordWorldFirst().items().stream().map(StubRecord::key).toList());
+
+        // Same records with scope=world_first + both URLs set -> main gets NONE, WF gets 2 INDIVIDUAL
+        NotificationGrouping.FlushPlan<StubRecord> bothWfScope = NotificationGrouping.planFlush(
+                twoWfFiveNormal, twoWfFiveNormal, StubRecord::worldFirst, BY_KEY,
+                true, true, true, true, true, "world_first", true, true);
+        assertEquals(NotificationGrouping.SendMode.NONE, bothWfScope.discord().mode());
+        assertEquals(NotificationGrouping.SendMode.INDIVIDUAL, bothWfScope.discordWorldFirst().mode());
+        assertEquals(2, bothWfScope.discordWorldFirst().items().size());
+
+        // 3 world-firsts + 2 normal records -> main gets 2 INDIVIDUAL (input order), WF gets 3 GROUPED (sorted)
+        List<StubRecord> threeWfTwoNormal = List.of(
+                new StubRecord("minecraft:stone", false),
+                new StubRecord("minecraft:netherite_ingot", true),
+                new StubRecord("minecraft:coal", false),
+                new StubRecord("minecraft:diamond", true),
+                new StubRecord("minecraft:emerald", true));
+
+        NotificationGrouping.FlushPlan<StubRecord> reversed = NotificationGrouping.planFlush(
+                threeWfTwoNormal, threeWfTwoNormal, StubRecord::worldFirst, BY_KEY,
+                true, true, true, true, true, "all", true, true);
+        assertEquals(NotificationGrouping.SendMode.INDIVIDUAL, reversed.discord().mode());
+        assertEquals(List.of("minecraft:stone", "minecraft:coal"),
+                reversed.discord().items().stream().map(StubRecord::key).toList());
+        assertEquals(NotificationGrouping.SendMode.GROUPED, reversed.discordWorldFirst().mode());
+        assertEquals(List.of("minecraft:diamond", "minecraft:emerald", "minecraft:netherite_ingot"),
+                reversed.discordWorldFirst().items().stream().map(StubRecord::key).toList());
+
+        // Only world-first URL set -> main gets NONE, WF gets 3 GROUPED
+        NotificationGrouping.FlushPlan<StubRecord> wfOnlyUrl = NotificationGrouping.planFlush(
+                threeWfTwoNormal, threeWfTwoNormal, StubRecord::worldFirst, BY_KEY,
+                true, true, true, true, true, "all", false, true);
+        assertEquals(NotificationGrouping.SendMode.NONE, wfOnlyUrl.discord().mode());
+        assertEquals(NotificationGrouping.SendMode.GROUPED, wfOnlyUrl.discordWorldFirst().mode());
+        assertEquals(3, wfOnlyUrl.discordWorldFirst().items().size());
+
+        // F45 opt-out (discordEnabled = false) suppresses BOTH destinations
+        NotificationGrouping.FlushPlan<StubRecord> optedOut = NotificationGrouping.planFlush(
+                threeWfTwoNormal, threeWfTwoNormal, StubRecord::worldFirst, BY_KEY,
+                true, true, true, true, false, "all", true, true);
+        assertEquals(NotificationGrouping.SendMode.NONE, optedOut.discord().mode());
+        assertEquals(NotificationGrouping.SendMode.NONE, optedOut.discordWorldFirst().mode());
     }
 
     @Test

@@ -2,6 +2,7 @@ package com.pengin0503.itemmilestonelog;
 
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
+import com.pengin0503.itemmilestonelog.api.WorldFirstRecord;
 import com.pengin0503.itemmilestonelog.network.PresetEntry;
 import com.pengin0503.itemmilestonelog.network.SyncMilestonesPayload;
 import com.pengin0503.itemmilestonelog.network.TargetEntry;
@@ -19,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -1537,5 +1539,264 @@ class MilestoneServiceTest {
         assertEquals(
                 "Invalid, unknown or empty item tag: #c:none",
                 ServerLang.trForLang("en_us", "message.itemmilestonelog.invalid_tag", "#c:none").getString());
+    }
+
+    // ---- F24: renameitem ----
+
+    @Test
+    void renameItemInDataAppliesAllCollisionRulesPreservesCountsAndLeavesTagsUntouched() {
+        String oldId = "oldmod:gem";
+        String newId = "minecraft:diamond";
+        String otherId = "minecraft:emerald";
+        UUID playerB = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        UUID playerC = UUID.fromString("33333333-3333-3333-3333-333333333333");
+        UUID playerD = UUID.fromString("44444444-4444-4444-4444-444444444444");
+
+        MilestoneData data = new MilestoneData();
+
+        // Player A: collisions on targets, records (old smaller & dest smaller & tie),
+        // progressNotified (larger wins + recorded keys dropped), carriedFromCreative, tags untouched
+        MilestoneData.PlayerData pdA = data.player(PLAYER_A);
+        pdA.targets.add(TargetKey.of(oldId));
+        pdA.targets.add(TargetKey.of(newId)); // collides with old#1 -> dedupe
+        pdA.targets.add(TargetKey.of(oldId, 64)); // no collision -> new#64
+        pdA.targets.add(TargetKey.of(otherId, 16));
+        pdA.targets.add(TargetKey.of("#c:gems")); // tag untouched
+
+        MilestoneRecord oldSmaller = new MilestoneRecord(100, 1L, 1_000L);
+        MilestoneRecord destLarger = new MilestoneRecord(300, 3L, 3_000L);
+        MilestoneRecord oldLarger = new MilestoneRecord(500, 5L, 5_000L);
+        MilestoneRecord destSmaller = new MilestoneRecord(200, 2L, 2_000L);
+        MilestoneRecord oldTie = new MilestoneRecord(400, 4L, 4_000L);
+        MilestoneRecord destTie = new MilestoneRecord(400, 9L, 9_000L);
+        MilestoneRecord oldOnlyRec = new MilestoneRecord(700, 7L, 7_000L);
+
+        pdA.records.put(TargetKey.of(oldId, 1), oldSmaller);
+        pdA.records.put(TargetKey.of(newId, 1), destLarger);
+        pdA.records.put(TargetKey.of(oldId, 10), oldLarger);
+        pdA.records.put(TargetKey.of(newId, 10), destSmaller);
+        pdA.records.put(TargetKey.of(oldId, 20), oldTie);
+        pdA.records.put(TargetKey.of(newId, 20), destTie);
+        pdA.records.put(TargetKey.of(oldId, 50), oldOnlyRec); // becomes new#50 -> drops new#50 progressNotified
+
+        pdA.progressNotified.put(TargetKey.of(oldId, 100), 75);
+        pdA.progressNotified.put(TargetKey.of(newId, 100), 25); // old > new -> 75
+        pdA.progressNotified.put(TargetKey.of(oldId, 200), 25);
+        pdA.progressNotified.put(TargetKey.of(newId, 200), 90); // new > old -> 90
+        pdA.progressNotified.put(TargetKey.of(oldId, 10), 50); // dest#10 recorded -> dropped
+        pdA.progressNotified.put(TargetKey.of(newId, 50), 50); // old#50 recorded (now new#50) -> dropped
+        pdA.progressNotified.put(TargetKey.of(otherId, 100), 50); // unrelated -> preserved
+
+        pdA.carriedFromCreative.add(oldId);
+        pdA.carriedFromCreative.add(newId); // deduped
+        pdA.carriedFromCreative.add(otherId);
+
+        // Player B: only carriedFromCreative matches oldId (still counts as 1 affected player)
+        MilestoneData.PlayerData pdB = data.player(playerB);
+        pdB.carriedFromCreative.add(oldId);
+
+        // Player C: unrelated player data (not counted as affected player),
+        // but holds a colliding destination world first so scoreboardPlayers must still include playerC
+        MilestoneData.PlayerData pdC = data.player(playerC);
+        pdC.targets.add(TargetKey.of(otherId));
+
+        // Player D: completely unaffected
+        MilestoneData.PlayerData pdD = data.player(playerD);
+        pdD.targets.add(TargetKey.of(otherId));
+
+        // World firsts covering all collision cases:
+        // #1: both known, old earlier -> old wins (itemId updated to newId)
+        data.recordWorldFirstIfAbsent(TargetKey.of(oldId, 1), PLAYER_A, "Alice", new MilestoneRecord(100, 1L, 1_000L));
+        data.recordWorldFirstIfAbsent(TargetKey.of(newId, 1), playerC, "Carol", new MilestoneRecord(200, 2L, 2_000L));
+        // #2: both known, dest earlier -> dest wins
+        data.recordWorldFirstIfAbsent(TargetKey.of(oldId, 2), PLAYER_A, "Alice", new MilestoneRecord(100, 1L, 3_000L));
+        data.recordWorldFirstIfAbsent(TargetKey.of(newId, 2), playerC, "Carol", new MilestoneRecord(200, 2L, 1_500L));
+        // #3: old known, dest unknown (0) -> dest wins
+        data.recordWorldFirstIfAbsent(TargetKey.of(oldId, 3), PLAYER_A, "Alice", new MilestoneRecord(100, 1L, 1_000L));
+        data.recordWorldFirstIfAbsent(TargetKey.of(newId, 3), playerC, "Carol", new MilestoneRecord(200, 2L, 0L));
+        // #4: old unknown (0), dest known -> dest wins
+        data.recordWorldFirstIfAbsent(TargetKey.of(oldId, 4), PLAYER_A, "Alice", new MilestoneRecord(100, 1L, 0L));
+        data.recordWorldFirstIfAbsent(TargetKey.of(newId, 4), playerC, "Carol", new MilestoneRecord(200, 2L, 5_000L));
+        // #5: both unknown (0) -> dest wins
+        data.recordWorldFirstIfAbsent(TargetKey.of(oldId, 5), PLAYER_A, "Alice", new MilestoneRecord(100, 1L, 0L));
+        data.recordWorldFirstIfAbsent(TargetKey.of(newId, 5), playerC, "Carol", new MilestoneRecord(200, 2L, 0L));
+        // #64: no collision -> moved with itemId updated to newId
+        data.recordWorldFirstIfAbsent(TargetKey.of(oldId, 64), PLAYER_A, "Alice", new MilestoneRecord(700, 7L, 7_000L));
+
+        // Preview (apply = false): returns exact counts and changes NOTHING
+        MilestoneService.RenameCounts preview = MilestoneService.renameItemInData(data, oldId, newId, false);
+        assertEquals(2, preview.players());
+        assertEquals(2, preview.targets());
+        assertEquals(4, preview.records());
+        assertEquals(6, preview.worldFirsts());
+        assertEquals(Set.of(PLAYER_A, playerB), preview.affectedPlayers());
+        assertEquals(Set.of(PLAYER_A, playerB, playerC), preview.scoreboardPlayers());
+        assertTrue(pdA.targets.contains(TargetKey.of(oldId)));
+        assertTrue(pdA.records.containsKey(TargetKey.of(oldId, 1)));
+        assertTrue(pdB.carriedFromCreative.contains(oldId));
+        assertNotNull(data.worldFirstOrNull(TargetKey.of(oldId, 1)));
+
+        // Apply (apply = true): commits all rewrites with exact collision winners
+        MilestoneService.RenameCounts applied = MilestoneService.renameItemInData(data, oldId, newId);
+        assertEquals(preview, applied);
+
+        assertEquals(Set.of(
+                TargetKey.of(newId, 1),
+                TargetKey.of(newId, 64),
+                TargetKey.of(otherId, 16),
+                TargetKey.of("#c:gems")
+        ), pdA.targets);
+
+        assertEquals(Map.of(
+                TargetKey.of(newId, 1), oldSmaller,
+                TargetKey.of(newId, 10), destSmaller,
+                TargetKey.of(newId, 20), destTie,
+                TargetKey.of(newId, 50), oldOnlyRec
+        ), pdA.records);
+
+        assertEquals(Map.of(
+                TargetKey.of(newId, 100), 75,
+                TargetKey.of(newId, 200), 90,
+                TargetKey.of(otherId, 100), 50
+        ), pdA.progressNotified);
+
+        assertEquals(Set.of(newId, otherId), pdA.carriedFromCreative);
+        assertEquals(Set.of(newId), pdB.carriedFromCreative);
+        assertEquals(Set.of(TargetKey.of(otherId)), pdC.targets);
+        assertEquals(Set.of(TargetKey.of(otherId)), pdD.targets);
+
+        // Verify world firsts & updated WorldFirstRecord.itemId()
+        assertNull(data.worldFirstOrNull(TargetKey.of(oldId, 1)));
+        assertNull(data.worldFirstOrNull(TargetKey.of(oldId, 64)));
+
+        WorldFirstRecord wf1 = data.worldFirstOrNull(TargetKey.of(newId, 1));
+        assertNotNull(wf1);
+        assertEquals(newId, wf1.itemId());
+        assertEquals(PLAYER_A, wf1.playerUuid());
+        assertEquals(1_000L, wf1.epochMillis());
+
+        assertEquals(playerC, data.worldFirstOrNull(TargetKey.of(newId, 2)).playerUuid());
+        assertEquals(playerC, data.worldFirstOrNull(TargetKey.of(newId, 3)).playerUuid());
+        assertEquals(playerC, data.worldFirstOrNull(TargetKey.of(newId, 4)).playerUuid());
+        assertEquals(playerC, data.worldFirstOrNull(TargetKey.of(newId, 5)).playerUuid());
+
+        WorldFirstRecord wf64 = data.worldFirstOrNull(TargetKey.of(newId, 64));
+        assertNotNull(wf64);
+        assertEquals(newId, wf64.itemId());
+        assertEquals(64, wf64.count());
+        assertEquals(PLAYER_A, wf64.playerUuid());
+    }
+
+    @Test
+    void executeRenameItemValidatesArgsBacksUpFirstAbortsOnBackupFailureAndAppendsConfigNote() {
+        String oldId = "oldmod:gem";
+        String newId = "minecraft:diamond";
+        Set<String> registered = Set.of(newId, "minecraft:emerald");
+
+        MilestoneData data = new MilestoneData();
+        MilestoneData.PlayerData pd = data.player(PLAYER_A);
+        pd.targets.add(TargetKey.of(oldId));
+        pd.records.put(TargetKey.of(oldId), new MilestoneRecord(120, 1L, 1_000L));
+        data.recordWorldFirstIfAbsent(TargetKey.of(oldId), PLAYER_A, "Alice", new MilestoneRecord(120, 1L, 1_000L));
+
+        AtomicInteger backupCalls = new AtomicInteger();
+
+        // Same ID (including implicit minecraft: normalization) -> renameitem_same
+        MilestoneService.ActionResult same = MilestoneService.executeRenameItem(
+                data, null, "diamond", newId, false, registered::contains,
+                () -> { backupCalls.incrementAndGet(); return true; }, Set.of(), List.of()).result();
+        assertFalse(same.success());
+        assertEquals("The old and new IDs are the same.", same.message().getString());
+
+        // Either side minecraft:air or unregistered newId or tag -> invalid_item
+        assertEquals("Invalid or unknown item ID: minecraft:air", MilestoneService.executeRenameItem(
+                data, null, "minecraft:air", newId, false, registered::contains, () -> true, Set.of(), List.of())
+                .result().message().getString());
+        assertEquals("Invalid or unknown item ID: minecraft:air", MilestoneService.executeRenameItem(
+                data, null, oldId, "minecraft:air", false, registered::contains, () -> true, Set.of(), List.of())
+                .result().message().getString());
+        assertEquals("Invalid or unknown item ID: othermod:missing", MilestoneService.executeRenameItem(
+                data, null, oldId, "othermod:missing", false, registered::contains, () -> true, Set.of(), List.of())
+                .result().message().getString());
+        assertFalse(MilestoneService.executeRenameItem(
+                data, null, "#c:gems", newId, false, registered::contains, () -> true, Set.of(), List.of())
+                .result().success());
+        assertEquals(0, backupCalls.get());
+
+        // Preview with defaultTargets containing oldId: changes nothing, skips backup, appends config note
+        Set<TargetKey> defaultTargets = Set.of(TargetKey.of(oldId, 16));
+        MilestoneService.ActionResult previewWithNote = MilestoneService.executeRenameItem(
+                data, null, oldId, newId, false, registered::contains,
+                () -> { backupCalls.incrementAndGet(); return true; }, defaultTargets, List.of()).result();
+        assertTrue(previewWithNote.success());
+        assertEquals(0, backupCalls.get());
+        assertTrue(pd.targets.contains(TargetKey.of(oldId)));
+        assertEquals(
+                "Renaming oldmod:gem to minecraft:diamond would change 1 player(s): 1 target(s), 1 record(s), 1 world first(s). "
+                        + "Add 'confirm' to apply (a backup is written first).\n"
+                        + "defaultTargets or a preset still contains oldmod:gem. Edit them by hand.",
+                previewWithNote.message().getString());
+
+        // Confirm when backup fails -> renameitem_backup_failed and changes NOTHING
+        MilestoneService.ActionResult backupFailed = MilestoneService.executeRenameItem(
+                data, null, oldId, newId, true, registered::contains,
+                () -> { backupCalls.incrementAndGet(); return false; }, defaultTargets, List.of()).result();
+        assertFalse(backupFailed.success());
+        assertEquals(1, backupCalls.get());
+        assertEquals("Could not write a backup, so nothing was changed.", backupFailed.message().getString());
+        assertTrue(pd.targets.contains(TargetKey.of(oldId)));
+        assertTrue(pd.records.containsKey(TargetKey.of(oldId)));
+        assertNotNull(data.worldFirstOrNull(TargetKey.of(oldId)));
+
+        // Confirm when backup succeeds -> backup runs BEFORE mutation, preset triggers config note, preset itself untouched
+        Presets.PresetDefinition presetWithOld = new Presets.PresetDefinition(
+                "custom_pack", "Custom Pack", List.of(TargetKey.of(oldId)), false);
+        MilestoneService.ActionResult applied = MilestoneService.executeRenameItem(
+                data, null, oldId, newId, true, registered::contains,
+                () -> {
+                    // Backup must see pre-rename state
+                    assertTrue(pd.targets.contains(TargetKey.of(oldId)), "Backup must run before mutating data");
+                    backupCalls.incrementAndGet();
+                    return true;
+                },
+                Set.of(), List.of(presetWithOld)).result();
+        assertTrue(applied.success());
+        assertEquals(2, backupCalls.get());
+        assertEquals(
+                "Renamed oldmod:gem to minecraft:diamond for 1 player(s): 1 target(s), 1 record(s), 1 world first(s).\n"
+                        + "defaultTargets or a preset still contains oldmod:gem. Edit them by hand.",
+                applied.message().getString());
+        assertTrue(pd.targets.contains(TargetKey.of(newId)));
+        assertFalse(pd.targets.contains(TargetKey.of(oldId)));
+        // Preset not rewritten
+        assertEquals(List.of(TargetKey.of(oldId)), presetWithOld.items());
+
+        // Confirm on empty MilestoneData succeeds with 0s without failing on empty-backup refusal
+        MilestoneData empty = new MilestoneData();
+        MilestoneService.ActionResult emptyRes = MilestoneService.executeRenameItem(
+                empty, null, oldId, newId, true, registered::contains, () -> false, Set.of(), List.of()).result();
+        assertTrue(emptyRes.success());
+        assertFalse(empty.isDirty());
+        assertEquals("Renamed oldmod:gem to minecraft:diamond for 0 player(s): 0 target(s), 0 record(s), 0 world first(s).",
+                emptyRes.message().getString());
+
+        // Verify Japanese translations match spec verbatim
+        assertEquals(
+                "oldmod:gem を minecraft:diamond に付け替えると、2 人分（目標 3 件、記録 4 件、世界初 1 件）が変わります。実行するには末尾に confirm を付けてください（先にバックアップを書きます）。",
+                ServerLang.trForLang("ja_jp", "message.itemmilestonelog.renameitem_preview",
+                        "oldmod:gem", "minecraft:diamond", 2, 3, 4, 1).getString());
+        assertEquals(
+                "oldmod:gem を minecraft:diamond に付け替えました: 2 人分（目標 3 件、記録 4 件、世界初 1 件）。",
+                ServerLang.trForLang("ja_jp", "message.itemmilestonelog.renameitem_done",
+                        "oldmod:gem", "minecraft:diamond", 2, 3, 4, 1).getString());
+        assertEquals(
+                "付け替え前と後の ID が同じです。",
+                ServerLang.trForLang("ja_jp", "message.itemmilestonelog.renameitem_same").getString());
+        assertEquals(
+                "バックアップを書けなかったため、何も変更していません。",
+                ServerLang.trForLang("ja_jp", "message.itemmilestonelog.renameitem_backup_failed").getString());
+        assertEquals(
+                "defaultTargets かプリセットに oldmod:gem が残っています。手で直してください。",
+                ServerLang.trForLang("ja_jp", "message.itemmilestonelog.renameitem_config_note", "oldmod:gem").getString());
     }
 }
