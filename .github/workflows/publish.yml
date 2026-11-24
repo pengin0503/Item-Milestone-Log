@@ -129,7 +129,11 @@ jobs:
           # the NeoForge loader entry, via the CurseForge versions API.
           curl -sS -f "https://minecraft.curseforge.com/api/game/versions" \
             -H "X-Api-Token: $CURSEFORGE_TOKEN" > cf-versions.json
+          echo "Version groups present in the CurseForge versions list:"
+          jq -r 'group_by(.gameVersionTypeID)[] | "type \(.[0].gameVersionTypeID): \(length) entries, e.g. \(.[0].name), \(.[1].name // "-")"' cf-versions.json
+          jq -r '.[] | select(.name == "Client" or .name == "Server" or .name == "NeoForge") | "special: \(.id) \(.name) type \(.gameVersionTypeID)"' cf-versions.json
           neoforge_id=$(jq -r '.[] | select(.name == "NeoForge") | .id' cf-versions.json | head -1)
+          env_ids=$(jq -r '.[] | select(.name == "Client" or .name == "Server") | .id' cf-versions.json | paste -sd, -)
           if [ -z "$neoforge_id" ]; then
             echo "::error::NeoForge game version id not found in the CurseForge versions list"
             exit 1
@@ -146,7 +150,7 @@ jobs:
             metadata=$(jq -n \
               --arg changelog "$changelog_text" \
               --arg displayName "Item Milestone Log $VERSION (MC $mc)" \
-              --argjson gameVersions "[${mc_id}, ${neoforge_id}]" \
+              --argjson gameVersions "[${mc_id}, ${neoforge_id}${env_ids:+,$env_ids}]" \
               '{changelog: $changelog, changelogType: "markdown",
                 displayName: $displayName, gameVersions: $gameVersions,
                 releaseType: "release"}')
