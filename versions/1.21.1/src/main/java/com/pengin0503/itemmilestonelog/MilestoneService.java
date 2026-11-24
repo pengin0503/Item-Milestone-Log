@@ -200,7 +200,7 @@ public final class MilestoneService {
         boolean dedicated = server == null || server.isDedicatedServer();
         ServerPlayer player = source.getPlayer();
         boolean isPlayer = player != null;
-        boolean singleplayerOwner = isPlayer && server != null && server.isSingleplayerOwner(player.getGameProfile());
+        boolean singleplayerOwner = isPlayer && server != null && McCompat.player().isSingleplayerOwner(server, player);
         boolean hasAdmin = source.hasPermission(PrivilegePolicy.ADMIN_PERMISSION_LEVEL);
         return PrivilegePolicy.isPrivileged(dedicated, isPlayer, singleplayerOwner, hasAdmin);
     }
@@ -208,7 +208,7 @@ public final class MilestoneService {
     public static boolean isPrivileged(ServerPlayer player) {
         MinecraftServer server = player.level().getServer();
         boolean dedicated = server == null || server.isDedicatedServer();
-        boolean singleplayerOwner = server != null && server.isSingleplayerOwner(player.getGameProfile());
+        boolean singleplayerOwner = server != null && McCompat.player().isSingleplayerOwner(server, player);
         boolean hasAdmin = player.hasPermissions(PrivilegePolicy.ADMIN_PERMISSION_LEVEL);
         return PrivilegePolicy.isPrivileged(dedicated, true, singleplayerOwner, hasAdmin);
     }
