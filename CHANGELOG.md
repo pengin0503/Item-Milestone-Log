@@ -43,9 +43,11 @@ The section for a version is used as it is for the GitHub Release (created when 
 - **Downgrading from 1.2.0 to 1.1.0 or 1.0.1**: older versions do not read tag targets/records/world-firsts or the new `lastDigestEpoch` field, so tag-target data and `lastDigestEpoch` are dropped on the next save. Make a backup (or use the automatic 1.2.0 backups) before downgrading. Downgrading from 1.1.0 to 1.0.1 additionally drops the 1.1.0 per-player fields described below.
 - New defaults worth noting: automatic backups, chat item hover, GUI world-first marks, item tooltip status, and localized playtime/Day formatting are on by default; the weekly digest, login summary, scoreboard objectives, silent Discord posts, and `milestoneCommand` are off until configured.
 
-## 1.1.0
 
-### New Commands
+### Also included: all changes from 1.1.0
+Version 1.1.0 was completed but never published on its own. This 1.2.0 release is the first public release after 1.0.1 and includes every 1.1.0 change listed below.
+
+#### New Commands
 - **Lookup, rankings & server stats**: Added `/milestonelog lookup <player> [<page>]`, `/milestonelog top [<item> [<count>]]`, `/milestonelog recent [<n>]` (1–20, default 10), and `/milestonelog stats` (controlled by `allowLookup`, default `true`; when `false`, restricted to OPs and the singleplayer/LAN host, while looking up yourself always works).
 - **Privacy & notification opt-outs**: Added `/milestonelog privacy` to hide your milestones from non-privileged players in `lookup`, `top`, `recent`, and `stats`; `/milestonelog muteprogress` to mute quantity-target progress alerts; and `/milestonelog discordoptout` to exclude your milestones from Discord webhooks (`allowDiscordOptOut`, default `true`).
 - **Preset progress, bulk target removal & undo**: Added `/milestonelog presetprogress <name>`, `/milestonelog presetremove <name>`, `/milestonelog removeall`, and `/milestonelog undo` (restores your last personal `reset`, `resetall`, GUI reset, `presetremove`, or `removeall` within 10 minutes).
@@ -53,7 +55,7 @@ The section for a version is used as it is for the GitHub Release (created when 
 - **HTML & CSV exports, full import & world-first preservation**: Added `/milestonelog exporthtml` / `exporthtmlall` (standalone single-file HTML summary), `/milestonelog exportcsv` / `exportcsvall` (UTF-8 BOM, RFC 4180, formula-injection safe), and OP `/milestonelog importall <fileName>`. `exportall` now includes `worldFirsts`, which `importall` restores and merges (earlier known timestamp wins).
 - **OP admin & maintenance commands**: Added `/milestonelog admin <player> add|remove|preset|grant` (`grant` records a milestone for an online player without checking inventory or creating world-firsts), `/milestonelog prunedata <days> [confirm]` (cleans up offline players with no records, personal targets, creative-carried items, or non-default preferences using tracked `lastSeen` timestamps), and `/milestonelog discordtest` (sends a test message and reports the HTTP result without exposing the webhook URL).
 
-### Notifications, Display & Configuration
+#### Notifications, Display & Configuration
 - **Quantity-target progress alerts (enabled by default)**: Sends a personal chat alert when a quantity target crosses configured possession thresholds (`progressAlerts`, default `true`; `progressAlertThresholds`, default `[50, 90]`; `progressAlertMinCount`, default `10`). Uses a baseline on first evaluation so existing inventory does not spam alerts; opt out anytime with `/milestonelog muteprogress`.
 - **Simultaneous notification grouping (default behavior change)**: Added `groupSimultaneousRecords` (default `true`). When 3 or more milestones are recorded for the same player in the same tick, chat messages, broadcasts, world-first announcements, and Discord posts are grouped into a single message per channel (sound plays once per tick). Set to `false` to restore 1.0.1 per-record messages.
 - **Creative/spectator carry notices (enabled by default)**: When `ignoreCreativeAndSpectator` is enabled, leaving Creative or Spectator mode while holding untracked target items now notifies you in chat, marks affected entries in `/milestonelog targets` with `(carried from creative)`, and shows a paused-recording notice in `/milestonelog`.
@@ -61,21 +63,21 @@ The section for a version is used as it is for the GitHub Release (created when 
 - **Preset completion & starter presets**: Added preset-completion detection and announcements (`announcePresetCompletion`, default `false`) and `firstJoinPresets` (default empty) to automatically grant removable personal targets to new players on first join.
 - **Display timezone & feature switches**: Added `displayTimeZone` (default `""` = server default) for server-formatted dates in chat, logs, Discord, and exports (client GUI continues to use the player's local timezone), plus top-level switches `presetsEnabled`, `exportImportEnabled`, and `worldFirstEnabled` (all default `true`).
 
-### Discord Improvements
+#### Discord Improvements
 - **Rich embeds & language**: Added `discordUseEmbeds` (default `false`) with Markdown escaping and Discord field length clamping, `discordLanguage` (default `"en_us"`, supports `"ja_jp"`), and `discordNotifyPresetCompletion` (default `false`).
 - **Secret-safe `env:` URLs**: `discordWebhookUrl` now accepts `env:VAR_NAME` to read the URL from an environment variable; logs a one-time reminder in singleplayer/LAN that the config file is shared across worlds.
 - **Delivery resilience**: Retries HTTP 429 once when `Retry-After` is 5 seconds or less, and pauses delivery after HTTP 401/404 with a single warning until the resolved webhook URL changes or `/milestonelog discordtest` succeeds.
 
-### Public Server API
+#### Public Server API
 - **Events**: Added `PresetCompletedEvent`, `MilestoneRecordedEvent#isWorldFirst()`, and `MilestoneRecordedEvent#getCause()` with `RecordCause` (`GAMEPLAY`, `API`, `ADMIN_GRANT`).
 - **Write helpers**: Added server-thread `ItemMilestoneLogApi.addTarget`, `removeTarget`, and `recordNow` (with nesting depth limit 16 and automatic GUI re-sync).
 
-### Fixes & Internal Improvements
+#### Fixes & Internal Improvements
 - **LAN preset permissions**: Fixed LAN guests without cheats being able to save, delete, or reload the host's presets by unifying privilege checks across commands and GUI.
 - **Preset overwrite safety**: Overwriting a custom preset now preserves its JSON `name` display field instead of replacing it with the ID; the GUI Save Preset screen now indicates when saving will overwrite an existing custom preset and disables saving over built-in preset IDs.
 - **Pickup fast-path & translation tooling**: Skipped unnecessary inventory counting on item pickups that do not match untracked targets or creative-carried items; simplified adding community translations via `ServerLang.BUNDLED_LANGUAGES` with automated test coverage.
 
-### Compatibility & Downgrade Notes
+#### Compatibility & Downgrade Notes
 - Fully backward-compatible with 1.0.0 and 1.0.1 worlds (including 1.21.1 → 26.x migration) and network-compatible with 1.0.1 clients/servers.
 - **Downgrading from 1.1.0 to 1.0.1**: 1.0.1 ignores the new per-player fields (`progressNotified`, `completedPresets`, `hideFromLookup`, `muteProgressAlerts`, `lastSeen`, `excludeFromDiscord`) and drops them on the next save. Personal privacy/mute/Discord opt-out settings will reset, and progress or preset-completion notifications may fire again if you later return to 1.1.0.
 

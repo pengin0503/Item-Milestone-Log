@@ -2,28 +2,32 @@
   "homepage": "https://www.curseforge.com/minecraft/mc-mods/item-milestone-log",
   "1.21.1": {
     "1.0.0": "Initial release.",
-    "1.0.1": "Added quantity-based milestone targets (1-1,000,000), in-game Day and real date to records, world-first tracking, obtainment sound, Discord webhook, JSON export/import, custom presets, OP admin commands, join tip, broadcast mute, per-player vanilla language fallback, and public API."
+    "1.0.1": "Added quantity-based milestone targets (1-1,000,000), in-game Day and real date to records, world-first tracking, obtainment sound, Discord webhook, JSON export/import, custom presets, OP admin commands, join tip, broadcast mute, per-player vanilla language fallback, and public API.",
+    "1.2.0": "Added tag targets, the info command, datapack presets, automatic world-data backups, per-language preset names, a config screen, permission nodes, Discord weekly digest and a separate world-first webhook, plus every 1.1.0 feature (lookup/top/recent/stats, HTML and CSV export, progress alerts, preset completion, undo, and more)."
   },
   "26.1.2": {
     "1.0.0": "Initial release.",
-    "1.0.1": "Added quantity-based milestone targets (1-1,000,000), in-game Day and real date to records, world-first tracking, obtainment sound, Discord webhook, JSON export/import, custom presets, OP admin commands, join tip, broadcast mute, per-player vanilla language fallback, and public API."
+    "1.0.1": "Added quantity-based milestone targets (1-1,000,000), in-game Day and real date to records, world-first tracking, obtainment sound, Discord webhook, JSON export/import, custom presets, OP admin commands, join tip, broadcast mute, per-player vanilla language fallback, and public API.",
+    "1.2.0": "Added tag targets, the info command, datapack presets, automatic world-data backups, per-language preset names, a config screen, permission nodes, Discord weekly digest and a separate world-first webhook, plus every 1.1.0 feature (lookup/top/recent/stats, HTML and CSV export, progress alerts, preset completion, undo, and more)."
   },
   "26.2": {
     "1.0.0": "Initial release.",
-    "1.0.1": "Added quantity-based milestone targets (1-1,000,000), in-game Day and real date to records, world-first tracking, obtainment sound, Discord webhook, JSON export/import, custom presets, OP admin commands, join tip, broadcast mute, per-player vanilla language fallback, and public API."
+    "1.0.1": "Added quantity-based milestone targets (1-1,000,000), in-game Day and real date to records, world-first tracking, obtainment sound, Discord webhook, JSON export/import, custom presets, OP admin commands, join tip, broadcast mute, per-player vanilla language fallback, and public API.",
+    "1.2.0": "Added tag targets, the info command, datapack presets, automatic world-data backups, per-language preset names, a config screen, permission nodes, Discord weekly digest and a separate world-first webhook, plus every 1.1.0 feature (lookup/top/recent/stats, HTML and CSV export, progress alerts, preset completion, undo, and more)."
   },
   "26.3": {
     "1.0.0": "Initial release.",
-    "1.0.1": "Added quantity-based milestone targets (1-1,000,000), in-game Day and real date to records, world-first tracking, obtainment sound, Discord webhook, JSON export/import, custom presets, OP admin commands, join tip, broadcast mute, per-player vanilla language fallback, and public API."
+    "1.0.1": "Added quantity-based milestone targets (1-1,000,000), in-game Day and real date to records, world-first tracking, obtainment sound, Discord webhook, JSON export/import, custom presets, OP admin commands, join tip, broadcast mute, per-player vanilla language fallback, and public API.",
+    "1.2.0": "Added tag targets, the info command, datapack presets, automatic world-data backups, per-language preset names, a config screen, permission nodes, Discord weekly digest and a separate world-first webhook, plus every 1.1.0 feature (lookup/top/recent/stats, HTML and CSV export, progress alerts, preset completion, undo, and more)."
   },
   "promos": {
-    "1.21.1-latest": "1.0.1",
-    "1.21.1-recommended": "1.0.1",
-    "26.1.2-latest": "1.0.1",
-    "26.1.2-recommended": "1.0.1",
-    "26.2-latest": "1.0.1",
-    "26.2-recommended": "1.0.1",
-    "26.3-latest": "1.0.1",
-    "26.3-recommended": "1.0.1"
+    "1.21.1-latest": "1.2.0",
+    "1.21.1-recommended": "1.2.0",
+    "26.1.2-latest": "1.2.0",
+    "26.1.2-recommended": "1.2.0",
+    "26.2-latest": "1.2.0",
+    "26.2-recommended": "1.2.0",
+    "26.3-latest": "1.2.0",
+    "26.3-recommended": "1.2.0"
   }
 }
