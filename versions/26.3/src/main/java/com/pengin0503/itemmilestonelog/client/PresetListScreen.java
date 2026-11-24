@@ -1,5 +1,6 @@
 package com.pengin0503.itemmilestonelog.client;
 
+import com.pengin0503.itemmilestonelog.compat.client.ClientCompat;
 import com.pengin0503.itemmilestonelog.network.MilestoneActionPayload;
 import com.pengin0503.itemmilestonelog.network.PresetEntry;
 import com.pengin0503.itemmilestonelog.network.SyncMilestonesPayload;
@@ -46,7 +47,7 @@ public final class PresetListScreen extends Screen {
         if (newData.feedback() != null) {
             this.feedbackMessage = newData.feedback();
         }
-        if (this.minecraft != null && this.minecraft.gui.screen() == this) {
+        if (this.minecraft != null && ClientCompat.screens().currentScreen(this.minecraft) == this) {
             rebuildWidgets();
             if (listWidget != null) {
                 listWidget.setScrollAmount(prevScroll);
@@ -85,7 +86,7 @@ public final class PresetListScreen extends Screen {
                             Component.translatable("gui.itemmilestonelog.presets.save_current"),
                             btn -> {
                                 if (this.minecraft != null) {
-                                    this.minecraft.gui.setScreen(new SavePresetScreen(this));
+                                    ClientCompat.screens().setScreen(this.minecraft, new SavePresetScreen(this));
                                 }
                             })
                     .bounds((this.width - saveWidth) / 2, this.height - 48, saveWidth, 20)
@@ -104,7 +105,7 @@ public final class PresetListScreen extends Screen {
         if (this.minecraft == null) {
             return;
         }
-        this.minecraft.gui.setScreen(new ConfirmResetScreen(
+        ClientCompat.screens().setScreen(this.minecraft, new ConfirmResetScreen(
                 this,
                 this::updateData,
                 Component.translatable("gui.itemmilestonelog.confirm_delete_preset.title"),
@@ -129,7 +130,7 @@ public final class PresetListScreen extends Screen {
     @Override
     public void onClose() {
         if (this.minecraft != null) {
-            this.minecraft.gui.setScreen(parent);
+            ClientCompat.screens().setScreen(this.minecraft, parent);
         }
     }
 
@@ -207,7 +208,7 @@ public final class PresetListScreen extends Screen {
                                 PresetListScreen.this.awaitingApplyFeedback = true;
                                 ClientMilestoneHandler.sendAction(MilestoneActionPayload.Action.APPLY_PRESET, entry.id());
                                 if (PresetListScreen.this.minecraft != null) {
-                                    PresetListScreen.this.minecraft.gui.setScreen(parent);
+                                    ClientCompat.screens().setScreen(PresetListScreen.this.minecraft, parent);
                                 }
                             })
                     .bounds(0, 0, 50, 20)

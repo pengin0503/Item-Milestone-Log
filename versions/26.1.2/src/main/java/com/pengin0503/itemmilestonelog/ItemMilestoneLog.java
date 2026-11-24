@@ -1,13 +1,13 @@
 package com.pengin0503.itemmilestonelog;
 
 import com.mojang.logging.LogUtils;
+import com.pengin0503.itemmilestonelog.compat.McCompat;
 import com.pengin0503.itemmilestonelog.gametest.MilestoneGameTestRegistration;
 import com.pengin0503.itemmilestonelog.network.ModNetworking;
 import net.minecraft.resources.Identifier;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
-import net.neoforged.fml.config.ModConfig;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.AddServerReloadListenersEvent;
 import net.neoforged.neoforge.event.server.ServerStartedEvent;
@@ -26,9 +26,9 @@ public class ItemMilestoneLog {
     public static final Logger LOGGER = LogUtils.getLogger();
 
     public ItemMilestoneLog(IEventBus modEventBus, ModContainer modContainer) {
-        modContainer.registerConfig(ModConfig.Type.COMMON, Config.SPEC);
+        modContainer.registerConfig(McCompat.config().type(), Config.SPEC);
 
-        ModTriggers.register(modEventBus);
+        McCompat.triggers().register(modEventBus);
         modEventBus.addListener(ModNetworking::registerPayloads);
         modEventBus.addListener(MilestoneGameTestRegistration::register);
         // F43: PermissionAPI posts PermissionGatherEvent.Nodes on the NeoForge game event bus

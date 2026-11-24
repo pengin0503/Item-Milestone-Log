@@ -1,5 +1,6 @@
 package com.pengin0503.itemmilestonelog.client;
 
+import com.pengin0503.itemmilestonelog.compat.client.ClientCompat;
 import com.pengin0503.itemmilestonelog.network.SyncMilestonesPayload;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.ConfirmScreen;
@@ -39,7 +40,7 @@ public final class ConfirmResetScreen extends ConfirmScreen {
             if (confirmed) {
                 onConfirm.run();
             }
-            Minecraft.getInstance().setScreen(parent);
+            ClientCompat.screens().setScreen(Minecraft.getInstance(), parent);
         }, title, message, confirmButton, cancelButton);
         this.parentScreen = parent;
         this.onSyncUpdate = onSyncUpdate;

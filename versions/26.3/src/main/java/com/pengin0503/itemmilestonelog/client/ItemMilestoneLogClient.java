@@ -3,6 +3,7 @@ package com.pengin0503.itemmilestonelog.client;
 import com.mojang.blaze3d.platform.InputConstants;
 import com.pengin0503.itemmilestonelog.Config;
 import com.pengin0503.itemmilestonelog.ItemMilestoneLog;
+import com.pengin0503.itemmilestonelog.compat.client.ClientCompat;
 import com.pengin0503.itemmilestonelog.network.ModNetworking;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
@@ -110,7 +111,7 @@ public final class ItemMilestoneLogClient {
 
     private static void onClientTick(ClientTickEvent.Post event) {
         Minecraft mc = Minecraft.getInstance();
-        if (mc.player == null || mc.gui.screen() != null) {
+        if (mc.player == null || ClientCompat.screens().currentScreen(mc) != null) {
             return;
         }
         while (OPEN_GUI_MAPPING.consumeClick()) {
@@ -130,7 +131,7 @@ public final class ItemMilestoneLogClient {
         if (!(event.getScreen() instanceof AbstractContainerScreen<?> screen)) {
             return;
         }
-        Slot slot = screen.getHoveredSlot();
+        Slot slot = ClientCompat.screens().hoveredSlot(screen);
         if (slot == null || !slot.hasItem()) {
             return;
         }

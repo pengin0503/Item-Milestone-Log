@@ -4,6 +4,7 @@ import com.pengin0503.itemmilestonelog.Playtime;
 import com.pengin0503.itemmilestonelog.TagTargets;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
+import com.pengin0503.itemmilestonelog.compat.client.ClientCompat;
 import com.pengin0503.itemmilestonelog.network.MilestoneActionPayload;
 import com.pengin0503.itemmilestonelog.network.SyncMilestonesPayload;
 import com.pengin0503.itemmilestonelog.network.TargetEntry;
@@ -94,7 +95,7 @@ public final class MilestoneScreen extends Screen {
         if (adoptFeedback && newData.feedback() != null) {
             this.feedbackMessage = newData.feedback();
         }
-        if (this.minecraft != null && this.minecraft.gui.screen() == this) {
+        if (this.minecraft != null && ClientCompat.screens().currentScreen(this.minecraft) == this) {
             rebuildWidgets();
             if (listWidget != null) {
                 listWidget.setScrollAmount(prevScroll);
@@ -125,7 +126,7 @@ public final class MilestoneScreen extends Screen {
                         btn -> {
                             if (this.minecraft != null) {
                                 this.feedbackMessage = null;
-                                this.minecraft.gui.setScreen(new ItemPickerScreen(this));
+                                ClientCompat.screens().setScreen(this.minecraft, new ItemPickerScreen(this));
                             }
                         },
                         Tooltip.create(Component.translatable("gui.itemmilestonelog.button.add"))),
@@ -141,7 +142,7 @@ public final class MilestoneScreen extends Screen {
                         btn -> {
                             if (this.minecraft != null) {
                                 this.feedbackMessage = null;
-                                this.minecraft.gui.setScreen(new PresetListScreen(this));
+                                ClientCompat.screens().setScreen(this.minecraft, new PresetListScreen(this));
                             }
                         },
                         Tooltip.create(Component.translatable("gui.itemmilestonelog.button.presets")))
@@ -279,7 +280,7 @@ public final class MilestoneScreen extends Screen {
         if (this.minecraft == null) {
             return;
         }
-        this.minecraft.gui.setScreen(new ConfirmResetScreen(
+        ClientCompat.screens().setScreen(this.minecraft, new ConfirmResetScreen(
                 this,
                 Component.translatable("gui.itemmilestonelog.confirm_reset.title"),
                 Component.translatable("gui.itemmilestonelog.confirm_reset.message", itemDisplayName),
@@ -293,7 +294,7 @@ public final class MilestoneScreen extends Screen {
         if (this.minecraft == null) {
             return;
         }
-        this.minecraft.gui.setScreen(new ConfirmResetScreen(
+        ClientCompat.screens().setScreen(this.minecraft, new ConfirmResetScreen(
                 this,
                 Component.translatable("gui.itemmilestonelog.confirm_resetall.title"),
                 Component.translatable("gui.itemmilestonelog.confirm_resetall.message", data.records().size()),

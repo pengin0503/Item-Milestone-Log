@@ -6,6 +6,7 @@ import com.pengin0503.itemmilestonelog.Playtime;
 import com.pengin0503.itemmilestonelog.TagTargets;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
+import com.pengin0503.itemmilestonelog.compat.client.ClientCompat;
 import com.pengin0503.itemmilestonelog.network.MilestoneActionPayload;
 import com.pengin0503.itemmilestonelog.network.RequestSyncPayload;
 import com.pengin0503.itemmilestonelog.network.SyncExtraPayload;
@@ -205,7 +206,7 @@ public final class ClientMilestoneHandler {
     public static void onSyncReceived(SyncMilestonesPayload payload) {
         rebuildTooltipIndex(payload);
         Minecraft mc = Minecraft.getInstance();
-        Screen current = mc.gui.screen();
+        Screen current = ClientCompat.screens().currentScreen(mc);
 
         if (current instanceof MilestoneScreen screen) {
             screen.updateData(payload);
@@ -235,7 +236,7 @@ public final class ClientMilestoneHandler {
             mc.player.sendOverlayMessage(payload.feedback());
         }
         if (payload.openScreen() && current == null) {
-            mc.gui.setScreen(new MilestoneScreen(payload));
+            ClientCompat.screens().setScreen(mc, new MilestoneScreen(payload));
         }
     }
 }
