@@ -80,7 +80,7 @@ jobs:
               echo "::error::Cannot parse the Minecraft version from $base"
               exit 1
             fi
-            data=$(jq -n \
+            jq -n \
               --arg name "Item Milestone Log $VERSION (MC $mc)" \
               --arg version_number "$VERSION" \
               --argjson changelog "$changelog_json" \
@@ -89,12 +89,13 @@ jobs:
               '{name: $name, version_number: $version_number, changelog: $changelog,
                 dependencies: [], version_type: "release", loaders: ["neoforge"],
                 featured: false, project_id: $project_id,
-                game_versions: [$mc], file_parts: ["file"]}')
+                game_versions: [$mc], file_parts: ["file"]}' > data.json
+            jq -e . data.json > /dev/null
             echo "Uploading $base to Modrinth (MC $mc)..."
             code=$(curl -sS -X POST "https://api.modrinth.com/v2/version" \
               -H "Authorization: $MODRINTH_TOKEN" \
               -H "User-Agent: pengin0503/Item-Milestone-Log publish workflow" \
-              -F "data=$data" \
+              -F "data=@data.json;type=application/json" \
               -F "file=@$jar" -o resp.json -w "%{http_code}")
             cat resp.json
             if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
