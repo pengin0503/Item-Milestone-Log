@@ -2,8 +2,8 @@
 # Assembles the MERGED 1.21.x release jars (Jar A and Jar B1, docs/VERSION_MATRIX.md,
 # docs/DESIGN_1.3.0.md section 3) from a base profile jar plus overlay profile jars
 # built by tools/build-121x-profile-jar.sh. Jar B2 and Jar C are single-profile jars:
-# they are produced directly by tools/build-121x-profile-jar.sh with MC_RANGE set and
-# do not go through this script.
+# CI also runs them through this script, with zero overlay arguments, to perform the
+# mods.toml range rewrite.
 #
 #   tools/merge-121x-jar.sh <base_jar> <mc_range> <output_jar> [<overlay_jar>:<suffix> ...]
 #
