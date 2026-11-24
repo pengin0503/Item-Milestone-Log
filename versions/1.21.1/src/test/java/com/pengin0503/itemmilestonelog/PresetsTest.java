@@ -30,11 +30,13 @@ class PresetsTest {
     @BeforeEach
     void initCleanPresets(@TempDir Path emptyDir) {
         Presets.reloadFrom(emptyDir);
+        Presets.clearDatapackPresets();
     }
 
     @AfterEach
     void resetPresets(@TempDir Path emptyDir) {
         Presets.reloadFrom(emptyDir);
+        Presets.clearDatapackPresets();
     }
 
     @Test
@@ -88,7 +90,9 @@ class PresetsTest {
         Presets.PresetDefinition custom = Presets.get("my_pack");
         assertNotNull(custom);
         assertFalse(custom.builtin());
-        assertEquals("My Pack Goals", custom.displayName());
+        // F54: a plain-string name resolves to itself for every language
+        assertEquals("My Pack Goals", custom.resolveDisplayName("en_us"));
+        assertEquals("My Pack Goals", custom.resolveDisplayName("ja_jp"));
         assertEquals(List.of(
                 TargetKey.of("minecraft:diamond"),
                 TargetKey.of("minecraft:diamond", 100),
@@ -101,7 +105,7 @@ class PresetsTest {
         Presets.PresetDefinition atmStar = Presets.get("atm_star");
         assertNotNull(atmStar);
         assertTrue(atmStar.builtin());
-        assertEquals("atm_star", atmStar.displayName());
+        assertEquals("atm_star", atmStar.resolveDisplayName("en_us"));
         assertEquals(10, atmStar.items().size());
         assertFalse(atmStar.items().contains(TargetKey.of("minecraft:dirt")));
 
@@ -170,7 +174,7 @@ class PresetsTest {
         assertEquals(1, Presets.reloadFrom(dir));
         Presets.PresetDefinition initial = Presets.get("handcrafted");
         assertNotNull(initial);
-        assertEquals("My Handcrafted Pack", initial.displayName());
+        assertEquals("My Handcrafted Pack", initial.resolveDisplayName("en_us"));
         assertEquals(List.of(
                 TargetKey.of("minecraft:dirt"),
                 TargetKey.of("#c:ingots/iron"),
@@ -185,11 +189,11 @@ class PresetsTest {
         JsonObject savedJson = JsonParser.parseString(Files.readString(file)).getAsJsonObject();
         assertEquals("My Handcrafted Pack", savedJson.get("name").getAsString());
         assertFalse(savedJson.has("extra_field"));
-        assertEquals("My Handcrafted Pack", Presets.get("handcrafted").displayName());
+        assertEquals("My Handcrafted Pack", Presets.get("handcrafted").resolveDisplayName("en_us"));
         assertEquals(updated, Presets.get("handcrafted").items());
 
         Presets.reloadFrom(dir);
-        assertEquals("My Handcrafted Pack", Presets.get("handcrafted").displayName());
+        assertEquals("My Handcrafted Pack", Presets.get("handcrafted").resolveDisplayName("en_us"));
         assertEquals(updated, Presets.get("handcrafted").items());
 
         // Blank, non-string, missing name, or corrupt JSON falls back to preset ID
@@ -197,17 +201,17 @@ class PresetsTest {
                 { "name": "   ", "items": ["minecraft:dirt"] }
                 """);
         assertTrue(Presets.saveCustomTo(dir, "blank_name", List.of(TargetKey.of("minecraft:stone"))));
-        assertEquals("blank_name", Presets.get("blank_name").displayName());
+        assertEquals("blank_name", Presets.get("blank_name").resolveDisplayName("en_us"));
 
         Files.writeString(dir.resolve("num_name.json"), """
                 { "name": 42, "items": ["minecraft:dirt"] }
                 """);
         assertTrue(Presets.saveCustomTo(dir, "num_name", List.of(TargetKey.of("minecraft:stone"))));
-        assertEquals("num_name", Presets.get("num_name").displayName());
+        assertEquals("num_name", Presets.get("num_name").resolveDisplayName("en_us"));
 
         Files.writeString(dir.resolve("corrupt_existing.json"), "{ not json");
         assertTrue(Presets.saveCustomTo(dir, "corrupt_existing", List.of(TargetKey.of("minecraft:stone"))));
-        assertEquals("corrupt_existing", Presets.get("corrupt_existing").displayName());
+        assertEquals("corrupt_existing", Presets.get("corrupt_existing").resolveDisplayName("en_us"));
 
         Presets.reloadFrom(dir.resolve("clean"));
     }
@@ -415,5 +419,236 @@ class PresetsTest {
                 big, Set.copyOf(items.subList(0, 10)), knownItems::contains, Presets.PROGRESS_MAX_ROWS);
         assertEquals(50, exact.unrecordedShown().size());
         assertEquals(0, exact.unrecordedHidden());
+    }
+
+    // --------------------------------------------------------- F21 datapack presets
+
+    @Test
+    void resolveDatapackPresetsIgnoresSubfoldersInvalidIdsAndBuiltins() {
+        Map<String, Map<String, String>> files = new LinkedHashMap<>();
+        // Files in subfolders are ignored so preset IDs can never contain '/'
+        files.put("nested_mod", Map.of(
+                "deep/inner", "{ \"items\": [\"minecraft:iron_ingot\"] }",
+                "ok_nested", "{ \"items\": [\"minecraft:iron_block\"] }"));
+        // Invalid, reserved and over-long IDs
+        files.put("bad_mod", Map.of(
+                "Bad-ID", "{ \"items\": [\"minecraft:dirt\"] }",
+                "list", "{ \"items\": [\"minecraft:dirt\"] }",
+                "way_too_long_preset_id_name_over_32_chars", "{ \"items\": [\"minecraft:dirt\"] }"));
+        // Built-in IDs never lose to a datapack file
+        files.put("builtin_mod", Map.of("atm_star", "{ \"items\": [\"minecraft:dirt\"] }"));
+
+        Map<String, Presets.PresetDefinition> resolved = Presets.resolveDatapackPresets(files);
+        assertEquals(Set.of("ok_nested"), resolved.keySet());
+        Presets.PresetDefinition nested = resolved.get("ok_nested");
+        assertEquals(Presets.PresetKind.DATAPACK, nested.kind());
+        assertFalse(nested.builtin());
+        assertEquals(List.of(TargetKey.of("minecraft:iron_block")), nested.items());
+
+        // Null and empty inputs are tolerated
+        assertTrue(Presets.resolveDatapackPresets(null).isEmpty());
+        assertTrue(Presets.resolveDatapackPresets(Map.of("empty_ns", Map.of())).isEmpty());
+    }
+
+    @Test
+    void resolveDatapackPresetsResolvesNamespaceCollisionsLexicographically() {
+        // Deliberately out of lexicographic order: "aaa_mod" must still win the shared "clash" ID.
+        Map<String, Map<String, String>> files = new LinkedHashMap<>();
+        files.put("zzz_mod", Map.of(
+                "clash", "{ \"name\": \"ZZZ Clash\", \"items\": [\"minecraft:gold_ingot\"] }",
+                "unique_z", "{ \"items\": [\"minecraft:gold_block\"] }"));
+        files.put("aaa_mod", Map.of(
+                "clash", "{ \"name\": \"AAA Clash\", \"items\": [\"minecraft:diamond\"] }",
+                "unique_a", "{ \"items\": [\"minecraft:emerald\"] }"));
+
+        Map<String, Presets.PresetDefinition> resolved = Presets.resolveDatapackPresets(files);
+        assertEquals(Set.of("clash", "unique_a", "unique_z"), resolved.keySet());
+        assertEquals("AAA Clash", resolved.get("clash").resolveDisplayName("en_us"));
+        assertEquals(List.of(TargetKey.of("minecraft:diamond")), resolved.get("clash").items());
+
+        // The winner is picked by namespace order even when its file is broken: the loser stays unused.
+        Map<String, Map<String, String>> brokenWinner = Map.of(
+                "aaa_mod", Map.of("shared", "{ not valid json"),
+                "bbb_mod", Map.of("shared", "{ \"items\": [\"minecraft:dirt\"] }"));
+        assertTrue(Presets.resolveDatapackPresets(brokenWinner).isEmpty());
+    }
+
+    @Test
+    void datapackPresetsFollowBuiltinFileDatapackPriority(@TempDir Path dir) throws Exception {
+        Presets.reloadFrom(dir);
+        Presets.setDatapackPresets(Presets.resolveDatapackPresets(Map.of(
+                "pack_mod", Map.of(
+                        "pack_only", "{ \"name\": \"Pack Only\", \"items\": [\"minecraft:emerald\"] }",
+                        "shared_id", "{ \"name\": \"Pack Shared\", \"items\": [\"minecraft:diamond\"] }",
+                        "atm_star", "{ \"items\": [\"minecraft:dirt\"] }"))));
+
+        // A datapack-only ID resolves as a read-only DATAPACK preset
+        Presets.PresetDefinition packOnly = Presets.get("pack_only");
+        assertNotNull(packOnly);
+        assertEquals(Presets.PresetKind.DATAPACK, packOnly.kind());
+        assertFalse(packOnly.builtin());
+        assertEquals("Pack Only", packOnly.resolveDisplayName("en_us"));
+        assertTrue(Presets.isDatapack("pack_only"));
+        assertEquals(List.of("pack_only", "shared_id"), Presets.datapackPresetIds());
+
+        // Built-in presets still win over datapack files
+        assertEquals(Presets.PresetKind.BUILTIN, Presets.get("atm_star").kind());
+        assertEquals(10, Presets.get("atm_star").items().size());
+
+        // A config-folder file with the same ID shadows the datapack preset
+        Files.writeString(dir.resolve("shared_id.json"),
+                "{ \"name\": \"File Shared\", \"items\": [\"minecraft:iron_ingot\"] }");
+        assertEquals(1, Presets.reloadFrom(dir));
+        Presets.PresetDefinition shared = Presets.get("shared_id");
+        assertEquals(Presets.PresetKind.FILE, shared.kind());
+        assertFalse(Presets.isDatapack("shared_id"));
+        assertEquals("File Shared", shared.resolveDisplayName("en_us"));
+        assertEquals(List.of("pack_only"), Presets.datapackPresetIds());
+
+        // Deleting the config file lets the datapack preset reappear
+        assertTrue(Presets.deleteCustomFrom(dir, "shared_id"));
+        Presets.PresetDefinition resurfaced = Presets.get("shared_id");
+        assertNotNull(resurfaced);
+        assertEquals(Presets.PresetKind.DATAPACK, resurfaced.kind());
+        assertEquals("Pack Shared", resurfaced.resolveDisplayName("en_us"));
+
+        // preset reload re-reads only the config folder: datapack presets stay loaded
+        Presets.reloadFrom(dir);
+        assertEquals(Presets.PresetKind.DATAPACK, Presets.get("pack_only").kind());
+    }
+
+    @Test
+    void datapackOnlyPresetsAreReadOnly(@TempDir Path dir) throws Exception {
+        Presets.reloadFrom(dir);
+        Presets.setDatapackPresets(Presets.resolveDatapackPresets(Map.of(
+                "pack_mod", Map.of("ro_pack", "{ \"name\": \"Read Only\", \"items\": [\"minecraft:diamond\"] }"))));
+        assertTrue(Presets.isDatapack("ro_pack"));
+
+        // In-game save/delete cannot overwrite or remove a datapack-only preset
+        assertThrows(IllegalArgumentException.class,
+                () -> Presets.saveCustomTo(dir, "ro_pack", List.of(TargetKey.of("minecraft:dirt"))));
+        assertFalse(Presets.deleteCustomFrom(dir, "ro_pack"));
+        assertFalse(Files.exists(dir.resolve("ro_pack.json")));
+        assertEquals(Presets.PresetKind.DATAPACK, Presets.get("ro_pack").kind());
+
+        // A hand-placed config file with the same ID wins and is editable as usual
+        Files.writeString(dir.resolve("ro_pack.json"), "{ \"items\": [\"minecraft:stone\"] }");
+        Presets.reloadFrom(dir);
+        assertFalse(Presets.isDatapack("ro_pack"));
+        assertEquals(Presets.PresetKind.FILE, Presets.get("ro_pack").kind());
+        assertTrue(Presets.saveCustomTo(dir, "ro_pack", List.of(TargetKey.of("minecraft:cobblestone"))));
+        assertTrue(Presets.deleteCustomFrom(dir, "ro_pack"));
+
+        Presets.clearDatapackPresets();
+        assertNull(Presets.get("ro_pack"));
+        assertTrue(Presets.datapackPresetIds().isEmpty());
+    }
+
+    // --------------------------------------------------------- F54 per-language names
+
+    @Test
+    void objectFormNameParsesPerLanguageEntriesAndResolvesByPriority(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("multi.json"), """
+                {
+                  "name": {
+                    "EN_US": "  Starter Kit  ",
+                    "ja_jp": "スターターキット",
+                    "fr_fr": "Kit de départ",
+                    "": "dropped: blank key",
+                    "   ": "dropped: blank key too",
+                    "de_de": "   ",
+                    "es_es": 42,
+                    "pt_br": ["not a string"]
+                  },
+                  "items": ["minecraft:diamond"]
+                }
+                """);
+        Files.writeString(dir.resolve("first_valid.json"), """
+                { "name": { "ja_jp": "日本語", "fr_fr": "Français" }, "items": ["minecraft:diamond"] }
+                """);
+        Files.writeString(dir.resolve("invalid_only.json"), """
+                { "name": { "": "x", "de_de": "   ", "es_es": 42 }, "items": ["minecraft:diamond"] }
+                """);
+        Files.writeString(dir.resolve("capped.json"), """
+                { "name": { "en_us": "%s", "ja_jp": "%s" }, "items": ["minecraft:diamond"] }
+                """.formatted("E".repeat(300), "J".repeat(10)));
+
+        assertEquals(4, Presets.reloadFrom(dir));
+
+        // Exact language match wins; keys were normalized to lower case and values trimmed
+        Presets.PresetDefinition multi = Presets.get("multi");
+        assertNotNull(multi);
+        assertEquals("Starter Kit", multi.resolveDisplayName("en_us"));
+        assertEquals("Starter Kit", multi.resolveDisplayName("EN_US"));
+        assertEquals("スターターキット", multi.resolveDisplayName("ja_jp"));
+        assertEquals("Kit de départ", multi.resolveDisplayName("fr_fr"));
+        // No match -> en_us priority
+        assertEquals("Starter Kit", multi.resolveDisplayName("de_de"));
+
+        // No match and no en_us -> the first valid value in JSON writing order
+        Presets.PresetDefinition firstValid = Presets.get("first_valid");
+        assertNotNull(firstValid);
+        assertEquals("日本語", firstValid.resolveDisplayName("en_us"));
+        assertEquals("日本語", firstValid.resolveDisplayName("de_de"));
+        assertEquals("Français", firstValid.resolveDisplayName("fr_fr"));
+
+        // An object with no valid entry is the same as no name at all: the ID becomes the name
+        Presets.PresetDefinition invalidOnly = Presets.get("invalid_only");
+        assertNotNull(invalidOnly);
+        assertEquals("invalid_only", invalidOnly.resolveDisplayName("en_us"));
+        assertEquals("invalid_only", invalidOnly.resolveDisplayName("ja_jp"));
+
+        // The 256-char cap applies per language value, not to the whole object
+        Presets.PresetDefinition capped = Presets.get("capped");
+        assertNotNull(capped);
+        assertEquals("E".repeat(256), capped.resolveDisplayName("en_us"));
+        assertEquals("J".repeat(10), capped.resolveDisplayName("ja_jp"));
+
+        Presets.reloadFrom(dir.resolve("clean"));
+    }
+
+    @Test
+    void overwritingCustomPresetCarriesAnObjectFormNameOverUnchanged(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("multilang.json");
+        Files.writeString(file, """
+                {
+                  "name": { "en_us": "Starter Kit", "ja_jp": "スターターキット" },
+                  "items": ["minecraft:dirt"]
+                }
+                """);
+        assertEquals(1, Presets.reloadFrom(dir));
+        assertEquals("Starter Kit", Presets.get("multilang").resolveDisplayName("en_us"));
+        assertEquals("スターターキット", Presets.get("multilang").resolveDisplayName("ja_jp"));
+
+        // G2/F54: overwriting carries the existing object-form name over, like the string form
+        List<TargetKey> updated = List.of(TargetKey.of("minecraft:diamond"));
+        assertTrue(Presets.saveCustomTo(dir, "multilang", updated));
+
+        JsonObject savedJson = JsonParser.parseString(Files.readString(file)).getAsJsonObject();
+        assertTrue(savedJson.get("name").isJsonObject());
+        JsonObject savedName = savedJson.getAsJsonObject("name");
+        assertEquals("Starter Kit", savedName.get("en_us").getAsString());
+        assertEquals("スターターキット", savedName.get("ja_jp").getAsString());
+        assertEquals("minecraft:diamond", savedJson.getAsJsonArray("items").get(0).getAsString());
+
+        Presets.PresetDefinition after = Presets.get("multilang");
+        assertNotNull(after);
+        assertEquals("Starter Kit", after.resolveDisplayName("en_us"));
+        assertEquals("スターターキット", after.resolveDisplayName("ja_jp"));
+        assertEquals(updated, after.items());
+
+        // Round-trip through the file keeps the object name
+        Presets.reloadFrom(dir);
+        assertEquals("スターターキット", Presets.get("multilang").resolveDisplayName("ja_jp"));
+
+        // An existing object name with only invalid entries is no valid name: the ID is written instead
+        Path junk = dir.resolve("junk_name.json");
+        Files.writeString(junk, "{ \"name\": { \"\": \"x\", \"de_de\": \"   \" }, \"items\": [\"minecraft:dirt\"] }");
+        assertTrue(Presets.saveCustomTo(dir, "junk_name", List.of(TargetKey.of("minecraft:stone"))));
+        JsonObject junkJson = JsonParser.parseString(Files.readString(junk)).getAsJsonObject();
+        assertEquals("junk_name", junkJson.get("name").getAsString());
+        assertEquals("junk_name", Presets.get("junk_name").resolveDisplayName("en_us"));
+
+        Presets.reloadFrom(dir.resolve("clean"));
     }
 }

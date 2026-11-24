@@ -1044,10 +1044,17 @@ public final class MilestoneCommands {
         List<Presets.PresetDefinition> all = Presets.all();
         source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.presets_header", all.size()), false);
         for (Presets.PresetDefinition p : all) {
-            Component typeLabel = ServerLang.tr(source, p.builtin()
-                    ? "message.itemmilestonelog.preset_type_builtin"
-                    : "message.itemmilestonelog.preset_type_file");
-            String display = p.builtin() ? p.id() : p.displayName();
+            // F21: the kind column distinguishes built-in, config-folder and data pack presets.
+            Component typeLabel = ServerLang.tr(source, switch (p.kind()) {
+                case BUILTIN -> "message.itemmilestonelog.preset_type_builtin";
+                case FILE -> "message.itemmilestonelog.preset_type_file";
+                case DATAPACK -> "message.itemmilestonelog.preset_type_datapack";
+            });
+            // F54: custom names resolve in the source player's language (en_us priority for
+            // console / RCON); built-in rows keep showing the raw ID as before.
+            String display = p.builtin()
+                    ? p.id()
+                    : p.resolveDisplayName(MilestoneService.clientLanguage(source.getPlayer()));
             source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.presets_entry",
                     display, p.id(), p.items().size(), typeLabel), false);
         }

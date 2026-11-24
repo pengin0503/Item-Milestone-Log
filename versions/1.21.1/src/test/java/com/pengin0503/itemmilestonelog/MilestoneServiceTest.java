@@ -4,6 +4,7 @@ import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
 import com.pengin0503.itemmilestonelog.api.WorldFirstRecord;
 import com.pengin0503.itemmilestonelog.network.PresetEntry;
+import com.pengin0503.itemmilestonelog.network.SyncExtraPayload;
 import com.pengin0503.itemmilestonelog.network.SyncMilestonesPayload;
 import com.pengin0503.itemmilestonelog.network.TargetEntry;
 import net.minecraft.network.chat.Component;
@@ -36,11 +37,13 @@ class MilestoneServiceTest {
     @BeforeEach
     void initCleanPresets(@TempDir Path emptyDir) {
         Presets.reloadFrom(emptyDir);
+        Presets.clearDatapackPresets();
     }
 
     @AfterEach
     void resetPresets(@TempDir Path emptyDir) {
         Presets.reloadFrom(emptyDir);
+        Presets.clearDatapackPresets();
     }
 
     @Test
@@ -310,6 +313,61 @@ class MilestoneServiceTest {
     }
 
     @Test
+    void saveAndDeletePresetRejectDatapackOnlyIdsWhileApplyStillWorks(@TempDir Path dir) {
+        Presets.reloadFrom(dir);
+        Presets.setDatapackPresets(Presets.resolveDatapackPresets(Map.of(
+                "pack_mod", Map.of("dp_pack", "{ \"name\": \"Data Pack\", \"items\": [\"minecraft:diamond\"] }"))));
+
+        MilestoneData data = new MilestoneData();
+        Set<String> knownItems = Set.of("minecraft:diamond");
+        MilestoneData.PlayerData pd = data.player(PLAYER_A);
+        pd.targets.add(TargetKey.of("minecraft:diamond"));
+
+        // Saving over or deleting a datapack-only preset is rejected with the F21 message
+        MilestoneService.ActionResult save = MilestoneService.savePreset(
+                data, PLAYER_A, null, true, "dp_pack", () -> dir);
+        assertFalse(save.success());
+        assertEquals("Preset 'dp_pack' comes from a datapack and cannot be overwritten or deleted.",
+                save.message().getString());
+
+        MilestoneService.ActionResult delete = MilestoneService.deletePreset(null, true, "dp_pack", () -> dir);
+        assertFalse(delete.success());
+        assertEquals("Preset 'dp_pack' comes from a datapack and cannot be overwritten or deleted.",
+                delete.message().getString());
+        assertTrue(Files.notExists(dir.resolve("dp_pack.json")));
+        assertNotNull(Presets.get("dp_pack"));
+
+        // Applying a datapack preset works exactly like built-in and custom presets
+        MilestoneService.ActionResult applied = MilestoneService.applyPreset(
+                data, PLAYER_A, null, "dp_pack", knownItems::contains);
+        assertTrue(applied.success());
+        assertEquals(Set.of(TargetKey.of("minecraft:diamond")), pd.targets);
+
+        // presetsEnabled = false disables datapack presets together with all other presets
+        MilestoneData fresh = new MilestoneData();
+        assertFalse(MilestoneService.applyPreset(fresh, PLAYER_A, null, "dp_pack", knownItems::contains, false).success());
+
+        // GUI sync keeps the payload format: datapack presets are sent as builtin = false with their name
+        SyncMilestonesPayload payload = MilestoneService.buildSyncPayload(
+                pd, Set.of(), Set.of(), ids -> Map.of(), 0, true, false, null);
+        PresetEntry dpPack = payload.presets().stream()
+                .filter(p -> p.id().equals("dp_pack")).findFirst().orElseThrow();
+        assertFalse(dpPack.builtin());
+        assertEquals("Data Pack", dpPack.displayName());
+        assertEquals(1, dpPack.itemCount());
+
+        // Verify the F21 translation strings in en_us and ja_jp
+        assertEquals("datapack",
+                ServerLang.trForLang("en_us", "message.itemmilestonelog.preset_type_datapack").getString());
+        assertEquals("データパック",
+                ServerLang.trForLang("ja_jp", "message.itemmilestonelog.preset_type_datapack").getString());
+        assertEquals("Preset 'dp_pack' comes from a datapack and cannot be overwritten or deleted.",
+                ServerLang.trForLang("en_us", "message.itemmilestonelog.preset_datapack_protected", "dp_pack").getString());
+        assertEquals("プリセット「dp_pack」はデータパックのもので、上書き・削除できません。",
+                ServerLang.trForLang("ja_jp", "message.itemmilestonelog.preset_datapack_protected", "dp_pack").getString());
+    }
+
+    @Test
     void resetRecordAndResetAllClearRecordsWhileKeepingTargets() {
         MilestoneData data = new MilestoneData();
         Set<String> knownItems = Set.of("minecraft:diamond");
@@ -431,6 +489,44 @@ class MilestoneServiceTest {
     }
 
     @Test
+    void buildSyncPayloadResolvesCustomPresetNamesInThePlayersLanguage(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("multi.json"), """
+                { "name": { "en_us": "Starter Kit", "ja_jp": "スターターキット" }, "items": ["minecraft:diamond"] }
+                """);
+        Presets.reloadFrom(dir);
+        MilestoneData data = new MilestoneData();
+        MilestoneData.PlayerData pd = data.player(PLAYER_A);
+
+        // F54: the payload format is unchanged; the resolved string fills PresetEntry.displayName
+        SyncMilestonesPayload en = MilestoneService.buildSyncPayload(
+                pd, Set.of(), Set.of(), ids -> Map.of(), 0, true, false, null, true, "en_us");
+        PresetEntry enPack = en.presets().stream().filter(p -> p.id().equals("multi")).findFirst().orElseThrow();
+        assertEquals("Starter Kit", enPack.displayName());
+
+        SyncMilestonesPayload ja = MilestoneService.buildSyncPayload(
+                pd, Set.of(), Set.of(), ids -> Map.of(), 0, true, false, null, true, "ja_JP");
+        PresetEntry jaPack = ja.presets().stream().filter(p -> p.id().equals("multi")).findFirst().orElseThrow();
+        assertEquals("スターターキット", jaPack.displayName());
+
+        // Unmatched languages and a null language (console-style) resolve with en_us priority
+        SyncMilestonesPayload fr = MilestoneService.buildSyncPayload(
+                pd, Set.of(), Set.of(), ids -> Map.of(), 0, true, false, null, true, "fr_fr");
+        assertEquals("Starter Kit", fr.presets().stream()
+                .filter(p -> p.id().equals("multi")).findFirst().orElseThrow().displayName());
+        SyncMilestonesPayload nullLang = MilestoneService.buildSyncPayload(
+                pd, Set.of(), Set.of(), ids -> Map.of(), 0, true, false, null, true, null);
+        assertEquals("Starter Kit", nullLang.presets().stream()
+                .filter(p -> p.id().equals("multi")).findFirst().orElseThrow().displayName());
+
+        // Built-in presets still travel with an empty displayName (the client translates them)
+        PresetEntry builtin = en.presets().stream().filter(p -> p.id().equals("atm_star")).findFirst().orElseThrow();
+        assertTrue(builtin.builtin());
+        assertEquals("", builtin.displayName());
+
+        Presets.reloadFrom(dir.resolve("clean"));
+    }
+
+    @Test
     void presetsDisabledRejectsPresetOperationsAndHidesPresetsInSyncPayload(@TempDir Path dir) throws Exception {
         Files.writeString(dir.resolve("my_custom.json"), """
                 {
@@ -540,6 +636,22 @@ class MilestoneServiceTest {
                 "my_goals", "", List.of(TargetKey.of("minecraft:diamond")), false);
         assertEquals("my_goals",
                 MilestoneService.presetDisplayNameForLang("en_us", customFallback).getString());
+
+        // F54: an object-form (per-language) custom name resolves in the recipient's language,
+        // with en_us priority for unmatched languages
+        Presets.PresetDefinition localizedCustom = new Presets.PresetDefinition(
+                "my_goals",
+                PresetName.ofLocalized(Map.of("ja_jp", "100% パック %s 目標", "en_us", "100% Pack %s Goals")),
+                List.of(TargetKey.of("minecraft:diamond")),
+                Presets.PresetKind.FILE);
+        assertEquals("100% Pack %s Goals",
+                MilestoneService.presetDisplayNameForLang("en_us", localizedCustom).getString());
+        assertEquals("100% パック %s 目標",
+                MilestoneService.presetDisplayNameForLang("ja_jp", localizedCustom).getString());
+        assertEquals("100% パック %s 目標",
+                MilestoneService.presetDisplayNameForLang("JA_JP", localizedCustom).getString());
+        assertEquals("100% Pack %s Goals",
+                MilestoneService.presetDisplayNameForLang("fr_fr", localizedCustom).getString());
     }
 
     @Test
@@ -1798,5 +1910,46 @@ class MilestoneServiceTest {
         assertEquals(
                 "defaultTargets かプリセットに oldmod:gem が残っています。手で直してください。",
                 ServerLang.trForLang("ja_jp", "message.itemmilestonelog.renameitem_config_note", "oldmod:gem").getString());
+    }
+
+    @Test
+    void buildSyncExtraPayloadSelectsReceiversWorldFirstsAndRespectsGuiWorldFirstMarkConfig() {
+        MilestoneData data = new MilestoneData();
+        UUID playerB = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        TargetKey diamond1 = TargetKey.of("minecraft:diamond");
+        TargetKey diamond64 = TargetKey.of("minecraft:diamond", 64);
+        TargetKey ironTag = TargetKey.of("#c:ingots/iron", 100);
+        TargetKey emerald = TargetKey.of("minecraft:emerald");
+
+        data.recordWorldFirstIfAbsent(diamond1, PLAYER_A, "Alice", new MilestoneRecord(100, 1L, 1_000L));
+        data.recordWorldFirstIfAbsent(diamond64, PLAYER_A, "Alice", new MilestoneRecord(200, 2L, 2_000L));
+        data.recordWorldFirstIfAbsent(ironTag, PLAYER_A, "Alice", new MilestoneRecord(300, 3L, 3_000L));
+        data.recordWorldFirstIfAbsent(emerald, playerB, "Bob", new MilestoneRecord(150, 1L, 1_500L));
+
+        SyncExtraPayload enabled = MilestoneService.buildSyncExtraPayload(
+                data, PLAYER_A, true, List.of("pack_a", "Bad Id", "list", "pack-b_2"));
+        assertEquals(Set.of(diamond1, diamond64, ironTag), enabled.worldFirsts());
+        assertEquals(Set.of("pack_a", "pack-b_2"), enabled.readOnlyPresets());
+
+        // When guiWorldFirstMark is false, worldFirsts is empty while readOnlyPresets is still sent
+        SyncExtraPayload disabled = MilestoneService.buildSyncExtraPayload(
+                data, PLAYER_A, false, List.of("pack_a"));
+        assertTrue(disabled.worldFirsts().isEmpty());
+        assertEquals(Set.of("pack_a"), disabled.readOnlyPresets());
+
+        // Other player receives only their own world firsts
+        SyncExtraPayload forB = MilestoneService.buildSyncExtraPayload(data, playerB, true, Set.of());
+        assertEquals(Set.of(emerald), forB.worldFirsts());
+        assertTrue(forB.readOnlyPresets().isEmpty());
+
+        // Verify F25 GUI translation strings in en_us and ja_jp
+        assertEquals("✔ ★ 1h 00m 00s",
+                ServerLang.trForLang("en_us", "gui.itemmilestonelog.status.recorded_world_first", "1h 00m 00s").getString());
+        assertEquals("✔ ★ 1時間00分00秒",
+                ServerLang.trForLang("ja_jp", "gui.itemmilestonelog.status.recorded_world_first", "1時間00分00秒").getString());
+        assertEquals("Datapack",
+                ServerLang.trForLang("en_us", "gui.itemmilestonelog.presets.type.datapack").getString());
+        assertEquals("データパック",
+                ServerLang.trForLang("ja_jp", "gui.itemmilestonelog.presets.type.datapack").getString());
     }
 }

@@ -940,6 +940,24 @@ class TrackerTest {
         assertEquals("★ Player%s が My %s Pack の目標をすべて達成しました！",
                 ServerLang.trForLang("ja_jp", "message.itemmilestonelog.preset_completed_broadcast",
                         Component.literal("Player%s"), customName).getString());
+
+        // 5. F54: an object-form custom name resolves per language for F5 completion messages
+        Presets.PresetDefinition localizedCustom = new Presets.PresetDefinition(
+                "loc_pack",
+                PresetName.ofLocalized(Map.of("en_us", "My %s Pack", "ja_jp", "私の%sパック")),
+                List.of(TargetKey.of("minecraft:diamond")),
+                Presets.PresetKind.FILE);
+        assertEquals("★ Player%s completed all targets of My %s Pack!",
+                ServerLang.trForLang("en_us", "message.itemmilestonelog.preset_completed_broadcast",
+                        Component.literal("Player%s"),
+                        MilestoneService.presetDisplayNameForLang("en_us", localizedCustom)).getString());
+        assertEquals("★ Player%s が 私の%sパック の目標をすべて達成しました！",
+                ServerLang.trForLang("ja_jp", "message.itemmilestonelog.preset_completed_broadcast",
+                        Component.literal("Player%s"),
+                        MilestoneService.presetDisplayNameForLang("ja_jp", localizedCustom)).getString());
+        // Unmatched / null languages resolve with en_us priority (console / RCON path)
+        assertEquals("My %s Pack", MilestoneService.presetDisplayNameForLang("fr_fr", localizedCustom).getString());
+        assertEquals("My %s Pack", MilestoneService.presetDisplayNameForLang(null, localizedCustom).getString());
     }
 
     @Test

@@ -906,8 +906,9 @@ public final class DiscordNotifier {
     /**
      * Resolves a preset's display name in {@code language} for Discord notifications (F19):
      * built-in presets look up {@code gui.itemmilestonelog.preset.<id>} in the bundled language
-     * table (falling back to English), while custom presets use their JSON {@code name} (or ID
-     * when absent/blank).
+     * table (falling back to English), while custom presets resolve their JSON {@code name}
+     * (a plain string, or F54 per-language entries, with the ID as fallback) in {@code language}
+     * (F18's {@code discordLanguage}).
      */
     static String resolvePresetDisplayName(@Nullable Presets.PresetDefinition preset, @Nullable String language) {
         if (preset == null) {
@@ -917,11 +918,7 @@ public final class DiscordNotifier {
             String id = preset.id() != null ? preset.id() : "";
             return ServerLang.formatForLang(language, "gui.itemmilestonelog.preset." + id);
         }
-        String displayName = preset.displayName();
-        if (displayName != null && !displayName.isBlank()) {
-            return displayName;
-        }
-        return preset.id() != null ? preset.id() : "";
+        return preset.resolveDisplayName(language);
     }
 
     /**

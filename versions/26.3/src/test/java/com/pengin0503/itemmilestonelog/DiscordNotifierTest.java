@@ -1182,6 +1182,22 @@ class DiscordNotifierTest {
         assertEquals("★ Alice completed all targets of my\\_pack!",
                 customIdJson.get("content").getAsString());
 
+        // F54: an object-form name resolves in the notification language (discordLanguage)
+        Presets.PresetDefinition localizedNamed = new Presets.PresetDefinition(
+                "my_pack",
+                PresetName.ofLocalized(Map.of("en_us", "My _Super_ [Pack]", "ja_jp", "私の_スーパー_[パック]")),
+                List.of(TargetKey.of("minecraft:diamond")),
+                Presets.PresetKind.FILE);
+        JsonObject localizedJa = JsonParser.parseString(DiscordNotifier.buildPresetCompletionPayloadJson(
+                "_Steve_", localizedNamed, EPOCH_2023_11_14, false, "ja_jp")).getAsJsonObject();
+        assertEquals("★ \\_Steve\\_ が 私の\\_スーパー\\_\\[パック\\] の目標をすべて達成しました！",
+                localizedJa.get("content").getAsString());
+        // Unbundled languages fall back to the object's en_us entry
+        JsonObject localizedFr = JsonParser.parseString(DiscordNotifier.buildPresetCompletionPayloadJson(
+                "_Steve_", localizedNamed, EPOCH_2023_11_14, false, "fr_fr")).getAsJsonObject();
+        assertEquals("★ \\_Steve\\_ completed all targets of My \\_Super\\_ \\[Pack\\]!",
+                localizedFr.get("content").getAsString());
+
         // Plain content cap (2000 UTF-16 code units, surrogate-pair-safe)
         String longEmojiName = "\uD83D\uDC8E".repeat(1200);
         String cappedContent = JsonParser.parseString(DiscordNotifier.buildPresetCompletionPayloadJson(
@@ -1238,6 +1254,21 @@ class DiscordNotifierTest {
         assertEquals(0x2ECC71, customEmbed.get("color").getAsInt());
         assertEquals("_Steve_", customEmbed.getAsJsonObject("footer").get("text").getAsString());
         assertEquals("2023-11-14T22:13:20Z", customEmbed.get("timestamp").getAsString());
+
+        // F54: an object-form name resolves the embed title in the notification language
+        Presets.PresetDefinition localizedNamed = new Presets.PresetDefinition(
+                "my_pack",
+                PresetName.ofLocalized(Map.of("en_us", "My _Super_ *Pack*", "ja_jp", "私の_スーパー_*パック*")),
+                List.of(TargetKey.of("minecraft:diamond")),
+                Presets.PresetKind.FILE);
+        JsonObject localizedJaEmbed = JsonParser.parseString(DiscordNotifier.buildPresetCompletionPayloadJson(
+                "Alice", localizedNamed, EPOCH_2023_11_14, true, "ja_jp"))
+                .getAsJsonObject().getAsJsonArray("embeds").get(0).getAsJsonObject();
+        // Titles stay literal (no Markdown escaping), resolved per language
+        assertEquals("私の_スーパー_*パック*", localizedJaEmbed.get("title").getAsString());
+        assertEquals("★ Alice が 私の\\_スーパー\\_\\*パック\\* の目標をすべて達成しました！",
+                localizedJaEmbed.get("description").getAsString());
+        assertEquals(0x2ECC71, localizedJaEmbed.get("color").getAsInt());
 
         // Custom preset with null displayName falls back to ID; unknown epoch omits timestamp; blank player omits footer
         Presets.PresetDefinition customFallbackId = new Presets.PresetDefinition(

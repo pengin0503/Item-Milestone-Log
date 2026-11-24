@@ -3,11 +3,13 @@ package com.pengin0503.itemmilestonelog;
 import com.mojang.logging.LogUtils;
 import com.pengin0503.itemmilestonelog.gametest.MilestoneGameTestRegistration;
 import com.pengin0503.itemmilestonelog.network.ModNetworking;
+import net.minecraft.resources.Identifier;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.config.ModConfig;
 import net.neoforged.neoforge.common.NeoForge;
+import net.neoforged.neoforge.event.AddServerReloadListenersEvent;
 import net.neoforged.neoforge.event.server.ServerStartedEvent;
 import net.neoforged.neoforge.event.server.ServerStartingEvent;
 import net.neoforged.neoforge.event.server.ServerStoppedEvent;
@@ -32,6 +34,7 @@ public class ItemMilestoneLog {
         NeoForge.EVENT_BUS.register(Tracker.class);
         NeoForge.EVENT_BUS.register(MilestoneCommands.class);
         NeoForge.EVENT_BUS.addListener(ItemMilestoneLog::onServerStarting);
+        NeoForge.EVENT_BUS.addListener(ItemMilestoneLog::onAddServerReloadListeners);
         NeoForge.EVENT_BUS.addListener(ItemMilestoneLog::onServerStarted);
         NeoForge.EVENT_BUS.addListener(ItemMilestoneLog::onServerTick);
         NeoForge.EVENT_BUS.addListener(ItemMilestoneLog::onServerStopping);
@@ -46,6 +49,14 @@ public class ItemMilestoneLog {
         LOGGER.info("[ItemMilestoneLog] Loaded {} preset(s) ({} custom)", Presets.names().size(), custom);
         MilestoneService.warnUnknownFirstJoinPresets();
         MilestoneBackup.initForServer(event.getServer());
+    }
+
+    /**
+     * F21: data pack presets reload with the server's data packs (initial load and {@code /reload}),
+     * not with {@code /milestonelog preset reload}, which only re-reads the config folder.
+     */
+    private static void onAddServerReloadListeners(AddServerReloadListenersEvent event) {
+        event.addListener(Identifier.fromNamespaceAndPath(MOD_ID, "presets"), new DatapackPresetReloadListener());
     }
 
     private static void onServerStarted(ServerStartedEvent event) {
@@ -72,5 +83,7 @@ public class ItemMilestoneLog {
     private static void onServerStopped(ServerStoppedEvent event) {
         MilestoneBackup.resetState();
         DiscordNotifier.resetDigestThrottler();
+        // F21: data pack presets belong to this world; do not carry them into the next one.
+        Presets.clearDatapackPresets();
     }
 }

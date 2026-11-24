@@ -8,6 +8,7 @@ import net.minecraft.client.Minecraft;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.common.Mod;
+import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 import net.neoforged.neoforge.client.settings.KeyConflictContext;
@@ -35,8 +36,14 @@ public final class ItemMilestoneLogClient {
 
     public ItemMilestoneLogClient(IEventBus modEventBus) {
         ModNetworking.setClientSyncHandler(ClientMilestoneHandler::onSyncReceived);
+        ModNetworking.setClientSyncExtraHandler(ClientMilestoneHandler::onSyncExtraReceived);
         modEventBus.addListener(ItemMilestoneLogClient::onRegisterKeyMappings);
         NeoForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onClientTick);
+        NeoForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onClientLoggingOut);
+    }
+
+    private static void onClientLoggingOut(ClientPlayerNetworkEvent.LoggingOut event) {
+        ClientMilestoneHandler.clearExtraData();
     }
 
     private static void onRegisterKeyMappings(RegisterKeyMappingsEvent event) {

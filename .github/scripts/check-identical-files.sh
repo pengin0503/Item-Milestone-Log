@@ -35,7 +35,7 @@ IDENTICAL_ALL_4=(
   "src/main/java/com/pengin0503/itemmilestonelog/gametest/MilestoneGameTests.java"
   "src/main/java/com/pengin0503/itemmilestonelog/network/TargetEntry.java"
 
-  # src/test/java (17 files)
+  # src/test/java (18 files)
   "src/test/java/com/pengin0503/itemmilestonelog/DiscordNotifierTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/MilestoneCommandRunnerTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/MilestoneCommandsHelpTest.java"
@@ -52,16 +52,18 @@ IDENTICAL_ALL_4=(
   "src/test/java/com/pengin0503/itemmilestonelog/client/ActionRowLayoutTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/network/MilestoneActionPayloadTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/network/ModNetworkingRateLimitTest.java"
+  "src/test/java/com/pengin0503/itemmilestonelog/network/SyncExtraPayloadTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/network/SyncMilestonesPayloadTest.java"
 )
 
 # Files that differ in 1.21.1 (ResourceLocation, NBT SavedData, player.server,
 # mods.toml loaderVersion, etc.) but must be byte-identical across 26.1.2, 26.2,
-# and 26.3. Together with the 15 src/main/java files in IDENTICAL_ALL_4, this
-# covers all 30 src/main/java files that are identical across 26.x.
+# and 26.3. Together with the 16 src/main/java files in IDENTICAL_ALL_4, this
+# covers all 33 src/main/java files that are identical across 26.x.
 IDENTICAL_26_X=(
-  # src/main/java (15 files; +15 from IDENTICAL_ALL_4 = 30 src/main/java files)
+  # src/main/java (17 files; +16 from IDENTICAL_ALL_4 = 33 src/main/java files)
   "src/main/java/com/pengin0503/itemmilestonelog/Config.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/DatapackPresetReloadListener.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestoneCommands.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestoneData.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestoneExport.java"
@@ -75,6 +77,7 @@ IDENTICAL_26_X=(
   "src/main/java/com/pengin0503/itemmilestonelog/network/ModNetworking.java"
   "src/main/java/com/pengin0503/itemmilestonelog/network/PresetEntry.java"
   "src/main/java/com/pengin0503/itemmilestonelog/network/RequestSyncPayload.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/network/SyncExtraPayload.java"
   "src/main/java/com/pengin0503/itemmilestonelog/network/SyncMilestonesPayload.java"
 
   # src/test/java (3 files)
@@ -96,6 +99,9 @@ IDENTICAL_26_X=(
 #     ItemPickerScreen,MilestoneScreen,PresetListScreen,SavePresetScreen}.java:
 #     1.21.1 uses GuiGraphics / Screen.render; 26.1.2 uses GuiGraphicsExtractor
 #     + mc.screen / mc.setScreen; 26.2 and 26.3 use mc.gui.screen() / mc.gui.setScreen().
+# - src/main/java/.../DatapackPresetReloadListener.java:
+#     1.21.1 registers via AddReloadListenerEvent and uses ResourceLocation;
+#     26.x registers via AddServerReloadListenersEvent and uses Identifier.
 # - src/main/java/.../Tracker.java:
 #     NeoForge 26.3 removed TagsUpdatedEvent#getUpdateCause()/UpdateCause, so 26.3's
 #     onTagsUpdated gates the defaultTargets tag warning on shouldUpdateStaticData()

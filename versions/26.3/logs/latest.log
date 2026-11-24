@@ -1,0 +1,38 @@
+[13:21:54] [main/WARN]: [ItemMilestoneLog] Ignoring preset file atm_star.json because 'atm_star' is a built-in preset
+[13:21:54] [main/ERROR]: [ItemMilestoneLog] Failed to parse preset file broken.json: com.google.gson.stream.MalformedJsonException: Expected ':' at line 1 column 8 path $.not
+See https://github.com/google/gson/blob/main/Troubleshooting.md#malformed-json
+[13:21:54] [main/WARN]: [ItemMilestoneLog] Skipping preset file empty.json: 0 valid item IDs
+[13:21:54] [main/WARN]: [ItemMilestoneLog] Skipping item 'minecraft:iron_ingot' with invalid count in preset my_pack.json
+[13:21:54] [main/WARN]: [ItemMilestoneLog] Skipping item 'minecraft:gold_ingot' with invalid count in preset my_pack.json
+[13:21:54] [main/WARN]: [ItemMilestoneLog] Skipping invalid item 'not valid id' in preset my_pack.json
+[13:21:54] [main/WARN]: [ItemMilestoneLog] Ignoring datapack preset zzz_mod:itemmilestonelog/presets/clash.json because preset 'clash' is already provided by namespace 'aaa_mod' (lexicographically first namespace wins)
+[13:21:54] [main/ERROR]: [ItemMilestoneLog] Failed to parse preset file aaa_mod:itemmilestonelog/presets/shared.json: com.google.gson.stream.MalformedJsonException: Expected ':' at line 1 column 8 path $.not
+See https://github.com/google/gson/blob/main/Troubleshooting.md#malformed-json
+[13:21:54] [main/WARN]: [ItemMilestoneLog] Ignoring datapack preset bbb_mod:itemmilestonelog/presets/shared.json because preset 'shared' is already provided by namespace 'aaa_mod' (lexicographically first namespace wins)
+[13:21:54] [main/WARN]: [ItemMilestoneLog] Ignoring datapack preset 'ro_pack' because 'ro_pack' is already provided by a config-folder file preset
+[13:21:54] [main/WARN]: [ItemMilestoneLog] Ignoring datapack preset 'ro_pack' because 'ro_pack' is already provided by a config-folder file preset
+[13:21:54] [main/WARN]: [ItemMilestoneLog] Ignoring datapack preset pack_mod:itemmilestonelog/presets/atm_star.json because 'atm_star' is a built-in preset
+[13:21:54] [main/WARN]: [ItemMilestoneLog] Ignoring datapack preset 'shared_id' because 'shared_id' is already provided by a config-folder file preset
+[13:21:54] [main/WARN]: [ItemMilestoneLog] Skipping invalid item '#' in preset tag_pack.json
+[13:21:54] [main/WARN]: [ItemMilestoneLog] Skipping invalid item '##c:x' in preset tag_pack.json
+[13:21:54] [main/WARN]: [ItemMilestoneLog] Skipping invalid item '#c:x#' in preset tag_pack.json
+[13:21:54] [main/WARN]: [ItemMilestoneLog] Skipping invalid item '#c:x#0' in preset tag_pack.json
+[13:21:54] [main/WARN]: [ItemMilestoneLog] Skipping invalid item '#c:x#abc' in preset tag_pack.json
+[13:21:54] [main/WARN]: [ItemMilestoneLog] Skipping invalid item '#:x' in preset tag_pack.json
+[13:21:54] [main/WARN]: [ItemMilestoneLog] Skipping invalid item '#c:' in preset tag_pack.json
+[13:21:54] [main/WARN]: [ItemMilestoneLog] Skipping invalid item 'c:x#1#2' in preset tag_pack.json
+[13:21:54] [main/WARN]: [ItemMilestoneLog] Skipping item '#nonexistentmod:bad_count' with invalid count in preset tag_pack.json
+[13:21:54] [main/WARN]: [ItemMilestoneLog] Skipping invalid item '#' in preset tag_pack.json
+[13:21:54] [main/WARN]: [ItemMilestoneLog] Skipping invalid item '##c:x' in preset tag_pack.json
+[13:21:54] [main/WARN]: [ItemMilestoneLog] Skipping invalid item '#c:x#' in preset tag_pack.json
+[13:21:54] [main/WARN]: [ItemMilestoneLog] Skipping invalid item '#c:x#0' in preset tag_pack.json
+[13:21:54] [main/WARN]: [ItemMilestoneLog] Skipping invalid item '#c:x#abc' in preset tag_pack.json
+[13:21:54] [main/WARN]: [ItemMilestoneLog] Skipping invalid item '#:x' in preset tag_pack.json
+[13:21:54] [main/WARN]: [ItemMilestoneLog] Skipping invalid item '#c:' in preset tag_pack.json
+[13:21:54] [main/WARN]: [ItemMilestoneLog] Skipping invalid item 'c:x#1#2' in preset tag_pack.json
+[13:21:54] [main/WARN]: [ItemMilestoneLog] Skipping item '#nonexistentmod:bad_count' with invalid count in preset tag_pack.json
+[13:21:54] [main/WARN]: [ItemMilestoneLog] Ignoring datapack preset bad_mod:itemmilestonelog/presets/Bad-ID.json (file name must match [a-z0-9_-]{1,32} and must not be a reserved word)
+[13:21:54] [main/WARN]: [ItemMilestoneLog] Ignoring datapack preset bad_mod:itemmilestonelog/presets/list.json (file name must match [a-z0-9_-]{1,32} and must not be a reserved word)
+[13:21:54] [main/WARN]: [ItemMilestoneLog] Ignoring datapack preset bad_mod:itemmilestonelog/presets/way_too_long_preset_id_name_over_32_chars.json (file name must match [a-z0-9_-]{1,32} and must not be a reserved word)
+[13:21:54] [main/WARN]: [ItemMilestoneLog] Ignoring datapack preset builtin_mod:itemmilestonelog/presets/atm_star.json because 'atm_star' is a built-in preset
+[13:21:54] [main/WARN]: [ItemMilestoneLog] Ignoring datapack preset nested_mod:itemmilestonelog/presets/deep/inner.json (files in subfolders are ignored; use a flat file name)

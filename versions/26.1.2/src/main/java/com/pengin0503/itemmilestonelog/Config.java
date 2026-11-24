@@ -202,6 +202,12 @@ public final class Config {
                     "periodic digests (F9), or /milestonelog discordtest (F49).")
             .define("discordSilentRecords", false);
 
+    /** F25: show a star mark on milestones in the GUI for which the player holds the world first. */
+    public static final ModConfigSpec.BooleanValue GUI_WORLD_FIRST_MARK = BUILDER
+            .comment("Show a star mark (★) on recorded milestones in the GUI for which you hold the world first.",
+                    "Does not affect datapack preset metadata sent in the extra sync payload.")
+            .define("guiWorldFirstMark", true);
+
     static final ModConfigSpec SPEC = BUILDER.build();
 
     private record ThresholdsCache(List<? extends Integer> source, List<Integer> normalized) {
@@ -352,6 +358,18 @@ public final class Config {
             return DISCORD_SILENT_RECORDS.get();
         } catch (IllegalStateException notLoaded) {
             return false;
+        }
+    }
+
+    /**
+     * F25: {@link #GUI_WORLD_FIRST_MARK}, or {@code true} while the config is not loaded yet
+     * (plain unit tests).
+     */
+    public static boolean guiWorldFirstMark() {
+        try {
+            return GUI_WORLD_FIRST_MARK.get();
+        } catch (IllegalStateException notLoaded) {
+            return true;
         }
     }
 

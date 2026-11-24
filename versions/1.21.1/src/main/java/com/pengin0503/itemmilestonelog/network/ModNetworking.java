@@ -3,7 +3,6 @@ package com.pengin0503.itemmilestonelog.network;
 import com.pengin0503.itemmilestonelog.ItemMilestoneLog;
 import com.pengin0503.itemmilestonelog.MilestoneService;
 import net.minecraft.server.level.ServerPlayer;
-import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 import net.neoforged.neoforge.network.registration.PayloadRegistrar;
@@ -79,12 +78,19 @@ public final class ModNetworking {
 
     private static volatile Consumer<SyncMilestonesPayload> clientSyncHandler = payload -> {
     };
+    private static volatile Consumer<SyncExtraPayload> clientSyncExtraHandler = payload -> {
+    };
 
     private ModNetworking() {
     }
 
     public static void setClientSyncHandler(Consumer<SyncMilestonesPayload> handler) {
         clientSyncHandler = handler != null ? handler : payload -> {
+        };
+    }
+
+    public static void setClientSyncExtraHandler(Consumer<SyncExtraPayload> handler) {
+        clientSyncExtraHandler = handler != null ? handler : payload -> {
         };
     }
 
@@ -106,6 +112,11 @@ public final class ModNetworking {
                 SyncMilestonesPayload.STREAM_CODEC,
                 ModNetworking::handleSyncClient
         );
+        registrar.playToClient(
+                SyncExtraPayload.TYPE,
+                SyncExtraPayload.STREAM_CODEC,
+                ModNetworking::handleSyncExtraClient
+        );
     }
 
     private static void handleRequestSync(RequestSyncPayload payload, IPayloadContext context) {
@@ -115,8 +126,7 @@ public final class ModNetworking {
         context.enqueueWork(() -> {
             ItemMilestoneLog.LOGGER.debug("[ItemMilestoneLog] Received RequestSyncPayload from {}",
                     player.getGameProfile().getName());
-            SyncMilestonesPayload sync = MilestoneService.createSyncPayload(player, true, null);
-            PacketDistributor.sendToPlayer(player, sync);
+            MilestoneService.sendSync(player, true, null);
         });
     }
 
@@ -135,8 +145,7 @@ public final class ModNetworking {
                 case SAVE_PRESET -> MilestoneService.savePreset(player, payload.argument());
                 case DELETE_PRESET -> MilestoneService.deletePreset(player, payload.argument());
             };
-            SyncMilestonesPayload sync = MilestoneService.createSyncPayload(player, false, result.message());
-            PacketDistributor.sendToPlayer(player, sync);
+            MilestoneService.sendSync(player, false, result.message());
             if (result.success() && (payload.action() == MilestoneActionPayload.Action.SAVE_PRESET
                     || payload.action() == MilestoneActionPayload.Action.DELETE_PRESET)) {
                 MilestoneService.syncAllOnlineGuiPlayers(player.server, player);
@@ -150,6 +159,15 @@ public final class ModNetworking {
                     "[ItemMilestoneLog] Received SyncMilestonesPayload (targets={}, records={}, presets={}, openScreen={})",
                     payload.targets().size(), payload.records().size(), payload.presets().size(), payload.openScreen());
             clientSyncHandler.accept(payload);
+        });
+    }
+
+    private static void handleSyncExtraClient(SyncExtraPayload payload, IPayloadContext context) {
+        context.enqueueWork(() -> {
+            ItemMilestoneLog.LOGGER.debug(
+                    "[ItemMilestoneLog] Received SyncExtraPayload (worldFirsts={}, readOnlyPresets={})",
+                    payload.worldFirsts().size(), payload.readOnlyPresets().size());
+            clientSyncExtraHandler.accept(payload);
         });
     }
 }
