@@ -33,6 +33,7 @@ bin/
 .DS_Store
 
 ### Minecraft Modding ###
+versions/verify/
 logs/
 run/
 !**/src/**/run/
