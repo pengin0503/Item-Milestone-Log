@@ -44,7 +44,8 @@ public final class NotificationGrouping {
             ChannelPlan<T> broadcastChat,
             ChannelPlan<T> worldFirstChat,
             boolean playSound,
-            ChannelPlan<T> discord
+            ChannelPlan<T> discord,
+            ChannelPlan<T> discordWorldFirst
     ) {
     }
 
@@ -115,7 +116,8 @@ public final class NotificationGrouping {
 
     /**
      * Decides per-channel delivery for a single player's queued records in a single tick,
-     * with an independent Discord queue and opt-out gate (F27 + F45).
+     * with an independent Discord queue and opt-out gate (F27 + F45), assuming only the
+     * primary Discord webhook is configured.
      */
     public static <T> FlushPlan<T> planFlush(
             List<T> records,
@@ -128,12 +130,47 @@ public final class NotificationGrouping {
             boolean milestoneSoundEnabled,
             boolean discordEnabled,
             String discordNotifyScope) {
+        return planFlush(
+                records,
+                discordRecords,
+                isWorldFirst,
+                groupSortOrder,
+                notifyPlayer,
+                broadcastMilestones,
+                announceWorldFirst,
+                milestoneSoundEnabled,
+                discordEnabled,
+                discordNotifyScope,
+                true,
+                false);
+    }
+
+    /**
+     * Decides per-channel delivery for a single player's queued records in a single tick,
+     * splitting Discord records by destination ({@code discordWebhookUrl} vs
+     * {@code discordWorldFirstWebhookUrl}) BEFORE applying the F27 grouping threshold
+     * independently per destination (F27 + F45 + F46).
+     */
+    public static <T> FlushPlan<T> planFlush(
+            List<T> records,
+            List<T> discordRecords,
+            Predicate<T> isWorldFirst,
+            Comparator<T> groupSortOrder,
+            boolean notifyPlayer,
+            boolean broadcastMilestones,
+            boolean announceWorldFirst,
+            boolean milestoneSoundEnabled,
+            boolean discordEnabled,
+            String discordNotifyScope,
+            boolean mainWebhookSet,
+            boolean worldFirstWebhookSet) {
         if (records == null || records.isEmpty()) {
             return new FlushPlan<>(
                     ChannelPlan.none(),
                     ChannelPlan.none(),
                     ChannelPlan.none(),
                     false,
+                    ChannelPlan.none(),
                     ChannelPlan.none());
         }
 
@@ -149,21 +186,19 @@ public final class NotificationGrouping {
         ChannelPlan<T> worldFirstChat = planChannel(worldFirstRecords, announceWorldFirst, groupSortOrder);
 
         ChannelPlan<T> discord;
+        ChannelPlan<T> discordWorldFirst;
         if (!discordEnabled || discordRecords == null || discordRecords.isEmpty()) {
             discord = ChannelPlan.none();
-        } else if ("world_first".equals(discordNotifyScope)) {
-            List<T> discordWorldFirst = new ArrayList<>();
-            for (T rec : discordRecords) {
-                if (isWorldFirst != null && isWorldFirst.test(rec)) {
-                    discordWorldFirst.add(rec);
-                }
-            }
-            discord = planChannel(discordWorldFirst, true, groupSortOrder);
+            discordWorldFirst = ChannelPlan.none();
         } else {
-            discord = planChannel(discordRecords, true, groupSortOrder);
+            DiscordRouting.RecordBatchSplit<T> split = DiscordRouting.splitRecordsByDestination(
+                    discordRecords, isWorldFirst, mainWebhookSet, worldFirstWebhookSet, discordNotifyScope);
+            discord = planChannel(split.mainRecords(), true, groupSortOrder);
+            discordWorldFirst = planChannel(split.worldFirstRecords(), true, groupSortOrder);
         }
 
-        return new FlushPlan<>(playerChat, broadcastChat, worldFirstChat, milestoneSoundEnabled, discord);
+        return new FlushPlan<>(
+                playerChat, broadcastChat, worldFirstChat, milestoneSoundEnabled, discord, discordWorldFirst);
     }
 
     private static <T> ChannelPlan<T> planChannel(List<T> eligible, boolean enabled, Comparator<T> groupSortOrder) {

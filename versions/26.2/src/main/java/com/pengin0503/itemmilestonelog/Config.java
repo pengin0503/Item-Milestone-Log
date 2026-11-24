@@ -162,6 +162,46 @@ public final class Config {
                     "%uuid% can also target the player, and %item% only ever contains validated item or tag IDs.")
             .define("milestoneCommand", "");
 
+    /** F10: automatically back up MilestoneData on world save and server stop. */
+    public static final ModConfigSpec.BooleanValue AUTO_BACKUP_ENABLED = BUILDER
+            .comment("Automatically back up MilestoneData to <world>/itemmilestonelog/backups/ on world save (at most once per hour) and server stop.",
+                    "Independent of exportImportEnabled.")
+            .define("autoBackupEnabled", true);
+
+    /** F10: maximum number of automatic backup files to keep per world (1-20). */
+    public static final ModConfigSpec.IntValue AUTO_BACKUP_GENERATIONS = BUILDER
+            .comment("Maximum number of automatic backup files to keep in <world>/itemmilestonelog/backups/ (1-20).")
+            .defineInRange("autoBackupGenerations", MilestoneBackupLogic.DEFAULT_GENERATIONS,
+                    MilestoneBackupLogic.MIN_GENERATIONS, MilestoneBackupLogic.MAX_GENERATIONS);
+
+    /** F9: periodically send a Discord digest summarizing milestones recorded since the previous digest. */
+    public static final ModConfigSpec.BooleanValue DISCORD_DIGEST_ENABLED = BUILDER
+            .comment("Send a periodic Discord digest summarizing milestones recorded since the previous digest.",
+                    "Uses discordWebhookUrl, discordNotifyScope, discordUseEmbeds, and discordLanguage.")
+            .define("discordDigestEnabled", false);
+
+    /** F9: interval in days between Discord digest messages (1-30). */
+    public static final ModConfigSpec.IntValue DISCORD_DIGEST_INTERVAL_DAYS = BUILDER
+            .comment("Interval in days between Discord digest messages (1-30).")
+            .defineInRange("discordDigestIntervalDays", DiscordDigestLogic.DEFAULT_INTERVAL_DAYS,
+                    DiscordDigestLogic.MIN_INTERVAL_DAYS, DiscordDigestLogic.MAX_INTERVAL_DAYS);
+
+    /** F46: optional separate Discord webhook URL used exclusively for world-first notifications (empty = unused; supports env:VAR_NAME; never logged). */
+    public static final ModConfigSpec.ConfigValue<String> DISCORD_WORLD_FIRST_WEBHOOK_URL = BUILDER
+            .comment("Optional Discord webhook URL dedicated to world-first milestone notifications. Leave empty to use discordWebhookUrl.",
+                    "When set (and resolvable), world-first posts are sent ONLY to this URL (not duplicated to discordWebhookUrl).",
+                    "Preset completion (F19) and periodic digest (F9) posts always use discordWebhookUrl.",
+                    "You can also use \"env:VAR_NAME\" to read the URL from an environment variable.",
+                    "Treat this URL as a secret; it is never printed to logs or chat.")
+            .define("discordWorldFirstWebhookUrl", "");
+
+    /** F53: send normal (non-world-first) milestone record posts to Discord silently (SUPPRESS_NOTIFICATIONS flag). */
+    public static final ModConfigSpec.BooleanValue DISCORD_SILENT_RECORDS = BUILDER
+            .comment("Send normal (non-world-first) milestone record posts to Discord without triggering notifications (flags: 4096).",
+                    "Does not affect world-first posts, grouped batches containing a world first, preset completions (F19),",
+                    "periodic digests (F9), or /milestonelog discordtest (F49).")
+            .define("discordSilentRecords", false);
+
     static final ModConfigSpec SPEC = BUILDER.build();
 
     private record ThresholdsCache(List<? extends Integer> source, List<Integer> normalized) {
@@ -239,6 +279,79 @@ public final class Config {
             return cmd != null ? cmd : "";
         } catch (IllegalStateException notLoaded) {
             return "";
+        }
+    }
+
+    /**
+     * F10: {@link #AUTO_BACKUP_ENABLED}, or {@code true} while the config is not loaded yet
+     * (plain unit tests).
+     */
+    public static boolean autoBackupEnabled() {
+        try {
+            return AUTO_BACKUP_ENABLED.get();
+        } catch (IllegalStateException notLoaded) {
+            return true;
+        }
+    }
+
+    /**
+     * F10: {@link #AUTO_BACKUP_GENERATIONS}, or {@link MilestoneBackupLogic#DEFAULT_GENERATIONS}
+     * while the config is not loaded yet (plain unit tests).
+     */
+    public static int autoBackupGenerations() {
+        try {
+            return AUTO_BACKUP_GENERATIONS.get();
+        } catch (IllegalStateException notLoaded) {
+            return MilestoneBackupLogic.DEFAULT_GENERATIONS;
+        }
+    }
+
+    /**
+     * F9: {@link #DISCORD_DIGEST_ENABLED}, or {@code false} while the config is not loaded yet
+     * (plain unit tests).
+     */
+    public static boolean discordDigestEnabled() {
+        try {
+            return DISCORD_DIGEST_ENABLED.get();
+        } catch (IllegalStateException notLoaded) {
+            return false;
+        }
+    }
+
+    /**
+     * F9: {@link #DISCORD_DIGEST_INTERVAL_DAYS}, or {@link DiscordDigestLogic#DEFAULT_INTERVAL_DAYS}
+     * while the config is not loaded yet (plain unit tests).
+     */
+    public static int discordDigestIntervalDays() {
+        try {
+            return DISCORD_DIGEST_INTERVAL_DAYS.get();
+        } catch (IllegalStateException notLoaded) {
+            return DiscordDigestLogic.DEFAULT_INTERVAL_DAYS;
+        }
+    }
+
+    /**
+     * F46: {@link #DISCORD_WORLD_FIRST_WEBHOOK_URL}, or {@code ""} while the config is not loaded yet
+     * (plain unit tests).
+     */
+    public static String discordWorldFirstWebhookUrl() {
+        try {
+            String url = DISCORD_WORLD_FIRST_WEBHOOK_URL.get();
+            return url != null ? url : "";
+        } catch (IllegalStateException notLoaded) {
+            return "";
+        }
+    }
+
+    /**
+     * F53: {@link #DISCORD_SILENT_RECORDS}, or {@code false} while the config is not loaded yet
+     * (plain unit tests).
+     */
+    public static boolean discordSilentRecords() {
+        try {
+            return DISCORD_SILENT_RECORDS.get();
+        } catch (IllegalStateException notLoaded) {
+            return false;
         }
     }
 

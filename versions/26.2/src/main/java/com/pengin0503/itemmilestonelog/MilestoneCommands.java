@@ -85,6 +85,39 @@ public final class MilestoneCommands {
         return ids;
     }
 
+    /** F24: non-tag item IDs present anywhere in {@code data} (for {@code renameitem <oldId>} suggestions). */
+    static Set<String> allStoredItemIds(MilestoneData data) {
+        Set<String> ids = new LinkedHashSet<>();
+        for (MilestoneData.PlayerData pd : data.allPlayers().values()) {
+            for (TargetKey key : pd.targets) {
+                if (!key.isTag()) {
+                    ids.add(key.itemId());
+                }
+            }
+            for (TargetKey key : pd.records.keySet()) {
+                if (!key.isTag()) {
+                    ids.add(key.itemId());
+                }
+            }
+            for (TargetKey key : pd.progressNotified.keySet()) {
+                if (!key.isTag()) {
+                    ids.add(key.itemId());
+                }
+            }
+            for (String carriedId : pd.carriedFromCreative) {
+                if (carriedId != null && !carriedId.isEmpty() && !TargetKey.isTagId(carriedId)) {
+                    ids.add(carriedId);
+                }
+            }
+        }
+        for (TargetKey key : data.worldFirsts().keySet()) {
+            if (!key.isTag()) {
+                ids.add(key.itemId());
+            }
+        }
+        return ids;
+    }
+
     /** F8b: tag IDs (without the leading {@code '#'}) of the tag keys, as typed into the tag commands. */
     static Set<String> tagIdsOf(Collection<TargetKey> keys) {
         Set<String> ids = new LinkedHashSet<>();
@@ -424,6 +457,20 @@ public final class MilestoneCommands {
                     .stream().map(String::valueOf).toList();
             return SharedSuggestionProvider.suggest(counts, builder);
         };
+        SuggestionProvider<CommandSourceStack> renameOldItemSuggestions = (ctx, builder) -> {
+            MinecraftServer server = ctx.getSource().getServer();
+            if (server == null) {
+                return builder.buildFuture();
+            }
+            return SharedSuggestionProvider.suggest(allStoredItemIds(MilestoneData.get(server)), builder);
+        };
+        SuggestionProvider<CommandSourceStack> renameNewItemSuggestions = (ctx, builder) -> {
+            List<String> items = BuiltInRegistries.ITEM.keySet().stream()
+                    .map(Object::toString)
+                    .filter(id -> !"minecraft:air".equals(id))
+                    .toList();
+            return SharedSuggestionProvider.suggest(items, builder);
+        };
 
         return literal("milestonelog")
                 .executes(MilestoneCommands::summary)
@@ -578,7 +625,9 @@ public final class MilestoneCommands {
                 .then(literal("privacy").executes(MilestoneCommands::privacy))
                 .then(literal("discordtest")
                         .requires(adminRequirement)
-                        .executes(MilestoneCommands::discordTest))
+                        .executes(ctx -> discordTest(ctx, DiscordRouting.Destination.MAIN))
+                        .then(literal("worldfirst")
+                                .executes(ctx -> discordTest(ctx, DiscordRouting.Destination.WORLD_FIRST))))
                 .then(literal("lookup")
                         .then(argument("player", StringArgumentType.word())
                                 .suggests(lookupPlayerSuggestions)
@@ -607,6 +656,21 @@ public final class MilestoneCommands {
                                 .executes(ctx -> pruneData(ctx, IntegerArgumentType.getInteger(ctx, "days"), false))
                                 .then(literal("confirm")
                                         .executes(ctx -> pruneData(ctx, IntegerArgumentType.getInteger(ctx, "days"), true)))))
+                .then(literal("renameitem")
+                        .requires(adminRequirement)
+                        .then(argument("oldId", IdentifierArgument.id())
+                                .suggests(renameOldItemSuggestions)
+                                .then(argument("newId", IdentifierArgument.id())
+                                        .suggests(renameNewItemSuggestions)
+                                        .executes(ctx -> renameItem(ctx,
+                                                IdentifierArgument.getId(ctx, "oldId").toString(),
+                                                IdentifierArgument.getId(ctx, "newId").toString(),
+                                                false))
+                                        .then(literal("confirm")
+                                                .executes(ctx -> renameItem(ctx,
+                                                        IdentifierArgument.getId(ctx, "oldId").toString(),
+                                                        IdentifierArgument.getId(ctx, "newId").toString(),
+                                                        true))))))
                 .then(literal("admin")
                         .requires(adminRequirement)
                         .then(literal("players")
@@ -1377,13 +1441,13 @@ public final class MilestoneCommands {
 
     // --------------------------------------------------------- F49 Discord test
 
-    private static int discordTest(CommandContext<CommandSourceStack> ctx) {
+    private static int discordTest(CommandContext<CommandSourceStack> ctx, DiscordRouting.Destination destination) {
         CommandSourceStack source = ctx.getSource();
         MinecraftServer server = source.getServer();
         ServerPlayer executorPlayer = source.getPlayer();
         UUID executorUuid = executorPlayer != null ? executorPlayer.getUUID() : null;
 
-        DiscordTestResult immediateError = DiscordNotifier.sendTestMessage(result -> {
+        DiscordTestResult immediateError = DiscordNotifier.sendTestMessage(destination, result -> {
             if (server == null) {
                 return;
             }
@@ -1976,6 +2040,13 @@ public final class MilestoneCommands {
         ItemMilestoneLog.LOGGER.info("[ItemMilestoneLog] Admin {} pruned data for {} player(s) (days={})",
                 source.getTextName(), count, days);
         return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.prunedata_done", count));
+    }
+
+    // --------------------------------------------------------- F24 renameitem
+
+    private static int renameItem(CommandContext<CommandSourceStack> ctx, String oldId, String newId, boolean confirm) {
+        CommandSourceStack source = ctx.getSource();
+        return respond(ctx, MilestoneService.renameItem(source.getServer(), source, oldId, newId, confirm));
     }
 
     // --------------------------------------------------------- F29 help

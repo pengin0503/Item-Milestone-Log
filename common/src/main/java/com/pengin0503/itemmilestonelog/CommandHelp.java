@@ -129,6 +129,7 @@ public final class CommandHelp {
             new Entry("importall", false, Gate.EXPORT_IMPORT),
             new Entry("admin", false, Gate.NONE),
             new Entry("prunedata", false, Gate.NONE),
+            new Entry("renameitem", false, Gate.NONE),
             new Entry("discordtest", false, Gate.NONE),
             new Entry("help", false, Gate.NONE)
     );

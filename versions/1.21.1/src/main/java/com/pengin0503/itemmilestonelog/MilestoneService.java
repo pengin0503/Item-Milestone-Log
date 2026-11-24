@@ -2,6 +2,7 @@ package com.pengin0503.itemmilestonelog;
 
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
+import com.pengin0503.itemmilestonelog.api.WorldFirstRecord;
 import com.pengin0503.itemmilestonelog.network.PresetEntry;
 import com.pengin0503.itemmilestonelog.network.SyncMilestonesPayload;
 import com.pengin0503.itemmilestonelog.network.TargetEntry;
@@ -22,6 +23,8 @@ import javax.annotation.Nullable;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -29,6 +32,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -1194,6 +1198,298 @@ public final class MilestoneService {
             }
         }
         return targets.size();
+    }
+
+    // --------------------------------------------------------- F24 renameitem
+
+    /**
+     * F24: counts returned by {@link #renameItemInData(MilestoneData, String, String, boolean)}.
+     *
+     * @param players           number of players whose {@link MilestoneData.PlayerData} changes
+     * @param targets           number of personal target entries rewritten across all players
+     * @param records           number of milestone record entries rewritten across all players
+     * @param worldFirsts       number of world-first entries rewritten
+     * @param affectedPlayers   UUIDs of players whose {@link MilestoneData.PlayerData} changes
+     * @param scoreboardPlayers UUIDs of players whose F17 scoreboard counts (records or world firsts) may change
+     */
+    public record RenameCounts(
+            int players,
+            int targets,
+            int records,
+            int worldFirsts,
+            Set<UUID> affectedPlayers,
+            Set<UUID> scoreboardPlayers) {
+        public static final RenameCounts EMPTY = new RenameCounts(0, 0, 0, 0, Set.of(), Set.of());
+
+        public RenameCounts {
+            affectedPlayers = Collections.unmodifiableSet(new LinkedHashSet<>(affectedPlayers));
+            scoreboardPlayers = Collections.unmodifiableSet(new LinkedHashSet<>(scoreboardPlayers));
+        }
+
+        public boolean hasChanges() {
+            return players > 0 || worldFirsts > 0;
+        }
+    }
+
+    record RenameOutcome(
+            ActionResult result,
+            @Nullable String oldId,
+            @Nullable String newId,
+            @Nullable RenameCounts counts) {
+    }
+
+    /** F24: applies an item-ID rewrite to {@code data} in place and returns the change counts. */
+    public static RenameCounts renameItemInData(MilestoneData data, String oldId, String newId) {
+        return renameItemInData(data, oldId, newId, true);
+    }
+
+    /**
+     * F24: computes (and when {@code apply} is {@code true}, commits) the item-ID rewrite
+     * {@code oldId -> newId} on {@code data}. When {@code apply} is {@code false}, {@code data}
+     * and its dirty flag are left untouched.
+     */
+    public static RenameCounts renameItemInData(MilestoneData data, String oldId, String newId, boolean apply) {
+        if (data == null
+                || oldId == null || newId == null
+                || oldId.equals(newId)
+                || !TargetKey.isValidItemId(oldId) || !TargetKey.isValidItemId(newId)
+                || TargetKey.isTagId(oldId) || TargetKey.isTagId(newId)) {
+            return RenameCounts.EMPTY;
+        }
+
+        Predicate<TargetKey> isOld = key -> oldId.equals(key.itemId());
+        Predicate<TargetKey> isNew = key -> newId.equals(key.itemId());
+        Function<TargetKey, TargetKey> toNew = key -> new TargetKey(newId, key.count());
+        Function<TargetKey, TargetKey> newToOld = key -> new TargetKey(oldId, key.count());
+
+        int totalTargets = 0;
+        int totalRecords = 0;
+        Set<UUID> affectedPlayers = new LinkedHashSet<>();
+        Set<UUID> scoreboardPlayers = new LinkedHashSet<>();
+        boolean anyPlayerMutated = false;
+
+        for (Map.Entry<UUID, MilestoneData.PlayerData> entry : data.allPlayers().entrySet()) {
+            UUID uuid = entry.getKey();
+            MilestoneData.PlayerData pd = entry.getValue();
+
+            RenameItemLogic.SetRewrite<TargetKey> targetsRes =
+                    RenameItemLogic.rewriteTargets(pd.targets, isOld, toNew);
+            RenameItemLogic.MapRewrite<TargetKey, MilestoneRecord> recordsRes =
+                    RenameItemLogic.rewriteRecords(pd.records, isOld, isNew, toNew, MilestoneRecord::playTicks);
+            RenameItemLogic.ProgressRewrite<TargetKey> progressRes =
+                    RenameItemLogic.rewriteProgressNotified(
+                            pd.progressNotified,
+                            pd.records.keySet(),
+                            recordsRes.values().keySet(),
+                            isOld,
+                            isNew,
+                            toNew,
+                            newToOld);
+            RenameItemLogic.SetRewrite<String> carriedRes =
+                    RenameItemLogic.rewriteCarriedFromCreative(pd.carriedFromCreative, oldId, newId);
+
+            boolean playerChanged = targetsRes.changedCount() > 0
+                    || recordsRes.changedCount() > 0
+                    || progressRes.changed()
+                    || carriedRes.changedCount() > 0;
+            if (!playerChanged) {
+                continue;
+            }
+
+            affectedPlayers.add(uuid);
+            scoreboardPlayers.add(uuid);
+            totalTargets += targetsRes.changedCount();
+            totalRecords += recordsRes.changedCount();
+
+            if (apply) {
+                if (targetsRes.changedCount() > 0) {
+                    pd.targets.clear();
+                    pd.targets.addAll(targetsRes.values());
+                }
+                if (recordsRes.changedCount() > 0) {
+                    pd.records.clear();
+                    pd.records.putAll(recordsRes.values());
+                }
+                if (progressRes.changed()) {
+                    pd.progressNotified.clear();
+                    pd.progressNotified.putAll(progressRes.values());
+                }
+                if (carriedRes.changedCount() > 0) {
+                    pd.carriedFromCreative.clear();
+                    pd.carriedFromCreative.addAll(carriedRes.values());
+                }
+                anyPlayerMutated = true;
+            }
+        }
+
+        RenameItemLogic.WorldFirstRewrite<TargetKey, WorldFirstRecord> firstsRes =
+                RenameItemLogic.rewriteWorldFirsts(
+                        data.worldFirsts(),
+                        isOld,
+                        isNew,
+                        toNew,
+                        wf -> new WorldFirstRecord(
+                                newId,
+                                wf.count(),
+                                wf.playerUuid(),
+                                wf.playerName(),
+                                wf.playTicks(),
+                                wf.day(),
+                                wf.epochMillis()),
+                        WorldFirstRecord::epochMillis,
+                        WorldFirstRecord::playerUuid);
+
+        scoreboardPlayers.addAll(firstsRes.affectedPlayers());
+
+        if (apply) {
+            if (firstsRes.changedCount() > 0) {
+                data.replaceWorldFirsts(firstsRes.values());
+            } else if (anyPlayerMutated) {
+                data.setDirty();
+            }
+        }
+
+        return new RenameCounts(
+                affectedPlayers.size(),
+                totalTargets,
+                totalRecords,
+                firstsRes.changedCount(),
+                affectedPlayers,
+                scoreboardPlayers);
+    }
+
+    /** F24: whether {@code itemId} appears in {@code defaultTargets} or any loaded preset (at any count). */
+    static boolean containsItemIdInConfigOrPresets(
+            String itemId,
+            @Nullable Collection<TargetKey> defaultTargets,
+            @Nullable Collection<Presets.PresetDefinition> presets) {
+        if (itemId == null || itemId.isEmpty()) {
+            return false;
+        }
+        if (defaultTargets != null) {
+            for (TargetKey key : defaultTargets) {
+                if (key != null && itemId.equals(key.itemId())) {
+                    return true;
+                }
+            }
+        }
+        if (presets != null) {
+            for (Presets.PresetDefinition preset : presets) {
+                if (preset == null || preset.items() == null) {
+                    continue;
+                }
+                for (TargetKey key : preset.items()) {
+                    if (key != null && itemId.equals(key.itemId())) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * F24 {@code /milestonelog renameitem <oldId> <newId> [confirm]}: previews or applies an
+     * item-ID rewrite across all players' targets, records, {@code progressNotified},
+     * {@code carriedFromCreative}, and world-first records.
+     *
+     * <p>When {@code confirm} is {@code true}, writes an F10 backup first (ignoring
+     * {@code autoBackupEnabled} and the 1-hour rate limit) unless {@link MilestoneData#isEmpty()},
+     * aborts without modifying anything if the backup fails, then logs an info line, re-syncs
+     * online GUI players, and refreshes F17 scoreboard scores for affected players. Fires no
+     * events, notifications, or F7 commands.
+     */
+    public static ActionResult renameItem(
+            MinecraftServer server,
+            CommandSourceStack source,
+            String oldId,
+            String newId,
+            boolean confirm) {
+        MilestoneData data = MilestoneData.get(server);
+        RenameOutcome outcome = executeRenameItem(
+                data,
+                source.getPlayer(),
+                oldId,
+                newId,
+                confirm,
+                MilestoneService::isRegisteredNonAirItem,
+                () -> MilestoneBackup.writeBackupNow(server),
+                Tracker.defaultTargets(),
+                Presets.all());
+        if (confirm && outcome.result().success() && outcome.counts() != null) {
+            RenameCounts counts = outcome.counts();
+            ItemMilestoneLog.LOGGER.info(
+                    "[ItemMilestoneLog] Admin {} renamed item {} -> {} ({} player(s): {} target(s), {} record(s), {} world first(s))",
+                    source.getTextName(), outcome.oldId(), outcome.newId(),
+                    counts.players(), counts.targets(), counts.records(), counts.worldFirsts());
+            if (counts.hasChanges()) {
+                syncAllOnlineGuiPlayers(server, null);
+                for (UUID uuid : counts.scoreboardPlayers()) {
+                    ScoreboardSync.refreshScores(server, uuid);
+                }
+            }
+        }
+        return outcome.result();
+    }
+
+    static RenameOutcome executeRenameItem(
+            MilestoneData data,
+            @Nullable ServerPlayer executor,
+            String oldId,
+            String newId,
+            boolean confirm,
+            Predicate<String> isRegisteredNonAirItem,
+            BooleanSupplier backupWriter,
+            @Nullable Collection<TargetKey> defaultTargets,
+            @Nullable Collection<Presets.PresetDefinition> presets) {
+        String oldNorm = TargetKey.normalizeItemId(oldId, false);
+        if (oldNorm == null || TargetKey.isTagId(oldNorm) || "minecraft:air".equals(oldNorm)) {
+            return new RenameOutcome(
+                    new ActionResult(false, ServerLang.tr(executor, "message.itemmilestonelog.invalid_item",
+                            Component.literal(String.valueOf(oldId)))),
+                    null, null, null);
+        }
+        String newNorm = TargetKey.normalizeItemId(newId, false);
+        if (newNorm == null || TargetKey.isTagId(newNorm) || "minecraft:air".equals(newNorm)) {
+            return new RenameOutcome(
+                    new ActionResult(false, ServerLang.tr(executor, "message.itemmilestonelog.invalid_item",
+                            Component.literal(String.valueOf(newId)))),
+                    oldNorm, null, null);
+        }
+        if (oldNorm.equals(newNorm)) {
+            return new RenameOutcome(
+                    new ActionResult(false, ServerLang.tr(executor, "message.itemmilestonelog.renameitem_same")),
+                    oldNorm, newNorm, null);
+        }
+        if (!isRegisteredNonAirItem.test(newNorm)) {
+            return new RenameOutcome(
+                    new ActionResult(false, ServerLang.tr(executor, "message.itemmilestonelog.invalid_item",
+                            Component.literal(newNorm))),
+                    oldNorm, newNorm, null);
+        }
+        if (confirm && !data.isEmpty() && !backupWriter.getAsBoolean()) {
+            return new RenameOutcome(
+                    new ActionResult(false, ServerLang.tr(executor, "message.itemmilestonelog.renameitem_backup_failed")),
+                    oldNorm, newNorm, null);
+        }
+
+        RenameCounts counts = renameItemInData(data, oldNorm, newNorm, confirm);
+        String messageKey = confirm
+                ? "message.itemmilestonelog.renameitem_done"
+                : "message.itemmilestonelog.renameitem_preview";
+        Component message = ServerLang.tr(executor, messageKey,
+                Component.literal(oldNorm),
+                Component.literal(newNorm),
+                counts.players(),
+                counts.targets(),
+                counts.records(),
+                counts.worldFirsts());
+        if (containsItemIdInConfigOrPresets(oldNorm, defaultTargets, presets)) {
+            message = message.copy().append(Component.literal("\n"))
+                    .append(ServerLang.tr(executor, "message.itemmilestonelog.renameitem_config_note",
+                            Component.literal(oldNorm)));
+        }
+        return new RenameOutcome(new ActionResult(true, message), oldNorm, newNorm, counts);
     }
 
     public static void syncPlayerIfOpen(ServerPlayer player) {

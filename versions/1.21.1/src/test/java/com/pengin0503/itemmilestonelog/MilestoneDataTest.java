@@ -676,4 +676,49 @@ class MilestoneDataTest {
         assertEquals(100, wf100.count());
         assertEquals(48000, wf100.playTicks());
     }
+
+    @Test
+    void persistsLastDigestEpochLenientlyOmitsWhenZeroAndRoundTrips() {
+        MilestoneData original = new MilestoneData();
+        assertEquals(0L, original.lastDigestEpochMillis());
+        assertFalse(original.save(new CompoundTag(), null).contains("lastDigestEpoch"));
+
+        // Setting a positive timestamp marks dirty, writes NBT key "lastDigestEpoch", and round-trips.
+        original.setLastDigestEpochMillis(1795800000000L);
+        assertTrue(original.isDirty());
+        CompoundTag saved = original.save(new CompoundTag(), null);
+        assertEquals(1795800000000L, saved.getLong("lastDigestEpoch"));
+        MilestoneData loaded = MilestoneData.load(saved, null);
+        assertEquals(1795800000000L, loaded.lastDigestEpochMillis());
+
+        // Setting negative clamps to 0 and omits key on save.
+        original.setLastDigestEpochMillis(-50L);
+        assertEquals(0L, original.lastDigestEpochMillis());
+        assertFalse(original.save(new CompoundTag(), null).contains("lastDigestEpoch"));
+
+        // Absent key defaults to 0.
+        assertEquals(0L, MilestoneData.load(new CompoundTag(), null).lastDigestEpochMillis());
+
+        // Malformed tag (non-numeric) is skipped leniently without breaking player data.
+        UUID playerA = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        CompoundTag playerATag = new CompoundTag();
+        playerATag.putString("lastKnownName", "Alice");
+        CompoundTag players = new CompoundTag();
+        players.put(playerA.toString(), playerATag);
+
+        CompoundTag malformedRoot = new CompoundTag();
+        malformedRoot.put("players", players.copy());
+        malformedRoot.put("lastDigestEpoch", StringTag.valueOf("garbage"));
+        MilestoneData loadedMalformed = MilestoneData.load(malformedRoot, null);
+        assertEquals(0L, loadedMalformed.lastDigestEpochMillis());
+        assertEquals("Alice", loadedMalformed.playerOrNull(playerA).lastKnownName);
+
+        // Negative value is skipped leniently and defaults to 0.
+        CompoundTag negativeRoot = new CompoundTag();
+        negativeRoot.put("players", players.copy());
+        negativeRoot.putLong("lastDigestEpoch", -100L);
+        MilestoneData loadedNegative = MilestoneData.load(negativeRoot, null);
+        assertEquals(0L, loadedNegative.lastDigestEpochMillis());
+        assertEquals("Alice", loadedNegative.playerOrNull(playerA).lastKnownName);
+    }
 }

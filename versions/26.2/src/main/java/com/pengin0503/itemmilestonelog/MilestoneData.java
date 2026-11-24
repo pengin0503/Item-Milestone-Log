@@ -2,14 +2,19 @@ package com.pengin0503.itemmilestonelog;
 
 import com.mojang.datafixers.util.Either;
 import com.mojang.serialization.Codec;
+import com.mojang.serialization.DynamicOps;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
 import com.pengin0503.itemmilestonelog.api.WorldFirstRecord;
+import net.minecraft.SharedConstants;
+import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.NbtAccounter;
 import net.minecraft.nbt.NbtIo;
 import net.minecraft.nbt.NbtOps;
+import net.minecraft.nbt.NbtUtils;
+import net.minecraft.nbt.Tag;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.level.saveddata.SavedData;
@@ -272,10 +277,12 @@ public class MilestoneData extends SavedData {
             Codec.unboundedMap(Codec.STRING, PLAYER_DATA_CODEC).optionalFieldOf("players", Map.of())
                     .forGetter(MilestoneData::playersByStringKey),
             Codec.unboundedMap(Codec.STRING, ITEM_WORLD_FIRSTS_CODEC).optionalFieldOf("worldFirsts", Map.of())
-                    .forGetter(MilestoneData::worldFirstsAsNestedMap)
+                    .forGetter(MilestoneData::worldFirstsAsNestedMap),
+            Codec.LONG.lenientOptionalFieldOf("lastDigestEpoch", 0L)
+                    .forGetter(d -> d.lastDigestEpochMillis > 0L ? d.lastDigestEpochMillis : 0L)
     ).apply(instance, MilestoneData::fromCodec));
 
-    private static final SavedDataType<MilestoneData> TYPE = new SavedDataType<>(
+    static final SavedDataType<MilestoneData> TYPE = new SavedDataType<>(
             DATA_ID,
             MilestoneData::new,
             CODEC
@@ -283,6 +290,43 @@ public class MilestoneData extends SavedData {
 
     private final Map<UUID, PlayerData> players = new LinkedHashMap<>();
     private final Map<TargetKey, WorldFirstRecord> worldFirsts = new LinkedHashMap<>();
+    /** Epoch millis of the last Discord digest (0 = never initialized/sent, F9). */
+    private long lastDigestEpochMillis = 0L;
+
+    /** Returns the epoch millis of the last Discord digest, or {@code 0} if not yet recorded (F9). */
+    public long lastDigestEpochMillis() {
+        return lastDigestEpochMillis;
+    }
+
+    /** Updates the last Discord digest timestamp (clamping negative values to 0) and marks dirty when changed (F9). */
+    public void setLastDigestEpochMillis(long epochMillis) {
+        long normalized = Math.max(0L, epochMillis);
+        if (this.lastDigestEpochMillis != normalized) {
+            this.lastDigestEpochMillis = normalized;
+            setDirty();
+        }
+    }
+
+    /** Returns {@code true} when neither player entries nor world-first records exist. */
+    public boolean isEmpty() {
+        return players.isEmpty() && worldFirsts.isEmpty();
+    }
+
+    /**
+     * F10: serializes this in-memory {@link MilestoneData} into the exact root NBT wrapper
+     * ({@code {"data": ..., "DataVersion": ...}}) written by vanilla {@code SavedDataStorage}.
+     * Does not clear {@link #isDirty()}.
+     */
+    CompoundTag toSavedDataFileTag(@Nullable HolderLookup.Provider registries) {
+        DynamicOps<Tag> ops = registries != null
+                ? registries.createSerializationContext(NbtOps.INSTANCE)
+                : NbtOps.INSTANCE;
+        CompoundTag root = new CompoundTag();
+        root.put("data", CODEC.encodeStart(ops, this).getOrThrow());
+        SharedConstants.tryDetectVersion();
+        NbtUtils.addCurrentDataVersion(root);
+        return root;
+    }
 
     public static MilestoneData get(MinecraftServer server) {
         var storage = server.getDataStorage();
@@ -443,8 +487,14 @@ public class MilestoneData extends SavedData {
     }
 
     private static MilestoneData fromCodec(Map<String, PlayerData> rawPlayers,
-                                           Map<String, Map<String, WorldFirstEntry>> rawFirsts) {
+                                           Map<String, Map<String, WorldFirstEntry>> rawFirsts,
+                                           long lastDigestEpoch) {
         MilestoneData data = new MilestoneData();
+        if (lastDigestEpoch > 0L) {
+            data.lastDigestEpochMillis = lastDigestEpoch;
+        } else if (lastDigestEpoch < 0L) {
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping negative lastDigestEpoch value {} in SavedData", lastDigestEpoch);
+        }
         for (Map.Entry<String, PlayerData> e : rawPlayers.entrySet()) {
             UUID uuid;
             try {

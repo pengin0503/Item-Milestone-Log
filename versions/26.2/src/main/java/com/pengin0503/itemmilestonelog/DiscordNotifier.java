@@ -4,6 +4,8 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
+import com.pengin0503.itemmilestonelog.api.WorldFirstRecord;
+import net.minecraft.server.MinecraftServer;
 
 import javax.annotation.Nullable;
 import java.net.URI;
@@ -16,6 +18,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.OptionalLong;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -28,6 +31,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.IntFunction;
 
 /**
  * Asynchronous Discord webhook sender for milestone notifications.
@@ -43,6 +47,9 @@ public final class DiscordNotifier {
     static final int COLOR_NORMAL = 0x3498DB;
     static final int COLOR_WORLD_FIRST = 0xF1C40F;
     static final int COLOR_PRESET_COMPLETED = 0x2ECC71;
+
+    /** Discord Execute Webhook message flag: suppress push and desktop notifications (F53). */
+    static final int SUPPRESS_NOTIFICATIONS = 1 << 12;
 
     static final int EMBED_TITLE_MAX_CHARS = 256;
     static final int EMBED_FIELD_NAME_MAX_CHARS = 256;
@@ -68,16 +75,72 @@ public final class DiscordNotifier {
         void sleep(long millis) throws InterruptedException;
     }
 
-    private static final DiscordDeliveryPolicy.DeadWebhookTracker DEAD_WEBHOOKS =
-            new DiscordDeliveryPolicy.DeadWebhookTracker();
-    private static final DiscordWebhookUrl.EnvWarnTracker ENV_WARNINGS =
-            new DiscordWebhookUrl.EnvWarnTracker();
+    @FunctionalInterface
+    interface DestinationSender {
+        void send(DiscordRouting.Destination destination, URI uri, String json);
+    }
+
+    /**
+     * Per-destination delivery state (F46): each configured webhook destination keeps its own
+     * F35 dead-webhook tracker and F39 env-warning deduplication state while sharing the single
+     * sender thread, HTTP client, and payload builders.
+     */
+    static final class DestinationState {
+        final DiscordRouting.Destination destination;
+        final DiscordDeliveryPolicy.DeadWebhookTracker deadWebhooks =
+                new DiscordDeliveryPolicy.DeadWebhookTracker();
+        final DiscordWebhookUrl.EnvWarnTracker envWarnings =
+                new DiscordWebhookUrl.EnvWarnTracker();
+
+        DestinationState(DiscordRouting.Destination destination) {
+            this.destination = destination;
+        }
+
+        void reset() {
+            deadWebhooks.reset();
+            envWarnings.reset();
+        }
+    }
+
+    /**
+     * Outcome of resolving one webhook destination: {@code resolved} indicates whether the URL
+     * resolved to a valid HTTPS URI (used for F46 routing), while {@code deliverableUri} is
+     * non-null only when the resolved URL is also not suppressed by F35 dead-webhook state.
+     */
+    record DestinationResolution(
+            DiscordRouting.Destination destination,
+            boolean resolved,
+            @Nullable URI deliverableUri) {
+        static DestinationResolution empty(DiscordRouting.Destination destination) {
+            return new DestinationResolution(destination, false, null);
+        }
+    }
+
+    /** Snapshot of both Discord webhook destinations for flushing a batch of records. */
+    record ResolvedDestinations(
+            DestinationResolution main,
+            DestinationResolution worldFirst) {
+        static final ResolvedDestinations NONE = new ResolvedDestinations(
+                DestinationResolution.empty(DiscordRouting.Destination.MAIN),
+                DestinationResolution.empty(DiscordRouting.Destination.WORLD_FIRST));
+    }
+
+    private static final DestinationState MAIN_STATE =
+            new DestinationState(DiscordRouting.Destination.MAIN);
+    private static final DestinationState WORLD_FIRST_STATE =
+            new DestinationState(DiscordRouting.Destination.WORLD_FIRST);
     private static final AtomicBoolean TEST_IN_PROGRESS = new AtomicBoolean(false);
+    private static final DiscordDigestLogic.TickThrottler DIGEST_THROTTLER =
+            new DiscordDigestLogic.TickThrottler();
 
     private static ExecutorService executor;
     private static HttpClient httpClient;
 
     private DiscordNotifier() {
+    }
+
+    static DestinationState stateFor(DiscordRouting.Destination destination) {
+        return destination == DiscordRouting.Destination.WORLD_FIRST ? WORLD_FIRST_STATE : MAIN_STATE;
     }
 
     /**
@@ -114,6 +177,32 @@ public final class DiscordNotifier {
         return shouldPostToDiscord(allowDiscordOptOut, pd);
     }
 
+    /**
+     * F53: returns {@code true} iff a single milestone record post should emit
+     * {@code "flags": SUPPRESS_NOTIFICATIONS} (normal records only; never world firsts).
+     */
+    static boolean shouldSuppressRecordNotifications(boolean silentRecords, boolean worldFirst) {
+        return silentRecords && !worldFirst;
+    }
+
+    /**
+     * F53: returns {@code true} iff a grouped milestone batch (F27) contains no world first and
+     * should emit {@code "flags": SUPPRESS_NOTIFICATIONS}.
+     */
+    static boolean shouldSuppressGroupedNotifications(
+            boolean silentRecords,
+            @Nullable List<MilestoneEntry> entries) {
+        if (!silentRecords || entries == null || entries.isEmpty()) {
+            return false;
+        }
+        for (MilestoneEntry entry : entries) {
+            if (entry != null && entry.worldFirst()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public static void notifyMilestone(
             @Nullable MilestoneData.PlayerData playerData,
             String playerName,
@@ -123,62 +212,316 @@ public final class DiscordNotifier {
         if (!shouldPostToDiscord(playerData)) {
             return;
         }
-        String scope = Config.DISCORD_NOTIFY_SCOPE.get();
-        if ("world_first".equals(scope) && !worldFirst) {
-            return;
-        }
-        URI uri = resolveWebhookUri();
-        if (uri == null) {
-            return;
-        }
-
-        boolean useEmbeds = Config.DISCORD_USE_EMBEDS.get();
-        String language = Config.DISCORD_LANGUAGE.get();
-        ZoneId zone = Config.displayTimeZone();
-        String itemDisplayName = useEmbeds ? serverItemDisplayName(target) : null;
-        String json = buildSinglePayloadJson(
-                playerName, target, itemDisplayName, record, worldFirst, zone, useEmbeds, language);
-        if (json.isEmpty()) {
-            return;
-        }
-        enqueueSend(uri, json);
+        notifyMilestone(
+                Config.ALLOW_DISCORD_OPT_OUT.get(),
+                playerData,
+                Config.DISCORD_WEBHOOK_URL.get(),
+                Config.discordWorldFirstWebhookUrl(),
+                System::getenv,
+                Config.DISCORD_NOTIFY_SCOPE.get(),
+                playerName,
+                target,
+                DiscordNotifier::serverItemDisplayName,
+                record,
+                worldFirst,
+                Config.displayTimeZone(),
+                Config.DISCORD_USE_EMBEDS.get(),
+                Config.DISCORD_LANGUAGE.get(),
+                Config.discordSilentRecords(),
+                msg -> ItemMilestoneLog.LOGGER.warn(msg),
+                DiscordNotifier::enqueueSend);
     }
 
     /**
-     * Sends a single grouped Discord notification for multiple simultaneous milestone records (F27).
-     * {@code entries} must already be filtered according to {@code discordNotifyScope} and sorted
-     * in {@link TargetKey} order.
+     * Testable F46-routed single milestone dispatch helper (defaults {@code silentRecords} to {@code false}).
+     *
+     * @return {@code true} if a message was handed to {@code sender}, {@code false} if suppressed
+     */
+    static boolean notifyMilestone(
+            boolean allowDiscordOptOut,
+            @Nullable MilestoneData.PlayerData playerData,
+            @Nullable String mainConfiguredUrl,
+            @Nullable String worldFirstConfiguredUrl,
+            Function<String, String> envLookup,
+            String notifyScope,
+            String playerName,
+            TargetKey target,
+            @Nullable Function<TargetKey, String> itemDisplayNameResolver,
+            MilestoneRecord record,
+            boolean worldFirst,
+            ZoneId zone,
+            boolean useEmbeds,
+            String language,
+            Consumer<String> warnLogger,
+            DestinationSender sender) {
+        return notifyMilestone(
+                allowDiscordOptOut,
+                playerData,
+                mainConfiguredUrl,
+                worldFirstConfiguredUrl,
+                envLookup,
+                notifyScope,
+                playerName,
+                target,
+                itemDisplayNameResolver,
+                record,
+                worldFirst,
+                zone,
+                useEmbeds,
+                language,
+                false,
+                warnLogger,
+                sender);
+    }
+
+    /**
+     * Testable F46 + F53 single milestone dispatch helper.
+     *
+     * @return {@code true} if a message was handed to {@code sender}, {@code false} if suppressed
+     */
+    static boolean notifyMilestone(
+            boolean allowDiscordOptOut,
+            @Nullable MilestoneData.PlayerData playerData,
+            @Nullable String mainConfiguredUrl,
+            @Nullable String worldFirstConfiguredUrl,
+            Function<String, String> envLookup,
+            String notifyScope,
+            String playerName,
+            TargetKey target,
+            @Nullable Function<TargetKey, String> itemDisplayNameResolver,
+            MilestoneRecord record,
+            boolean worldFirst,
+            ZoneId zone,
+            boolean useEmbeds,
+            String language,
+            boolean silentRecords,
+            Consumer<String> warnLogger,
+            DestinationSender sender) {
+        if (!shouldPostToDiscord(allowDiscordOptOut, playerData)) {
+            return false;
+        }
+        if (!worldFirst && "world_first".equals(notifyScope)) {
+            return false;
+        }
+        DestinationResolution wfRes = worldFirst
+                ? resolveDestination(DiscordRouting.Destination.WORLD_FIRST, worldFirstConfiguredUrl, envLookup, warnLogger)
+                : DestinationResolution.empty(DiscordRouting.Destination.WORLD_FIRST);
+        DestinationResolution mainRes = (!worldFirst || !wfRes.resolved())
+                ? resolveDestination(DiscordRouting.Destination.MAIN, mainConfiguredUrl, envLookup, warnLogger)
+                : DestinationResolution.empty(DiscordRouting.Destination.MAIN);
+        DiscordRouting.Destination dest = DiscordRouting.routeRecord(
+                worldFirst, mainRes.resolved(), wfRes.resolved(), notifyScope);
+        if (dest == null) {
+            return false;
+        }
+        URI uri = dest == DiscordRouting.Destination.WORLD_FIRST
+                ? wfRes.deliverableUri()
+                : mainRes.deliverableUri();
+        if (uri == null) {
+            return false;
+        }
+        String itemDisplayName = useEmbeds && itemDisplayNameResolver != null
+                ? itemDisplayNameResolver.apply(target)
+                : null;
+        boolean suppressNotifications = shouldSuppressRecordNotifications(silentRecords, worldFirst);
+        String json = buildSinglePayloadJson(
+                playerName, target, itemDisplayName, record, worldFirst, zone, useEmbeds, language,
+                suppressNotifications);
+        if (json.isEmpty()) {
+            return false;
+        }
+        sender.send(dest, uri, json);
+        return true;
+    }
+
+    /**
+     * Sends a single milestone notification directly to a pre-resolved F46 destination
+     * (used when flushing individual items from a pre-routed F27 batch).
+     */
+    static void notifyMilestoneToDestination(
+            @Nullable MilestoneData.PlayerData playerData,
+            String playerName,
+            TargetKey target,
+            MilestoneRecord record,
+            boolean worldFirst,
+            @Nullable DestinationResolution destination) {
+        if (!shouldPostToDiscord(playerData) || destination == null || destination.deliverableUri() == null) {
+            return;
+        }
+        notifyMilestoneToDestination(
+                Config.ALLOW_DISCORD_OPT_OUT.get(),
+                playerData,
+                playerName,
+                target,
+                DiscordNotifier::serverItemDisplayName,
+                record,
+                worldFirst,
+                Config.displayTimeZone(),
+                Config.DISCORD_USE_EMBEDS.get(),
+                Config.DISCORD_LANGUAGE.get(),
+                Config.discordSilentRecords(),
+                destination,
+                DiscordNotifier::enqueueSend);
+    }
+
+    /**
+     * Testable F46 + F53 helper for sending an individual record to a pre-resolved destination.
+     *
+     * @return {@code true} if a message was handed to {@code sender}, {@code false} if suppressed
+     */
+    static boolean notifyMilestoneToDestination(
+            boolean allowDiscordOptOut,
+            @Nullable MilestoneData.PlayerData playerData,
+            String playerName,
+            TargetKey target,
+            @Nullable Function<TargetKey, String> itemDisplayNameResolver,
+            MilestoneRecord record,
+            boolean worldFirst,
+            ZoneId zone,
+            boolean useEmbeds,
+            String language,
+            boolean silentRecords,
+            @Nullable DestinationResolution destination,
+            DestinationSender sender) {
+        if (!shouldPostToDiscord(allowDiscordOptOut, playerData)
+                || destination == null || destination.deliverableUri() == null) {
+            return false;
+        }
+        String itemDisplayName = useEmbeds && itemDisplayNameResolver != null
+                ? itemDisplayNameResolver.apply(target)
+                : null;
+        boolean suppressNotifications = shouldSuppressRecordNotifications(silentRecords, worldFirst);
+        String json = buildSinglePayloadJson(
+                playerName, target, itemDisplayName, record, worldFirst, zone, useEmbeds, language,
+                suppressNotifications);
+        if (json.isEmpty()) {
+            return false;
+        }
+        sender.send(destination.destination(), destination.deliverableUri(), json);
+        return true;
+    }
+
+    /**
+     * Sends a single grouped Discord notification for multiple simultaneous milestone records (F27)
+     * to the primary webhook. {@code entries} must already be filtered for the destination and
+     * sorted in {@link TargetKey} order.
      */
     public static void notifyMilestonesGrouped(
             @Nullable MilestoneData.PlayerData playerData,
             String playerName,
             List<MilestoneEntry> entries) {
-        if (!shouldPostToDiscord(playerData)) {
+        if (!shouldPostToDiscord(playerData) || entries == null || entries.isEmpty()) {
             return;
         }
-        if (entries == null || entries.isEmpty()) {
-            return;
-        }
-        URI uri = resolveWebhookUri();
-        if (uri == null) {
-            return;
-        }
+        DestinationResolution main = resolveDestination(
+                DiscordRouting.Destination.MAIN,
+                Config.DISCORD_WEBHOOK_URL.get(),
+                System::getenv,
+                msg -> ItemMilestoneLog.LOGGER.warn(msg));
+        notifyMilestonesGroupedToDestination(playerData, playerName, entries, main);
+    }
 
-        boolean useEmbeds = Config.DISCORD_USE_EMBEDS.get();
-        String language = Config.DISCORD_LANGUAGE.get();
-        ZoneId zone = Config.displayTimeZone();
-        String json = buildGroupedPayloadJson(
-                playerName, entries, zone, useEmbeds, language, DiscordNotifier::serverItemDisplayName);
-        if (json.isEmpty()) {
+    /**
+     * Sends a grouped Discord notification directly to a pre-resolved F46 destination (F27 + F46).
+     */
+    static void notifyMilestonesGroupedToDestination(
+            @Nullable MilestoneData.PlayerData playerData,
+            String playerName,
+            List<MilestoneEntry> entries,
+            @Nullable DestinationResolution destination) {
+        if (!shouldPostToDiscord(playerData)
+                || entries == null || entries.isEmpty()
+                || destination == null || destination.deliverableUri() == null) {
             return;
         }
-        enqueueSend(uri, json);
+        notifyMilestonesGroupedToDestination(
+                Config.ALLOW_DISCORD_OPT_OUT.get(),
+                playerData,
+                playerName,
+                entries,
+                Config.displayTimeZone(),
+                Config.DISCORD_USE_EMBEDS.get(),
+                Config.DISCORD_LANGUAGE.get(),
+                Config.discordSilentRecords(),
+                DiscordNotifier::serverItemDisplayName,
+                destination,
+                DiscordNotifier::enqueueSend);
+    }
+
+    /**
+     * Testable F27 + F46 + F53 helper for sending a grouped batch to a pre-resolved destination.
+     *
+     * @return {@code true} if a message was handed to {@code sender}, {@code false} if suppressed
+     */
+    static boolean notifyMilestonesGroupedToDestination(
+            boolean allowDiscordOptOut,
+            @Nullable MilestoneData.PlayerData playerData,
+            String playerName,
+            List<MilestoneEntry> entries,
+            ZoneId zone,
+            boolean useEmbeds,
+            String language,
+            boolean silentRecords,
+            @Nullable Function<TargetKey, String> itemDisplayNameResolver,
+            @Nullable DestinationResolution destination,
+            DestinationSender sender) {
+        if (!shouldPostToDiscord(allowDiscordOptOut, playerData)
+                || entries == null || entries.isEmpty()
+                || destination == null || destination.deliverableUri() == null) {
+            return false;
+        }
+        boolean suppressNotifications = shouldSuppressGroupedNotifications(silentRecords, entries);
+        String json = buildGroupedPayloadJson(
+                playerName, entries, zone, useEmbeds, language, itemDisplayNameResolver, suppressNotifications);
+        if (json.isEmpty()) {
+            return false;
+        }
+        sender.send(destination.destination(), destination.deliverableUri(), json);
+        return true;
+    }
+
+    /**
+     * Resolves only the Discord webhook destinations that could receive records from a queued
+     * F27 batch with the given normal/world-first composition and {@code discordNotifyScope}.
+     */
+    static ResolvedDestinations resolveDestinationsForBatch(
+            boolean anyNormal,
+            boolean anyWorldFirst,
+            String discordScope) {
+        return resolveDestinationsForBatch(
+                anyNormal,
+                anyWorldFirst,
+                discordScope,
+                Config.DISCORD_WEBHOOK_URL.get(),
+                Config.discordWorldFirstWebhookUrl(),
+                System::getenv,
+                msg -> ItemMilestoneLog.LOGGER.warn(msg));
+    }
+
+    static ResolvedDestinations resolveDestinationsForBatch(
+            boolean anyNormal,
+            boolean anyWorldFirst,
+            String discordScope,
+            @Nullable String mainConfiguredUrl,
+            @Nullable String worldFirstConfiguredUrl,
+            Function<String, String> envLookup,
+            Consumer<String> warnLogger) {
+        DestinationResolution wf = anyWorldFirst
+                ? resolveDestination(DiscordRouting.Destination.WORLD_FIRST, worldFirstConfiguredUrl, envLookup, warnLogger)
+                : DestinationResolution.empty(DiscordRouting.Destination.WORLD_FIRST);
+        boolean needMain = (anyNormal && !"world_first".equals(discordScope))
+                || (anyWorldFirst && !wf.resolved());
+        DestinationResolution main = needMain
+                ? resolveDestination(DiscordRouting.Destination.MAIN, mainConfiguredUrl, envLookup, warnLogger)
+                : DestinationResolution.empty(DiscordRouting.Destination.MAIN);
+        return new ResolvedDestinations(main, wf);
     }
 
     /**
      * Posts a preset completion notification to Discord (F19) when
-     * {@link Config#DISCORD_NOTIFY_PRESET_COMPLETION} is enabled and a webhook is configured.
+     * {@link Config#DISCORD_NOTIFY_PRESET_COMPLETION} is enabled and the primary webhook is configured.
      * Independent of {@code announcePresetCompletion} and {@code discordNotifyScope};
+     * always uses {@link Config#DISCORD_WEBHOOK_URL} (never F46's world-first webhook) and
      * respects per-player opt-out via {@link #shouldPostToDiscord(MilestoneData.PlayerData)} (F45).
      */
     public static void notifyPresetCompletion(
@@ -201,7 +544,7 @@ public final class DiscordNotifier {
                 Config.DISCORD_USE_EMBEDS.get(),
                 Config.DISCORD_LANGUAGE.get(),
                 msg -> ItemMilestoneLog.LOGGER.warn(msg),
-                DiscordNotifier::enqueueSend);
+                (uri, json) -> enqueueSend(DiscordRouting.Destination.MAIN, uri, json));
     }
 
     /**
@@ -257,16 +600,37 @@ public final class DiscordNotifier {
             ZoneId zone,
             boolean useEmbeds,
             String language) {
+        return buildSinglePayloadJson(
+                playerName, target, itemDisplayName, record, worldFirst, zone, useEmbeds, language, false);
+    }
+
+    /**
+     * Pure payload builder for a single milestone Discord notification (F4 + F18 + F53).
+     * {@code suppressNotifications} only takes effect when {@code worldFirst} is {@code false}.
+     */
+    static String buildSinglePayloadJson(
+            String playerName,
+            TargetKey target,
+            @Nullable String itemDisplayName,
+            MilestoneRecord record,
+            boolean worldFirst,
+            ZoneId zone,
+            boolean useEmbeds,
+            String language,
+            boolean suppressNotifications) {
         if (target == null || record == null) {
             return "";
         }
+        boolean suppress = shouldSuppressRecordNotifications(suppressNotifications, worldFirst);
         if (useEmbeds) {
             String displayName = (itemDisplayName != null && !itemDisplayName.isEmpty())
                     ? itemDisplayName
                     : target.formatDisplayId();
-            return buildSingleEmbedJson(playerName, displayName, record, worldFirst, zone, language);
+            return buildSingleEmbedJson(playerName, displayName, record, worldFirst, zone, language, suppress);
         }
-        return buildPlainTextJson(buildSinglePlainTextContent(playerName, target, record, worldFirst, zone, language));
+        return buildPlainTextJson(
+                buildSinglePlainTextContent(playerName, target, record, worldFirst, zone, language),
+                suppress);
     }
 
     static String buildSinglePlainTextContent(
@@ -293,6 +657,17 @@ public final class DiscordNotifier {
             boolean worldFirst,
             ZoneId zone,
             String language) {
+        return buildSingleEmbedJson(playerName, itemDisplayName, record, worldFirst, zone, language, false);
+    }
+
+    static String buildSingleEmbedJson(
+            String playerName,
+            String itemDisplayName,
+            MilestoneRecord record,
+            boolean worldFirst,
+            ZoneId zone,
+            String language,
+            boolean suppressNotifications) {
         String safeName = playerName != null ? playerName : "";
         String safeItem = itemDisplayName != null ? itemDisplayName : "";
         String escapedName = TextEscaping.escapeDiscordMarkdown(safeName);
@@ -308,7 +683,7 @@ public final class DiscordNotifier {
         int color = worldFirst ? COLOR_WORLD_FIRST : COLOR_NORMAL;
 
         JsonObject embed = buildRecordEmbed(title, description, color, safeName, record, zone, language);
-        return buildEmbedsJson(embed);
+        return buildEmbedsJson(embed, shouldSuppressRecordNotifications(suppressNotifications, worldFirst));
     }
 
     /**
@@ -316,7 +691,7 @@ public final class DiscordNotifier {
      */
     static String buildGroupedPayloadJson(String playerName, List<MilestoneEntry> entries, ZoneId zone) {
         return buildGroupedPayloadJson(
-                playerName, entries, zone, false, ServerLang.DEFAULT_LANG, TargetKey::formatDisplayId);
+                playerName, entries, zone, false, ServerLang.DEFAULT_LANG, TargetKey::formatDisplayId, false);
     }
 
     /**
@@ -328,18 +703,35 @@ public final class DiscordNotifier {
             ZoneId zone,
             boolean useEmbeds,
             String language,
-            Function<TargetKey, String> itemDisplayNameResolver) {
+            @Nullable Function<TargetKey, String> itemDisplayNameResolver) {
+        return buildGroupedPayloadJson(
+                playerName, entries, zone, useEmbeds, language, itemDisplayNameResolver, false);
+    }
+
+    /**
+     * Pure payload builder for grouped Discord notifications (F4 + F18 + F27 + F53).
+     * {@code suppressNotifications} only takes effect when {@code entries} contains no world first.
+     */
+    static String buildGroupedPayloadJson(
+            String playerName,
+            List<MilestoneEntry> entries,
+            ZoneId zone,
+            boolean useEmbeds,
+            String language,
+            @Nullable Function<TargetKey, String> itemDisplayNameResolver,
+            boolean suppressNotifications) {
         if (entries == null || entries.isEmpty()) {
             return "";
         }
+        boolean suppress = shouldSuppressGroupedNotifications(suppressNotifications, entries);
         if (useEmbeds) {
-            return buildGroupedEmbedJson(playerName, entries, zone, language, itemDisplayNameResolver);
+            return buildGroupedEmbedJson(playerName, entries, zone, language, itemDisplayNameResolver, suppress);
         }
         String content = buildGroupedPlainTextContent(playerName, entries, zone, language);
         if (content.isEmpty()) {
             return "";
         }
-        return buildPlainTextJson(content);
+        return buildPlainTextJson(content, suppress);
     }
 
     static String buildGroupedPlainTextContent(
@@ -375,7 +767,17 @@ public final class DiscordNotifier {
             List<MilestoneEntry> entries,
             ZoneId zone,
             String language,
-            Function<TargetKey, String> itemDisplayNameResolver) {
+            @Nullable Function<TargetKey, String> itemDisplayNameResolver) {
+        return buildGroupedEmbedJson(playerName, entries, zone, language, itemDisplayNameResolver, false);
+    }
+
+    static String buildGroupedEmbedJson(
+            String playerName,
+            List<MilestoneEntry> entries,
+            ZoneId zone,
+            String language,
+            @Nullable Function<TargetKey, String> itemDisplayNameResolver,
+            boolean suppressNotifications) {
         if (entries == null || entries.isEmpty()) {
             return "";
         }
@@ -415,7 +817,7 @@ public final class DiscordNotifier {
 
         JsonObject embed = buildRecordEmbed(
                 title, description, color, safeName, entries.get(0).record(), zone, language);
-        return buildEmbedsJson(embed);
+        return buildEmbedsJson(embed, suppressNotifications && !anyWorldFirst);
     }
 
     private static JsonObject buildRecordEmbed(
@@ -468,15 +870,26 @@ public final class DiscordNotifier {
     }
 
     static String buildPlainTextJson(String content) {
+        return buildPlainTextJson(content, false);
+    }
+
+    static String buildPlainTextJson(String content, boolean suppressNotifications) {
         JsonObject body = new JsonObject();
         body.addProperty("content", TextEscaping.truncateUtf16(content != null ? content : "", PLAIN_CONTENT_MAX_CHARS));
         JsonObject allowedMentions = new JsonObject();
         allowedMentions.add("parse", new JsonArray());
         body.add("allowed_mentions", allowedMentions);
+        if (suppressNotifications) {
+            body.addProperty("flags", SUPPRESS_NOTIFICATIONS);
+        }
         return body.toString();
     }
 
     static String buildEmbedsJson(JsonObject embed) {
+        return buildEmbedsJson(embed, false);
+    }
+
+    static String buildEmbedsJson(JsonObject embed, boolean suppressNotifications) {
         JsonObject body = new JsonObject();
         JsonArray embeds = new JsonArray();
         embeds.add(embed);
@@ -484,6 +897,9 @@ public final class DiscordNotifier {
         JsonObject allowedMentions = new JsonObject();
         allowedMentions.add("parse", new JsonArray());
         body.add("allowed_mentions", allowedMentions);
+        if (suppressNotifications) {
+            body.addProperty("flags", SUPPRESS_NOTIFICATIONS);
+        }
         return body.toString();
     }
 
@@ -576,6 +992,221 @@ public final class DiscordNotifier {
     }
 
     /**
+     * F9: resets the periodic tick counter and runs one digest check at server start.
+     */
+    public static void checkDigestOnServerStart(@Nullable MinecraftServer server) {
+        DIGEST_THROTTLER.reset();
+        checkAndSendDigest(server);
+    }
+
+    /**
+     * F9: called on {@code ServerTickEvent.Post}; runs a digest check roughly once per hour
+     * ({@value DiscordDigestLogic#CHECK_INTERVAL_TICKS} ticks).
+     */
+    public static void tickDigest(@Nullable MinecraftServer server) {
+        if (server == null) {
+            return;
+        }
+        if (DIGEST_THROTTLER.tick()) {
+            checkAndSendDigest(server);
+        }
+    }
+
+    /**
+     * F9: checks whether a periodic Discord digest should initialize its timestamp or send now.
+     * Sends only to {@link Config#DISCORD_WEBHOOK_URL} (never to F46's world-first webhook).
+     */
+    public static void checkAndSendDigest(@Nullable MinecraftServer server) {
+        if (server == null) {
+            return;
+        }
+        if (!Config.discordDigestEnabled()) {
+            return;
+        }
+        String configuredUrl = Config.DISCORD_WEBHOOK_URL.get();
+        if (configuredUrl == null || configuredUrl.isBlank()) {
+            return;
+        }
+        MilestoneData data = MilestoneData.get(server);
+        checkAndSendDigest(
+                data,
+                true,
+                Config.discordDigestIntervalDays(),
+                configuredUrl,
+                System::getenv,
+                Config.DISCORD_NOTIFY_SCOPE.get(),
+                Config.ALLOW_DISCORD_OPT_OUT.get(),
+                Config.DISCORD_USE_EMBEDS.get(),
+                Config.DISCORD_LANGUAGE.get(),
+                Config.displayTimeZone(),
+                System.currentTimeMillis(),
+                DiscordNotifier::serverItemDisplayName,
+                msg -> ItemMilestoneLog.LOGGER.warn(msg),
+                (uri, json) -> enqueueSend(DiscordRouting.Destination.MAIN, uri, json));
+    }
+
+    /**
+     * Testable F9 digest check and dispatch helper.
+     *
+     * @return {@code true} if a digest message was queued to {@code sender}, {@code false} otherwise
+     */
+    static boolean checkAndSendDigest(
+            @Nullable MilestoneData data,
+            boolean digestEnabled,
+            int intervalDays,
+            @Nullable String configuredUrl,
+            Function<String, String> envLookup,
+            String notifyScope,
+            boolean allowDiscordOptOut,
+            boolean useEmbeds,
+            String language,
+            ZoneId zone,
+            long nowMillis,
+            @Nullable Function<TargetKey, String> itemDisplayNameResolver,
+            Consumer<String> warnLogger,
+            BiConsumer<URI, String> sender) {
+        if (data == null || nowMillis <= 0L) {
+            return false;
+        }
+        boolean hasConfiguredUrl = configuredUrl != null && !configuredUrl.isBlank();
+        int clampedDays = DiscordDigestLogic.clampIntervalDays(intervalDays);
+        long lastDigestEpoch = data.lastDigestEpochMillis();
+        DiscordDigestLogic.CheckAction action = DiscordDigestLogic.decideAction(
+                digestEnabled, hasConfiguredUrl, lastDigestEpoch, nowMillis, clampedDays);
+        if (action == DiscordDigestLogic.CheckAction.SKIP) {
+            return false;
+        }
+        URI uri = resolveWebhookUri(configuredUrl, envLookup, warnLogger);
+        if (uri == null) {
+            return false;
+        }
+        if (action == DiscordDigestLogic.CheckAction.INIT_TIMESTAMP_ONLY) {
+            data.setLastDigestEpochMillis(nowMillis);
+            return false;
+        }
+        List<DiscordDigestLogic.DigestEntry> entries = extractDigestEntries(
+                data, lastDigestEpoch, nowMillis, notifyScope, allowDiscordOptOut);
+        if (entries.isEmpty()) {
+            data.setLastDigestEpochMillis(nowMillis);
+            return false;
+        }
+        String json = buildDigestPayloadJson(
+                entries, clampedDays, zone, nowMillis, useEmbeds, language, itemDisplayNameResolver);
+        if (json.isEmpty()) {
+            data.setLastDigestEpochMillis(nowMillis);
+            return false;
+        }
+        sender.accept(uri, json);
+        data.setLastDigestEpochMillis(nowMillis);
+        return true;
+    }
+
+    /**
+     * Extracts qualifying F9 digest entries from {@link MilestoneData} in
+     * {@code (lastDigestEpoch, nowMillis]}, delegating filtering and sorting to
+     * {@link DiscordDigestLogic#extractEntries}.
+     */
+    static List<DiscordDigestLogic.DigestEntry> extractDigestEntries(
+            @Nullable MilestoneData data,
+            long lastDigestEpoch,
+            long nowMillis,
+            String notifyScope,
+            boolean allowDiscordOptOut) {
+        if (data == null) {
+            return List.of();
+        }
+        List<DiscordDigestLogic.PlayerSnapshot> players = new ArrayList<>(data.allPlayers().size());
+        for (Map.Entry<UUID, MilestoneData.PlayerData> e : data.allPlayers().entrySet()) {
+            MilestoneData.PlayerData pd = e.getValue();
+            if (pd == null) {
+                continue;
+            }
+            List<DiscordDigestLogic.RecordSnapshot> records = new ArrayList<>(pd.records.size());
+            for (Map.Entry<TargetKey, MilestoneRecord> r : pd.records.entrySet()) {
+                TargetKey key = r.getKey();
+                MilestoneRecord rec = r.getValue();
+                if (key != null && rec != null) {
+                    records.add(new DiscordDigestLogic.RecordSnapshot(
+                            key.itemId(), key.count(), rec.playTicks(), rec.day(), rec.epochMillis()));
+                }
+            }
+            players.add(new DiscordDigestLogic.PlayerSnapshot(
+                    e.getKey(), pd.lastKnownName, pd.excludeFromDiscord, records));
+        }
+        List<DiscordDigestLogic.WorldFirstSnapshot> worldFirsts = new ArrayList<>(data.worldFirsts().size());
+        for (WorldFirstRecord wf : data.worldFirsts().values()) {
+            if (wf != null) {
+                worldFirsts.add(new DiscordDigestLogic.WorldFirstSnapshot(
+                        wf.itemId(), wf.count(), wf.playerUuid(), wf.playerName(),
+                        wf.playTicks(), wf.day(), wf.epochMillis()));
+            }
+        }
+        return DiscordDigestLogic.extractEntries(
+                players, worldFirsts, lastDigestEpoch, nowMillis, notifyScope, allowDiscordOptOut);
+    }
+
+    /**
+     * Pure payload builder for F9 periodic Discord digest notifications (F4 + F11 + F18).
+     */
+    static String buildDigestPayloadJson(
+            List<DiscordDigestLogic.DigestEntry> entries,
+            int intervalDays,
+            ZoneId zone,
+            long nowMillis,
+            boolean useEmbeds,
+            String language,
+            @Nullable Function<TargetKey, String> itemDisplayNameResolver) {
+        if (entries == null || entries.isEmpty()) {
+            return "";
+        }
+        int clampedDays = DiscordDigestLogic.clampIntervalDays(intervalDays);
+        Function<TargetKey, String> resolver = itemDisplayNameResolver != null
+                ? itemDisplayNameResolver
+                : TargetKey::formatDisplayId;
+
+        boolean anyWorldFirst = false;
+        List<String> lines = new ArrayList<>(entries.size());
+        for (DiscordDigestLogic.DigestEntry entry : entries) {
+            if (entry.worldFirst()) {
+                anyWorldFirst = true;
+            }
+            TargetKey key = TargetKey.of(entry.itemId(), entry.count());
+            MilestoneRecord rec = new MilestoneRecord(entry.playTicks(), entry.day(), entry.epochMillis());
+            String formattedPlaytime = Playtime.formatRecord(rec, zone);
+            String itemLabel;
+            if (useEmbeds) {
+                String resolved = resolver.apply(key);
+                itemLabel = (resolved != null && !resolved.isEmpty()) ? resolved : key.formatDisplayId();
+            } else {
+                itemLabel = key.formatDisplayId();
+            }
+            String escapedName = TextEscaping.escapeDiscordMarkdown(entry.playerName());
+            String escapedItem = TextEscaping.escapeDiscordMarkdown(itemLabel);
+            String formatted = ServerLang.formatForLang(
+                    language, "discord.itemmilestonelog.digest.line", escapedName, escapedItem, formattedPlaytime);
+            lines.add(entry.worldFirst() ? DiscordDigestLogic.WORLD_FIRST_PREFIX + formatted : formatted);
+        }
+
+        String title = ServerLang.formatForLang(language, "discord.itemmilestonelog.digest.title", clampedDays);
+        IntFunction<String> moreFormatter = remaining ->
+                ServerLang.formatForLang(language, "discord.itemmilestonelog.digest.more", remaining);
+
+        if (useEmbeds) {
+            String description = DiscordDigestLogic.assembleEmbedDescription(lines, moreFormatter);
+            JsonObject embed = new JsonObject();
+            embed.addProperty("title", TextEscaping.truncateUtf16(title, EMBED_TITLE_MAX_CHARS));
+            embed.addProperty("description", TextEscaping.truncateUtf16(description, EMBED_DESCRIPTION_MAX_CHARS));
+            embed.addProperty("color", anyWorldFirst ? COLOR_WORLD_FIRST : COLOR_NORMAL);
+            if (nowMillis > 0L) {
+                embed.addProperty("timestamp", Instant.ofEpochMilli(nowMillis).toString());
+            }
+            return buildEmbedsJson(embed);
+        }
+        String content = DiscordDigestLogic.assemblePlainText(title, lines, moreFormatter);
+        return buildPlainTextJson(content);
+    }
+
+    /**
      * Pure payload builder for {@code /milestonelog discordtest} (F49), honoring F18 language
      * and F4 embed mode.
      */
@@ -595,11 +1226,11 @@ public final class DiscordNotifier {
     }
 
     /**
-     * Validates the configured webhook URL and, if valid and no test send is already in flight,
+     * Validates the configured primary webhook URL and, if valid and no test send is already in flight,
      * queues a fixed test message on the shared Discord sender thread (F49).
      *
      * <p>Bypasses F35 dead-webhook suppression so admins can verify a repaired webhook; on
-     * HTTP 2xx success, clears the dead-webhook stop so normal notifications resume.
+     * HTTP 2xx success, clears that destination's dead-webhook stop so normal notifications resume.
      *
      * @param onComplete invoked on the Discord sender thread with the classified send result
      *                   when this method returns {@code null}
@@ -609,8 +1240,24 @@ public final class DiscordNotifier {
      */
     @Nullable
     public static DiscordTestResult sendTestMessage(Consumer<DiscordTestResult> onComplete) {
+        return sendTestMessage(DiscordRouting.Destination.MAIN, onComplete);
+    }
+
+    /**
+     * Validates the configured webhook URL for {@code destination} ({@link DiscordRouting.Destination#MAIN}
+     * for {@code /milestonelog discordtest}, {@link DiscordRouting.Destination#WORLD_FIRST} for
+     * {@code /milestonelog discordtest worldfirst}) and queues a fixed test message (F49 + F46).
+     */
+    @Nullable
+    public static DiscordTestResult sendTestMessage(
+            DiscordRouting.Destination destination,
+            Consumer<DiscordTestResult> onComplete) {
+        String configuredUrl = destination == DiscordRouting.Destination.WORLD_FIRST
+                ? Config.discordWorldFirstWebhookUrl()
+                : Config.DISCORD_WEBHOOK_URL.get();
         return sendTestMessage(
-                Config.DISCORD_WEBHOOK_URL.get(),
+                destination,
+                configuredUrl,
                 System::getenv,
                 Config.DISCORD_USE_EMBEDS.get(),
                 Config.DISCORD_LANGUAGE.get(),
@@ -620,6 +1267,19 @@ public final class DiscordNotifier {
 
     @Nullable
     static DiscordTestResult sendTestMessage(
+            @Nullable String configuredUrl,
+            Function<String, String> envLookup,
+            boolean useEmbeds,
+            String language,
+            Instant timestamp,
+            Consumer<DiscordTestResult> onComplete) {
+        return sendTestMessage(
+                DiscordRouting.Destination.MAIN, configuredUrl, envLookup, useEmbeds, language, timestamp, onComplete);
+    }
+
+    @Nullable
+    static DiscordTestResult sendTestMessage(
+            DiscordRouting.Destination destination,
             @Nullable String configuredUrl,
             Function<String, String> envLookup,
             boolean useEmbeds,
@@ -641,7 +1301,7 @@ public final class DiscordNotifier {
         try {
             URI uri = resolution.uri();
             String json = buildTestPayloadJson(useEmbeds, language, timestamp);
-            enqueueTestSend(uri, json, onComplete);
+            enqueueTestSend(destination, uri, json, onComplete);
             handedOff = true;
             return null;
         } finally {
@@ -653,6 +1313,25 @@ public final class DiscordNotifier {
 
     @Nullable
     static DiscordTestResult sendTestMessage(
+            @Nullable String configuredUrl,
+            Function<String, String> envLookup,
+            boolean useEmbeds,
+            String language,
+            Instant timestamp,
+            Executor targetExecutor,
+            HttpPostTransport transport,
+            RetrySleeper sleeper,
+            Consumer<String> warnLogger,
+            Consumer<DiscordTestResult> onComplete) {
+        return sendTestMessage(
+                DiscordRouting.Destination.MAIN,
+                configuredUrl, envLookup, useEmbeds, language, timestamp,
+                targetExecutor, transport, sleeper, warnLogger, onComplete);
+    }
+
+    @Nullable
+    static DiscordTestResult sendTestMessage(
+            DiscordRouting.Destination destination,
             @Nullable String configuredUrl,
             Function<String, String> envLookup,
             boolean useEmbeds,
@@ -679,7 +1358,7 @@ public final class DiscordNotifier {
             URI uri = resolution.uri();
             String json = buildTestPayloadJson(useEmbeds, language, timestamp);
             TestSendTask task = new TestSendTask(() -> {
-                DiscordTestResult result = sendTestWithTransport(uri, json, transport, sleeper, warnLogger);
+                DiscordTestResult result = sendTestWithTransport(destination, uri, json, transport, sleeper, warnLogger);
                 if (result != null && onComplete != null) {
                     onComplete.accept(result);
                 }
@@ -700,17 +1379,23 @@ public final class DiscordNotifier {
     }
 
     /**
-     * Clears dead-webhook suppression so sending resumes for the configured URL.
-     *
-     * <p>F49 seam: call when {@code /milestonelog discordtest} succeeds against a
-     * previously suppressed webhook URL.
+     * Clears dead-webhook suppression across all destinations.
      */
     static void resetDeadWebhook() {
-        DEAD_WEBHOOKS.reset();
+        MAIN_STATE.deadWebhooks.reset();
+        WORLD_FIRST_STATE.deadWebhooks.reset();
+    }
+
+    /**
+     * Clears dead-webhook suppression for a single destination (F49 seam).
+     */
+    static void resetDeadWebhook(DiscordRouting.Destination destination) {
+        stateFor(destination).deadWebhooks.reset();
     }
 
     static void resetEnvWarnings() {
-        ENV_WARNINGS.reset();
+        MAIN_STATE.envWarnings.reset();
+        WORLD_FIRST_STATE.envWarnings.reset();
     }
 
     static boolean isTestInProgress() {
@@ -721,17 +1406,27 @@ public final class DiscordNotifier {
         TEST_IN_PROGRESS.set(false);
     }
 
+    public static void resetDigestThrottler() {
+        DIGEST_THROTTLER.reset();
+    }
+
     static boolean isDeadWebhook(@Nullable String resolvedUrl) {
-        return DEAD_WEBHOOKS.isDead(resolvedUrl);
+        return MAIN_STATE.deadWebhooks.isDead(resolvedUrl)
+                || WORLD_FIRST_STATE.deadWebhooks.isDead(resolvedUrl);
+    }
+
+    static boolean isDeadWebhook(DiscordRouting.Destination destination, @Nullable String resolvedUrl) {
+        return stateFor(destination).deadWebhooks.isDead(resolvedUrl);
     }
 
     /**
      * Logs a one-time warning when opening a world on an integrated server (singleplayer / LAN)
-     * while a Discord webhook URL resolves, including via {@code env:} (F39).
+     * while either Discord webhook URL resolves, including via {@code env:} (F39 + F46).
      */
     public static void warnIfWebhookConfiguredInSingleplayer() {
         warnIfWebhookConfiguredInSingleplayer(
                 Config.DISCORD_WEBHOOK_URL.get(),
+                Config.discordWorldFirstWebhookUrl(),
                 System::getenv,
                 msg -> ItemMilestoneLog.LOGGER.warn(msg));
     }
@@ -740,8 +1435,18 @@ public final class DiscordNotifier {
             @Nullable String configuredUrl,
             Function<String, String> envLookup,
             Consumer<String> warnLogger) {
-        DiscordWebhookUrl.Resolution resolution = DiscordWebhookUrl.resolve(configuredUrl, envLookup);
-        if (!resolution.isResolved()) {
+        return warnIfWebhookConfiguredInSingleplayer(configuredUrl, null, envLookup, warnLogger);
+    }
+
+    static boolean warnIfWebhookConfiguredInSingleplayer(
+            @Nullable String mainConfiguredUrl,
+            @Nullable String worldFirstConfiguredUrl,
+            Function<String, String> envLookup,
+            Consumer<String> warnLogger) {
+        boolean mainResolved = DiscordWebhookUrl.resolve(mainConfiguredUrl, envLookup).isResolved();
+        boolean worldFirstResolved = !mainResolved
+                && DiscordWebhookUrl.resolve(worldFirstConfiguredUrl, envLookup).isResolved();
+        if (!mainResolved && !worldFirstResolved) {
             return false;
         }
         warnLogger.accept(DiscordWebhookUrl.SINGLEPLAYER_WEBHOOK_WARNING);
@@ -749,16 +1454,8 @@ public final class DiscordNotifier {
     }
 
     @Nullable
-    private static URI resolveWebhookUri() {
-        return resolveWebhookUri(
-                Config.DISCORD_WEBHOOK_URL.get(),
-                System::getenv,
-                msg -> ItemMilestoneLog.LOGGER.warn(msg));
-    }
-
-    @Nullable
     static URI resolveWebhookUri(@Nullable String configuredUrl, Consumer<String> warnLogger) {
-        return resolveWebhookUri(configuredUrl, System::getenv, warnLogger);
+        return resolveWebhookUri(DiscordRouting.Destination.MAIN, configuredUrl, System::getenv, warnLogger);
     }
 
     @Nullable
@@ -766,50 +1463,73 @@ public final class DiscordNotifier {
             @Nullable String configuredUrl,
             Function<String, String> envLookup,
             Consumer<String> warnLogger) {
+        return resolveWebhookUri(DiscordRouting.Destination.MAIN, configuredUrl, envLookup, warnLogger);
+    }
+
+    @Nullable
+    static URI resolveWebhookUri(
+            DiscordRouting.Destination destination,
+            @Nullable String configuredUrl,
+            Function<String, String> envLookup,
+            Consumer<String> warnLogger) {
+        return resolveDestination(destination, configuredUrl, envLookup, warnLogger).deliverableUri();
+    }
+
+    static DestinationResolution resolveDestination(
+            DiscordRouting.Destination destination,
+            @Nullable String configuredUrl,
+            Function<String, String> envLookup,
+            Consumer<String> warnLogger) {
+        DestinationState state = stateFor(destination);
         DiscordWebhookUrl.Resolution resolution = DiscordWebhookUrl.resolve(configuredUrl, envLookup);
         if (resolution.isEnvResolutionError()) {
-            if (ENV_WARNINGS.shouldWarn(resolution)) {
+            if (state.envWarnings.shouldWarn(resolution)) {
                 warnLogger.accept(resolution.warningMessage());
             }
-            DEAD_WEBHOOKS.syncCurrentUrlAndCheckDead(null);
-            return null;
+            state.deadWebhooks.syncCurrentUrlAndCheckDead(null);
+            return DestinationResolution.empty(destination);
         }
-        ENV_WARNINGS.shouldWarn(resolution);
+        state.envWarnings.shouldWarn(resolution);
         if (resolution.status() == DiscordWebhookUrl.Status.EMPTY) {
-            DEAD_WEBHOOKS.syncCurrentUrlAndCheckDead(null);
-            return null;
+            state.deadWebhooks.syncCurrentUrlAndCheckDead(null);
+            return DestinationResolution.empty(destination);
         }
         if (!resolution.isResolved()) {
-            DEAD_WEBHOOKS.syncCurrentUrlAndCheckDead(null);
+            state.deadWebhooks.syncCurrentUrlAndCheckDead(null);
             String warning = resolution.warningMessage();
             if (warning != null) {
                 warnLogger.accept(warning);
             }
-            return null;
+            return DestinationResolution.empty(destination);
         }
-        if (DEAD_WEBHOOKS.syncCurrentUrlAndCheckDead(resolution.resolvedUrl())) {
-            return null;
+        if (state.deadWebhooks.syncCurrentUrlAndCheckDead(resolution.resolvedUrl())) {
+            return new DestinationResolution(destination, true, null);
         }
-        return resolution.uri();
+        return new DestinationResolution(destination, true, resolution.uri());
     }
 
-    private static void enqueueSend(URI uri, String json) {
+    private static void enqueueSend(DiscordRouting.Destination destination, URI uri, String json) {
         synchronized (DiscordNotifier.class) {
             ExecutorService exec = ensureExecutor();
             HttpClient client = ensureClient();
             try {
-                exec.execute(() -> send(client, uri, json));
+                exec.execute(() -> send(client, destination, uri, json));
             } catch (RejectedExecutionException ignored) {
             }
         }
     }
 
-    private static void enqueueTestSend(URI uri, String json, Consumer<DiscordTestResult> onComplete) {
+    private static void enqueueTestSend(
+            DiscordRouting.Destination destination,
+            URI uri,
+            String json,
+            Consumer<DiscordTestResult> onComplete) {
         synchronized (DiscordNotifier.class) {
             ExecutorService exec = ensureExecutor();
             HttpClient client = ensureClient();
             TestSendTask task = new TestSendTask(() -> {
                 DiscordTestResult result = sendTestWithTransport(
+                        destination,
                         uri,
                         json,
                         (targetUri, payload) -> executePost(client, targetUri, payload),
@@ -856,8 +1576,9 @@ public final class DiscordNotifier {
         }
     }
 
-    private static void send(HttpClient client, URI uri, String json) {
+    private static void send(HttpClient client, DiscordRouting.Destination destination, URI uri, String json) {
         sendWithTransport(
+                destination,
                 uri,
                 json,
                 (targetUri, payload) -> executePost(client, targetUri, payload),
@@ -882,7 +1603,17 @@ public final class DiscordNotifier {
             HttpPostTransport transport,
             RetrySleeper sleeper,
             Consumer<String> warnLogger) {
-        executeSend(uri, json, false, transport, sleeper, warnLogger);
+        sendWithTransport(DiscordRouting.Destination.MAIN, uri, json, transport, sleeper, warnLogger);
+    }
+
+    static void sendWithTransport(
+            DiscordRouting.Destination destination,
+            URI uri,
+            String json,
+            HttpPostTransport transport,
+            RetrySleeper sleeper,
+            Consumer<String> warnLogger) {
+        executeSend(destination, uri, json, false, transport, sleeper, warnLogger);
     }
 
     @Nullable
@@ -892,25 +1623,38 @@ public final class DiscordNotifier {
             HttpPostTransport transport,
             RetrySleeper sleeper,
             Consumer<String> warnLogger) {
-        return executeSend(uri, json, true, transport, sleeper, warnLogger);
+        return sendTestWithTransport(DiscordRouting.Destination.MAIN, uri, json, transport, sleeper, warnLogger);
+    }
+
+    @Nullable
+    static DiscordTestResult sendTestWithTransport(
+            DiscordRouting.Destination destination,
+            URI uri,
+            String json,
+            HttpPostTransport transport,
+            RetrySleeper sleeper,
+            Consumer<String> warnLogger) {
+        return executeSend(destination, uri, json, true, transport, sleeper, warnLogger);
     }
 
     @Nullable
     private static DiscordTestResult executeSend(
+            DiscordRouting.Destination destination,
             URI uri,
             String json,
             boolean isTest,
             HttpPostTransport transport,
             RetrySleeper sleeper,
             Consumer<String> warnLogger) {
+        DestinationState state = stateFor(destination);
         String urlKey = uri.toString();
-        if (!isTest && DEAD_WEBHOOKS.isDead(urlKey)) {
+        if (!isTest && state.deadWebhooks.isDead(urlKey)) {
             return null;
         }
         try {
             HttpPostResult first = transport.post(uri, json);
             if (first.statusCode() != 429) {
-                return handleTerminalStatus(urlKey, first.statusCode(), false, isTest, warnLogger);
+                return handleTerminalStatus(state, urlKey, first.statusCode(), false, isTest, warnLogger);
             }
             OptionalLong retryDelayMs = DiscordDeliveryPolicy.parseRetryAfterMillis(first.retryAfterHeader());
             if (retryDelayMs.isEmpty()) {
@@ -923,11 +1667,11 @@ public final class DiscordNotifier {
             } else if (Thread.currentThread().isInterrupted()) {
                 return null;
             }
-            if (!isTest && DEAD_WEBHOOKS.isDead(urlKey)) {
+            if (!isTest && state.deadWebhooks.isDead(urlKey)) {
                 return null;
             }
             HttpPostResult retry = transport.post(uri, json);
-            return handleTerminalStatus(urlKey, retry.statusCode(), true, isTest, warnLogger);
+            return handleTerminalStatus(state, urlKey, retry.statusCode(), true, isTest, warnLogger);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return null;
@@ -941,6 +1685,7 @@ public final class DiscordNotifier {
 
     @Nullable
     private static DiscordTestResult handleTerminalStatus(
+            DestinationState state,
             String urlKey,
             int status,
             boolean wasRetry,
@@ -948,7 +1693,7 @@ public final class DiscordNotifier {
             Consumer<String> warnLogger) {
         if (DiscordDeliveryPolicy.isSuccessStatus(status)) {
             if (isTest) {
-                resetDeadWebhook();
+                state.deadWebhooks.reset();
             }
             return isTest ? DiscordTestResult.classifyHttpStatus(status) : null;
         }
@@ -961,7 +1706,7 @@ public final class DiscordNotifier {
             return isTest ? DiscordTestResult.classifyHttpStatus(status) : null;
         }
         if (DiscordDeliveryPolicy.isDeadWebhookStatus(status)) {
-            if (DEAD_WEBHOOKS.markDead(urlKey)) {
+            if (state.deadWebhooks.markDead(urlKey)) {
                 warnLogger.accept("[ItemMilestoneLog] Discord webhook returned HTTP " + status
                         + "; webhook may be deleted or the URL is wrong; sending resumes when the config is fixed");
             }
@@ -1026,8 +1771,9 @@ public final class DiscordNotifier {
             httpClient.close();
             httpClient = null;
         }
-        DEAD_WEBHOOKS.reset();
-        ENV_WARNINGS.reset();
+        MAIN_STATE.reset();
+        WORLD_FIRST_STATE.reset();
         TEST_IN_PROGRESS.set(false);
+        DIGEST_THROTTLER.reset();
     }
 }

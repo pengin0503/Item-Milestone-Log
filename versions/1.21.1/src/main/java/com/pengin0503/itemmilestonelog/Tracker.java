@@ -1793,6 +1793,20 @@ public final class Tracker {
             ZoneId zone) {
         MilestoneData.PlayerData actorPd = data.playerOrNull(pending.playerId);
         boolean postToDiscord = DiscordNotifier.shouldPostToDiscord(actorPd);
+        DiscordNotifier.ResolvedDestinations discordDestinations = DiscordNotifier.ResolvedDestinations.NONE;
+        if (postToDiscord && !pending.discordRecords.isEmpty()) {
+            boolean anyNormal = false;
+            boolean anyWorldFirst = false;
+            for (QueuedRecord q : pending.discordRecords) {
+                if (q.worldFirst()) {
+                    anyWorldFirst = true;
+                } else {
+                    anyNormal = true;
+                }
+            }
+            discordDestinations = DiscordNotifier.resolveDestinationsForBatch(
+                    anyNormal, anyWorldFirst, discordScope);
+        }
         NotificationGrouping.FlushPlan<QueuedRecord> plan = NotificationGrouping.planFlush(
                 pending.records,
                 pending.discordRecords,
@@ -1803,7 +1817,9 @@ public final class Tracker {
                 announceWorldFirst,
                 milestoneSoundEnabled,
                 postToDiscord,
-                discordScope);
+                discordScope,
+                discordDestinations.main().resolved(),
+                discordDestinations.worldFirst().resolved());
 
         ServerPlayer onlineActor = server.getPlayerList().getPlayer(pending.playerId);
         Component actorDisplayName = onlineActor != null
@@ -1843,7 +1859,8 @@ public final class Tracker {
 
         // 5. Discord record notifications (still sent even if player went offline)
         if (postToDiscord) {
-            sendDiscordChannel(actorPd, pending.playerName, plan.discord());
+            sendDiscordChannel(actorPd, pending.playerName, plan.discord(), discordDestinations.main());
+            sendDiscordChannel(actorPd, pending.playerName, plan.discordWorldFirst(), discordDestinations.worldFirst());
         }
 
         // 6. F19 Discord preset completion notifications (still sent even if player went offline;
@@ -1964,13 +1981,16 @@ public final class Tracker {
     private static void sendDiscordChannel(
             @Nullable MilestoneData.PlayerData playerData,
             String playerName,
-            NotificationGrouping.ChannelPlan<QueuedRecord> channel) {
-        if (channel.mode() == NotificationGrouping.SendMode.NONE) {
+            NotificationGrouping.ChannelPlan<QueuedRecord> channel,
+            DiscordNotifier.DestinationResolution destination) {
+        if (channel.mode() == NotificationGrouping.SendMode.NONE
+                || destination == null || destination.deliverableUri() == null) {
             return;
         }
         if (channel.mode() == NotificationGrouping.SendMode.INDIVIDUAL) {
             for (QueuedRecord q : channel.items()) {
-                DiscordNotifier.notifyMilestone(playerData, playerName, q.key(), q.record(), q.worldFirst());
+                DiscordNotifier.notifyMilestoneToDestination(
+                        playerData, playerName, q.key(), q.record(), q.worldFirst(), destination);
             }
             return;
         }
@@ -1978,7 +1998,7 @@ public final class Tracker {
         for (QueuedRecord q : channel.items()) {
             entries.add(new DiscordNotifier.MilestoneEntry(q.key(), q.record(), q.worldFirst()));
         }
-        DiscordNotifier.notifyMilestonesGrouped(playerData, playerName, entries);
+        DiscordNotifier.notifyMilestonesGroupedToDestination(playerData, playerName, entries, destination);
     }
 
     private static MutableComponent buildTargetListComponent(
