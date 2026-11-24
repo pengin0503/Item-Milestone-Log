@@ -143,19 +143,18 @@ jobs:
               echo "::error::CurseForge game version id not found for Minecraft $mc"
               exit 1
             fi
-            jq -n \
+            metadata=$(jq -n \
               --arg changelog "$changelog_text" \
               --arg displayName "Item Milestone Log $VERSION (MC $mc)" \
               --argjson gameVersions "[${mc_id}, ${neoforge_id}]" \
               '{changelog: $changelog, changelogType: "markdown",
                 displayName: $displayName, gameVersions: $gameVersions,
-                releaseType: "release"}' > metadata.json
-            jq -e . metadata.json > /dev/null
+                releaseType: "release"}')
             echo "Uploading $base to CurseForge (MC $mc)..."
             code=$(curl -sS -X POST \
               "https://minecraft.curseforge.com/api/projects/$CURSEFORGE_PROJECT_ID/upload-file" \
               -H "X-Api-Token: $CURSEFORGE_TOKEN" \
-              -F "metadata=@metadata.json;type=application/json" \
+              --form-string "metadata=$metadata" \
               -F "file=@$jar" -o resp.json -w "%{http_code}")
             cat resp.json
             if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
