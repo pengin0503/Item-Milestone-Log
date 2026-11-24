@@ -1,13 +1,15 @@
-package com.pengin0503.itemmilestonelog;
+package com.pengin0503.itemmilestonelog.compat.v26_2;
 
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
+import com.pengin0503.itemmilestonelog.Config;
+import com.pengin0503.itemmilestonelog.MilestoneTriggerLogic;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
+import net.minecraft.advancements.predicates.ContextAwarePredicate;
 import net.minecraft.advancements.predicates.MinMaxBounds;
+import net.minecraft.advancements.predicates.entity.EntityPredicate;
 import net.minecraft.advancements.triggers.SimpleCriterionTrigger;
-import net.minecraft.core.Holder;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.level.storage.loot.predicates.LootItemCondition;
 
 import java.util.Optional;
 
@@ -16,7 +18,7 @@ import java.util.Optional;
  *
  * <p>All conditions are optional:
  * <ul>
- *   <li>{@code player}: vanilla player predicate ({@link LootItemCondition} holder in MC 26.3)</li>
+ *   <li>{@code player}: vanilla player predicate ({@link ContextAwarePredicate})</li>
  *   <li>{@code item}: exact string match against {@link TargetKey#itemId()} (tag targets pass their
  *       {@code "#..."} ID as-is; no tag-membership matching)</li>
  *   <li>{@code count}: vanilla {@link MinMaxBounds.Ints} against {@link TargetKey#count()}</li>
@@ -35,13 +37,13 @@ public class MilestoneRecordedTrigger extends SimpleCriterionTrigger<MilestoneRe
     }
 
     public record TriggerInstance(
-            Optional<Holder<LootItemCondition>> player,
+            Optional<ContextAwarePredicate> player,
             Optional<String> item,
             MinMaxBounds.Ints count,
             Optional<Boolean> worldFirst)
             implements SimpleCriterionTrigger.SimpleInstance {
         public static final Codec<TriggerInstance> CODEC = RecordCodecBuilder.create(instance -> instance.group(
-                        LootItemCondition.CODEC.optionalFieldOf("player").forGetter(TriggerInstance::player),
+                        EntityPredicate.ADVANCEMENT_CODEC.optionalFieldOf("player").forGetter(TriggerInstance::player),
                         Codec.STRING.optionalFieldOf("item").forGetter(TriggerInstance::item),
                         MinMaxBounds.Ints.CODEC.optionalFieldOf("count", MinMaxBounds.Ints.ANY).forGetter(TriggerInstance::count),
                         Codec.BOOL.optionalFieldOf("world_first").forGetter(TriggerInstance::worldFirst))

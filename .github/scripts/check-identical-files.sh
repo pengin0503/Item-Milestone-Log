@@ -62,11 +62,11 @@ IDENTICAL_ALL_4=(
 # Files that differ in 1.21.1 (ResourceLocation, NBT SavedData, player.server,
 # mods.toml loaderVersion, etc.) but must be byte-identical across 26.1.2, 26.2,
 # and 26.3. Together with the 17 src/main/java files in IDENTICAL_ALL_4, this
-# covers all 50 src/main/java files that are identical across 26.x (of 57; the
-# remaining 7 are the two javadoc-only entry points, the two trigger classes
-# behind TriggerCompat, and the three per-version compat implementations).
+# covers all 49 src/main/java files that are identical across 26.x (of 57; the
+# remaining files are the two javadoc-only entry points and the per-version
+# compat classes under compat/v26_*).
 IDENTICAL_26_X=(
-  # src/main/java (33 files; +17 from IDENTICAL_ALL_4 = 50 src/main/java files)
+  # src/main/java (32 files; +17 from IDENTICAL_ALL_4 = 49 src/main/java files)
   "src/main/java/com/pengin0503/itemmilestonelog/Config.java"
   "src/main/java/com/pengin0503/itemmilestonelog/DatapackPresetReloadListener.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestoneCommands.java"
@@ -88,7 +88,6 @@ IDENTICAL_26_X=(
   "src/main/java/com/pengin0503/itemmilestonelog/compat/McVersion.java"
   "src/main/java/com/pengin0503/itemmilestonelog/compat/McCompat.java"
   "src/main/java/com/pengin0503/itemmilestonelog/compat/TriggerCompat.java"
-  "src/main/java/com/pengin0503/itemmilestonelog/compat/TriggerCompatImpl.java"
   "src/main/java/com/pengin0503/itemmilestonelog/compat/TagEventCompat.java"
   "src/main/java/com/pengin0503/itemmilestonelog/compat/ConfigCompat.java"
   "src/main/java/com/pengin0503/itemmilestonelog/compat/client/ScreenCompat.java"
@@ -126,19 +125,20 @@ IDENTICAL_26_X=(
 #     interpretation moved behind TagEventCompat (26.3 removed getUpdateCause()),
 #     so the 26.x sources are identical again. 1.21.1 still differs
 #     (ResourceLocation, player.server, GameProfile#getName).
-# - src/main/java/.../MilestoneRecordedTrigger.java:
+# - src/main/java/.../compat/v26_*/MilestoneRecordedTrigger.java (1.21.1: root package):
+#     Moved into compat/v26_*/ in N251 stage 2a so all variants can coexist in the merged JAR.
 #     Minecraft moved advancement packages and changed SimpleInstance#player() across versions:
 #     1.21.1 uses advancements.critereon.*; 26.1.2 uses advancements.criterion.*;
 #     26.2 uses advancements.triggers.* + advancements.predicates.*;
 #     26.3 replaces ContextAwarePredicate / EntityPredicate.ADVANCEMENT_CODEC with
 #     Optional<Holder<LootItemCondition>> and LootItemCondition.CODEC.
-# - src/main/java/.../ModTriggers.java:
+# - src/main/java/.../compat/v26_*/ModTriggers.java (1.21.1: root package):
+#     Moved into compat/v26_*/ in N251 stage 2a so all variants can coexist in the merged JAR.
 #     1.21.1 and 26.1.2 import net.minecraft.advancements.CriterionTrigger;
 #     26.2 and 26.3 import net.minecraft.advancements.triggers.CriterionTrigger.
-# - src/main/java/.../compat/{v26_1,v26_2,v26_3}/{TagEventCompatImpl,ConfigCompatImpl,client/ScreenCompatImpl}.java:
+# - src/main/java/.../compat/{v26_1,v26_2,v26_3}/{ModTriggers,MilestoneRecordedTrigger,TriggerCompatImpl,TagEventCompatImpl,ConfigCompatImpl,client/ScreenCompatImpl}.java:
 #     Per-version compat implementations under compat/v26_1, compat/v26_2, compat/v26_3
-#     intentionally differ per version (N251, docs/DESIGN_1.3.0.md);
-#     ModTriggers/MilestoneRecordedTrigger likewise remain version-specific behind TriggerCompat.
+#     intentionally differ per version (N251, docs/DESIGN_1.3.0.md).
 # - src/test/java/.../ServerLangTest.java:
 #     Fallback source directory path embeds each project's own Minecraft version.
 
