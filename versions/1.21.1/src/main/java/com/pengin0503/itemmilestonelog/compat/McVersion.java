@@ -48,10 +48,8 @@ public enum McVersion {
     }
 
     private static McVersion detect() {
-        String name;
-        try {
-            name = SharedConstants.VERSION_STRING;
-        } catch (RuntimeException | LinkageError e) {
+        String name = versionName();
+        if (name == null) {
             return V121_1;
         }
         int patch = patchOf(name);
@@ -65,6 +63,31 @@ public enum McVersion {
             }
         }
         return result;
+    }
+
+    /**
+     * Name of the running Minecraft version, or null when it cannot be determined.
+     * Resolved reflectively because each accessor exists only in part of the 1.21.x line:
+     * {@code SharedConstants.VERSION_STRING} up to 1.21.8 (removed in 1.21.9, so even a
+     * direct reference fails to compile there), and the {@code WorldVersion} accessor is
+     * {@code getName()} up to 1.21.5 but {@code name()} from 1.21.6.
+     */
+    private static String versionName() {
+        try {
+            return (String) SharedConstants.class.getField("VERSION_STRING").get(null);
+        } catch (ReflectiveOperationException | LinkageError e) {
+            // 1.21.9+ removed the field; fall through to the WorldVersion accessor.
+        }
+        try {
+            Object version = SharedConstants.getCurrentVersion();
+            try {
+                return (String) version.getClass().getMethod("name").invoke(version);
+            } catch (NoSuchMethodException e) {
+                return (String) version.getClass().getMethod("getName").invoke(version);
+            }
+        } catch (ReflectiveOperationException | LinkageError e) {
+            return null;
+        }
     }
 
     /**
