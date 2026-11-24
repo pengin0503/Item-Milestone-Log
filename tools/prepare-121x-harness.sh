@@ -63,5 +63,21 @@ sed -i "s|^neo_version=.*|neo_version=${neo_version}|" "$props"
 rm -rf "$pkg_dir/compat/v121_1" "$pkg_dir/compat/client/v121_1"
 cp -R "$variant/." "$pkg_dir/compat/"
 
-# 5. Done.
+# 5. Test-only patch: the DimensionDataStorage constructor changed File -> Path in
+#    MC 1.21.2, so the generated project's MilestoneBackupTest must pass the Path
+#    directly. Shipped sources are unaffected (they keep compiling on 1.21.1).
+if [[ "$profile" != "v121_1" ]]; then
+  python3 - "$dest/src/test/java/com/pengin0503/itemmilestonelog/MilestoneBackupTest.java" <<'PYEOF'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+old = "new DimensionDataStorage(dataDir.toFile(), null, null)"
+new = "new DimensionDataStorage(dataDir, null, null)"
+assert old in s, "DimensionDataStorage File constructor call not found"
+open(p, "w").write(s.replace(old, new))
+print("DimensionDataStorage constructor patched:", p)
+PYEOF
+fi
+
+# 6. Done.
 echo "Harness project ($mc, profile $profile, neo $neo_version): $dest"
