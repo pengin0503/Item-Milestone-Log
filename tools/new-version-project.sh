@@ -150,6 +150,15 @@ tar -C "$base_dir" \
   --exclude='./.gradle' \
   -cf - . | tar --no-same-owner -C "$dest_dir" -xf -
 
+# The base projects pull the repo-root shared sources via ../../common/...
+# (they live at versions/<mc>/). Generated projects sit one level deeper
+# (versions/verify/<mc>/), so those paths need one more ../ — otherwise
+# Gradle silently drops the nonexistent srcDirs and every shared class
+# (all *Logic classes, resources) vanishes from the verification build.
+if [[ -f "$dest_dir/build.gradle" ]]; then
+  sed -i "s|\.\./\.\./common/|../../../common/|g" "$dest_dir/build.gradle"
+fi
+
 props_file="$dest_dir/gradle.properties"
 
 has_prop() {
