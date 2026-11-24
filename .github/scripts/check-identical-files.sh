@@ -17,8 +17,9 @@ VERSIONS_26=(26.1.2 26.2 26.3)
 # Files that must be byte-identical across ALL four Minecraft versions
 # (1.21.1, 26.1.2, 26.2, 26.3).
 IDENTICAL_ALL_4=(
-  # src/main/java (16 files)
+  # src/main/java (17 files)
   "src/main/java/com/pengin0503/itemmilestonelog/DiscordNotifier.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/ItemInfoLogic.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestoneBackup.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestoneCommandRunner.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestoneRankings.java"
@@ -35,10 +36,12 @@ IDENTICAL_ALL_4=(
   "src/main/java/com/pengin0503/itemmilestonelog/gametest/MilestoneGameTests.java"
   "src/main/java/com/pengin0503/itemmilestonelog/network/TargetEntry.java"
 
-  # src/test/java (18 files)
+  # src/test/java (20 files)
   "src/test/java/com/pengin0503/itemmilestonelog/DiscordNotifierTest.java"
+  "src/test/java/com/pengin0503/itemmilestonelog/ItemInfoLogicTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/MilestoneCommandRunnerTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/MilestoneCommandsHelpTest.java"
+  "src/test/java/com/pengin0503/itemmilestonelog/MilestonePermissionsTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/MilestoneRankingsTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/ScoreboardSyncTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/WorldFirstNamesTest.java"
@@ -59,14 +62,15 @@ IDENTICAL_ALL_4=(
 # Files that differ in 1.21.1 (ResourceLocation, NBT SavedData, player.server,
 # mods.toml loaderVersion, etc.) but must be byte-identical across 26.1.2, 26.2,
 # and 26.3. Together with the 16 src/main/java files in IDENTICAL_ALL_4, this
-# covers all 33 src/main/java files that are identical across 26.x.
+# covers all 34 src/main/java files that are identical across 26.x.
 IDENTICAL_26_X=(
-  # src/main/java (17 files; +16 from IDENTICAL_ALL_4 = 33 src/main/java files)
+  # src/main/java (18 files; +16 from IDENTICAL_ALL_4 = 34 src/main/java files)
   "src/main/java/com/pengin0503/itemmilestonelog/Config.java"
   "src/main/java/com/pengin0503/itemmilestonelog/DatapackPresetReloadListener.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestoneCommands.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestoneData.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestoneExport.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/MilestonePermissions.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestoneService.java"
   "src/main/java/com/pengin0503/itemmilestonelog/Playtime.java"
   "src/main/java/com/pengin0503/itemmilestonelog/Presets.java"

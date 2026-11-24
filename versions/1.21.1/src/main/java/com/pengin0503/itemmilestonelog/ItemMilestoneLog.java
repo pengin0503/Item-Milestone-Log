@@ -38,6 +38,10 @@ public class ItemMilestoneLog {
         ModTriggers.register(modEventBus);
         modEventBus.addListener(ModNetworking::registerPayloads);
         modEventBus.addListener(MilestoneGameTestRegistration::register);
+        // F43: PermissionAPI posts PermissionGatherEvent.Nodes on the NeoForge game event bus
+        // (NeoForge.EVENT_BUS), never on the mod event bus; a game event listener on the mod bus
+        // is rejected with IllegalArgumentException during mod construction.
+        NeoForge.EVENT_BUS.addListener(MilestonePermissions::register);
         NeoForge.EVENT_BUS.register(Tracker.class);
         NeoForge.EVENT_BUS.register(MilestoneCommands.class);
         NeoForge.EVENT_BUS.addListener(ItemMilestoneLog::onServerStarting);

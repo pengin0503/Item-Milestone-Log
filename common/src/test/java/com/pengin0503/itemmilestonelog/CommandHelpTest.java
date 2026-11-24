@@ -28,7 +28,7 @@ class CommandHelpTest {
                 "summary", "playtime", "add", "addhand", "addtag", "remove", "removetag", "removeall",
                 "targets", "list",
                 "preset", "presetremove", "presetprogress", "reset", "resettag", "resetall", "undo",
-                "firsts", "top", "toptag", "recent", "stats", "lookup",
+                "firsts", "info", "top", "toptag", "recent", "stats", "lookup",
                 "privacy", "mutebroadcast", "muteprogress", "discordoptout",
                 "export", "exporthtml", "exportcsv", "import",
                 "exportall", "exporthtmlall", "exportcsvall", "importall",

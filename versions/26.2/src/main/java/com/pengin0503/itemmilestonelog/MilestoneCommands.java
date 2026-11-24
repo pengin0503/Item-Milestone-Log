@@ -26,6 +26,7 @@ import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 
@@ -203,6 +204,23 @@ public final class MilestoneCommands {
             Supplier<ArgumentType<?>> itemArg,
             Predicate<CommandSourceStack> adminRequirement,
             CommandDispatcher<CommandSourceStack> dispatcher) {
+        // F43: every admin-gated branch keeps its old level-2 legacy check and additionally accepts
+        // the matching permission node for player sources. Non-player sources use the legacy check.
+        Predicate<CommandSourceStack> adminRequirementWithNode = src ->
+                MilestonePermissions.check(src, MilestonePermissions.ADMIN, adminRequirement.test(src));
+        Predicate<CommandSourceStack> firstsResetRequirement = src ->
+                MilestonePermissions.check(src, MilestonePermissions.FIRSTS_RESET, adminRequirement.test(src));
+        Predicate<CommandSourceStack> exportAllRequirement = src ->
+                MilestonePermissions.check(src, MilestonePermissions.EXPORT_ALL, adminRequirement.test(src));
+        Predicate<CommandSourceStack> importAllRequirement = src ->
+                MilestonePermissions.check(src, MilestonePermissions.IMPORT_ALL, adminRequirement.test(src));
+        Predicate<CommandSourceStack> pruneDataRequirement = src ->
+                MilestonePermissions.check(src, MilestonePermissions.PRUNEDATA, adminRequirement.test(src));
+        Predicate<CommandSourceStack> renameItemRequirement = src ->
+                MilestonePermissions.check(src, MilestonePermissions.RENAMEITEM, adminRequirement.test(src));
+        Predicate<CommandSourceStack> discordTestRequirement = src ->
+                MilestonePermissions.check(src, MilestonePermissions.DISCORDTEST, adminRequirement.test(src));
+
         SuggestionProvider<CommandSourceStack> presetSuggestions = (ctx, builder) -> {
             if (!Config.PRESETS_ENABLED.get()) {
                 return builder.buildFuture();
@@ -283,7 +301,9 @@ public final class MilestoneCommands {
                 return builder.buildFuture();
             }
             List<String> files = MilestoneExport.listExportFiles(server);
-            if (Commands.hasPermission(Commands.LEVEL_GAMEMASTERS).test(ctx.getSource())) {
+            CommandSourceStack source = ctx.getSource();
+            if (MilestonePermissions.check(source, MilestonePermissions.IMPORT_ALL,
+                    Commands.hasPermission(Commands.LEVEL_GAMEMASTERS).test(source))) {
                 return SharedSuggestionProvider.suggest(files, builder);
             }
             ServerPlayer sp = ctx.getSource().getPlayer();
@@ -471,6 +491,37 @@ public final class MilestoneCommands {
                     .toList();
             return SharedSuggestionProvider.suggest(items, builder);
         };
+        // F51: own effective targets + own records + items recorded by anyone the F6 gate allows.
+        SuggestionProvider<CommandSourceStack> infoItemSuggestions = (ctx, builder) -> {
+            ServerPlayer sp = ctx.getSource().getPlayer();
+            if (sp == null) {
+                return builder.buildFuture();
+            }
+            MilestoneData data = MilestoneData.get(sp.level().getServer());
+            MilestoneData.PlayerData pd = data.playerOrNull(sp.getUUID());
+            return SharedSuggestionProvider.suggest(
+                    ItemInfoLogic.suggestionItemIds(
+                            data.allPlayers(),
+                            rankingViewer(ctx.getSource()),
+                            Config.ALLOW_LOOKUP.get(),
+                            Tracker.effectiveTargets(pd),
+                            pd != null ? pd.records : Map.of()),
+                    builder);
+        };
+        SuggestionProvider<CommandSourceStack> infoItemCountSuggestions = (ctx, builder) -> {
+            ServerPlayer sp = ctx.getSource().getPlayer();
+            if (sp == null) {
+                return builder.buildFuture();
+            }
+            MilestoneData.PlayerData pd = MilestoneData.get(sp.level().getServer()).playerOrNull(sp.getUUID());
+            if (pd == null) {
+                return builder.buildFuture();
+            }
+            String itemId = IdentifierArgument.getId(ctx, "item").toString();
+            Set<String> counts = new LinkedHashSet<>(countsForItem(Tracker.effectiveTargets(pd), itemId));
+            counts.addAll(countsForItem(pd.records.keySet(), itemId));
+            return SharedSuggestionProvider.suggest(counts, builder);
+        };
 
         return literal("milestonelog")
                 .executes(MilestoneCommands::summary)
@@ -578,7 +629,7 @@ public final class MilestoneCommands {
                         .then(argument("page", IntegerArgumentType.integer(1))
                                 .executes(ctx -> firstsList(ctx, IntegerArgumentType.getInteger(ctx, "page"))))
                         .then(literal("reset")
-                                .requires(adminRequirement)
+                                .requires(firstsResetRequirement)
                                 .then(argument("item", IdentifierArgument.id())
                                         .suggests(worldFirstSuggestions)
                                         .executes(ctx -> firstsReset(ctx, IdentifierArgument.getId(ctx, "item").toString(), TargetKey.MIN_COUNT))
@@ -587,7 +638,7 @@ public final class MilestoneCommands {
                                                 .executes(ctx -> firstsReset(ctx, IdentifierArgument.getId(ctx, "item").toString(),
                                                         IntegerArgumentType.getInteger(ctx, "count"))))))
                         .then(literal("resettag")
-                                .requires(adminRequirement)
+                                .requires(firstsResetRequirement)
                                 .then(argument("tag", tagArgumentType())
                                         .suggests(worldFirstTagSuggestions)
                                         .executes(ctx -> firstsReset(ctx, tagArg(ctx), TargetKey.MIN_COUNT))
@@ -596,8 +647,18 @@ public final class MilestoneCommands {
                                                 .executes(ctx -> firstsReset(ctx, tagArg(ctx),
                                                         IntegerArgumentType.getInteger(ctx, "count"))))))
                         .then(literal("resetall")
-                                .requires(adminRequirement)
+                                .requires(firstsResetRequirement)
                                 .executes(MilestoneCommands::firstsResetAll)))
+                .then(literal("info")
+                        .then(argument("item", IdentifierArgument.id())
+                                .suggests(infoItemSuggestions)
+                                .executes(ctx -> infoItem(ctx, IdentifierArgument.getId(ctx, "item").toString(), TargetKey.MIN_COUNT))
+                                .then(argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                        .suggests(infoItemCountSuggestions)
+                                        .executes(ctx -> infoItem(ctx, IdentifierArgument.getId(ctx, "item").toString(),
+                                                IntegerArgumentType.getInteger(ctx, "count")))))
+                        .then(literal("hand")
+                                .executes(MilestoneCommands::infoHand)))
                 .then(literal("export").executes(MilestoneCommands::exportSelf))
                 .then(literal("exporthtml").executes(MilestoneCommands::exportHtmlSelf))
                 .then(literal("exportcsv").executes(MilestoneCommands::exportCsvSelf))
@@ -606,16 +667,16 @@ public final class MilestoneCommands {
                                 .suggests(exportFileSuggestions)
                                 .executes(ctx -> importSelf(ctx, StringArgumentType.getString(ctx, "fileName")))))
                 .then(literal("exportall")
-                        .requires(adminRequirement)
+                        .requires(exportAllRequirement)
                         .executes(MilestoneCommands::exportAll))
                 .then(literal("exporthtmlall")
-                        .requires(adminRequirement)
+                        .requires(exportAllRequirement)
                         .executes(MilestoneCommands::exportHtmlAll))
                 .then(literal("exportcsvall")
-                        .requires(adminRequirement)
+                        .requires(exportAllRequirement)
                         .executes(MilestoneCommands::exportCsvAll))
                 .then(literal("importall")
-                        .requires(adminRequirement)
+                        .requires(importAllRequirement)
                         .then(argument("fileName", StringArgumentType.word())
                                 .suggests(exportFileSuggestions)
                                 .executes(ctx -> importAll(ctx, StringArgumentType.getString(ctx, "fileName")))))
@@ -624,7 +685,7 @@ public final class MilestoneCommands {
                 .then(literal("discordoptout").executes(MilestoneCommands::discordOptOut))
                 .then(literal("privacy").executes(MilestoneCommands::privacy))
                 .then(literal("discordtest")
-                        .requires(adminRequirement)
+                        .requires(discordTestRequirement)
                         .executes(ctx -> discordTest(ctx, DiscordRouting.Destination.MAIN))
                         .then(literal("worldfirst")
                                 .executes(ctx -> discordTest(ctx, DiscordRouting.Destination.WORLD_FIRST))))
@@ -651,13 +712,13 @@ public final class MilestoneCommands {
                 .then(literal("stats")
                         .executes(MilestoneCommands::stats))
                 .then(literal("prunedata")
-                        .requires(adminRequirement)
+                        .requires(pruneDataRequirement)
                         .then(argument("days", IntegerArgumentType.integer(PruneDataLogic.MIN_DAYS, PruneDataLogic.MAX_DAYS))
                                 .executes(ctx -> pruneData(ctx, IntegerArgumentType.getInteger(ctx, "days"), false))
                                 .then(literal("confirm")
                                         .executes(ctx -> pruneData(ctx, IntegerArgumentType.getInteger(ctx, "days"), true)))))
                 .then(literal("renameitem")
-                        .requires(adminRequirement)
+                        .requires(renameItemRequirement)
                         .then(argument("oldId", IdentifierArgument.id())
                                 .suggests(renameOldItemSuggestions)
                                 .then(argument("newId", IdentifierArgument.id())
@@ -672,7 +733,7 @@ public final class MilestoneCommands {
                                                         IdentifierArgument.getId(ctx, "newId").toString(),
                                                         true))))))
                 .then(literal("admin")
-                        .requires(adminRequirement)
+                        .requires(adminRequirementWithNode)
                         .then(literal("players")
                                 .executes(ctx -> adminPlayers(ctx, null))
                                 .then(argument("page", IntegerArgumentType.integer(1))
@@ -1066,7 +1127,7 @@ public final class MilestoneCommands {
         if (!Config.PRESETS_ENABLED.get()) {
             return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.feature_disabled"));
         }
-        if (!MilestoneService.isPrivileged(source)) {
+        if (!MilestoneService.canManagePresets(source)) {
             return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_no_permission"));
         }
         return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_invalid_name", ""));
@@ -1077,7 +1138,7 @@ public final class MilestoneCommands {
         if (!Config.PRESETS_ENABLED.get()) {
             return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.feature_disabled"));
         }
-        if (!MilestoneService.isPrivileged(source)) {
+        if (!MilestoneService.canManagePresets(source)) {
             return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_no_permission"));
         }
         return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_unknown",
@@ -1111,7 +1172,7 @@ public final class MilestoneCommands {
         if (!Config.PRESETS_ENABLED.get()) {
             return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.feature_disabled"));
         }
-        if (!MilestoneService.isPrivileged(source)) {
+        if (!MilestoneService.canManagePresets(source)) {
             return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_no_permission"));
         }
         int custom = Presets.reload();
@@ -1259,8 +1320,10 @@ public final class MilestoneCommands {
         }
         try {
             MilestoneExport.ImportPayload payload = MilestoneExport.parseSinglePlayerExport(file);
+            CommandSourceStack source = ctx.getSource();
             if (!MilestoneExport.canImport(payload, player.getUUID(),
-                    Commands.hasPermission(Commands.LEVEL_GAMEMASTERS).test(ctx.getSource()))) {
+                    MilestonePermissions.check(source, MilestonePermissions.IMPORT_ALL,
+                            Commands.hasPermission(Commands.LEVEL_GAMEMASTERS).test(source)))) {
                 return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.import_not_owner", fileName));
             }
             MinecraftServer server = player.level().getServer();
@@ -1629,7 +1692,7 @@ public final class MilestoneCommands {
     /** Names offered for {@code lookup <player>}: only targets this source may actually look up (F6 / F14). */
     private static Set<String> lookupSuggestionNames(CommandSourceStack source, MinecraftServer server) {
         boolean allowLookup = Config.ALLOW_LOOKUP.get();
-        boolean privileged = MilestoneService.isPrivileged(source);
+        boolean privileged = canViewHidden(source);
         ServerPlayer viewer = source.getPlayer();
         UUID viewerId = viewer != null ? viewer.getUUID() : null;
         Set<String> names = new LinkedHashSet<>();
@@ -1645,7 +1708,7 @@ public final class MilestoneCommands {
     private static int lookup(CommandContext<CommandSourceStack> ctx, String query, @Nullable Integer page) {
         CommandSourceStack source = ctx.getSource();
         boolean allowLookup = Config.ALLOW_LOOKUP.get();
-        boolean privileged = MilestoneService.isPrivileged(source);
+        boolean privileged = canViewHidden(source);
         ServerPlayer viewer = source.getPlayer();
         Map.Entry<UUID, MilestoneData.PlayerData> target;
         if (!LookupPolicy.canLookUpOthers(allowLookup, privileged)) {
@@ -1673,14 +1736,23 @@ public final class MilestoneCommands {
 
     // --------------------------------------------------------- F13 top / recent
 
-    /** Same gate as F6 lookup of other players: {@code allowLookup}, or {@code isPrivileged} when it is off. */
+    /**
+     * F43 viewhidden: the F6 / F14 privilege (the old {@code isPrivileged} check) or the
+     * {@code itemmilestonelog.viewhidden} node for player sources.
+     */
+    private static boolean canViewHidden(CommandSourceStack source) {
+        return MilestonePermissions.check(source, MilestonePermissions.VIEWHIDDEN,
+                MilestoneService.isPrivileged(source));
+    }
+
+    /** Same gate as F6 lookup of other players: {@code allowLookup}, or the viewhidden privilege when it is off. */
     private static boolean canUseRankings(CommandSourceStack source) {
-        return LookupPolicy.canLookUpOthers(Config.ALLOW_LOOKUP.get(), MilestoneService.isPrivileged(source));
+        return LookupPolicy.canLookUpOthers(Config.ALLOW_LOOKUP.get(), canViewHidden(source));
     }
 
     private static MilestoneRankings.Viewer rankingViewer(CommandSourceStack source) {
         ServerPlayer viewer = source.getPlayer();
-        return new MilestoneRankings.Viewer(viewer != null ? viewer.getUUID() : null, MilestoneService.isPrivileged(source));
+        return new MilestoneRankings.Viewer(viewer != null ? viewer.getUUID() : null, canViewHidden(source));
     }
 
     private static int top(CommandContext<CommandSourceStack> ctx) {
@@ -1790,6 +1862,144 @@ public final class MilestoneCommands {
                     e.rank(), MilestoneService.targetDisplayName(e.key()), e.players()), false);
         }
         return stats.totalRecords();
+    }
+
+    // --------------------------------------------------------- F51 info
+
+    /**
+     * F51 {@code /milestonelog info <item> [<count>]}: the viewer's own status, the world first,
+     * the recorder count and own rank for one target key, and related tag targets.
+     * {@code <item>} is the same {@code IdentifierArgument} as {@code reset}, so records of items
+     * from removed mods can be inspected too.
+     */
+    private static int infoItem(CommandContext<CommandSourceStack> ctx, String itemId, int count)
+            throws CommandSyntaxException {
+        ServerPlayer player = player(ctx);
+        TargetKey key = TargetKey.normalize(itemId, count);
+        if (key == null) {
+            return fail(ctx, ServerLang.tr(player, MilestoneService.invalidTargetKey(itemId),
+                    String.valueOf(itemId)));
+        }
+        return sendInfo(ctx, player, key);
+    }
+
+    /**
+     * F51 {@code /milestonelog info hand}: the main-hand item with count 1. An empty hand replies
+     * with the same message as {@code addhand}.
+     */
+    private static int infoHand(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+        ServerPlayer player = player(ctx);
+        ItemStack held = player.getMainHandItem();
+        if (held.isEmpty()) {
+            return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.addhand_empty"));
+        }
+        String itemId = BuiltInRegistries.ITEM.getKey(held.getItem()).toString();
+        return sendInfo(ctx, player, TargetKey.of(itemId, TargetKey.MIN_COUNT));
+    }
+
+    /** Renders the five F51 info steps for {@code key}; returns the number of lines sent. */
+    private static int sendInfo(CommandContext<CommandSourceStack> ctx, ServerPlayer player, TargetKey key) {
+        CommandSourceStack source = ctx.getSource();
+        MilestoneData data = MilestoneData.get(source.getServer());
+        MilestoneData.PlayerData pd = data.playerOrNull(player.getUUID());
+        Map<TargetKey, MilestoneRecord> records = pd != null ? pd.records : Map.of();
+        Set<TargetKey> effectiveTargets = Tracker.effectiveTargets(pd);
+        Set<String> carried = Tracker.carriedFromCreative(pd);
+        TagIndex tagIndex = TagTargets.index();
+        ZoneId zone = Config.displayTimeZone();
+        int lines = 0;
+
+        // 1. Header with the target display name (F12 hover attached by targetDisplayName).
+        source.sendSuccess(() -> ServerLang.tr(player, "message.itemmilestonelog.info_header",
+                MilestoneService.targetDisplayName(key)), false);
+        lines++;
+
+        // Possession is counted only for unrecorded quantity targets (steps 2 and 5).
+        List<TargetKey> relatedKeys = ItemInfoLogic.relatedTagKeys(key.itemId(),
+                MilestoneService.isKnownNonAirItem(key.itemId()),
+                effectiveTargets, records, data.worldFirsts().keySet(), tagIndex);
+        Set<TargetKey> progressKeys = new LinkedHashSet<>(relatedKeys);
+        progressKeys.add(key);
+        Set<String> progressIds = ItemInfoLogic.possessionIds(progressKeys, records, carried);
+        Map<String, Integer> possession = progressIds.isEmpty()
+                ? Map.of()
+                : Tracker.countItemsInPossession(player, progressIds);
+
+        // 2. Own status (recorded / target with possession / not a target).
+        Component ownStatus = infoStatusComponent(player,
+                ItemInfoLogic.ownStatus(key, records, effectiveTargets, carried, tagIndex, possession), zone);
+        source.sendSuccess(() -> ownStatus, false);
+        lines++;
+
+        // 3. World first (F47 holder-name rule, F48 record formatting).
+        WorldFirstRecord worldFirst = data.worldFirstOrNull(key);
+        if (worldFirst != null) {
+            MilestoneData.PlayerData holder = data.playerOrNull(worldFirst.playerUuid());
+            WorldFirstNames.Choice choice = WorldFirstNames.choose(worldFirst.playerUuid(), worldFirst.playerName(),
+                    holder != null, holder != null ? holder.lastKnownName : null);
+            Component holderName = choice.renamed()
+                    ? ServerLang.tr(player, "message.itemmilestonelog.firsts_name_renamed",
+                            Component.literal(choice.name()), Component.literal(choice.recordedName()))
+                    : Component.literal(choice.name());
+            source.sendSuccess(() -> ServerLang.tr(player, "message.itemmilestonelog.info_world_first",
+                    holderName, Playtime.formatRecordComponent(player, worldFirst.toMilestoneRecord(), zone)), false);
+        } else {
+            source.sendSuccess(() -> ServerLang.tr(player, "message.itemmilestonelog.info_world_first_none"), false);
+        }
+        lines++;
+
+        // 4. Recorder count and own rank — omitted unless the F6 lookup gate allows it.
+        ItemInfoLogic.PlayersLine players = ItemInfoLogic.playersLine(
+                data.allPlayers(), key, rankingViewer(source), Config.ALLOW_LOOKUP.get());
+        if (players.shown()) {
+            Component playersLine = players.ownRank() != null
+                    ? ServerLang.tr(player, "message.itemmilestonelog.info_players_ranked",
+                            players.players(), players.ownRank())
+                    : ServerLang.tr(player, "message.itemmilestonelog.info_players_unranked", players.players());
+            source.sendSuccess(() -> playersLine, false);
+            lines++;
+        }
+
+        // 5. Related tag targets, at most 10 rows plus the overflow count.
+        ItemInfoLogic.RelatedTags relatedTags = ItemInfoLogic.relatedTagEntries(
+                relatedKeys, records, effectiveTargets, carried, tagIndex, possession);
+        if (!relatedTags.isEmpty()) {
+            source.sendSuccess(() -> ServerLang.tr(player, "message.itemmilestonelog.info_tag_header"), false);
+            lines++;
+            for (ItemInfoLogic.TagEntry entry : relatedTags.entries()) {
+                Component line = ServerLang.tr(player, "message.itemmilestonelog.info_tag_entry",
+                        MilestoneService.targetDisplayName(entry.key()),
+                        infoStatusComponent(player, entry.status(), zone));
+                source.sendSuccess(() -> line, false);
+                lines++;
+            }
+            if (relatedTags.more() > 0) {
+                source.sendSuccess(() -> ServerLang.tr(player, "message.itemmilestonelog.info_tag_more",
+                        relatedTags.more()), false);
+                lines++;
+            }
+        }
+        return lines;
+    }
+
+    /**
+     * The viewer's status message: {@code info_status_recorded} (F48 record formatting),
+     * {@code info_status_target}, {@code info_status_target_progress} or {@code info_status_none}.
+     * A quantity target carried out of creative gets the F50 {@code target_creative_carried} note.
+     */
+    private static Component infoStatusComponent(ServerPlayer player, ItemInfoLogic.OwnStatus status, ZoneId zone) {
+        MutableComponent line = switch (status.kind()) {
+            case RECORDED -> ServerLang.tr(player, "message.itemmilestonelog.info_status_recorded",
+                    Playtime.formatRecordComponent(player, status.record(), zone));
+            case TARGET -> ServerLang.tr(player, "message.itemmilestonelog.info_status_target");
+            case TARGET_PROGRESS -> ServerLang.tr(player, "message.itemmilestonelog.info_status_target_progress",
+                    status.current(), status.goal());
+            case NONE -> ServerLang.tr(player, "message.itemmilestonelog.info_status_none");
+        };
+        if (status.creativeCarried()) {
+            line.append(ServerLang.tr(player, "message.itemmilestonelog.target_creative_carried"));
+        }
+        return line;
     }
 
     /** Shared record listing for {@code admin <player> list} and {@code lookup <player>} (same format). */
@@ -2061,7 +2271,7 @@ public final class MilestoneCommands {
     private static CommandHelp.Context helpContext(CommandSourceStack source) {
         return new CommandHelp.Context(
                 source.getPlayer() != null,
-                MilestoneService.isPrivileged(source),
+                canViewHidden(source),
                 Config.PRESETS_ENABLED.get(),
                 Config.EXPORT_IMPORT_ENABLED.get(),
                 Config.ALLOW_LOOKUP.get(),
