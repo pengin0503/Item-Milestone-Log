@@ -3,6 +3,7 @@ package com.pengin0503.itemmilestonelog;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
 import com.pengin0503.itemmilestonelog.api.WorldFirstRecord;
+import com.pengin0503.itemmilestonelog.compat.McCompat;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.IntTag;
 import net.minecraft.nbt.ListTag;
@@ -97,16 +98,16 @@ class MilestoneDataTest {
         assertEquals(0L, loadedB.lastSeen);
         assertTrue(loadedB.progressNotified.isEmpty());
         assertTrue(loadedB.completedPresets.isEmpty());
-        assertTrue(saved.getCompound("players").getCompound(playerA.toString()).contains("muteProgressAlerts"));
-        assertTrue(saved.getCompound("players").getCompound(playerA.toString()).contains("excludeFromDiscord"));
-        assertTrue(saved.getCompound("players").getCompound(playerA.toString()).contains("lastSeen"));
-        assertTrue(saved.getCompound("players").getCompound(playerA.toString()).contains("completedPresets"));
-        assertFalse(saved.getCompound("players").getCompound(playerB.toString()).contains("carriedFromCreative"));
-        assertFalse(saved.getCompound("players").getCompound(playerB.toString()).contains("muteProgressAlerts"));
-        assertFalse(saved.getCompound("players").getCompound(playerB.toString()).contains("excludeFromDiscord"));
-        assertFalse(saved.getCompound("players").getCompound(playerB.toString()).contains("lastSeen"));
-        assertFalse(saved.getCompound("players").getCompound(playerB.toString()).contains("progressNotified"));
-        assertFalse(saved.getCompound("players").getCompound(playerB.toString()).contains("completedPresets"));
+        assertTrue(McCompat.nbt().getCompound(McCompat.nbt().getCompound(saved, "players"), playerA.toString()).contains("muteProgressAlerts"));
+        assertTrue(McCompat.nbt().getCompound(McCompat.nbt().getCompound(saved, "players"), playerA.toString()).contains("excludeFromDiscord"));
+        assertTrue(McCompat.nbt().getCompound(McCompat.nbt().getCompound(saved, "players"), playerA.toString()).contains("lastSeen"));
+        assertTrue(McCompat.nbt().getCompound(McCompat.nbt().getCompound(saved, "players"), playerA.toString()).contains("completedPresets"));
+        assertFalse(McCompat.nbt().getCompound(McCompat.nbt().getCompound(saved, "players"), playerB.toString()).contains("carriedFromCreative"));
+        assertFalse(McCompat.nbt().getCompound(McCompat.nbt().getCompound(saved, "players"), playerB.toString()).contains("muteProgressAlerts"));
+        assertFalse(McCompat.nbt().getCompound(McCompat.nbt().getCompound(saved, "players"), playerB.toString()).contains("excludeFromDiscord"));
+        assertFalse(McCompat.nbt().getCompound(McCompat.nbt().getCompound(saved, "players"), playerB.toString()).contains("lastSeen"));
+        assertFalse(McCompat.nbt().getCompound(McCompat.nbt().getCompound(saved, "players"), playerB.toString()).contains("progressNotified"));
+        assertFalse(McCompat.nbt().getCompound(McCompat.nbt().getCompound(saved, "players"), playerB.toString()).contains("completedPresets"));
 
         WorldFirstRecord wf1 = loaded.worldFirstOrNull(diamond1);
         assertNotNull(wf1);
@@ -290,11 +291,11 @@ class MilestoneDataTest {
         assertTrue(loadedB.progressNotified.isEmpty());
 
         CompoundTag resaved = loaded.save(new CompoundTag(), null);
-        CompoundTag savedATag = resaved.getCompound("players").getCompound(playerA.toString());
+        CompoundTag savedATag = McCompat.nbt().getCompound(McCompat.nbt().getCompound(resaved, "players"), playerA.toString());
         assertTrue(savedATag.contains("progressNotified"));
-        assertEquals(50, savedATag.getCompound("progressNotified").getInt("minecraft:diamond#1000"));
-        assertEquals(0, savedATag.getCompound("progressNotified").getInt("minecraft:iron_ingot#64"));
-        assertFalse(resaved.getCompound("players").getCompound(playerB.toString()).contains("progressNotified"));
+        assertEquals(50, McCompat.nbt().getInt(McCompat.nbt().getCompound(savedATag, "progressNotified"), "minecraft:diamond#1000"));
+        assertEquals(0, McCompat.nbt().getInt(McCompat.nbt().getCompound(savedATag, "progressNotified"), "minecraft:iron_ingot#64"));
+        assertFalse(McCompat.nbt().getCompound(McCompat.nbt().getCompound(resaved, "players"), playerB.toString()).contains("progressNotified"));
     }
 
     @Test
@@ -336,10 +337,10 @@ class MilestoneDataTest {
 
         // Write only when true
         CompoundTag resaved = loaded.save(new CompoundTag(), null);
-        CompoundTag savedPlayers = resaved.getCompound("players");
-        assertTrue(savedPlayers.getCompound(playerA.toString()).getBoolean("muteProgressAlerts"));
-        assertFalse(savedPlayers.getCompound(playerB.toString()).contains("muteProgressAlerts"));
-        assertFalse(savedPlayers.getCompound(playerC.toString()).contains("muteProgressAlerts"));
+        CompoundTag savedPlayers = McCompat.nbt().getCompound(resaved, "players");
+        assertTrue(McCompat.nbt().getBoolean(McCompat.nbt().getCompound(savedPlayers, playerA.toString()), "muteProgressAlerts"));
+        assertFalse(McCompat.nbt().getCompound(savedPlayers, playerB.toString()).contains("muteProgressAlerts"));
+        assertFalse(McCompat.nbt().getCompound(savedPlayers, playerC.toString()).contains("muteProgressAlerts"));
 
         // ResetAll must NOT clear personal setting muteProgressAlerts, while purge removes PlayerData
         TargetKey diamond100 = TargetKey.of("minecraft:diamond", 100);
@@ -393,10 +394,10 @@ class MilestoneDataTest {
 
         // Write only when true
         CompoundTag resaved = loaded.save(new CompoundTag(), null);
-        CompoundTag savedPlayers = resaved.getCompound("players");
-        assertTrue(savedPlayers.getCompound(playerA.toString()).getBoolean("excludeFromDiscord"));
-        assertFalse(savedPlayers.getCompound(playerB.toString()).contains("excludeFromDiscord"));
-        assertFalse(savedPlayers.getCompound(playerC.toString()).contains("excludeFromDiscord"));
+        CompoundTag savedPlayers = McCompat.nbt().getCompound(resaved, "players");
+        assertTrue(McCompat.nbt().getBoolean(McCompat.nbt().getCompound(savedPlayers, playerA.toString()), "excludeFromDiscord"));
+        assertFalse(McCompat.nbt().getCompound(savedPlayers, playerB.toString()).contains("excludeFromDiscord"));
+        assertFalse(McCompat.nbt().getCompound(savedPlayers, playerC.toString()).contains("excludeFromDiscord"));
 
         // ResetAll must NOT clear personal setting excludeFromDiscord, while purge removes PlayerData
         TargetKey diamond100 = TargetKey.of("minecraft:diamond", 100);
@@ -451,10 +452,10 @@ class MilestoneDataTest {
 
         // Write only when true
         CompoundTag resaved = loaded.save(new CompoundTag(), null);
-        CompoundTag savedPlayers = resaved.getCompound("players");
-        assertTrue(savedPlayers.getCompound(playerA.toString()).getBoolean("hideFromLookup"));
-        assertFalse(savedPlayers.getCompound(playerB.toString()).contains("hideFromLookup"));
-        assertFalse(savedPlayers.getCompound(playerC.toString()).contains("hideFromLookup"));
+        CompoundTag savedPlayers = McCompat.nbt().getCompound(resaved, "players");
+        assertTrue(McCompat.nbt().getBoolean(McCompat.nbt().getCompound(savedPlayers, playerA.toString()), "hideFromLookup"));
+        assertFalse(McCompat.nbt().getCompound(savedPlayers, playerB.toString()).contains("hideFromLookup"));
+        assertFalse(McCompat.nbt().getCompound(savedPlayers, playerC.toString()).contains("hideFromLookup"));
 
         // Round trip: save -> load keeps the flag
         MilestoneData reloaded = MilestoneData.load(resaved, null);
@@ -528,12 +529,12 @@ class MilestoneDataTest {
 
         // Save back: written only when non-empty
         CompoundTag resaved = loaded.save(new CompoundTag(), null);
-        CompoundTag savedPlayers = resaved.getCompound("players");
-        assertTrue(savedPlayers.getCompound(playerA.toString()).contains("completedPresets"));
-        assertEquals(3, savedPlayers.getCompound(playerA.toString()).getList("completedPresets", 8).size());
-        assertFalse(savedPlayers.getCompound(playerB.toString()).contains("completedPresets"));
-        assertFalse(savedPlayers.getCompound(playerC.toString()).contains("completedPresets"));
-        assertFalse(savedPlayers.getCompound(playerD.toString()).contains("completedPresets"));
+        CompoundTag savedPlayers = McCompat.nbt().getCompound(resaved, "players");
+        assertTrue(McCompat.nbt().getCompound(savedPlayers, playerA.toString()).contains("completedPresets"));
+        assertEquals(3, McCompat.nbt().getStringList(McCompat.nbt().getCompound(savedPlayers, playerA.toString()), "completedPresets").size());
+        assertFalse(McCompat.nbt().getCompound(savedPlayers, playerB.toString()).contains("completedPresets"));
+        assertFalse(McCompat.nbt().getCompound(savedPlayers, playerC.toString()).contains("completedPresets"));
+        assertFalse(McCompat.nbt().getCompound(savedPlayers, playerD.toString()).contains("completedPresets"));
 
         // Single reset keeps completedPresets; resetAll clears completedPresets
         TargetKey diamond = TargetKey.of("minecraft:diamond");
@@ -546,7 +547,7 @@ class MilestoneDataTest {
         assertTrue(MilestoneService.resetAllRecords(loaded, playerA, null).success());
         assertTrue(loadedA.completedPresets.isEmpty());
         CompoundTag afterResetAll = loaded.save(new CompoundTag(), null);
-        assertFalse(afterResetAll.getCompound("players").getCompound(playerA.toString()).contains("completedPresets"));
+        assertFalse(McCompat.nbt().getCompound(McCompat.nbt().getCompound(afterResetAll, "players"), playerA.toString()).contains("completedPresets"));
     }
 
     @Test
@@ -598,11 +599,11 @@ class MilestoneDataTest {
 
         // Write only when > 0
         CompoundTag resaved = loaded.save(new CompoundTag(), null);
-        CompoundTag savedPlayers = resaved.getCompound("players");
-        assertEquals(1795800000000L, savedPlayers.getCompound(playerA.toString()).getLong("lastSeen"));
-        assertFalse(savedPlayers.getCompound(playerB.toString()).contains("lastSeen"));
-        assertFalse(savedPlayers.getCompound(playerC.toString()).contains("lastSeen"));
-        assertFalse(savedPlayers.getCompound(playerD.toString()).contains("lastSeen"));
+        CompoundTag savedPlayers = McCompat.nbt().getCompound(resaved, "players");
+        assertEquals(1795800000000L, McCompat.nbt().getLong(McCompat.nbt().getCompound(savedPlayers, playerA.toString()), "lastSeen"));
+        assertFalse(McCompat.nbt().getCompound(savedPlayers, playerB.toString()).contains("lastSeen"));
+        assertFalse(McCompat.nbt().getCompound(savedPlayers, playerC.toString()).contains("lastSeen"));
+        assertFalse(McCompat.nbt().getCompound(savedPlayers, playerD.toString()).contains("lastSeen"));
 
         // Round trip: save -> load preserves lastSeen
         MilestoneData reloaded = MilestoneData.load(resaved, null);
@@ -640,13 +641,13 @@ class MilestoneDataTest {
 
         CompoundTag saved = original.save(new CompoundTag(), null);
         // Verify on-disk NBT format matches F8a storage spec
-        CompoundTag savedPlayer = saved.getCompound("players").getCompound(playerA.toString());
-        ListTag savedTargets = savedPlayer.getList("targets", 8);
+        CompoundTag savedPlayer = McCompat.nbt().getCompound(McCompat.nbt().getCompound(saved, "players"), playerA.toString());
+        ListTag savedTargets = McCompat.nbt().getStringList(savedPlayer, "targets");
         assertEquals(List.of("#c:ingots/iron", "#c:ingots/iron#100", "#minecraft:logs#64"),
-                List.of(savedTargets.getString(0), savedTargets.getString(1), savedTargets.getString(2)));
-        assertTrue(savedPlayer.getCompound("records").contains("#c:ingots/iron"));
-        assertEquals(50, savedPlayer.getCompound("progressNotified").getInt("#minecraft:logs#64"));
-        assertTrue(saved.getCompound("worldFirsts").contains("#c:ingots/iron"));
+                List.of(McCompat.nbt().listString(savedTargets, 0), McCompat.nbt().listString(savedTargets, 1), McCompat.nbt().listString(savedTargets, 2)));
+        assertTrue(McCompat.nbt().getCompound(savedPlayer, "records").contains("#c:ingots/iron"));
+        assertEquals(50, McCompat.nbt().getInt(McCompat.nbt().getCompound(savedPlayer, "progressNotified"), "#minecraft:logs#64"));
+        assertTrue(McCompat.nbt().getCompound(saved, "worldFirsts").contains("#c:ingots/iron"));
 
         // Inject malformed tag entries to confirm lenient per-entry skipping
         savedTargets.add(StringTag.valueOf("#"));
@@ -654,7 +655,7 @@ class MilestoneDataTest {
         savedTargets.add(StringTag.valueOf("#c:x#0"));
         savedTargets.add(StringTag.valueOf("#:x"));
         savedTargets.add(StringTag.valueOf("#c:"));
-        savedPlayer.getCompound("progressNotified").putInt("#c:x#abc", 50);
+        McCompat.nbt().getCompound(savedPlayer, "progressNotified").putInt("#c:x#abc", 50);
 
         MilestoneData loaded = MilestoneData.load(saved, null);
         MilestoneData.PlayerData loadedPd = loaded.playerOrNull(playerA);
@@ -687,7 +688,7 @@ class MilestoneDataTest {
         original.setLastDigestEpochMillis(1795800000000L);
         assertTrue(original.isDirty());
         CompoundTag saved = original.save(new CompoundTag(), null);
-        assertEquals(1795800000000L, saved.getLong("lastDigestEpoch"));
+        assertEquals(1795800000000L, McCompat.nbt().getLong(saved, "lastDigestEpoch"));
         MilestoneData loaded = MilestoneData.load(saved, null);
         assertEquals(1795800000000L, loaded.lastDigestEpochMillis());
 

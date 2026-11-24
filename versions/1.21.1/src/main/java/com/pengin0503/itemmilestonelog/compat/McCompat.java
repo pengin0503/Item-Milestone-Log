@@ -1,6 +1,8 @@
 package com.pengin0503.itemmilestonelog.compat;
 
+import com.pengin0503.itemmilestonelog.compat.client.NetworkCompat;
 import com.pengin0503.itemmilestonelog.compat.client.ScrollCompat;
+import com.pengin0503.itemmilestonelog.compat.client.TooltipCompat;
 
 /**
  * N252: single access point for the version-specific compat implementations of the
@@ -14,6 +16,9 @@ public final class McCompat {
     private static final NbtCompat NBT = load(NbtCompat.class, "NbtCompatImpl");
     private static final GameTestCompat GAME_TEST = load(GameTestCompat.class, "GameTestCompatImpl");
     private static final ReloadCompat RELOAD = load(ReloadCompat.class, "ReloadCompatImpl");
+    private static final DataCompat DATA = load(DataCompat.class, "DataCompatImpl");
+    private static final ChatCompat CHAT = load(ChatCompat.class, "ChatCompatImpl");
+    private static final PlayerCompat PLAYER = load(PlayerCompat.class, "PlayerCompatImpl");
 
     private McCompat() {
     }
@@ -38,12 +43,34 @@ public final class McCompat {
         return RELOAD;
     }
 
+    public static DataCompat data() {
+        return DATA;
+    }
+
+    public static ChatCompat chat() {
+        return CHAT;
+    }
+
+    public static PlayerCompat player() {
+        return PLAYER;
+    }
+
     /**
      * Client-only: the implementation references client classes, so it is loaded lazily on
      * first use (never during {@code McCompat} initialization on a dedicated server).
      */
     public static ScrollCompat scroll() {
         return ClientHolder.SCROLL;
+    }
+
+    /** Client-only, lazily loaded like {@link #scroll()}. */
+    public static TooltipCompat tooltip() {
+        return ClientHolder.TOOLTIP;
+    }
+
+    /** Client-only, lazily loaded like {@link #scroll()}. */
+    public static NetworkCompat network() {
+        return ClientHolder.NETWORK;
     }
 
     private static <T> T load(Class<T> iface, String simpleName) {
@@ -63,5 +90,7 @@ public final class McCompat {
 
     private static final class ClientHolder {
         private static final ScrollCompat SCROLL = load(ScrollCompat.class, "client.", "ScrollCompatImpl");
+        private static final TooltipCompat TOOLTIP = load(TooltipCompat.class, "client.", "TooltipCompatImpl");
+        private static final NetworkCompat NETWORK = load(NetworkCompat.class, "client.", "NetworkCompatImpl");
     }
 }

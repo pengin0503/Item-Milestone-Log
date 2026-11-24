@@ -132,7 +132,7 @@ public final class SavePresetScreen extends Screen {
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
         super.render(guiGraphics, mouseX, mouseY, partialTick);
 
-        guiGraphics.drawCenteredString(this.font, this.title, this.width / 2, this.height / 2 - 44, 0xFFFFFF);
+        guiGraphics.drawCenteredString(this.font, this.title, this.width / 2, this.height / 2 - 44, 0xFFFFFFFF);
 
         String trimmed = currentName.trim();
         PresetEntry matched = findMatchingPreset(trimmed);
@@ -150,9 +150,9 @@ public final class SavePresetScreen extends Screen {
         int maxWidth = Math.max(40, this.width - 20);
         if (this.font.width(label) > maxWidth) {
             String trimmedLabel = this.font.plainSubstrByWidth(label.getString(), maxWidth);
-            guiGraphics.drawCenteredString(this.font, trimmedLabel, this.width / 2, this.height / 2 - 26, 0xD0D0D0);
+            guiGraphics.drawCenteredString(this.font, trimmedLabel, this.width / 2, this.height / 2 - 26, 0xFFD0D0D0);
         } else {
-            guiGraphics.drawCenteredString(this.font, label, this.width / 2, this.height / 2 - 26, 0xD0D0D0);
+            guiGraphics.drawCenteredString(this.font, label, this.width / 2, this.height / 2 - 26, 0xFFD0D0D0);
         }
     }
 

@@ -2,6 +2,7 @@ package com.pengin0503.itemmilestonelog.compat;
 
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.Tag;
 
 import java.util.Set;
 
@@ -15,6 +16,12 @@ import java.util.Set;
  * fresh empty list. A present compound child is returned live (same instance).
  */
 public interface NbtCompat {
+    /**
+     * Tag type that matches any numeric tag type in {@link #containsTyped}. Replaces
+     * {@code Tag.TAG_ANY_NUMERIC}, which was removed in MC 1.21.5.
+     */
+    byte ANY_NUMERIC = 99;
+
     int getInt(CompoundTag tag, String key);
 
     long getLong(CompoundTag tag, String key);
@@ -33,7 +40,7 @@ public interface NbtCompat {
 
     /**
      * Whether {@code key} is present with tag type {@code type} (a {@code Tag.TAG_*} constant;
-     * {@code Tag.TAG_ANY_NUMERIC} matches any numeric type).
+     * {@link #ANY_NUMERIC} matches any numeric type).
      */
     boolean containsTyped(CompoundTag tag, String key, byte type);
 
@@ -48,4 +55,9 @@ public interface NbtCompat {
 
     /** String element at {@code index}, or {@code ""} when out of range or not a string. */
     String listString(ListTag list, int index);
+
+    /**
+     * The string value of a string tag (legacy {@code Tag#getAsString}, removed in 1.21.5).
+     */
+    String tagAsString(Tag tag);
 }

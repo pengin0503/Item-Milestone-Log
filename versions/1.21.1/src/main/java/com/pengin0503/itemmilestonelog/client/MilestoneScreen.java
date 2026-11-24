@@ -318,7 +318,7 @@ public final class MilestoneScreen extends Screen {
         super.render(guiGraphics, mouseX, mouseY, partialTick);
 
         // Title
-        guiGraphics.drawCenteredString(this.font, this.title, this.width / 2, 8, 0xFFFFFF);
+        guiGraphics.drawCenteredString(this.font, this.title, this.width / 2, 8, 0xFFFFFFFF);
 
         // Header summary: current playtime (live ticking) + achieved / total targets
         Component header = Component.translatable(
@@ -327,7 +327,7 @@ public final class MilestoneScreen extends Screen {
                 cachedAchievedCount,
                 data.targets().size()
         );
-        guiGraphics.drawCenteredString(this.font, header, this.width / 2, 22, 0xD0D0D0);
+        guiGraphics.drawCenteredString(this.font, header, this.width / 2, 22, 0xFFD0D0D0);
 
         // Empty list hint
         if (listWidget != null && listWidget.children().isEmpty()) {
@@ -335,7 +335,7 @@ public final class MilestoneScreen extends Screen {
                     ? Component.translatable("gui.itemmilestonelog.empty_targets")
                     : Component.translatable("gui.itemmilestonelog.empty_records");
             int centerY = listWidget.getY() + listWidget.getHeight() / 2 - 4;
-            guiGraphics.drawCenteredString(this.font, emptyText, this.width / 2, centerY, 0xA0A0A0);
+            guiGraphics.drawCenteredString(this.font, emptyText, this.width / 2, centerY, 0xFFA0A0A0);
         }
 
         // Feedback banner from last action
@@ -496,7 +496,7 @@ public final class MilestoneScreen extends Screen {
                 nameStr = nameStr + " [" + Component.translatable("gui.itemmilestonelog.badge.default").getString() + "]";
             }
             String trimmedName = MilestoneScreen.this.font.plainSubstrByWidth(nameStr, maxTextWidth);
-            guiGraphics.drawString(MilestoneScreen.this.font, trimmedName, textX, top + 4, 0xFFFFFF, false);
+            guiGraphics.drawString(MilestoneScreen.this.font, trimmedName, textX, top + 4, 0xFFFFFFFF, false);
 
             Component statusComponent;
             int statusColor;
@@ -506,10 +506,10 @@ public final class MilestoneScreen extends Screen {
                         : "gui.itemmilestonelog.status.recorded";
                 statusComponent = Component.translatable(statusKey,
                         Playtime.formatRecordComponent(recordedRecord, java.time.ZoneId.systemDefault(), Playtime.CLIENT));
-                statusColor = 0x55FF55;
+                statusColor = 0xFF55FF55;
             } else {
                 statusComponent = Component.translatable("gui.itemmilestonelog.status.pending");
-                statusColor = 0xA0A0A0;
+                statusColor = 0xFFA0A0A0;
             }
             String trimmedStatus = MilestoneScreen.this.font.plainSubstrByWidth(statusComponent.getString(), maxTextWidth);
             guiGraphics.drawString(MilestoneScreen.this.font, trimmedStatus, textX, top + 15, statusColor, false);
