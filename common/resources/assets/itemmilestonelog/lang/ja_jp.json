@@ -189,6 +189,7 @@
   "message.itemmilestonelog.page_out_of_range": "%s ページはありません（1〜%s ページ）。",
   "message.itemmilestonelog.page_prev": "[< 前へ]",
   "message.itemmilestonelog.playtime": "あなたの累計プレイ時間: %s",
+  "message.itemmilestonelog.playtime_format": "%s時間%s分%s秒",
   "message.itemmilestonelog.preset_applied": "プリセット '%s' を適用: %s件追加、%s件スキップ（このパックに存在しないアイテム）",
   "message.itemmilestonelog.preset_applied_with_counts": "プリセット '%s' を適用: %s件追加（うち個数つき%s件）、%s件スキップ（このパックに存在しないアイテム）",
   "message.itemmilestonelog.preset_applied_limit": "ターゲット一覧がいっぱいのため、さらに%s件のターゲットがスキップされました。",
@@ -224,7 +225,10 @@
   "message.itemmilestonelog.recent_entry": "%s — %s（%s）",
   "message.itemmilestonelog.recent_entry_world_first": "★ %s — %s（%s）",
   "message.itemmilestonelog.recent_header": "最近の記録（%s件）:",
-  "message.itemmilestonelog.recorded": "★ マイルストーン記録: %s を累計プレイ時間 %s で初取得",
+  "message.itemmilestonelog.record_date": "%s（%s）",
+  "message.itemmilestonelog.record_day": "%s（%s日目）",
+  "message.itemmilestonelog.record_day_date": "%s（%s日目、%s）",
+  "message.itemmilestonelog.recorded":"★ マイルストーン記録: %s を累計プレイ時間 %s で初取得",
   "message.itemmilestonelog.recorded_broadcast": "★ %s が %s を累計プレイ時間 %s で初取得",
   "message.itemmilestonelog.recorded_group": "★ マイルストーン記録: %s 件を累計プレイ時間 %s で初取得: %s",
   "message.itemmilestonelog.recorded_group_broadcast": "★ %s が %s 件を累計プレイ時間 %s で初取得: %s",
@@ -264,5 +268,7 @@
   "message.itemmilestonelog.undo_hint": "10 分以内なら /milestonelog undo で元に戻せます。",
   "message.itemmilestonelog.undo_nothing": "取り消せるものがありません。取り消せるのは、10 分以内の直前のリセットか一括削除だけです。",
   "message.itemmilestonelog.world_first_group": "★ 世界初！%s が %s 件を %s にワールド初取得しました: %s",
-  "message.itemmilestonelog.world_first_recorded": "★ 世界初！%s が %s を %s にワールド初取得しました"
+  "message.itemmilestonelog.world_first_recorded": "★ 世界初！%s が %s を %s にワールド初取得しました",
+  "scoreboard.itemmilestonelog.records": "マイルストーン",
+  "scoreboard.itemmilestonelog.world_firsts": "世界初"
 }

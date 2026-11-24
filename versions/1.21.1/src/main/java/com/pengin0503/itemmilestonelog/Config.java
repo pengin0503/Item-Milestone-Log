@@ -158,6 +158,36 @@ public final class Config {
                     "Example: [\"vanilla_endgame\"]")
             .defineListAllowEmpty("firstJoinPresets", List.of(), () -> "vanilla_endgame", Config::validateFirstJoinPreset);
 
+    /** F12: attach a show_item hover (the item's default stack) to item names in chat messages. */
+    public static final ModConfigSpec.BooleanValue CHAT_ITEM_HOVER = BUILDER
+            .comment("Show the item when hovering an item name in this mod's chat messages (show_item hover).",
+                    "Tag targets show the first item of the tag (by registry ID). The text itself is unchanged.")
+            .define("chatItemHover", true);
+
+    /** F17: scoreboard objective name for each player's milestone record count (empty = disabled). */
+    public static final ModConfigSpec.ConfigValue<String> SCOREBOARD_OBJECTIVE = BUILDER
+            .comment("Optional scoreboard objective name to store each player's milestone record count (empty = disabled).",
+                    "Use a dedicated name (e.g. \"iml_records\") matching ^[A-Za-z0-9_.+-]{1,32}$ so it does not overwrite other datapacks.",
+                    "Created automatically with the dummy criterion on first write; clearing this setting does not delete existing objectives or scores.")
+            .define("scoreboardObjective", "", Config::validateScoreboardObjective);
+
+    /** F17: scoreboard objective name for each player's world-first count (empty = disabled). */
+    public static final ModConfigSpec.ConfigValue<String> SCOREBOARD_WORLD_FIRST_OBJECTIVE = BUILDER
+            .comment("Optional scoreboard objective name to store each player's world-first count (empty = disabled).",
+                    "Must match ^[A-Za-z0-9_.+-]{1,32}$ and differ from scoreboardObjective (if equal, this one is disabled with a warning).",
+                    "Created automatically with the dummy criterion on first write; clearing this setting does not delete existing objectives or scores.")
+            .define("scoreboardWorldFirstObjective", "", Config::validateScoreboardObjective);
+
+    /** F7: server command executed on milestone confirmation (without leading '/', empty = disabled). */
+    public static final ModConfigSpec.ConfigValue<String> MILESTONE_COMMAND = BUILDER
+            .comment("Optional server command to run (without a leading '/') when a milestone is recorded (empty = disabled).",
+                    "Example: \"give %player% minecraft:firework_rocket 3\" (use \"function <namespace>:<path>\" for multiple commands).",
+                    "Placeholders: %player%, %uuid%, %item% (or #tag for tag targets), %count%, %playtime% (may contain spaces), %worldfirst% (true/false).",
+                    "Security note: only server owners can edit this config file. %player% is substituted only when the",
+                    "player's name matches ^[A-Za-z0-9_.*+-]{1,20}$ (otherwise execution is skipped and a warning is logged);",
+                    "%uuid% can also target the player, and %item% only ever contains validated item or tag IDs.")
+            .define("milestoneCommand", "");
+
     static final ModConfigSpec SPEC = BUILDER.build();
 
     private record ThresholdsCache(List<? extends Integer> source, List<Integer> normalized) {
@@ -195,6 +225,47 @@ public final class Config {
     /** Resolves {@link #DISPLAY_TIME_ZONE}, falling back to the server's default timezone when empty or invalid. */
     public static ZoneId displayTimeZone() {
         return DisplayTimeZone.resolve(DISPLAY_TIME_ZONE.get());
+    }
+
+    /**
+     * F12: {@link #CHAT_ITEM_HOVER}, or {@code false} while the config is not loaded yet
+     * (plain unit tests), so building a chat component never throws.
+     */
+    public static boolean chatItemHover() {
+        try {
+            return CHAT_ITEM_HOVER.get();
+        } catch (IllegalStateException notLoaded) {
+            return false;
+        }
+    }
+
+    static boolean validateScoreboardObjective(Object obj) {
+        return ScoreboardLogic.isValidConfigValue(obj);
+    }
+
+    /**
+     * F17: resolves {@link #SCOREBOARD_OBJECTIVE} and {@link #SCOREBOARD_WORLD_FIRST_OBJECTIVE},
+     * returning both disabled while the config is not loaded yet (plain unit tests).
+     */
+    public static ScoreboardLogic.Objectives scoreboardObjectives() {
+        try {
+            return ScoreboardLogic.resolve(SCOREBOARD_OBJECTIVE.get(), SCOREBOARD_WORLD_FIRST_OBJECTIVE.get());
+        } catch (IllegalStateException notLoaded) {
+            return new ScoreboardLogic.Objectives(null, null, false);
+        }
+    }
+
+    /**
+     * F7: {@link #MILESTONE_COMMAND}, or {@code ""} while the config is not loaded yet
+     * (plain unit tests), so milestone recording never throws.
+     */
+    public static String milestoneCommand() {
+        try {
+            String cmd = MILESTONE_COMMAND.get();
+            return cmd != null ? cmd : "";
+        } catch (IllegalStateException notLoaded) {
+            return "";
+        }
     }
 
     private static boolean validateSoundId(Object obj) {

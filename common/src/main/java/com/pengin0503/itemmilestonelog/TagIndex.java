@@ -26,14 +26,18 @@ import java.util.TreeSet;
  */
 public final class TagIndex {
     /** Index with no tags (before the registry tags are bound, or in unit tests). */
-    public static final TagIndex EMPTY = new TagIndex(Map.of(), Map.of());
+    public static final TagIndex EMPTY = new TagIndex(Map.of(), Map.of(), Map.of());
 
     private final Map<String, Set<String>> membersByTag;
     private final Map<String, Set<String>> tagsByItem;
+    /** F12: registry-ID lexicographically smallest member per tag (precomputed so chat never sorts). */
+    private final Map<String, String> lexFirstByTag;
 
-    private TagIndex(Map<String, Set<String>> membersByTag, Map<String, Set<String>> tagsByItem) {
+    private TagIndex(Map<String, Set<String>> membersByTag, Map<String, Set<String>> tagsByItem,
+                     Map<String, String> lexFirstByTag) {
         this.membersByTag = membersByTag;
         this.tagsByItem = tagsByItem;
+        this.lexFirstByTag = lexFirstByTag;
     }
 
     /**
@@ -68,9 +72,17 @@ public final class TagIndex {
             }
         }
         Map<String, Set<String>> frozen = new LinkedHashMap<>();
+        Map<String, String> lexFirst = new HashMap<>();
         for (Map.Entry<String, Set<String>> e : members.entrySet()) {
             Set<String> set = Collections.unmodifiableSet(e.getValue());
             frozen.put(e.getKey(), set);
+            String min = null;
+            for (String item : set) {
+                if (min == null || item.compareTo(min) < 0) {
+                    min = item;
+                }
+            }
+            lexFirst.put(e.getKey(), min);
             for (String item : set) {
                 byItem.computeIfAbsent(item, k -> new TreeSet<>()).add(e.getKey());
             }
@@ -79,7 +91,8 @@ public final class TagIndex {
         for (Map.Entry<String, Set<String>> e : byItem.entrySet()) {
             frozenByItem.put(e.getKey(), Collections.unmodifiableSet(e.getValue()));
         }
-        return new TagIndex(Collections.unmodifiableMap(frozen), Collections.unmodifiableMap(frozenByItem));
+        return new TagIndex(Collections.unmodifiableMap(frozen), Collections.unmodifiableMap(frozenByItem),
+                Collections.unmodifiableMap(lexFirst));
     }
 
     /** Whether {@code tagKey} ({@code "#ns:path"}) exists and has at least one item. */
@@ -100,6 +113,15 @@ public final class TagIndex {
     public String firstMember(String tagKey) {
         Set<String> set = members(tagKey);
         return set.isEmpty() ? null : set.iterator().next();
+    }
+
+    /**
+     * F12: member item ID of {@code tagKey} that comes first in registry-ID lexicographic order
+     * ({@link String#compareTo}), or {@code null} if the tag is unknown/empty. Used as the chat
+     * {@code show_item} hover item of a tag target.
+     */
+    public String lexicographicFirstMember(String tagKey) {
+        return tagKey == null ? null : lexFirstByTag.get(tagKey);
     }
 
     /** Tag keys ({@code "#ns:path"}, sorted) that contain {@code itemId}. */

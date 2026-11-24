@@ -32,6 +32,7 @@ public class ItemMilestoneLog {
     public ItemMilestoneLog(IEventBus modEventBus, ModContainer modContainer) {
         modContainer.registerConfig(ModConfig.Type.COMMON, Config.SPEC);
 
+        ModTriggers.register(modEventBus);
         modEventBus.addListener(ModNetworking::registerPayloads);
         modEventBus.addListener(MilestoneGameTestRegistration::register);
         NeoForge.EVENT_BUS.register(Tracker.class);
@@ -53,11 +54,14 @@ public class ItemMilestoneLog {
         if (!event.getServer().isDedicatedServer()) {
             DiscordNotifier.warnIfWebhookConfiguredInSingleplayer();
         }
+        ScoreboardSync.refreshAll(event.getServer());
     }
 
     private static void onServerStopping(ServerStoppingEvent event) {
         Tracker.clearPendingNotifications();
+        MilestoneCommandRunner.clearPending();
         MilestoneService.UNDO_SNAPSHOTS.clear();
+        ScoreboardSync.resetWarningState();
         DiscordNotifier.shutdown();
     }
 }

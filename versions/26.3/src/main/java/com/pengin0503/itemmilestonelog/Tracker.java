@@ -6,6 +6,7 @@ import com.pengin0503.itemmilestonelog.api.MilestoneRecordedEvent;
 import com.pengin0503.itemmilestonelog.api.PresetCompletedEvent;
 import com.pengin0503.itemmilestonelog.api.RecordCause;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
+import com.pengin0503.itemmilestonelog.api.WorldFirstRecord;
 import com.pengin0503.itemmilestonelog.network.ModNetworking;
 import com.pengin0503.itemmilestonelog.network.SyncMilestonesPayload;
 import net.minecraft.commands.CommandSourceStack;
@@ -25,6 +26,7 @@ import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.common.util.FakePlayer;
+import net.neoforged.neoforge.event.OnDatapackSyncEvent;
 import net.neoforged.neoforge.event.TagsUpdatedEvent;
 import net.neoforged.neoforge.event.entity.player.ItemEntityPickupEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
@@ -222,6 +224,8 @@ public final class Tracker {
         }
         MinecraftServer server = player.level().getServer();
         MilestoneData data = MilestoneData.get(server);
+        MilestoneData.PlayerData existingPd = data.playerOrNull(player.getUUID());
+        String previousName = existingPd != null ? existingPd.lastKnownName : null;
         boolean hasMod = player.connection != null
                 && player.connection.hasChannel(SyncMilestonesPayload.TYPE);
         List<Component> messages = processPlayerLogin(
@@ -238,6 +242,67 @@ public final class Tracker {
                 System.currentTimeMillis());
         for (Component msg : messages) {
             player.sendSystemMessage(msg);
+        }
+        ScoreboardSync.removeStaleNameScores(server, player.getUUID(), previousName);
+        ScoreboardSync.refreshScores(server, player.getUUID());
+        triggerExistingRecords(player, data, Config.WORLD_FIRST_ENABLED.get());
+    }
+
+    /**
+     * F2: retroactive advancement criterion trigger on {@code /reload} ({@code event.getPlayer() == null})
+     * for all online players. The login case ({@code event.getPlayer() != null}) is intentionally ignored
+     * here and handled in {@link #onPlayerLoggedIn} after the player is added to the player list.
+     */
+    @SubscribeEvent
+    public static void onDatapackSync(OnDatapackSyncEvent event) {
+        if (event.getPlayer() != null) {
+            return;
+        }
+        MinecraftServer server = event.getPlayerList().getServer();
+        if (server == null) {
+            return;
+        }
+        MilestoneData data = MilestoneData.get(server);
+        boolean worldFirstEnabled = Config.WORLD_FIRST_ENABLED.get();
+        for (ServerPlayer player : List.copyOf(event.getPlayerList().getPlayers())) {
+            triggerExistingRecords(player, data, worldFirstEnabled);
+        }
+    }
+
+    record RetroactiveTriggerEntry(TargetKey key, boolean worldFirst) {
+    }
+
+    /**
+     * F2: collects every existing milestone record for {@code playerId} along with whether that
+     * player holds the world-first for the key (always {@code false} when {@code worldFirstEnabled}
+     * is {@code false}).
+     */
+    static List<RetroactiveTriggerEntry> collectRetroactiveTriggers(
+            @Nullable MilestoneData data, UUID playerId, boolean worldFirstEnabled) {
+        if (data == null || playerId == null) {
+            return List.of();
+        }
+        MilestoneData.PlayerData pd = data.playerOrNull(playerId);
+        if (pd == null || pd.records.isEmpty()) {
+            return List.of();
+        }
+        List<RetroactiveTriggerEntry> entries = new ArrayList<>(pd.records.size());
+        for (TargetKey key : pd.records.keySet()) {
+            WorldFirstRecord wf = data.worldFirstOrNull(key);
+            boolean worldFirst = MilestoneTriggerLogic.isRetroactiveWorldFirst(
+                    playerId, wf != null ? wf.playerUuid() : null, worldFirstEnabled);
+            entries.add(new RetroactiveTriggerEntry(key, worldFirst));
+        }
+        return entries;
+    }
+
+    private static void triggerExistingRecords(
+            @Nullable ServerPlayer player, @Nullable MilestoneData data, boolean worldFirstEnabled) {
+        if (player == null || player instanceof FakePlayer || data == null) {
+            return;
+        }
+        for (RetroactiveTriggerEntry entry : collectRetroactiveTriggers(data, player.getUUID(), worldFirstEnabled)) {
+            ModTriggers.trigger(player, entry.key(), entry.worldFirst(), worldFirstEnabled);
         }
     }
 
@@ -1094,10 +1159,10 @@ public final class Tracker {
 
     @SubscribeEvent
     public static void onServerTick(ServerTickEvent.Post event) {
-        if (PENDING_NOTIFICATIONS.isEmpty()) {
-            return;
+        if (!PENDING_NOTIFICATIONS.isEmpty()) {
+            flushPendingNotifications(event.getServer(), drainPendingNotifications());
         }
-        flushPendingNotifications(event.getServer(), drainPendingNotifications());
+        MilestoneCommandRunner.drainAndRun(event.getServer());
     }
 
     static void queuePendingNotification(
@@ -1345,8 +1410,14 @@ public final class Tracker {
                     }
                 },
                 event -> NeoForge.EVENT_BUS.post(event));
-        if (result.success() && online != null) {
-            MilestoneService.syncPlayerIfOpen(online);
+        if (result.success()) {
+            ScoreboardSync.refreshScores(server, targetId);
+            if (online != null) {
+                if (result.key() != null) {
+                    ModTriggers.trigger(online, result.key(), false, Config.WORLD_FIRST_ENABLED.get());
+                }
+                MilestoneService.syncPlayerIfOpen(online);
+            }
         }
         return new MilestoneService.ActionResult(result.success(), result.executorMessage());
     }
@@ -1444,7 +1515,7 @@ public final class Tracker {
                 targetPlayer,
                 "message.itemmilestonelog.granted_notice",
                 keyDisplay,
-                Playtime.format(rec.playTicks())));
+                Playtime.formatComponent(targetPlayer, rec.playTicks())));
 
         // F5 preset completion: only personal preset_completed to the target when notifyPlayer is true (no broadcast).
         if (notifyPlayer && !completedPresets.isEmpty()) {
@@ -1484,12 +1555,15 @@ public final class Tracker {
 
         String playerName = player.getGameProfile().name();
         String safePlayerName = playerName != null ? playerName : "";
+        boolean worldFirstEnabled = Config.WORLD_FIRST_ENABLED.get();
         RecordOutcome outcome = applyRecord(data, player.getUUID(), playerName, key, rec,
-                Config.WORLD_FIRST_ENABLED.get());
+                worldFirstEnabled);
         if (outcome == RecordOutcome.ALREADY_RECORDED) {
             return false;
         }
+        ScoreboardSync.refreshScores(server, player.getUUID());
         boolean worldFirst = outcome == RecordOutcome.RECORDED_WORLD_FIRST;
+        ModTriggers.trigger(player, key, worldFirst, worldFirstEnabled);
         List<Presets.PresetDefinition> completedPresets = evaluatePresetCompletions(
                 data,
                 player.getUUID(),
@@ -1502,6 +1576,7 @@ public final class Tracker {
 
         ItemMilestoneLog.LOGGER.info("[ItemMilestoneLog] {} first obtained {} at playtime {} ({} ticks)",
                 playerName, key.formatDisplayId(), formattedRecord, ticks);
+        MilestoneCommandRunner.enqueue(player.getUUID(), safePlayerName, key, ticks, worldFirst);
 
         boolean postToDiscord = DiscordNotifier.shouldPostToDiscord(pd);
         if (Config.GROUP_SIMULTANEOUS_RECORDS.get()) {
@@ -1524,7 +1599,7 @@ public final class Tracker {
             }
             postRecordEvents(player, key, rec, outcome, completedPresets, cause, event -> NeoForge.EVENT_BUS.post(event));
         } else {
-            sendImmediateNotifications(server, data, player, key, ticks, worldFirst, formattedRecord);
+            sendImmediateNotifications(server, data, player, key, ticks, worldFirst, rec, zone);
             for (Presets.PresetDefinition preset : completedPresets) {
                 sendPresetCompletionChat(
                         server,
@@ -1642,16 +1717,16 @@ public final class Tracker {
             TargetKey key,
             int ticks,
             boolean worldFirst,
-            String formattedRecord) {
+            MilestoneRecord rec,
+            ZoneId zone) {
         Component displayName = MilestoneService.targetDisplayName(key);
 
         if (Config.NOTIFY_PLAYER.get()) {
             Component msg = ServerLang.tr(player, "message.itemmilestonelog.recorded",
-                    displayName, Playtime.format(ticks));
+                    displayName, Playtime.formatComponent(player, ticks));
             player.sendSystemMessage(msg);
         }
         if (Config.BROADCAST.get()) {
-            String formattedTicks = Playtime.format(ticks);
             for (ServerPlayer other : server.getPlayerList().getPlayers()) {
                 if (other == player) {
                     continue;
@@ -1661,7 +1736,7 @@ public final class Tracker {
                     continue;
                 }
                 other.sendSystemMessage(ServerLang.tr(other, "message.itemmilestonelog.recorded_broadcast",
-                        player.getDisplayName(), displayName, formattedTicks));
+                        player.getDisplayName(), displayName, Playtime.formatComponent(other, ticks)));
             }
         }
         if (worldFirst && Config.ANNOUNCE_WORLD_FIRST.get()) {
@@ -1671,7 +1746,7 @@ public final class Tracker {
                     continue;
                 }
                 recipient.sendSystemMessage(ServerLang.tr(recipient, "message.itemmilestonelog.world_first_recorded",
-                        player.getDisplayName(), displayName, formattedRecord));
+                        player.getDisplayName(), displayName, Playtime.formatRecordComponent(recipient, rec, zone)));
             }
         }
         if (Config.MILESTONE_SOUND_ENABLED.get()) {
@@ -1789,12 +1864,12 @@ public final class Tracker {
             for (QueuedRecord q : channel.items()) {
                 Component displayName = MilestoneService.targetDisplayName(q.key());
                 player.sendSystemMessage(ServerLang.tr(player, "message.itemmilestonelog.recorded",
-                        displayName, Playtime.format(q.record().playTicks())));
+                        displayName, Playtime.formatComponent(player, q.record().playTicks())));
             }
             return;
         }
         List<QueuedRecord> items = channel.items();
-        String formattedPlaytime = Playtime.format(items.get(0).record().playTicks());
+        Component formattedPlaytime = Playtime.formatComponent(player, items.get(0).record().playTicks());
         Component targetList = buildTargetListComponent(player, items);
         player.sendSystemMessage(ServerLang.tr(player, "message.itemmilestonelog.recorded_group",
                 items.size(), formattedPlaytime, targetList));
@@ -1812,7 +1887,7 @@ public final class Tracker {
         if (channel.mode() == NotificationGrouping.SendMode.INDIVIDUAL) {
             for (QueuedRecord q : channel.items()) {
                 Component displayName = MilestoneService.targetDisplayName(q.key());
-                String formattedTicks = Playtime.format(q.record().playTicks());
+                int ticks = q.record().playTicks();
                 for (ServerPlayer other : server.getPlayerList().getPlayers()) {
                     if (other.getUUID().equals(actorId)) {
                         continue;
@@ -1822,13 +1897,13 @@ public final class Tracker {
                         continue;
                     }
                     other.sendSystemMessage(ServerLang.tr(other, "message.itemmilestonelog.recorded_broadcast",
-                            actorDisplayName, displayName, formattedTicks));
+                            actorDisplayName, displayName, Playtime.formatComponent(other, ticks)));
                 }
             }
             return;
         }
         List<QueuedRecord> items = channel.items();
-        String formattedPlaytime = Playtime.format(items.get(0).record().playTicks());
+        int groupTicks = items.get(0).record().playTicks();
         for (ServerPlayer other : server.getPlayerList().getPlayers()) {
             if (other.getUUID().equals(actorId)) {
                 continue;
@@ -1839,7 +1914,7 @@ public final class Tracker {
             }
             Component targetList = buildTargetListComponent(other, items);
             other.sendSystemMessage(ServerLang.tr(other, "message.itemmilestonelog.recorded_group_broadcast",
-                    actorDisplayName, items.size(), formattedPlaytime, targetList));
+                    actorDisplayName, items.size(), Playtime.formatComponent(other, groupTicks), targetList));
         }
     }
 
@@ -1856,20 +1931,20 @@ public final class Tracker {
         if (channel.mode() == NotificationGrouping.SendMode.INDIVIDUAL) {
             for (QueuedRecord q : channel.items()) {
                 Component displayName = MilestoneService.targetDisplayName(q.key());
-                String formattedRecord = Playtime.formatRecord(q.record(), zone);
+                MilestoneRecord queuedRecord = q.record();
                 for (ServerPlayer recipient : server.getPlayerList().getPlayers()) {
                     MilestoneData.PlayerData recPd = data.playerOrNull(recipient.getUUID());
                     if (!recipient.getUUID().equals(actorId) && recPd != null && recPd.muteBroadcasts) {
                         continue;
                     }
                     recipient.sendSystemMessage(ServerLang.tr(recipient, "message.itemmilestonelog.world_first_recorded",
-                            actorDisplayName, displayName, formattedRecord));
+                            actorDisplayName, displayName, Playtime.formatRecordComponent(recipient, queuedRecord, zone)));
                 }
             }
             return;
         }
         List<QueuedRecord> items = channel.items();
-        String formattedRecord = Playtime.formatRecord(items.get(0).record(), zone);
+        MilestoneRecord groupRecord = items.get(0).record();
         for (ServerPlayer recipient : server.getPlayerList().getPlayers()) {
             MilestoneData.PlayerData recPd = data.playerOrNull(recipient.getUUID());
             if (!recipient.getUUID().equals(actorId) && recPd != null && recPd.muteBroadcasts) {
@@ -1877,7 +1952,7 @@ public final class Tracker {
             }
             Component targetList = buildTargetListComponent(recipient, items);
             recipient.sendSystemMessage(ServerLang.tr(recipient, "message.itemmilestonelog.world_first_group",
-                    actorDisplayName, items.size(), formattedRecord, targetList));
+                    actorDisplayName, items.size(), Playtime.formatRecordComponent(recipient, groupRecord, zone), targetList));
         }
     }
 

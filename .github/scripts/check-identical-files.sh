@@ -17,9 +17,11 @@ VERSIONS_26=(26.1.2 26.2 26.3)
 # Files that must be byte-identical across ALL four Minecraft versions
 # (1.21.1, 26.1.2, 26.2, 26.3).
 IDENTICAL_ALL_4=(
-  # src/main/java (13 files)
+  # src/main/java (15 files)
   "src/main/java/com/pengin0503/itemmilestonelog/DiscordNotifier.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/MilestoneCommandRunner.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestoneRankings.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/ScoreboardSync.java"
   "src/main/java/com/pengin0503/itemmilestonelog/WorldFirstNames.java"
   "src/main/java/com/pengin0503/itemmilestonelog/api/ItemMilestoneLogApi.java"
   "src/main/java/com/pengin0503/itemmilestonelog/api/MilestoneRecord.java"
@@ -32,10 +34,12 @@ IDENTICAL_ALL_4=(
   "src/main/java/com/pengin0503/itemmilestonelog/gametest/MilestoneGameTests.java"
   "src/main/java/com/pengin0503/itemmilestonelog/network/TargetEntry.java"
 
-  # src/test/java (15 files)
+  # src/test/java (17 files)
   "src/test/java/com/pengin0503/itemmilestonelog/DiscordNotifierTest.java"
+  "src/test/java/com/pengin0503/itemmilestonelog/MilestoneCommandRunnerTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/MilestoneCommandsHelpTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/MilestoneRankingsTest.java"
+  "src/test/java/com/pengin0503/itemmilestonelog/ScoreboardSyncTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/WorldFirstNamesTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/api/ItemMilestoneLogApiTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/LangFilesTest.java"
@@ -52,10 +56,10 @@ IDENTICAL_ALL_4=(
 
 # Files that differ in 1.21.1 (ResourceLocation, NBT SavedData, player.server,
 # mods.toml loaderVersion, etc.) but must be byte-identical across 26.1.2, 26.2,
-# and 26.3. Together with the 13 src/main/java files in IDENTICAL_ALL_4, this
-# covers all 28 src/main/java files that are identical across 26.x.
+# and 26.3. Together with the 15 src/main/java files in IDENTICAL_ALL_4, this
+# covers all 30 src/main/java files that are identical across 26.x.
 IDENTICAL_26_X=(
-  # src/main/java (15 files; +13 from IDENTICAL_ALL_4 = 28 src/main/java files)
+  # src/main/java (15 files; +15 from IDENTICAL_ALL_4 = 30 src/main/java files)
   "src/main/java/com/pengin0503/itemmilestonelog/Config.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestoneCommands.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestoneData.java"
@@ -95,6 +99,15 @@ IDENTICAL_26_X=(
 #     onTagsUpdated gates the defaultTargets tag warning on shouldUpdateStaticData()
 #     instead of UpdateCause.SERVER_DATA_LOAD. 1.21.1 differs as well (ResourceLocation,
 #     player.server, GameProfile#getName); 26.1.2 and 26.2 are still identical to each other but are no longer checked.
+# - src/main/java/.../MilestoneRecordedTrigger.java:
+#     Minecraft moved advancement packages and changed SimpleInstance#player() across versions:
+#     1.21.1 uses advancements.critereon.*; 26.1.2 uses advancements.criterion.*;
+#     26.2 uses advancements.triggers.* + advancements.predicates.*;
+#     26.3 replaces ContextAwarePredicate / EntityPredicate.ADVANCEMENT_CODEC with
+#     Optional<Holder<LootItemCondition>> and LootItemCondition.CODEC.
+# - src/main/java/.../ModTriggers.java:
+#     1.21.1 and 26.1.2 import net.minecraft.advancements.CriterionTrigger;
+#     26.2 and 26.3 import net.minecraft.advancements.triggers.CriterionTrigger.
 # - src/test/java/.../ServerLangTest.java:
 #     Fallback source directory path embeds each project's own Minecraft version.
 

@@ -8,6 +8,7 @@ import com.pengin0503.itemmilestonelog.network.TargetEntry;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.HoverEvent;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
@@ -29,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
@@ -107,20 +109,50 @@ public final class MilestoneService {
         return Component.literal(itemId == null ? "" : itemId);
     }
 
+    /**
+     * Formats a target display name, appending {@code " ×<count>"} when count > 1.
+     * F12: carries a {@code show_item} hover when {@code chatItemHover} is enabled (see {@link #withItemHover}).
+     */
     public static Component targetDisplayName(TargetKey key) {
         Component base = itemName(key.itemId());
         if (key.count() > TargetKey.MIN_COUNT) {
-            return base.copy().append(Component.literal(key.formatSuffix()));
+            base = base.copy().append(Component.literal(key.formatSuffix()));
         }
-        return base;
+        return withItemHover(base, key.itemId());
     }
 
     public static Component targetDisplayName(String itemId, int count) {
         Component base = itemName(itemId);
         if (count > TargetKey.MIN_COUNT) {
-            return base.copy().append(Component.literal(" ×" + count));
+            base = base.copy().append(Component.literal(" ×" + count));
         }
-        return base;
+        return withItemHover(base, itemId);
+    }
+
+    /**
+     * F12: returns {@code name} with a {@code show_item} hover of the default stack (count 1, no
+     * components) of the item chosen by {@link ChatItemHover#hoverItemId}, or {@code name} unchanged
+     * when the hover is disabled or no item applies. Only the style changes, so {@code getString()}
+     * is identical either way.
+     */
+    static Component withItemHover(Component name, String targetId) {
+        if (!Config.chatItemHover()) {
+            return name; // checked first so the tag cache / registry are not touched when disabled
+        }
+        String hoverId = ChatItemHover.hoverItemId(true, targetId, TagTargets.index(),
+                MilestoneService::isRegisteredNonAirItem);
+        if (hoverId == null) {
+            return name;
+        }
+        ItemStack stack = new ItemStack(BuiltInRegistries.ITEM.getValue(Identifier.parse(hoverId)));
+        HoverEvent hover = new HoverEvent.ShowItem(net.minecraft.world.item.ItemStackTemplate.fromNonEmptyStack(stack));
+        return name.copy().withStyle(style -> style.withHoverEvent(hover));
+    }
+
+    /** F12: whether {@code itemId} (not a tag) is in the item registry and is not air. */
+    private static boolean isRegisteredNonAirItem(String itemId) {
+        Identifier id = Identifier.tryParse(itemId);
+        return id != null && BuiltInRegistries.ITEM.containsKey(id) && BuiltInRegistries.ITEM.getValue(id) != Items.AIR;
     }
 
     public static Component presetDisplayName(@Nullable ServerPlayer recipient, Presets.PresetDefinition preset) {
@@ -885,9 +917,14 @@ public final class MilestoneService {
     }
 
     public static ActionResult resetRecord(ServerPlayer player, String itemId, int count) {
-        return resetRecord(MilestoneData.get(player.level().getServer()), player.getUUID(), player, itemId, count,
+        MinecraftServer server = player.level().getServer();
+        ActionResult result = resetRecord(MilestoneData.get(server), player.getUUID(), player, itemId, count,
                 MilestoneService::isValidItemId, MilestoneService::targetDisplayName,
                 UNDO_SNAPSHOTS, System.nanoTime());
+        if (result.success()) {
+            ScoreboardSync.refreshScores(server, player.getUUID());
+        }
+        return result;
     }
 
     static ActionResult resetRecord(MilestoneData data, UUID playerId, @Nullable ServerPlayer player,
@@ -950,8 +987,13 @@ public final class MilestoneService {
     }
 
     public static ActionResult resetAllRecords(ServerPlayer player) {
-        return resetAllRecords(MilestoneData.get(player.level().getServer()), player.getUUID(), player,
+        MinecraftServer server = player.level().getServer();
+        ActionResult result = resetAllRecords(MilestoneData.get(server), player.getUUID(), player,
                 UNDO_SNAPSHOTS, System.nanoTime());
+        if (result.success()) {
+            ScoreboardSync.refreshScores(server, player.getUUID());
+        }
+        return result;
     }
 
     static ActionResult resetAllRecords(MilestoneData data, UUID playerId, @Nullable ServerPlayer player) {
@@ -1000,9 +1042,11 @@ public final class MilestoneService {
      * re-syncs the player's GUI.
      */
     public static ActionResult undo(ServerPlayer player) {
-        ActionResult result = undo(MilestoneData.get(player.level().getServer()), player.getUUID(), player,
+        MinecraftServer server = player.level().getServer();
+        ActionResult result = undo(MilestoneData.get(server), player.getUUID(), player,
                 UNDO_SNAPSHOTS, System.nanoTime());
         if (result.success()) {
+            ScoreboardSync.refreshScores(server, player.getUUID());
             syncPlayerIfOpen(player);
         }
         return result;
@@ -1104,7 +1148,8 @@ public final class MilestoneService {
                 playerDataDir,
                 System.currentTimeMillis(),
                 days,
-                confirm);
+                confirm,
+                uuid -> ScoreboardSync.deleteScores(server, uuid));
     }
 
     static int pruneInactivePlayers(
@@ -1114,6 +1159,17 @@ public final class MilestoneService {
             long nowMillis,
             int days,
             boolean confirm) {
+        return pruneInactivePlayers(data, isOnline, playerDataDir, nowMillis, days, confirm, null);
+    }
+
+    static int pruneInactivePlayers(
+            MilestoneData data,
+            Predicate<UUID> isOnline,
+            @Nullable Path playerDataDir,
+            long nowMillis,
+            int days,
+            boolean confirm,
+            @Nullable Consumer<UUID> beforePurge) {
         List<UUID> targets = new ArrayList<>();
         for (Map.Entry<UUID, MilestoneData.PlayerData> entry : data.allPlayers().entrySet()) {
             UUID uuid = entry.getKey();
@@ -1129,6 +1185,9 @@ public final class MilestoneService {
         }
         if (confirm) {
             for (UUID uuid : targets) {
+                if (beforePurge != null) {
+                    beforePurge.accept(uuid);
+                }
                 data.purgePlayer(uuid);
             }
         }
