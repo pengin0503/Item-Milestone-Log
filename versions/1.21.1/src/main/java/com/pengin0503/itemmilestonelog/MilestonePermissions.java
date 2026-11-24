@@ -1,5 +1,6 @@
 package com.pengin0503.itemmilestonelog;
 
+import com.pengin0503.itemmilestonelog.compat.McCompat;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.server.level.ServerPlayer;
@@ -29,7 +30,7 @@ import java.util.List;
 public final class MilestonePermissions {
     private static final PermissionNode.PermissionResolver<Boolean> DEFAULT_RESOLVER =
             (player, playerUuid, context) -> player != null
-                    && player.hasPermissions(Commands.LEVEL_GAMEMASTERS);
+                    && McCompat.permissions().playerHasPermission(player, Commands.LEVEL_GAMEMASTERS);
 
     public static final PermissionNode<Boolean> ADMIN = node(MilestonePermissionLogic.ADMIN);
     public static final PermissionNode<Boolean> FIRSTS_RESET = node(MilestonePermissionLogic.FIRSTS_RESET);

@@ -19,6 +19,7 @@ public final class McCompat {
     private static final DataCompat DATA = load(DataCompat.class, "DataCompatImpl");
     private static final ChatCompat CHAT = load(ChatCompat.class, "ChatCompatImpl");
     private static final PlayerCompat PLAYER = load(PlayerCompat.class, "PlayerCompatImpl");
+    private static final PermissionCompat PERMISSIONS = load(PermissionCompat.class, "PermissionCompatImpl");
 
     private McCompat() {
     }
@@ -53,6 +54,10 @@ public final class McCompat {
 
     public static PlayerCompat player() {
         return PLAYER;
+    }
+
+    public static PermissionCompat permissions() {
+        return PERMISSIONS;
     }
 
     /**

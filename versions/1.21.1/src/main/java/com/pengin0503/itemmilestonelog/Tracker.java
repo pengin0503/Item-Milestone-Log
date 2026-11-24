@@ -2098,7 +2098,7 @@ public final class Tracker {
         }
         SoundEvent event = McCompat.registries().soundOrNull(rl);
         if (event != null) {
-            player.playNotifySound(event, SoundSource.PLAYERS, 1.0F, 1.0F);
+            McCompat.player().playNotifySound(player, event, SoundSource.PLAYERS, 1.0F, 1.0F);
         }
     }
 }
