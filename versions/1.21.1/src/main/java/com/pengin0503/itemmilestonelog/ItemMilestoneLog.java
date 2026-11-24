@@ -1,5 +1,6 @@
 package com.pengin0503.itemmilestonelog;
 
+import com.pengin0503.itemmilestonelog.compat.McCompat;
 import com.pengin0503.itemmilestonelog.gametest.MilestoneGameTestRegistration;
 import com.pengin0503.itemmilestonelog.network.ModNetworking;
 import net.neoforged.bus.api.IEventBus;
@@ -35,7 +36,7 @@ public class ItemMilestoneLog {
     public ItemMilestoneLog(IEventBus modEventBus, ModContainer modContainer) {
         modContainer.registerConfig(ModConfig.Type.COMMON, Config.SPEC);
 
-        ModTriggers.register(modEventBus);
+        McCompat.triggers().register(modEventBus);
         modEventBus.addListener(ModNetworking::registerPayloads);
         modEventBus.addListener(MilestoneGameTestRegistration::register);
         // F43: PermissionAPI posts PermissionGatherEvent.Nodes on the NeoForge game event bus

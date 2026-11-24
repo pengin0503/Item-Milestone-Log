@@ -148,7 +148,7 @@ public final class ModNetworking {
             MilestoneService.sendSync(player, false, result.message());
             if (result.success() && (payload.action() == MilestoneActionPayload.Action.SAVE_PRESET
                     || payload.action() == MilestoneActionPayload.Action.DELETE_PRESET)) {
-                MilestoneService.syncAllOnlineGuiPlayers(player.server, player);
+                MilestoneService.syncAllOnlineGuiPlayers(player.getServer(), player);
             }
         });
     }
