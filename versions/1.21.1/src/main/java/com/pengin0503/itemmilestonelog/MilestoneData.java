@@ -406,7 +406,7 @@ public class MilestoneData extends SavedData {
         return data;
     }
 
-    @Override
+    // No @Override: SavedData declares this method only up to MC 1.21.4; on 1.21.5+ the DataCompat codec calls it.
     public CompoundTag save(CompoundTag tag, HolderLookup.Provider provider) {
         CompoundTag all = new CompoundTag();
         for (Map.Entry<UUID, PlayerData> e : players.entrySet()) {

@@ -26,9 +26,9 @@ public final class MilestoneGameTestRegistration {
     }
 
     public static void register(RegisterGameTestsEvent event) {
-        Holder<TestEnvironmentDefinition<?>> env = event.registerEnvironment(
+        Holder<TestEnvironmentDefinition> env = event.registerEnvironment(
                 ResourceLocation.fromNamespaceAndPath(ItemMilestoneLog.MOD_ID, "default"));
-        TestData<Holder<TestEnvironmentDefinition<?>>> testData = new TestData<>(
+        TestData<Holder<TestEnvironmentDefinition>> testData = new TestData<>(
                 env,
                 EMPTY_STRUCTURE,
                 DEFAULT_MAX_TICKS,
@@ -44,7 +44,7 @@ public final class MilestoneGameTestRegistration {
     private static void registerTest(
             RegisterGameTestsEvent event,
             String name,
-            TestData<Holder<TestEnvironmentDefinition<?>>> testData,
+            TestData<Holder<TestEnvironmentDefinition>> testData,
             Consumer<GameTestHelper> body) {
         ResourceLocation id = ResourceLocation.fromNamespaceAndPath(ItemMilestoneLog.MOD_ID, name);
         event.registerTest(id, new InlineGameTestInstance(testData, body));
@@ -55,7 +55,7 @@ public final class MilestoneGameTestRegistration {
         private final MapCodec<InlineGameTestInstance> codec;
 
         InlineGameTestInstance(
-                TestData<Holder<TestEnvironmentDefinition<?>>> info,
+                TestData<Holder<TestEnvironmentDefinition>> info,
                 Consumer<GameTestHelper> body) {
             super(info);
             this.body = body;
