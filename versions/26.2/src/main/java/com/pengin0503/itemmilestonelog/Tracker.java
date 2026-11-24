@@ -245,6 +245,11 @@ public final class Tracker {
         ScoreboardSync.removeStaleNameScores(server, player.getUUID(), previousName);
         ScoreboardSync.refreshScores(server, player.getUUID());
         triggerExistingRecords(player, data, Config.WORLD_FIRST_ENABLED.get());
+        if (hasMod) {
+            // F42: send the player's current state on login so the client can build the item-tooltip
+            // index without waiting for the GUI to be opened (openScreen=false, no feedback).
+            MilestoneService.syncPlayerIfOpen(player);
+        }
     }
 
     /**
