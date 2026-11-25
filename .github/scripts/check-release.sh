@@ -4,9 +4,11 @@
 #   check-release.sh <jar_dir> <tag or ""> <notes_file>
 #
 # The release composition comes from publish-manifest.json (repo root): five merged
-# jars, the 26.x jar (26.1.2-26.3) and the four 1.21.x jars (A 1.21-1.21.4,
-# B1 1.21.5-1.21.8, B2 1.21.9-1.21.10, C 1.21.11), each with its game_versions,
-# neoforge_min and java (docs/DESIGN_1.3.0.md section 6).
+# jars, the 26.x jar (26.1.2-26.3), the four 1.21.x jars (A 1.21-1.21.4,
+# B1 1.21.5-1.21.8, B2 1.21.9-1.21.10, C 1.21.11), and the Forge 1.20.1 jar
+# (docs/DESIGN_1.3.0.md section 6, docs/DESIGN_1.20.1.md section 8.1). Each entry
+# has its game_versions, java and loader ("neoforge" when the field is absent, for
+# backward compatibility) with the matching neoforge_min / forge_min.
 #
 # - every versions/*/gradle.properties has the same mod_version,
 # - jar_dir holds exactly the manifest's jars for that version ({version} in each
@@ -22,7 +24,10 @@ DIR="$1"
 TAG="$2"
 NOTES="$3"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-MC_VERSIONS=(1.21.1 26.1.2 26.2 26.3)
+# Every version project that ships in this release. 1.20.1-forge has its own
+# ForgeGradle build but shares the same mod_version as the NeoForge projects
+# (docs/DESIGN_1.20.1.md section 8.3).
+MC_VERSIONS=(1.21.1 26.1.2 26.2 26.3 1.20.1-forge)
 
 prop() { grep -E "^$2=" "$ROOT/versions/$1/gradle.properties" | cut -d= -f2-; }
 
@@ -50,11 +55,15 @@ if ! jq -e '
     and all(.files[];
       (.file | type == "string" and length > 0)
       and (.game_versions | type == "array" and length > 0 and all(.[]; type == "string"))
-      and (.neoforge_min | type == "string" and length > 0)
+      and ((.loader // "neoforge") as $loader
+           | if $loader == "neoforge" then (.neoforge_min | type == "string" and length > 0)
+             elif $loader == "forge" then (.forge_min | type == "string" and length > 0)
+             else false end)
       and (.java | type == "number"))
   ' "$MANIFEST" > /dev/null 2>&1; then
   echo "  FAIL  $MANIFEST is not valid JSON or does not match the expected shape"
-  echo "        ({\"files\": [{\"file\", \"game_versions\": [...], \"neoforge_min\", \"java\"}, ...]})"
+  echo "        ({\"files\": [{\"file\", \"game_versions\": [...], \"loader\","
+  echo "          \"neoforge_min\" or \"forge_min\", \"java\"}, ...]})"
   exit 1
 fi
 CONCRETE="$(jq --arg v "$VERSION" '.files |= map(.file |= gsub("\\{version\\}"; $v))' "$MANIFEST")"
@@ -110,15 +119,31 @@ fi
   echo
   echo "Each jar loads on the Minecraft versions in its row."
   echo
-  echo "| Minecraft | File | NeoForge | Java |"
-  echo "|---|---|---|---|"
-  # Minecraft label: first–last of game_versions when more than one (en dash, as in
-  # CHANGELOG.md), else the single version.
-  jq -r '.files[]
-    | (if (.game_versions | length) > 1
-         then "\(.game_versions[0])–\(.game_versions[-1])"
-         else .game_versions[0] end) as $mc
-    | "| \($mc) | `\(.file)` | \(.neoforge_min) or newer | \(.java) |"' <<< "$CONCRETE"
+  # A NeoForge-only manifest keeps the historic table byte-for-byte (the loader
+  # column would be constant); a mixed manifest adds it so the Forge 1.20.1 row
+  # names Forge and forge_min instead of NeoForge and neoforge_min.
+  if jq -e 'all(.files[]; (.loader // "neoforge") == "neoforge")' <<< "$CONCRETE" > /dev/null; then
+    echo "| Minecraft | File | NeoForge | Java |"
+    echo "|---|---|---|---|"
+    # Minecraft label: first–last of game_versions when more than one (en dash, as in
+    # CHANGELOG.md), else the single version.
+    jq -r '.files[]
+      | (if (.game_versions | length) > 1
+           then "\(.game_versions[0])–\(.game_versions[-1])"
+           else .game_versions[0] end) as $mc
+      | "| \($mc) | `\(.file)` | \(.neoforge_min) or newer | \(.java) |"' <<< "$CONCRETE"
+  else
+    echo "| Minecraft | File | Loader | Java |"
+    echo "|---|---|---|---|"
+    jq -r '.files[]
+      | (if (.game_versions | length) > 1
+           then "\(.game_versions[0])–\(.game_versions[-1])"
+           else .game_versions[0] end) as $mc
+      | (if (.loader // "neoforge") == "forge"
+           then "Forge \(.forge_min) or newer"
+           else "NeoForge \(.neoforge_min) or newer" end) as $loader
+      | "| \($mc) | `\(.file)` | \($loader) | \(.java) |"' <<< "$CONCRETE"
+  fi
 } >> "$NOTES"
 
 echo "Release notes (${NOTES}):"

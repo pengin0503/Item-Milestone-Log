@@ -5,7 +5,8 @@
 #   .github/scripts/check-identical-files.sh
 #
 # How to intentionally diverge a file in the future:
-#   1. Remove the path from IDENTICAL_ALL_4 or IDENTICAL_26_X below.
+#   1. Remove the path from IDENTICAL_ALL_4, IDENTICAL_26_X or
+#      IDENTICAL_FORGE_1201 below.
 #   2. Document the path and the reason for the divergence in the
 #      "Intentionally excluded files" comment block below.
 set -euo pipefail
@@ -13,6 +14,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 ALL_VERSIONS=(1.21.1 26.1.2 26.2 26.3)
 VERSIONS_26=(26.1.2 26.2 26.3)
+VERSIONS_FORGE_1201=(1.21.1 1.20.1-forge)
 
 # Files that must be byte-identical across ALL four Minecraft versions
 # (1.21.1, 26.1.2, 26.2, 26.3).
@@ -108,6 +110,34 @@ IDENTICAL_26_X=(
   "src/main/templates/META-INF/neoforge.mods.toml"
 )
 
+# Files that must be byte-identical between 1.21.1 and the Forge 1.20.1 port
+# (docs/DESIGN_1.20.1.md section 2.3). The Forge tree is deliberately NOT part of
+# ALL_VERSIONS: it is a different loader generation, not another NeoForge version.
+# Only pure-logic source/test files that are byte-identical today are listed; files
+# that must differ (Forge events, SavedData, Brigadier, scoreboard, Java 17 HTTP)
+# are noted in the exclusion block below.
+IDENTICAL_FORGE_1201=(
+  # src/main/java (10 files)
+  "src/main/java/com/pengin0503/itemmilestonelog/ItemInfoLogic.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/MilestoneRankings.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/WorldFirstNames.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/api/ItemMilestoneLogApi.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/api/MilestoneRecord.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/api/RecordCause.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/api/TargetKey.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/api/WorldFirstRecord.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/client/ActionRowLayout.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/network/TargetEntry.java"
+
+  # src/test/java (6 files)
+  "src/test/java/com/pengin0503/itemmilestonelog/ItemInfoLogicTest.java"
+  "src/test/java/com/pengin0503/itemmilestonelog/MilestoneRankingsTest.java"
+  "src/test/java/com/pengin0503/itemmilestonelog/WorldFirstNamesTest.java"
+  "src/test/java/com/pengin0503/itemmilestonelog/TargetKeyTest.java"
+  "src/test/java/com/pengin0503/itemmilestonelog/api/ItemMilestoneLogApiTest.java"
+  "src/test/java/com/pengin0503/itemmilestonelog/client/ActionRowLayoutTest.java"
+)
+
 # Intentionally excluded files (differ across versions by design):
 # - src/main/java/.../gametest/MilestoneGameTests.java:
 #     Removed from IDENTICAL_ALL_4 in N252 stage 2a: the 1.21.1 copy routes
@@ -145,6 +175,22 @@ IDENTICAL_26_X=(
 #     intentionally differ per version (N251, docs/DESIGN_1.3.0.md).
 # - src/test/java/.../ServerLangTest.java:
 #     Fallback source directory path embeds each project's own Minecraft version.
+#
+# Files in IDENTICAL_ALL_4 that differ in 1.20.1-forge by design (and are therefore
+# not in IDENTICAL_FORGE_1201; docs/DESIGN_1.20.1.md section 2.3):
+# - src/main/java/.../DiscordNotifier.java:
+#     Java 17's java.net.http.HttpClient is not AutoCloseable, so shutdown() drops
+#     the client without calling close().
+# - src/main/java/.../MilestoneBackup.java:
+#     1.20.1 SavedData has no HolderLookup.Provider argument.
+# - src/main/java/.../MilestoneCommandRunner.java:
+#     1.20.1 Brigadier ResultConsumer callback has the (source, success, result)
+#     signature instead of withCallback(tracker::onResult).
+# - src/main/java/.../ScoreboardSync.java:
+#     1.20.1 uses ScoreHolder/getOrCreatePlayerScore(String, Objective) and setScore.
+# - src/main/java/.../api/MilestoneRecordedEvent.java and
+#   src/main/java/.../api/PresetCompletedEvent.java:
+#     Forge Event base class and MinecraftForge.EVENT_BUS instead of NeoForge.
 
 status=0
 checked=0
@@ -193,6 +239,7 @@ check_group() {
 
 check_group "all 4 versions" ALL_VERSIONS IDENTICAL_ALL_4
 check_group "26.x versions" VERSIONS_26 IDENTICAL_26_X
+check_group "1.21.1 and 1.20.1-forge" VERSIONS_FORGE_1201 IDENTICAL_FORGE_1201
 
 if [ "$status" -eq 0 ]; then
   echo "All $checked file check(s) passed."

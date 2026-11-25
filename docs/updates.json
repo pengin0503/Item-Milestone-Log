@@ -58,6 +58,8 @@
     "1.3.0": "Version support release: one jar per version range, and the full Minecraft 1.21.x line (1.21–1.21.11) is now supported. All 1.2.0 features included; existing milestone data is fully compatible."
   },
   "promos": {
+    "1.20.1-latest": "1.3.0",
+    "1.20.1-recommended": "1.3.0",
     "1.21-latest": "1.3.0",
     "1.21-recommended": "1.3.0",
     "1.21.1-latest": "1.3.0",
