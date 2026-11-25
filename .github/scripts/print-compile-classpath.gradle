@@ -1,7 +1,8 @@
 // Gradle init script for the binary-linkage audit (.github/scripts/audit-merged-jar-links.py).
 // Adds a printCompileClasspath task that writes the main compile classpath (one jar per
 // line) to the file given by -PcpOut=<path>. Resolving the classpath makes ModDevGradle
-// create the Minecraft artifacts (build/moddev/artifacts/*-merged.jar) first.
+// create the Minecraft artifacts first; the game jar is the classpath entry under
+// build/moddev/artifacts/ (the *-merged.jar is only written for IDE syncs and runs).
 // Configuration-cache safe: the task only captures the FileCollection and the output File.
 //
 //   ./gradlew --init-script .github/scripts/print-compile-classpath.gradle \

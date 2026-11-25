@@ -686,7 +686,18 @@ jobs:
             dir="versions/${{ matrix.mc }}"
           fi
           (cd "$dir" && "$GITHUB_WORKSPACE/gradlew" --init-script "$GITHUB_WORKSPACE/.github/scripts/print-compile-classpath.gradle" printCompileClasspath -PcpOut="$GITHUB_WORKSPACE/build/audit/classpath.txt" --console=plain)
-          game_jar="$(ls "$dir"/build/moddev/artifacts/*-merged.jar)"
+          # The game jar is the Minecraft artifact on the compile classpath itself
+          # (build/moddev/artifacts/<name>.jar). ModDevGradle writes the *-merged.jar
+          # (classes + sources, same classes) only when an IDE sync or run asks for it,
+          # so a clean CI checkout does not have it.
+          mapfile -t game_jars < <(grep -E '/build/moddev/artifacts/[^/]+\.jar$' build/audit/classpath.txt \
+            | grep -vE -- '-(sources|merged|client-extra-aka-minecraft-resources)\.jar$')
+          if [[ ${#game_jars[@]} -ne 1 ]]; then
+            echo "::error::expected exactly one Minecraft artifact on the compile classpath, got ${#game_jars[@]}: ${game_jars[*]}"
+            exit 1
+          fi
+          game_jar="${game_jars[0]}"
+          test -f "$game_jar"
           echo "Game jar: $game_jar"
           echo "jar=$game_jar" >> "$GITHUB_OUTPUT"
 

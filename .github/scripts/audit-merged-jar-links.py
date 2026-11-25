@@ -12,7 +12,7 @@ version of the jar's range. This tool checks that directly from the class files
         [--jdk <java_home>]
 
 <game_jar> is the merged Minecraft+NeoForge jar of that version
-(versions/verify/<mc>/build/moddev/artifacts/*-merged.jar, or versions/<mc>/... for the
+(versions/verify/<mc>/build/moddev/artifacts/<name>.jar, or versions/<mc>/... for the
 real projects). It may be an os.pathsep-separated list searched in order, e.g.
 "neoforge-21.7.25-beta-universal.jar:neoforge-21.7.0-beta-merged.jar" to check the
 NeoForge API of a later build of the same line on top of the pinned game jar. <classpath_file> optionally lists the version's library jars (one path
