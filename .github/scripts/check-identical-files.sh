@@ -19,12 +19,14 @@ VERSIONS_FORGE_1201=(1.21.1 1.20.1-forge)
 # Files that must be byte-identical across ALL four Minecraft versions
 # (1.21.1, 26.1.2, 26.2, 26.3).
 IDENTICAL_ALL_4=(
-  # src/main/java (17 files)
+  # src/main/java (19 files)
   "src/main/java/com/pengin0503/itemmilestonelog/DiscordNotifier.java"
   "src/main/java/com/pengin0503/itemmilestonelog/ItemInfoLogic.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestoneBackup.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestoneCommandRunner.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/MilestoneImportAll.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestoneRankings.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/MilestoneServerStop.java"
   "src/main/java/com/pengin0503/itemmilestonelog/ScoreboardSync.java"
   "src/main/java/com/pengin0503/itemmilestonelog/WorldFirstNames.java"
   "src/main/java/com/pengin0503/itemmilestonelog/api/ItemMilestoneLogApi.java"
@@ -62,8 +64,8 @@ IDENTICAL_ALL_4=(
 
 # Files that differ in 1.21.1 (ResourceLocation, NBT SavedData, player.server,
 # mods.toml loaderVersion, etc.) but must be byte-identical across 26.1.2, 26.2,
-# and 26.3. Together with the 17 src/main/java files in IDENTICAL_ALL_4, this
-# covers all 50 src/main/java files that are identical across 26.x (of 58; the
+# and 26.3. Together with the 19 src/main/java files in IDENTICAL_ALL_4, this
+# covers all 52 src/main/java files that are identical across 26.x (of 60; the
 # remaining files are the two javadoc-only entry points and the per-version
 # compat classes under compat/v26_*).
 IDENTICAL_26_X=(
