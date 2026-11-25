@@ -1,55 +1,944 @@
-name: Hide broken B1 1.3.0 file (one-off)
+name: Build
 
 on:
+  push:
+    branches: [main]
+    # A version tag (v1.0.0) also publishes a GitHub Release with the four jars.
+    tags: ['v*']
+  pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# identical-files ─────────────────────────────────┐
+# build ──┬── server-test ──┬── release-check ── release (tags only)
+#         ├── migration ────┤
+#         └── compat-test ──┘
 jobs:
-  hide:
+  identical-files:
+    # Verifies that source/test/template files expected to remain byte-identical across
+    # Minecraft versions have not drifted out of sync (docs/FEATURE_SPEC_1.1.0.md §3.2 (a)).
+    name: Check identical files across versions
     runs-on: ubuntu-latest
-    env:
-      MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
-      CURSEFORGE_TOKEN: ${{ secrets.CURSEFORGE_TOKEN }}
-      MODRINTH_PROJECT_ID: A4mCJN2v
-      CURSEFORGE_PROJECT_ID: "1822783"
-      TARGET_FILE: itemmilestonelog-neoforge-1.21.5-1.21.8-1.3.0.jar
+    timeout-minutes: 5
     steps:
-      - name: Delete the B1 version on Modrinth
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Check identical files
+        run: .github/scripts/check-identical-files.sh
+
+  build:
+    # Compiles and unit-tests every Minecraft version against both NeoForge versions.
+    # "min" is the NeoForge version the release jar is compiled against (and the lowest
+    # version the mod declares support for); "latest" is the newest NeoForge build listed
+    # in gradle.properties (neo_version_latest). The "min" job uploads the release jar,
+    # which server-test then runs on a production server of both NeoForge versions.
+    #
+    # setup-gradle keys its cache on the workflow name, this job's id and its matrix:
+    # renaming either or changing the matrix makes every job miss its Gradle cache once.
+    name: Build MC ${{ matrix.mc }} / NeoForge ${{ matrix.neo }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # Whether this job writes its Minecraft version's NeoForm cache entry (see "Restore
+      # the NeoForm cache"): the "latest" job does, on pushes to main.
+      SAVES_NEOFORM_CACHE: ${{ matrix.neo == 'latest' && github.ref == 'refs/heads/main' }}
+    strategy: &versions
+      fail-fast: false
+      matrix:
+        mc: ['1.21.1', '26.1.2', '26.2', '26.3']
+        neo: [min, latest]
+        include:
+          # bot (used by server-test): a vanilla-protocol client (mineflayer) joins the
+          # server. mineflayer supports 1.21.1 and 26.1.x, not 26.2/26.3 yet; those get
+          # RCON checks only.
+          - mc: '1.21.1'
+            java: '21'
+            bot: true
+          - mc: '26.1.2'
+            java: '25'
+            bot: true
+          - mc: '26.2'
+            java: '25'
+            bot: false
+          - mc: '26.3'
+            java: '25'
+            bot: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup JDK ${{ matrix.java }}
+        uses: actions/setup-java@v5
+        with:
+          java-version: ${{ matrix.java }}
+          distribution: 'temurin'
+
+      # The builds run through the Gradle wrapper, so gradle/wrapper/gradle-wrapper.properties
+      # is the one place the Gradle version is set.
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          # Only pushes to main write the Gradle cache; pull requests and tags only read it.
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+          # Has a cache entry of its own (see below). setup-gradle deletes this directory
+          # right after restoring its own entry and before saving it.
+          gradle-home-cache-excludes: caches/neoformruntime
+
+      # ModDevGradle runs NeoForm Runtime, which keeps Minecraft (downloaded and patched
+      # with NeoForge) and the game assets in ~/.gradle/caches/neoformruntime: 0.7-1 GB per
+      # Minecraft version, most of the Gradle cache. In setup-gradle's entry it would be
+      # saved again on every push to main, once per job, and a job without an entry of its
+      # own restores another Minecraft version's, whose content then piles up in its own.
+      # Instead, each Minecraft version has one entry, keyed on the files that set the
+      # versions it depends on (Minecraft, NeoForge, Parchment, ModDevGradle), so it is
+      # written only when they change. Both jobs of a Minecraft version read it; the
+      # "latest" job writes it, because it builds against both NeoForge versions.
+      # Restored after setup-gradle, which deletes the directory (see above).
+      - name: Restore the NeoForm cache
+        id: neoform
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.gradle/caches/neoformruntime
+          key: neoform-v1-${{ runner.os }}-${{ matrix.mc }}-${{ hashFiles(format('versions/{0}/gradle.properties', matrix.mc), format('versions/{0}/*.gradle', matrix.mc)) }}
+          # On a version change: the previous entry of this Minecraft version, so that only
+          # the steps for the new version run. Its other results are deleted before saving.
+          restore-keys: neoform-v1-${{ runner.os }}-${{ matrix.mc }}-
+
+      - name: Select NeoForge version
+        id: neo
+        run: .github/scripts/neoforge-version.sh ${{ matrix.mc }} ${{ matrix.neo }}
+
+      # For "Delete the NeoForm results that the build did not use" below.
+      - name: Mark the start of the build
+        run: touch "$RUNNER_TEMP/build-start"
+
+      - name: Build and run unit tests
+        run: ./gradlew -p versions/${{ matrix.mc }} build -Pneo_version=${{ steps.neo.outputs.version }} --console=plain
+
+      - name: Run GameTests
+        run: ./gradlew -p versions/${{ matrix.mc }} runGameTestServer -Pneo_version=${{ steps.neo.outputs.version }} --console=plain
+
+      - name: Build the release jar against the minimum NeoForge
+        if: matrix.neo == 'latest'
+        run: ./gradlew -p versions/${{ matrix.mc }} jar -Pneo_version=${{ steps.neo.outputs.min }} --console=plain
+
+      - name: Check the jar contents
+        run: .github/scripts/verify-jar.sh ${{ matrix.mc }}
+
+      # Only when there is no entry for this key yet (after a version change), and only
+      # after a successful build, so a failed build saves nothing.
+      - name: Delete the NeoForm results that the build did not use
+        if: env.SAVES_NEOFORM_CACHE == 'true' && steps.neoform.outputs.cache-hit != 'true'
+        run: .github/scripts/prune-neoform-cache.sh "$RUNNER_TEMP/build-start"
+
+      - name: Save the NeoForm cache
+        if: env.SAVES_NEOFORM_CACHE == 'true' && steps.neoform.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ~/.gradle/caches/neoformruntime
+          key: ${{ steps.neoform.outputs.cache-primary-key }}
+
+      - name: Upload release jar
+        if: matrix.neo == 'min'
+        uses: actions/upload-artifact@v6
+        with:
+          name: itemmilestonelog-${{ matrix.mc }}
+          path: versions/${{ matrix.mc }}/build/libs/*.jar
+          if-no-files-found: error
+
+      - name: Upload unit test reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: unit-test-reports-${{ matrix.mc }}-${{ matrix.neo }}
+          path: versions/${{ matrix.mc }}/build/reports/tests/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  merge-26x:
+    # N251 (docs/DESIGN_1.3.0.md section 3.3): assembles the single 26.x release jar
+    # from the three per-version release jars and verifies it (variant packages,
+    # mods.toml ranges, and the bytecode check that common classes reference no
+    # version-specific APIs). The per-version jars remain what server-test runs;
+    # the merged jar gets its own server verification in a later stage.
+    name: Merge 26.x single jar
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup JDK 25
+        uses: actions/setup-java@v5
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+
+      - name: Download the 26.1.2 release jar
+        uses: actions/download-artifact@v7
+        with:
+          name: itemmilestonelog-26.1.2
+          path: jars/26.1.2
+
+      - name: Download the 26.2 release jar
+        uses: actions/download-artifact@v7
+        with:
+          name: itemmilestonelog-26.2
+          path: jars/26.2
+
+      - name: Download the 26.3 release jar
+        uses: actions/download-artifact@v7
+        with:
+          name: itemmilestonelog-26.3
+          path: jars/26.3
+
+      - name: Merge the 26.x jars
         run: |
-          set -euo pipefail
-          vid=$(curl -sS "https://api.modrinth.com/v2/project/$MODRINTH_PROJECT_ID/version" \
-            -H "Authorization: $MODRINTH_TOKEN" \
-            | jq -r --arg f "$TARGET_FILE" '.[] | select(.files[].filename == $f) | .id' | head -1)
-          echo "Modrinth version id for $TARGET_FILE: ${vid:-NOT FOUND}"
-          if [ -n "${vid:-}" ]; then
-            code=$(curl -sS -o /dev/null -w "%{http_code}" -X DELETE \
-              "https://api.modrinth.com/v2/version/$vid" \
-              -H "Authorization: $MODRINTH_TOKEN")
-            echo "DELETE /v2/version/$vid -> HTTP $code"
-            [ "$code" = "204" ] || { echo "::error::Modrinth delete failed"; exit 1; }
-          fi
-          echo "Remaining 1.3.0 versions on Modrinth:"
-          curl -sS "https://api.modrinth.com/v2/project/$MODRINTH_PROJECT_ID/version" \
-            -H "Authorization: $MODRINTH_TOKEN" \
-            | jq -r '.[] | select(.version_number == "1.3.0") | .id + " " + (.files[0].filename // "")'
-      - name: Delete the B1 file on CurseForge
+          mod_version="$(grep -E '^mod_version=' versions/26.1.2/gradle.properties | cut -d= -f2-)"
+          tools/merge-26x-jar.sh jars/26.1.2/*.jar jars/26.2/*.jar jars/26.3/*.jar "dist/itemmilestonelog-neoforge-26.x-$mod_version.jar"
+
+      - name: Verify the merged jar
+        run: .github/scripts/verify-merged-jar.sh dist/*.jar
+
+      - name: Upload merged jar
+        uses: actions/upload-artifact@v6
+        with:
+          name: itemmilestonelog-26.x
+          path: dist/*.jar
+          if-no-files-found: error
+
+  merged-server-test:
+    # N251 (docs/DESIGN_1.3.0.md section 3.1): runs the merged single 26.x jar on
+    # production servers of every 26.x version. This is the check that actually
+    # proves the single jar works cross-version: the server log checks in
+    # server-lib.sh fail on linkage errors (NoClassDefFoundError and friends)
+    # involving the mod, and use_server picks the config file name per version,
+    # so the 26.3 run also proves the LOCAL config compat dispatch.
+    name: Merged jar on Server MC ${{ matrix.mc }} / NeoForge ${{ matrix.neo }}
+    needs: merge-26x
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        mc: ['26.1.2', '26.2', '26.3']
+        neo: [min, latest]
+        include:
+          - mc: '26.1.2'
+            bot: true
+          - mc: '26.2'
+            bot: false
+          - mc: '26.3'
+            bot: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup JDK 25
+        uses: actions/setup-java@v5
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: .github/integration/package-lock.json
+
+      - name: Select NeoForge version
+        id: neo
+        run: .github/scripts/neoforge-version.sh ${{ matrix.mc }} ${{ matrix.neo }}
+
+      - name: Download the merged 26.x jar
+        uses: actions/download-artifact@v7
+        with:
+          name: itemmilestonelog-26.x
+          path: dist-merged
+
+      - name: Restore the NeoForge server
+        uses: actions/cache@v5
+        with:
+          path: build/server/${{ matrix.mc }}-${{ steps.neo.outputs.version }}/libraries
+          key: neoforge-server-v1-${{ runner.os }}-${{ matrix.mc }}-${{ steps.neo.outputs.version }}
+
+      - name: Install integration test client
+        run: npm ci --prefix .github/integration --no-audit --no-fund
+
+      - name: Run the merged jar on a NeoForge dedicated server
+        run: .github/scripts/run-server-tests.sh ${{ matrix.mc }} ${{ steps.neo.outputs.version }} ${{ matrix.bot }} dist-merged/itemmilestonelog-neoforge-26.x-*.jar
+
+      - name: Upload server logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: test-logs-merged-${{ matrix.mc }}-${{ matrix.neo }}
+          path: |
+            build/server-logs/
+            build/server/*/logs/
+            build/server/*/config/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  build-121x-profiles:
+    # N252 (docs/VERSION_MATRIX.md, docs/DESIGN_1.3.0.md section 3): the per-profile
+    # 1.21.x jars the merged 1.21.x release jars are assembled from. Each entry builds
+    # one compat profile against its minimum NeoForge from a generated verify project
+    # (tools/build-121x-profile-jar.sh); merge-121x combines them into Jar A, B1, B2
+    # and C. The whole 1.21.x line is Java 21.
+    name: Profile jar MC ${{ matrix.mc }} (${{ matrix.profile }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mc: '1.21'
+            profile: v121_1
+            neo: '21.0.143'
+          - mc: '1.21.2'
+            profile: v121_2
+            neo: '21.2.0-beta'
+          - mc: '1.21.4'
+            profile: v121_4
+            neo: '21.4.121'
+          - mc: '1.21.5'
+            profile: v121_5
+            neo: '21.5.74'
+          - mc: '1.21.6'
+            profile: v121_6
+            neo: '21.6.0-beta'
+          - mc: '1.21.8'
+            profile: v121_8
+            neo: '21.8.9'
+          - mc: '1.21.9'
+            profile: v121_9
+            neo: '21.9.0-beta'
+          - mc: '1.21.11'
+            profile: v121_11
+            neo: '21.11.42'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup JDK 21
+        uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          # Only pushes to main write the Gradle cache; pull requests and tags only read it.
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+          # Has a cache entry of its own (see below). setup-gradle deletes this directory
+          # right after restoring its own entry and before saving it.
+          gradle-home-cache-excludes: caches/neoformruntime
+
+      # Unlike the build job (two jobs per MC version, so a restore-only step plus a
+      # managed save), each MC version here has exactly one profile job, so a plain
+      # cache step is safe. The key hashes the files that determine the generated
+      # project's versions.
+      - name: Cache NeoForm runtime
+        uses: actions/cache@v5
+        with:
+          path: ~/.gradle/caches/neoformruntime
+          key: neoform-v1-${{ runner.os }}-${{ matrix.mc }}-profile-${{ hashFiles('versions/1.21.1/gradle.properties', 'tools/new-version-project.sh', 'tools/prepare-121x-harness.sh') }}
+          restore-keys: neoform-v1-${{ runner.os }}-${{ matrix.mc }}-profile-
+
+      - name: Build the ${{ matrix.profile }} profile jar
+        run: tools/build-121x-profile-jar.sh ${{ matrix.mc }} ${{ matrix.profile }} ${{ matrix.neo }} profile-jars/p-${{ matrix.profile }}.jar
+
+      - name: Upload profile jar
+        uses: actions/upload-artifact@v6
+        with:
+          name: iml-profile-${{ matrix.profile }}
+          path: profile-jars/p-${{ matrix.profile }}.jar
+          if-no-files-found: error
+
+  merge-121x:
+    # N252 (docs/VERSION_MATRIX.md): assembles the four 1.21.x release jars from the
+    # profile jars and verifies each (contents, mods.toml minecraft range, duplicate
+    # entries, bytecode isolation):
+    #   A  [1.21, 1.21.4]      v121_1 base + v121_2 + v121_4 overlays
+    #   B1 [1.21.5, 1.21.8]    v121_5 base + v121_6 + v121_8 overlays
+    #   B2 [1.21.9, 1.21.10]   v121_9 profile jar, range rewritten
+    #   C  [1.21.11]           v121_11 profile jar, range rewritten
+    # (merge-121x-jar.sh with no overlay arguments only rewrites the range.)
+    # Like the merged 26.x jar, these artifacts must not land in the release dist
+    # until the stage-3 publish rework; the release jobs download artifacts by
+    # explicit name, so nothing changes there.
+    name: Merge 1.21.x jars
+    needs: build-121x-profiles
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      # JDK 21: verify-121x-jar.sh uses javap for the bytecode isolation check.
+      - name: Setup JDK 21
+        uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Download the v121_1 profile jar
+        uses: actions/download-artifact@v7
+        with:
+          name: iml-profile-v121_1
+          path: profile-jars
+
+      - name: Download the v121_2 profile jar
+        uses: actions/download-artifact@v7
+        with:
+          name: iml-profile-v121_2
+          path: profile-jars
+
+      - name: Download the v121_4 profile jar
+        uses: actions/download-artifact@v7
+        with:
+          name: iml-profile-v121_4
+          path: profile-jars
+
+      - name: Download the v121_5 profile jar
+        uses: actions/download-artifact@v7
+        with:
+          name: iml-profile-v121_5
+          path: profile-jars
+
+      - name: Download the v121_6 profile jar
+        uses: actions/download-artifact@v7
+        with:
+          name: iml-profile-v121_6
+          path: profile-jars
+
+      - name: Download the v121_8 profile jar
+        uses: actions/download-artifact@v7
+        with:
+          name: iml-profile-v121_8
+          path: profile-jars
+
+      - name: Download the v121_9 profile jar
+        uses: actions/download-artifact@v7
+        with:
+          name: iml-profile-v121_9
+          path: profile-jars
+
+      - name: Download the v121_11 profile jar
+        uses: actions/download-artifact@v7
+        with:
+          name: iml-profile-v121_11
+          path: profile-jars
+
+      - name: Merge the 1.21.x jars
         run: |
-          set -uo pipefail
-          fid=$(curl -sS "https://minecraft.curseforge.com/api/projects/$CURSEFORGE_PROJECT_ID/files" \
-            -H "X-Api-Token: $CURSEFORGE_TOKEN" \
-            | jq -r --arg f "$TARGET_FILE" '.[] | select((.name // .displayName // "") == $f) | .id' | head -1)
-          echo "CurseForge file id for $TARGET_FILE: ${fid:-NOT FOUND}"
-          if [ -z "${fid:-}" ]; then echo "::warning::file not listed; nothing to delete"; exit 0; fi
-          code=$(curl -sS -o /tmp/cf_del_body -w "%{http_code}" -X DELETE \
-            "https://api.curseforge.com/v1/mods/$CURSEFORGE_PROJECT_ID/files/$fid" \
-            -H "x-api-key: $CURSEFORGE_TOKEN" -H "Accept: application/json")
-          echo "Core API DELETE file $fid -> HTTP $code"; cat /tmp/cf_del_body; echo
-          if [ "$code" != "200" ] && [ "$code" != "204" ]; then
-            code2=$(curl -sS -o /tmp/cf_del_body2 -w "%{http_code}" -X DELETE \
-              "https://minecraft.curseforge.com/api/projects/$CURSEFORGE_PROJECT_ID/files/$fid" \
-              -H "X-Api-Token: $CURSEFORGE_TOKEN")
-            echo "Legacy API DELETE file $fid -> HTTP $code2"; cat /tmp/cf_del_body2; echo
-          fi
-          echo "Files still listed for the project (1.3.0 only):"
-          curl -sS "https://minecraft.curseforge.com/api/projects/$CURSEFORGE_PROJECT_ID/files" \
-            -H "X-Api-Token: $CURSEFORGE_TOKEN" \
-            | jq -r '.[] | select((.name // "") | contains("1.3.0")) | (.id | tostring) + " " + (.name // "")'
+          mod_version="$(grep -E '^mod_version=' versions/1.21.1/gradle.properties | cut -d= -f2-)"
+          tools/merge-121x-jar.sh profile-jars/p-v121_1.jar "[1.21,1.21.4]" "dist-121x/itemmilestonelog-neoforge-1.21-1.21.4-$mod_version.jar" profile-jars/p-v121_2.jar:v121_2 profile-jars/p-v121_4.jar:v121_4
+          tools/merge-121x-jar.sh profile-jars/p-v121_5.jar "[1.21.5,1.21.8]" "dist-121x/itemmilestonelog-neoforge-1.21.5-1.21.8-$mod_version.jar" profile-jars/p-v121_6.jar:v121_6 profile-jars/p-v121_8.jar:v121_8
+          tools/merge-121x-jar.sh profile-jars/p-v121_9.jar "[1.21.9,1.21.10]" "dist-121x/itemmilestonelog-neoforge-1.21.9-1.21.10-$mod_version.jar"
+          tools/merge-121x-jar.sh profile-jars/p-v121_11.jar "[1.21.11,1.21.11]" "dist-121x/itemmilestonelog-neoforge-1.21.11-$mod_version.jar"
+
+      - name: Verify the 1.21.x jars
+        run: |
+          .github/scripts/verify-121x-jar.sh dist-121x/itemmilestonelog-neoforge-1.21-1.21.4-*.jar A
+          .github/scripts/verify-121x-jar.sh dist-121x/itemmilestonelog-neoforge-1.21.5-1.21.8-*.jar B1
+          .github/scripts/verify-121x-jar.sh dist-121x/itemmilestonelog-neoforge-1.21.9-1.21.10-*.jar B2
+          .github/scripts/verify-121x-jar.sh dist-121x/itemmilestonelog-neoforge-1.21.11-*.jar C
+
+      - name: Upload 1.21.x Jar A
+        uses: actions/upload-artifact@v6
+        with:
+          name: itemmilestonelog-1.21-a
+          path: dist-121x/itemmilestonelog-neoforge-1.21-1.21.4-*.jar
+          if-no-files-found: error
+
+      - name: Upload 1.21.x Jar B1
+        uses: actions/upload-artifact@v6
+        with:
+          name: itemmilestonelog-1.21-b1
+          path: dist-121x/itemmilestonelog-neoforge-1.21.5-1.21.8-*.jar
+          if-no-files-found: error
+
+      - name: Upload 1.21.x Jar B2
+        uses: actions/upload-artifact@v6
+        with:
+          name: itemmilestonelog-1.21-b2
+          path: dist-121x/itemmilestonelog-neoforge-1.21.9-1.21.10-*.jar
+          if-no-files-found: error
+
+      - name: Upload 1.21.x Jar C
+        uses: actions/upload-artifact@v6
+        with:
+          name: itemmilestonelog-1.21-c
+          path: dist-121x/itemmilestonelog-neoforge-1.21.11-*.jar
+          if-no-files-found: error
+
+  merged-server-test-121x:
+    # N252 (docs/VERSION_MATRIX.md): runs each merged 1.21.x jar on production servers
+    # of the boundary versions of its range, proving the jar actually runs there (the
+    # server log checks in server-lib.sh fail on linkage errors involving the mod).
+    # The interior versions are covered by the per-version unit-test harness (stage 2b).
+    # The NeoForge versions are pinned in the matrix (the profile-build minimums):
+    # neoforge-version.sh reads versions/<mc>/gradle.properties, which exists only for
+    # real projects.
+    name: Merged 1.21.x jar on Server MC ${{ matrix.mc }}
+    needs: merge-121x
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mc: '1.21.1'
+            neo: '21.1.1'
+            artifact: itemmilestonelog-1.21-a
+            jar: itemmilestonelog-neoforge-1.21-1.21.4-*.jar
+            bot: false
+          - mc: '1.21.4'
+            neo: '21.4.121'
+            artifact: itemmilestonelog-1.21-a
+            jar: itemmilestonelog-neoforge-1.21-1.21.4-*.jar
+            bot: false
+          - mc: '1.21.5'
+            neo: '21.5.74'
+            artifact: itemmilestonelog-1.21-b1
+            jar: itemmilestonelog-neoforge-1.21.5-1.21.8-*.jar
+            bot: false
+          - mc: '1.21.8'
+            neo: '21.8.9'
+            artifact: itemmilestonelog-1.21-b1
+            jar: itemmilestonelog-neoforge-1.21.5-1.21.8-*.jar
+            bot: false
+          - mc: '1.21.9'
+            neo: '21.9.0-beta'
+            artifact: itemmilestonelog-1.21-b2
+            jar: itemmilestonelog-neoforge-1.21.9-1.21.10-*.jar
+            bot: false
+          - mc: '1.21.10'
+            neo: '21.10.63'
+            artifact: itemmilestonelog-1.21-b2
+            jar: itemmilestonelog-neoforge-1.21.9-1.21.10-*.jar
+            bot: false
+          - mc: '1.21.11'
+            neo: '21.11.42'
+            artifact: itemmilestonelog-1.21-c
+            jar: itemmilestonelog-neoforge-1.21.11-*.jar
+            bot: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup JDK 21
+        uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: .github/integration/package-lock.json
+
+      - name: Download the merged 1.21.x jar
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist-merged-121x
+
+      - name: Restore the NeoForge server
+        uses: actions/cache@v5
+        with:
+          path: build/server/${{ matrix.mc }}-${{ matrix.neo }}/libraries
+          key: neoforge-server-v1-${{ runner.os }}-${{ matrix.mc }}-${{ matrix.neo }}
+
+      - name: Install integration test client
+        run: npm ci --prefix .github/integration --no-audit --no-fund
+
+      - name: Run the merged jar on a NeoForge dedicated server
+        run: .github/scripts/run-server-tests.sh ${{ matrix.mc }} ${{ matrix.neo }} false dist-merged-121x/${{ matrix.jar }}
+
+      - name: Upload server logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: test-logs-merged-121x-${{ matrix.mc }}
+          path: |
+            build/server-logs/
+            build/server/*/logs/
+            build/server/*/config/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  server-test:
+    # Runs the release jar (compiled against the minimum NeoForge, from the "min" build
+    # job) on a production NeoForge dedicated server of this job's NeoForge version.
+    # !cancelled(): a failed build of one version does not hold back the other versions.
+    name: Server MC ${{ matrix.mc }} / NeoForge ${{ matrix.neo }}
+    needs: build
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy: *versions
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup JDK ${{ matrix.java }}
+        uses: actions/setup-java@v5
+        with:
+          java-version: ${{ matrix.java }}
+          distribution: 'temurin'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: .github/integration/package-lock.json
+
+      - name: Select NeoForge version
+        id: neo
+        run: .github/scripts/neoforge-version.sh ${{ matrix.mc }} ${{ matrix.neo }}
+
+      - name: Download the release jar
+        uses: actions/download-artifact@v7
+        with:
+          name: itemmilestonelog-${{ matrix.mc }}
+          path: versions/${{ matrix.mc }}/build/libs
+
+      # The NeoForge installer downloads Minecraft and the libraries and patches the
+      # server; install_server (server-lib.sh) skips it when libraries/ already has this
+      # NeoForge version. The migration job uses the same cache entries.
+      - name: Restore the NeoForge server
+        uses: actions/cache@v5
+        with:
+          path: build/server/${{ matrix.mc }}-${{ steps.neo.outputs.version }}/libraries
+          key: neoforge-server-v1-${{ runner.os }}-${{ matrix.mc }}-${{ steps.neo.outputs.version }}
+
+      - name: Install integration test client
+        run: npm ci --prefix .github/integration --no-audit --no-fund
+
+      - name: Run the release jar on a NeoForge dedicated server
+        run: .github/scripts/run-server-tests.sh ${{ matrix.mc }} ${{ steps.neo.outputs.version }} ${{ matrix.bot }}
+
+      - name: Upload server logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: test-logs-${{ matrix.mc }}-${{ matrix.neo }}
+          path: |
+            build/server-logs/
+            build/server/*/logs/
+            build/server/*/config/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  migration:
+    # A 1.21.1 world, with records made by the 1.21.1 jar, opened by the 26.1.2 jar
+    # on a 26.1.2 server: the records must come over (issue #13). mineflayer joins
+    # both servers; it does not support 26.2/26.3, which share the 26.1.2 code.
+    # It only needs the jars, so it runs next to server-test.
+    name: 1.21.1 world opened on 26.1.2
+    needs: build
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup JDK 21 and 25
+        uses: actions/setup-java@v5
+        with:
+          java-version: |
+            21
+            25
+          distribution: 'temurin'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: .github/integration/package-lock.json
+
+      - name: Select NeoForge versions
+        id: neo
+        run: |
+          latest() { grep -E '^neo_version_latest=' "versions/$1/gradle.properties" | cut -d= -f2-; }
+          old="$(latest 1.21.1)"
+          new="$(latest 26.1.2)"
+          echo "NeoForge $old (1.21.1) and $new (26.1.2)"
+          echo "old=$old" >> "$GITHUB_OUTPUT"
+          echo "new=$new" >> "$GITHUB_OUTPUT"
+
+      - name: Download the 1.21.1 release jar
+        uses: actions/download-artifact@v7
+        with:
+          name: itemmilestonelog-1.21.1
+          path: versions/1.21.1/build/libs
+
+      - name: Download the 26.1.2 release jar
+        uses: actions/download-artifact@v7
+        with:
+          name: itemmilestonelog-26.1.2
+          path: versions/26.1.2/build/libs
+
+      - name: Restore the NeoForge 1.21.1 server
+        uses: actions/cache@v5
+        with:
+          path: build/server/1.21.1-${{ steps.neo.outputs.old }}/libraries
+          key: neoforge-server-v1-${{ runner.os }}-1.21.1-${{ steps.neo.outputs.old }}
+
+      - name: Restore the NeoForge 26.1.2 server
+        uses: actions/cache@v5
+        with:
+          path: build/server/26.1.2-${{ steps.neo.outputs.new }}/libraries
+          key: neoforge-server-v1-${{ runner.os }}-26.1.2-${{ steps.neo.outputs.new }}
+
+      - name: Install integration test client
+        run: npm ci --prefix .github/integration --no-audit --no-fund
+
+      - name: Open a 1.21.1 world on a 26.1.2 server
+        run: .github/scripts/run-migration-test.sh ${{ steps.neo.outputs.old }} ${{ steps.neo.outputs.new }}
+
+      - name: Upload server logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: test-logs-migration
+          path: |
+            build/server-logs/
+            build/server/*/logs/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  compat-test:
+    # Verifies network compatibility between the current development version and the
+    # released 1.0.1 mod jar using a real Minecraft client on Xvfb (Mesa llvmpipe) and
+    # a production NeoForge dedicated server (docs/FEATURE_SPEC_1.1.0.md §3.1).
+    # Runs in parallel with server-test and migration, sharing the NeoForm and NeoForge
+    # server caches. Starts with 1.21.1 and 26.1.2 (26.2/26.3 will follow after client
+    # launch verification).
+    name: Client/Server Compat MC ${{ matrix.mc }}
+    needs: build
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Final 1.0.1 code commit (PR #49; no v1.0.1 tag/release exists yet).
+      # Note: spec §3.1 cited 12763d2 (PR #24), which predates PR #27 (quantity targets)
+      # and has an older SyncMilestonesPayload wire format; 4c16aa2 is the released 1.0.1 code.
+      BASELINE_1_0_1_REF: '4c16aa24429350a936f876b13a064e03ffbde012'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mc: '1.21.1'
+            java: '21'
+          - mc: '26.1.2'
+            java: '25'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Checkout 1.0.1 baseline commit
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ env.BASELINE_1_0_1_REF }}
+          path: build/baseline-1.0.1
+
+      - name: Setup JDK ${{ matrix.java }}
+        uses: actions/setup-java@v5
+        with:
+          java-version: ${{ matrix.java }}
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: true
+          gradle-home-cache-excludes: caches/neoformruntime
+
+      - name: Restore the NeoForm cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.gradle/caches/neoformruntime
+          key: neoform-v1-${{ runner.os }}-${{ matrix.mc }}-${{ hashFiles(format('versions/{0}/gradle.properties', matrix.mc), format('versions/{0}/*.gradle', matrix.mc)) }}
+          restore-keys: neoform-v1-${{ runner.os }}-${{ matrix.mc }}-
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: .github/integration/package-lock.json
+
+      - name: Select NeoForge version
+        id: neo
+        run: .github/scripts/neoforge-version.sh ${{ matrix.mc }} min
+
+      - name: Download the development release jar
+        uses: actions/download-artifact@v7
+        with:
+          name: itemmilestonelog-${{ matrix.mc }}
+          path: versions/${{ matrix.mc }}/build/libs
+
+      - name: Restore the NeoForge server
+        uses: actions/cache@v5
+        with:
+          path: build/server/${{ matrix.mc }}-${{ steps.neo.outputs.version }}/libraries
+          key: neoforge-server-v1-${{ runner.os }}-${{ matrix.mc }}-${{ steps.neo.outputs.version }}
+
+      - name: Install Xvfb, xdotool and software OpenGL packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb xdotool libgl1-mesa-dri libglx-mesa0 libgl1 libglu1-mesa libopenal1
+
+      - name: Install integration test client (for RCON /stop)
+        run: npm ci --prefix .github/integration --no-audit --no-fund
+
+      - name: Create development client launch script
+        run: ./gradlew -p versions/${{ matrix.mc }} createClientLaunchScript -Pneo_version=${{ steps.neo.outputs.version }} --console=plain
+
+      - name: Build 1.0.1 jar and client launch script
+        run: ./build/baseline-1.0.1/gradlew -p build/baseline-1.0.1/versions/${{ matrix.mc }} jar createClientLaunchScript -Pneo_version=${{ steps.neo.outputs.version }} --console=plain
+
+      - name: Run client/server version compatibility scenarios
+        run: .github/scripts/run-compat-test.sh ${{ matrix.mc }} ${{ steps.neo.outputs.version }} build/baseline-1.0.1
+
+      - name: Upload compatibility test logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: compat-logs-${{ matrix.mc }}
+          path: |
+            build/compat-logs/
+            build/server/*/logs/
+            versions/${{ matrix.mc }}/run/logs/
+            build/baseline-1.0.1/versions/${{ matrix.mc }}/run/logs/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  release-check:
+    # Runs on every build, so a broken release is found before the tag is pushed.
+    name: Check the release files
+    needs: [identical-files, build, merge-26x, merged-server-test, merge-121x, merged-server-test-121x, server-test, migration, compat-test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      # The release composition is the five merged jars listed in
+      # publish-manifest.json (docs/DESIGN_1.3.0.md section 6); explicit
+      # artifact names keep anything else out of dist.
+      - name: Download the 26.x merged jar
+        uses: actions/download-artifact@v7
+        with:
+          name: itemmilestonelog-26.x
+          path: dist
+
+      - name: Download the 1.21.x jar A
+        uses: actions/download-artifact@v7
+        with:
+          name: itemmilestonelog-1.21-a
+          path: dist
+
+      - name: Download the 1.21.x jar B1
+        uses: actions/download-artifact@v7
+        with:
+          name: itemmilestonelog-1.21-b1
+          path: dist
+
+      - name: Download the 1.21.x jar B2
+        uses: actions/download-artifact@v7
+        with:
+          name: itemmilestonelog-1.21-b2
+          path: dist
+
+      - name: Download the 1.21.x jar C
+        uses: actions/download-artifact@v7
+        with:
+          name: itemmilestonelog-1.21-c
+          path: dist
+
+      - name: Check the jars and write the release notes
+        run: .github/scripts/check-release.sh dist "${{ github.ref_type == 'tag' && github.ref_name || '' }}" build/release-notes.md
+
+  release:
+    name: Publish the GitHub Release
+    needs: release-check
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      # The release composition is the five merged jars listed in
+      # publish-manifest.json (docs/DESIGN_1.3.0.md section 6); explicit
+      # artifact names keep anything else out of dist.
+      - name: Download the 26.x merged jar
+        uses: actions/download-artifact@v7
+        with:
+          name: itemmilestonelog-26.x
+          path: dist
+
+      - name: Download the 1.21.x jar A
+        uses: actions/download-artifact@v7
+        with:
+          name: itemmilestonelog-1.21-a
+          path: dist
+
+      - name: Download the 1.21.x jar B1
+        uses: actions/download-artifact@v7
+        with:
+          name: itemmilestonelog-1.21-b1
+          path: dist
+
+      - name: Download the 1.21.x jar B2
+        uses: actions/download-artifact@v7
+        with:
+          name: itemmilestonelog-1.21-b2
+          path: dist
+
+      - name: Download the 1.21.x jar C
+        uses: actions/download-artifact@v7
+        with:
+          name: itemmilestonelog-1.21-c
+          path: dist
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          .github/scripts/check-release.sh dist "$TAG" build/release-notes.md
+          gh release create "$TAG" dist/*.jar dist/publish-manifest.json --verify-tag \
+            --title "Item Milestone Log ${TAG#v}" --notes-file build/release-notes.md
