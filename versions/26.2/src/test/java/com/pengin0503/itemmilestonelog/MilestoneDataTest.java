@@ -1048,4 +1048,126 @@ class MilestoneDataTest {
         assertEquals(1795800000000L, migrated.lastDigestEpochMillis());
         assertEquals("Alice", migrated.playerOrNull(PLAYER_A).lastKnownName);
     }
+
+    private static CompoundTag encodeRoot(MilestoneData data) {
+        return (CompoundTag) MilestoneData.CODEC.encodeStart(NbtOps.INSTANCE, data).getOrThrow();
+    }
+
+    @Test
+    void writesSchemaVersionOneForNewDataAndRoundTrips() {
+        MilestoneData original = new MilestoneData();
+        original.player(PLAYER_A).targets.add(TargetKey.of("minecraft:diamond"));
+
+        CompoundTag saved = encodeRoot(original);
+        assertEquals(SchemaVersionLogic.CURRENT_SCHEMA_VERSION, saved.getIntOr("schemaVersion", -1));
+
+        MilestoneData loaded = MilestoneData.CODEC.parse(NbtOps.INSTANCE, saved).getOrThrow();
+        assertEquals(SchemaVersionLogic.CURRENT_SCHEMA_VERSION, loaded.retainedSchemaVersion());
+        assertEquals(SchemaVersionLogic.CURRENT_SCHEMA_VERSION, loaded.schemaVersionForSave());
+
+        CompoundTag resaved = encodeRoot(loaded);
+        assertEquals(SchemaVersionLogic.CURRENT_SCHEMA_VERSION, resaved.getIntOr("schemaVersion", -1));
+    }
+
+    @Test
+    void legacyFixtureWithoutSchemaVersionLoadsAndSavesBackWithOneAndBodyUnchanged() {
+        MilestoneData original = new MilestoneData();
+        MilestoneData.PlayerData pd = original.player(PLAYER_A);
+        pd.targets.add(TargetKey.of("minecraft:diamond", 100));
+        MilestoneRecord record = new MilestoneRecord(12340, 11L, 1795600000000L);
+        pd.records.put(TargetKey.of("minecraft:diamond", 100), record);
+        pd.lastKnownName = "Alice";
+        original.recordWorldFirstIfAbsent(TargetKey.of("minecraft:diamond", 100), PLAYER_A, "Alice", record);
+
+        // 1.3.1 fixture: identical body, no schemaVersion field.
+        CompoundTag legacy = encodeRoot(original);
+        legacy.remove("schemaVersion");
+        assertFalse(legacy.contains("schemaVersion"));
+
+        MilestoneData loaded = MilestoneData.CODEC.parse(NbtOps.INSTANCE, legacy).getOrThrow();
+        assertEquals(0, loaded.retainedSchemaVersion());
+        assertEquals(SchemaVersionLogic.CURRENT_SCHEMA_VERSION, loaded.schemaVersionForSave());
+
+        MilestoneData.PlayerData loadedPd = loaded.playerOrNull(PLAYER_A);
+        assertNotNull(loadedPd);
+        assertEquals(Set.of(TargetKey.of("minecraft:diamond", 100)), loadedPd.targets);
+        assertEquals(record, loadedPd.records.get(TargetKey.of("minecraft:diamond", 100)));
+        assertEquals("Alice", loadedPd.lastKnownName);
+        assertEquals(original.worldFirsts(), loaded.worldFirsts());
+
+        CompoundTag resaved = encodeRoot(loaded);
+        assertEquals(SchemaVersionLogic.CURRENT_SCHEMA_VERSION, resaved.getIntOr("schemaVersion", -1));
+        assertEquals(legacy.get("players").toString(), resaved.get("players").toString());
+    }
+
+    @Test
+    void futureSchemaVersion99IsPreservedOnSaveAndInvalidValuesAreTreatedAsZero() {
+        MilestoneData original = new MilestoneData();
+        original.player(PLAYER_A).targets.add(TargetKey.of("minecraft:diamond"));
+        CompoundTag tag = encodeRoot(original);
+
+        tag.putInt("schemaVersion", 99);
+        MilestoneData future = MilestoneData.CODEC.parse(NbtOps.INSTANCE, tag).getOrThrow();
+        assertEquals(99, future.retainedSchemaVersion());
+        assertEquals(99, future.schemaVersionForSave());
+        assertEquals(99, encodeRoot(future).getIntOr("schemaVersion", -1));
+
+        tag.putInt("schemaVersion", -3);
+        MilestoneData negative = MilestoneData.CODEC.parse(NbtOps.INSTANCE, tag).getOrThrow();
+        assertEquals(0, negative.retainedSchemaVersion());
+        assertEquals(SchemaVersionLogic.CURRENT_SCHEMA_VERSION,
+                encodeRoot(negative).getIntOr("schemaVersion", -1));
+
+        tag.putString("schemaVersion", "not-a-number");
+        MilestoneData malformed = MilestoneData.CODEC.parse(NbtOps.INSTANCE, tag).getOrThrow();
+        assertEquals(0, malformed.retainedSchemaVersion());
+        assertEquals(SchemaVersionLogic.CURRENT_SCHEMA_VERSION,
+                encodeRoot(malformed).getIntOr("schemaVersion", -1));
+        assertEquals(Set.of(TargetKey.of("minecraft:diamond")),
+                malformed.playerOrNull(PLAYER_A).targets);
+    }
+
+    @Test
+    void readLegacyPreservesSchemaVersionFromThe1211MigrationFile(@TempDir Path dir) throws IOException {
+        CompoundTag player = new CompoundTag();
+        ListTag targets = new ListTag();
+        targets.add(StringTag.valueOf("minecraft:diamond"));
+        player.put("targets", targets);
+        CompoundTag players = new CompoundTag();
+        players.put(PLAYER_A.toString(), player);
+
+        // Future value: must survive the 1.21.1 -> 26.x migration and a re-save.
+        CompoundTag data = new CompoundTag();
+        data.put("players", players.copy());
+        data.putInt("schemaVersion", 99);
+        CompoundTag root = new CompoundTag();
+        root.put("data", data);
+        root.putInt("DataVersion", 3955);
+        Path file = dir.resolve(MilestoneData.LEGACY_FILE);
+        Files.createDirectories(file.getParent());
+        NbtIo.writeCompressed(root, file);
+
+        MilestoneData migrated = MilestoneData.readLegacy(file);
+        assertNotNull(migrated);
+        assertEquals(99, migrated.retainedSchemaVersion());
+        assertEquals(99, encodeRoot(migrated).getIntOr("schemaVersion", -1));
+        assertEquals(Set.of(TargetKey.of("minecraft:diamond")),
+                migrated.playerOrNull(PLAYER_A).targets);
+
+        // Legacy file without the field: migration treats it as 0 and the next save writes 1.
+        CompoundTag legacyData = new CompoundTag();
+        legacyData.put("players", players.copy());
+        CompoundTag legacyRoot = new CompoundTag();
+        legacyRoot.put("data", legacyData);
+        legacyRoot.putInt("DataVersion", 3955);
+        Path legacyFile = dir.resolve("data/legacy-no-schema.dat");
+        Files.createDirectories(legacyFile.getParent());
+        NbtIo.writeCompressed(legacyRoot, legacyFile);
+
+        MilestoneData legacyMigrated = MilestoneData.readLegacy(legacyFile);
+        assertNotNull(legacyMigrated);
+        assertEquals(0, legacyMigrated.retainedSchemaVersion());
+        assertEquals(SchemaVersionLogic.CURRENT_SCHEMA_VERSION,
+                encodeRoot(legacyMigrated).getIntOr("schemaVersion", -1));
+    }
 }

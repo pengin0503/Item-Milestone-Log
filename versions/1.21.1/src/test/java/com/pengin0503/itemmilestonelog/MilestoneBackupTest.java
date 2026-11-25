@@ -132,6 +132,10 @@ class MilestoneBackupTest {
         CompoundTag rawRoot = NbtIo.readCompressed(backupFile, NbtAccounter.unlimitedHeap());
         assertTrue(rawRoot.contains("data"));
         assertTrue(McCompat.nbt().getInt(rawRoot, "DataVersion") > 0);
+        // F-140-1 (N88): toSavedDataFileTag uses the normal save path, so the F10 backup root
+        // automatically carries schemaVersion.
+        assertEquals(SchemaVersionLogic.CURRENT_SCHEMA_VERSION,
+                McCompat.nbt().getInt(McCompat.nbt().getCompound(rawRoot, "data"), "schemaVersion"));
 
         // Load the backup content back through MilestoneData.load (the same entry the
         // DataCompat storage adapters use) and verify the round trip.

@@ -3,6 +3,12 @@
 The section for a version is used as it is for the GitHub Release (created when a
 `v<version>` tag is pushed) and for the CurseForge file changelog.
 
+## 1.4.0
+
+### Data & Compatibility
+- **Saved-data schema version (N88)**: `MilestoneData` now has a root `schemaVersion` field (int, current value `1`, always written) in the 1.21.1 NBT, 26.x Codec, and 1.20.1 Forge editions. Data written up to 1.3.1 (no field) is read as version 0 and saved with version 1 on the next write; a value from a newer release is loaded best-effort and preserved on save instead of being downgraded. The field is not part of the JSON export/import format, and the automatic backups include it because they reuse the saved-data root tag.
+- **Downgrading from 1.4.0 to 1.3.1**: 1.3.1 ignores `schemaVersion` and drops it on the next save. Targets, records, world-firsts, and the other saved fields are unaffected.
+
 ## 1.3.1
 
 This is a bug-fix release for the 1.3.0 version-range jars, and the first release that includes the Minecraft 1.20.1 (Forge) edition. There are no gameplay changes.

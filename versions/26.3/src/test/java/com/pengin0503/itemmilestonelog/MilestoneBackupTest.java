@@ -136,6 +136,10 @@ class MilestoneBackupTest {
         CompoundTag rawRoot = NbtIo.readCompressed(backupFile, NbtAccounter.unlimitedHeap());
         assertTrue(rawRoot.contains("data"));
         assertTrue(rawRoot.getIntOr("DataVersion", 0) > 0);
+        // F-140-1 (N88): toSavedDataFileTag uses the normal codec path, so the F10 backup root
+        // automatically carries schemaVersion.
+        assertEquals(SchemaVersionLogic.CURRENT_SCHEMA_VERSION,
+                rawRoot.getCompoundOrEmpty("data").getIntOr("schemaVersion", -1));
 
         // Decode through MilestoneData.TYPE's Codec path (exact path used by SavedDataStorage.readSavedData)
         RegistryOps<Tag> ops = registries.createSerializationContext(NbtOps.INSTANCE);
