@@ -73,6 +73,8 @@ public class MilestoneData extends SavedData {
     private final Map<TargetKey, WorldFirstRecord> worldFirsts = new LinkedHashMap<>();
     /** Epoch millis of the last Discord digest (0 = never initialized/sent, F9). */
     private long lastDigestEpochMillis = 0L;
+    /** Schema version retained from the last load; 0 when the field was missing or invalid (F-140-1). */
+    private int retainedSchemaVersion = 0;
 
     public static MilestoneData get(MinecraftServer server) {
         return McCompat.data().getOrCreate(server.overworld().getDataStorage());
@@ -90,6 +92,16 @@ public class MilestoneData extends SavedData {
             this.lastDigestEpochMillis = normalized;
             setDirty();
         }
+    }
+
+    /** SchemaVersion value retained from the last load (0 when the field was missing or invalid). */
+    int retainedSchemaVersion() {
+        return retainedSchemaVersion;
+    }
+
+    /** SchemaVersion to write on save: {@code max(CURRENT_SCHEMA_VERSION, retainedSchemaVersion)}. */
+    int schemaVersionForSave() {
+        return SchemaVersionLogic.versionToSave(retainedSchemaVersion);
     }
 
     public PlayerData player(UUID uuid) {
@@ -402,6 +414,20 @@ public class MilestoneData extends SavedData {
             ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed lastDigestEpoch tag in SavedData");
         }
 
+        // F-140-1 (N88): missing = legacy data (0); future versions are preserved on save.
+        int rawSchemaVersion = SchemaVersionLogic.ABSENT_SCHEMA_VERSION;
+        if (McCompat.nbt().containsTyped(tag, "schemaVersion", NbtCompat.ANY_NUMERIC)) {
+            rawSchemaVersion = McCompat.nbt().getInt(tag, "schemaVersion");
+        } else if (McCompat.nbt().contains(tag, "schemaVersion")) {
+            rawSchemaVersion = SchemaVersionLogic.MALFORMED_SCHEMA_VERSION;
+        }
+        SchemaVersionLogic.LoadResult schemaVersion = SchemaVersionLogic.fromStoredVersion(rawSchemaVersion);
+        String schemaWarning = SchemaVersionLogic.warningMessage(rawSchemaVersion, schemaVersion);
+        if (schemaWarning != null) {
+            ItemMilestoneLog.LOGGER.warn(schemaWarning);
+        }
+        data.retainedSchemaVersion = schemaVersion.retainedVersion();
+
         return data;
     }
 
@@ -500,6 +526,9 @@ public class MilestoneData extends SavedData {
         if (lastDigestEpochMillis > 0L) {
             tag.putLong("lastDigestEpoch", lastDigestEpochMillis);
         }
+
+        // F-140-1 (N88): always written; never downgrade a value loaded from a newer release.
+        tag.putInt("schemaVersion", schemaVersionForSave());
 
         return tag;
     }

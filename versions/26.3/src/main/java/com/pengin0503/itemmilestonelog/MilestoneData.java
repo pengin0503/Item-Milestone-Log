@@ -273,13 +273,25 @@ public class MilestoneData extends SavedData {
         return pd;
     }));
 
+    /**
+     * Lenient {@code schemaVersion} decoding (F-140-1): a present but non-numeric value decodes to
+     * {@link SchemaVersionLogic#MALFORMED_SCHEMA_VERSION} so the loader can warn and treat it as 0
+     * instead of failing the whole SavedData file.
+     */
+    private static final Codec<Integer> LENIENT_SCHEMA_VERSION_CODEC =
+            Codec.INT.orElse(SchemaVersionLogic.MALFORMED_SCHEMA_VERSION);
+
     public static final Codec<MilestoneData> CODEC = RecordCodecBuilder.create(instance -> instance.group(
             Codec.unboundedMap(Codec.STRING, PLAYER_DATA_CODEC).optionalFieldOf("players", Map.of())
                     .forGetter(MilestoneData::playersByStringKey),
             Codec.unboundedMap(Codec.STRING, ITEM_WORLD_FIRSTS_CODEC).optionalFieldOf("worldFirsts", Map.of())
                     .forGetter(MilestoneData::worldFirstsAsNestedMap),
             Codec.LONG.lenientOptionalFieldOf("lastDigestEpoch", 0L)
-                    .forGetter(d -> d.lastDigestEpochMillis > 0L ? d.lastDigestEpochMillis : 0L)
+                    .forGetter(d -> d.lastDigestEpochMillis > 0L ? d.lastDigestEpochMillis : 0L),
+            // F-140-1 (N88): always written; never downgrade a value loaded from a newer release.
+            LENIENT_SCHEMA_VERSION_CODEC
+                    .optionalFieldOf("schemaVersion", SchemaVersionLogic.ABSENT_SCHEMA_VERSION)
+                    .forGetter(MilestoneData::schemaVersionForSave)
     ).apply(instance, MilestoneData::fromCodec));
 
     static final SavedDataType<MilestoneData> TYPE = new SavedDataType<>(
@@ -292,6 +304,18 @@ public class MilestoneData extends SavedData {
     private final Map<TargetKey, WorldFirstRecord> worldFirsts = new LinkedHashMap<>();
     /** Epoch millis of the last Discord digest (0 = never initialized/sent, F9). */
     private long lastDigestEpochMillis = 0L;
+    /** Schema version retained from the last load; 0 when the field was missing or invalid (F-140-1). */
+    private int retainedSchemaVersion = 0;
+
+    /** SchemaVersion value retained from the last load (0 when the field was missing or invalid). */
+    int retainedSchemaVersion() {
+        return retainedSchemaVersion;
+    }
+
+    /** SchemaVersion to write on save: {@code max(CURRENT_SCHEMA_VERSION, retainedSchemaVersion)}. */
+    int schemaVersionForSave() {
+        return SchemaVersionLogic.versionToSave(retainedSchemaVersion);
+    }
 
     /** Returns the epoch millis of the last Discord digest, or {@code 0} if not yet recorded (F9). */
     public long lastDigestEpochMillis() {
@@ -488,8 +512,16 @@ public class MilestoneData extends SavedData {
 
     private static MilestoneData fromCodec(Map<String, PlayerData> rawPlayers,
                                            Map<String, Map<String, WorldFirstEntry>> rawFirsts,
-                                           long lastDigestEpoch) {
+                                           long lastDigestEpoch,
+                                           int rawSchemaVersion) {
         MilestoneData data = new MilestoneData();
+        // F-140-1 (N88): missing = legacy data (0); future versions are preserved on save.
+        SchemaVersionLogic.LoadResult schemaVersion = SchemaVersionLogic.fromStoredVersion(rawSchemaVersion);
+        String schemaWarning = SchemaVersionLogic.warningMessage(rawSchemaVersion, schemaVersion);
+        if (schemaWarning != null) {
+            ItemMilestoneLog.LOGGER.warn(schemaWarning);
+        }
+        data.retainedSchemaVersion = schemaVersion.retainedVersion();
         if (lastDigestEpoch > 0L) {
             data.lastDigestEpochMillis = lastDigestEpoch;
         } else if (lastDigestEpoch < 0L) {

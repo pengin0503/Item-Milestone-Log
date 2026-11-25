@@ -431,6 +431,10 @@ When a 1.21.1 world is opened with a 26.x version of the mod, the records (inclu
 
 Tag targets and tag records are stored under the tag key itself: `#namespace:path` (quantity 1) or `#namespace:path#count` in `targets`, `records`, `worldFirsts`, and `progressNotified`. The 1.2.0 root field `lastDigestEpoch` (long, epoch milliseconds, omitted while 0) records the last Discord digest time; it is not the same as a player's `lastSeen`.
 
+The 1.4.0 root field `schemaVersion` (int, always written; current value `1`) records the saved-data format version. Data written up to 1.3.1 has no such field and is read as version 0, then saved with version 1 on the next write. A value greater than the current version (data from a newer release) is read best-effort and preserved on save instead of being downgraded. The field is not part of the JSON export/import format.
+
+> **Downgrading from 1.4.0 to 1.3.1:** 1.3.1 does not read `schemaVersion` and omits it on the next save. Targets, records, world-firsts, and the other saved fields are unaffected.
+
 > **Downgrading from 1.2.0 to 1.1.0 or 1.0.1:** older versions do not accept the tag key form and do not read `lastDigestEpoch`. On the next save they drop all tag targets, tag records, tag world-firsts, and `lastDigestEpoch` (a return to 1.2.0 then treats the digest as a first run). Back up the world first — the automatic backups below are one option — because a downgrade is not reversible for tag data.
 
 > **Downgrading from 1.1.0 to 1.0.1:** 1.0.1 ignores the 1.1.0 per-player fields (`progressNotified`, `completedPresets`, `hideFromLookup`, `muteProgressAlerts`, `lastSeen`, `excludeFromDiscord`) and omits them on the next save. Your targets, records, and world-firsts stay intact, but personal privacy/mute/Discord opt-out settings are reset and progress or preset-completion notifications may fire again if you later upgrade back to 1.1.0.

@@ -722,4 +722,82 @@ class MilestoneDataTest {
         assertEquals(0L, loadedNegative.lastDigestEpochMillis());
         assertEquals("Alice", loadedNegative.playerOrNull(playerA).lastKnownName);
     }
+
+    @Test
+    void writesSchemaVersionOneForNewDataAndRoundTrips() {
+        UUID player = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        MilestoneData original = new MilestoneData();
+        original.player(player).targets.add(TargetKey.of("minecraft:diamond"));
+
+        CompoundTag saved = original.save(new CompoundTag(), null);
+        assertEquals(SchemaVersionLogic.CURRENT_SCHEMA_VERSION, McCompat.nbt().getInt(saved, "schemaVersion"));
+
+        MilestoneData loaded = MilestoneData.load(saved, null);
+        assertEquals(SchemaVersionLogic.CURRENT_SCHEMA_VERSION, loaded.retainedSchemaVersion());
+        assertEquals(SchemaVersionLogic.CURRENT_SCHEMA_VERSION, loaded.schemaVersionForSave());
+
+        CompoundTag resaved = loaded.save(new CompoundTag(), null);
+        assertEquals(SchemaVersionLogic.CURRENT_SCHEMA_VERSION, McCompat.nbt().getInt(resaved, "schemaVersion"));
+    }
+
+    @Test
+    void legacyFixtureWithoutSchemaVersionLoadsAndSavesBackWithOneAndBodyUnchanged() {
+        UUID player = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        MilestoneData original = new MilestoneData();
+        MilestoneData.PlayerData pd = original.player(player);
+        pd.targets.add(TargetKey.of("minecraft:diamond", 100));
+        MilestoneRecord record = new MilestoneRecord(12340, 11L, 1795600000000L);
+        pd.records.put(TargetKey.of("minecraft:diamond", 100), record);
+        pd.lastKnownName = "Alice";
+        original.recordWorldFirstIfAbsent(TargetKey.of("minecraft:diamond", 100), player, "Alice", record);
+
+        // 1.3.1 fixture: identical body, no schemaVersion field.
+        CompoundTag legacy = original.save(new CompoundTag(), null);
+        legacy.remove("schemaVersion");
+        assertFalse(McCompat.nbt().contains(legacy, "schemaVersion"));
+
+        MilestoneData loaded = MilestoneData.load(legacy, null);
+        assertEquals(0, loaded.retainedSchemaVersion());
+        assertEquals(SchemaVersionLogic.CURRENT_SCHEMA_VERSION, loaded.schemaVersionForSave());
+
+        MilestoneData.PlayerData loadedPd = loaded.playerOrNull(player);
+        assertNotNull(loadedPd);
+        assertEquals(Set.of(TargetKey.of("minecraft:diamond", 100)), loadedPd.targets);
+        assertEquals(record, loadedPd.records.get(TargetKey.of("minecraft:diamond", 100)));
+        assertEquals("Alice", loadedPd.lastKnownName);
+        assertEquals(original.worldFirsts(), loaded.worldFirsts());
+
+        CompoundTag resaved = loaded.save(new CompoundTag(), null);
+        assertEquals(SchemaVersionLogic.CURRENT_SCHEMA_VERSION, McCompat.nbt().getInt(resaved, "schemaVersion"));
+        assertEquals(McCompat.nbt().getCompound(legacy, "players").toString(),
+                McCompat.nbt().getCompound(resaved, "players").toString());
+    }
+
+    @Test
+    void futureSchemaVersion99IsPreservedOnSaveAndInvalidValuesAreTreatedAsZero() {
+        UUID player = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        MilestoneData original = new MilestoneData();
+        original.player(player).targets.add(TargetKey.of("minecraft:diamond"));
+        CompoundTag tag = original.save(new CompoundTag(), null);
+
+        tag.putInt("schemaVersion", 99);
+        MilestoneData future = MilestoneData.load(tag, null);
+        assertEquals(99, future.retainedSchemaVersion());
+        assertEquals(99, future.schemaVersionForSave());
+        assertEquals(99, McCompat.nbt().getInt(future.save(new CompoundTag(), null), "schemaVersion"));
+
+        tag.putInt("schemaVersion", -3);
+        MilestoneData negative = MilestoneData.load(tag, null);
+        assertEquals(0, negative.retainedSchemaVersion());
+        assertEquals(SchemaVersionLogic.CURRENT_SCHEMA_VERSION,
+                McCompat.nbt().getInt(negative.save(new CompoundTag(), null), "schemaVersion"));
+
+        tag.putString("schemaVersion", "not-a-number");
+        MilestoneData malformed = MilestoneData.load(tag, null);
+        assertEquals(0, malformed.retainedSchemaVersion());
+        assertEquals(SchemaVersionLogic.CURRENT_SCHEMA_VERSION,
+                McCompat.nbt().getInt(malformed.save(new CompoundTag(), null), "schemaVersion"));
+        assertEquals(Set.of(TargetKey.of("minecraft:diamond")),
+                malformed.playerOrNull(player).targets);
+    }
 }
