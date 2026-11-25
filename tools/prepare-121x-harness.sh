@@ -12,6 +12,19 @@
 #   tools/prepare-121x-harness.sh <mc> <profile> <neo_version>
 # Example:
 #   tools/prepare-121x-harness.sh 1.21.4 v121_4 21.4.121
+#
+# Profiles (the McVersion mapping) and the harness/profile-jar build entries
+# (<mc> <profile> <neo_version>; the profile jars use the first MC version of each):
+#   1.21     v121_1   21.0.143        1.21.1   v121_1   21.1.1   (versions/1.21.1 itself)
+#   1.21.2   v121_2   21.2.0-beta     1.21.3   v121_2   21.3.56
+#   1.21.4   v121_4   21.4.121
+#   1.21.5   v121_5   21.5.74
+#   1.21.6   v121_6   21.6.0-beta
+#   1.21.7   v121_7   21.7.0-beta     (reflective NetworkCompatImpl: NeoForge 21.7
+#                                      moved sendToServer mid-line)
+#   1.21.8   v121_8   21.8.9
+#   1.21.9   v121_9   21.9.0-beta     1.21.10  v121_9   21.10.64
+#   1.21.11  v121_11  21.11.42
 set -euo pipefail
 
 if [[ $# -ne 3 ]]; then

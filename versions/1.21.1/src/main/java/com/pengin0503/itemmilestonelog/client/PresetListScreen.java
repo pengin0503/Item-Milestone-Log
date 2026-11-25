@@ -4,7 +4,6 @@ import com.pengin0503.itemmilestonelog.compat.McCompat;
 import com.pengin0503.itemmilestonelog.network.MilestoneActionPayload;
 import com.pengin0503.itemmilestonelog.network.PresetEntry;
 import com.pengin0503.itemmilestonelog.network.SyncMilestonesPayload;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.ContainerObjectSelectionList;
@@ -29,7 +28,8 @@ public final class PresetListScreen extends Screen {
     private Component feedbackMessage;
     private int feedbackY = 0;
 
-    private PresetListWidget listWidget;
+    // Created by McCompat.lists(): the list subclass that positions the scrollbar is per profile.
+    private ContainerObjectSelectionList<PresetRow> listWidget;
 
     private boolean awaitingApplyFeedback = false;
 
@@ -75,9 +75,10 @@ public final class PresetListScreen extends Screen {
         int listBottom = this.height - footerHeight;
         int listHeight = Math.max(40, listBottom - listTop);
 
-        listWidget = addRenderableWidget(new PresetListWidget(this.minecraft, this.width, listHeight, listTop, 28));
+        listWidget = addRenderableWidget(McCompat.lists().containerList(
+                this.minecraft, this.width, listHeight, listTop, 28, () -> Math.min(460, this.width - 32)));
         for (PresetEntry entry : data.presets()) {
-            listWidget.addRow(new PresetRow(entry));
+            McCompat.lists().addRow(listWidget, new PresetRow(entry));
         }
 
         if (canManage) {
@@ -138,11 +139,11 @@ public final class PresetListScreen extends Screen {
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
         super.render(guiGraphics, mouseX, mouseY, partialTick);
 
-        guiGraphics.drawCenteredString(this.font, this.title, this.width / 2, 8, 0xFFFFFFFF);
+        McCompat.text().drawCenteredString(guiGraphics, this.font, this.title, this.width / 2, 8, 0xFFFFFFFF);
 
         if (listWidget != null && listWidget.children().isEmpty()) {
             int centerY = listWidget.getY() + listWidget.getHeight() / 2 - 4;
-            guiGraphics.drawCenteredString(this.font,
+            McCompat.text().drawCenteredString(guiGraphics, this.font,
                     Component.translatable("gui.itemmilestonelog.presets.empty"),
                     this.width / 2, centerY, 0xFFA0A0A0);
         }
@@ -150,33 +151,13 @@ public final class PresetListScreen extends Screen {
         if (feedbackMessage != null) {
             int maxWidth = this.width - 20;
             String trimmed = this.font.plainSubstrByWidth(feedbackMessage.getString(), maxWidth);
-            guiGraphics.drawCenteredString(this.font, trimmed, this.width / 2, this.feedbackY, 0xFFFFE88A);
+            McCompat.text().drawCenteredString(guiGraphics, this.font, trimmed, this.width / 2, this.feedbackY, 0xFFFFE88A);
         }
     }
 
     @Override
     public boolean isPauseScreen() {
         return false;
-    }
-
-    private final class PresetListWidget extends ContainerObjectSelectionList<PresetRow> {
-        public PresetListWidget(Minecraft mc, int width, int height, int y, int itemHeight) {
-            super(mc, width, height, y, itemHeight);
-        }
-
-        public void addRow(PresetRow row) {
-            this.addEntry(row);
-        }
-
-        @Override
-        public int getRowWidth() {
-            return Math.min(460, PresetListScreen.this.width - 32);
-        }
-
-        // No @Override: the supertype method was removed in MC 1.21.4; this still overrides it on 1.21-1.21.3.
-        protected int getScrollbarPosition() {
-            return this.getX() + this.width / 2 + getRowWidth() / 2 + 6;
-        }
     }
 
     private final class PresetRow extends ContainerObjectSelectionList.Entry<PresetRow> {
@@ -250,10 +231,10 @@ public final class PresetListScreen extends Screen {
             int maxTextWidth = Math.max(40, rightEdge - textX - 4);
 
             String trimmedName = PresetListScreen.this.font.plainSubstrByWidth(displayName.getString(), maxTextWidth);
-            guiGraphics.drawString(PresetListScreen.this.font, trimmedName, textX, top + 4, 0xFFFFFFFF, false);
+            McCompat.text().drawString(guiGraphics, PresetListScreen.this.font, trimmedName, textX, top + 4, 0xFFFFFFFF, false);
 
             String trimmedMeta = PresetListScreen.this.font.plainSubstrByWidth(metaLine.getString(), maxTextWidth);
-            guiGraphics.drawString(PresetListScreen.this.font, trimmedMeta, textX, top + 15, 0xFFA0A0A0, false);
+            McCompat.text().drawString(guiGraphics, PresetListScreen.this.font, trimmedMeta, textX, top + 15, 0xFFA0A0A0, false);
         }
 
         @Override

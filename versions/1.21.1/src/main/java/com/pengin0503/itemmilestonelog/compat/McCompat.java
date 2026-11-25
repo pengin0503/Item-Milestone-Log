@@ -1,7 +1,10 @@
 package com.pengin0503.itemmilestonelog.compat;
 
+import com.pengin0503.itemmilestonelog.compat.client.ListCompat;
 import com.pengin0503.itemmilestonelog.compat.client.NetworkCompat;
 import com.pengin0503.itemmilestonelog.compat.client.ScrollCompat;
+import com.pengin0503.itemmilestonelog.compat.client.SoundCompat;
+import com.pengin0503.itemmilestonelog.compat.client.TextCompat;
 import com.pengin0503.itemmilestonelog.compat.client.TooltipCompat;
 
 /**
@@ -78,6 +81,21 @@ public final class McCompat {
         return ClientHolder.NETWORK;
     }
 
+    /** Client-only, lazily loaded like {@link #scroll()}. */
+    public static TextCompat text() {
+        return ClientHolder.TEXT;
+    }
+
+    /** Client-only, lazily loaded like {@link #scroll()}. */
+    public static SoundCompat sound() {
+        return ClientHolder.SOUND;
+    }
+
+    /** Client-only, lazily loaded like {@link #scroll()}. */
+    public static ListCompat lists() {
+        return ClientHolder.LISTS;
+    }
+
     private static <T> T load(Class<T> iface, String simpleName) {
         return load(iface, "", simpleName);
     }
@@ -97,5 +115,8 @@ public final class McCompat {
         private static final ScrollCompat SCROLL = load(ScrollCompat.class, "client.", "ScrollCompatImpl");
         private static final TooltipCompat TOOLTIP = load(TooltipCompat.class, "client.", "TooltipCompatImpl");
         private static final NetworkCompat NETWORK = load(NetworkCompat.class, "client.", "NetworkCompatImpl");
+        private static final TextCompat TEXT = load(TextCompat.class, "client.", "TextCompatImpl");
+        private static final SoundCompat SOUND = load(SoundCompat.class, "client.", "SoundCompatImpl");
+        private static final ListCompat LISTS = load(ListCompat.class, "client.", "ListCompatImpl");
     }
 }

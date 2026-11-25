@@ -320,6 +320,9 @@ jobs:
           - mc: '1.21.6'
             profile: v121_6
             neo: '21.6.0-beta'
+          - mc: '1.21.7'
+            profile: v121_7
+            neo: '21.7.0-beta'
           - mc: '1.21.8'
             profile: v121_8
             neo: '21.8.9'
@@ -375,7 +378,7 @@ jobs:
     # profile jars and verifies each (contents, mods.toml minecraft range, duplicate
     # entries, bytecode isolation):
     #   A  [1.21, 1.21.4]      v121_1 base + v121_2 + v121_4 overlays
-    #   B1 [1.21.5, 1.21.8]    v121_5 base + v121_6 + v121_8 overlays
+    #   B1 [1.21.5, 1.21.8]    v121_5 base + v121_6 + v121_7 + v121_8 overlays
     #   B2 [1.21.9, 1.21.10]   v121_9 profile jar, range rewritten
     #   C  [1.21.11]           v121_11 profile jar, range rewritten
     # (merge-121x-jar.sh with no overlay arguments only rewrites the range.)
@@ -427,6 +430,12 @@ jobs:
           name: iml-profile-v121_6
           path: profile-jars
 
+      - name: Download the v121_7 profile jar
+        uses: actions/download-artifact@v7
+        with:
+          name: iml-profile-v121_7
+          path: profile-jars
+
       - name: Download the v121_8 profile jar
         uses: actions/download-artifact@v7
         with:
@@ -449,7 +458,7 @@ jobs:
         run: |
           mod_version="$(grep -E '^mod_version=' versions/1.21.1/gradle.properties | cut -d= -f2-)"
           tools/merge-121x-jar.sh profile-jars/p-v121_1.jar "[1.21,1.21.4]" "dist-121x/itemmilestonelog-neoforge-1.21-1.21.4-$mod_version.jar" profile-jars/p-v121_2.jar:v121_2 profile-jars/p-v121_4.jar:v121_4
-          tools/merge-121x-jar.sh profile-jars/p-v121_5.jar "[1.21.5,1.21.8]" "dist-121x/itemmilestonelog-neoforge-1.21.5-1.21.8-$mod_version.jar" profile-jars/p-v121_6.jar:v121_6 profile-jars/p-v121_8.jar:v121_8
+          tools/merge-121x-jar.sh profile-jars/p-v121_5.jar "[1.21.5,1.21.8]" "dist-121x/itemmilestonelog-neoforge-1.21.5-1.21.8-$mod_version.jar" profile-jars/p-v121_6.jar:v121_6 profile-jars/p-v121_7.jar:v121_7 profile-jars/p-v121_8.jar:v121_8
           tools/merge-121x-jar.sh profile-jars/p-v121_9.jar "[1.21.9,1.21.10]" "dist-121x/itemmilestonelog-neoforge-1.21.9-1.21.10-$mod_version.jar"
           tools/merge-121x-jar.sh profile-jars/p-v121_11.jar "[1.21.11,1.21.11]" "dist-121x/itemmilestonelog-neoforge-1.21.11-$mod_version.jar"
 
@@ -520,6 +529,12 @@ jobs:
             artifact: itemmilestonelog-1.21-b1
             jar: itemmilestonelog-neoforge-1.21.5-1.21.8-*.jar
             bot: false
+          # 1.21.7 has a profile of its own (v121_7, reflective NetworkCompat).
+          - mc: '1.21.7'
+            neo: '21.7.0-beta'
+            artifact: itemmilestonelog-1.21-b1
+            jar: itemmilestonelog-neoforge-1.21.5-1.21.8-*.jar
+            bot: false
           - mc: '1.21.8'
             neo: '21.8.9'
             artifact: itemmilestonelog-1.21-b1
@@ -587,6 +602,159 @@ jobs:
             build/server/*/config/
           if-no-files-found: ignore
           retention-days: 7
+
+  audit-121x-links:
+    # N252 (1.3.1, docs/VERSION_MATRIX.md): binary-linkage audit of the five release jars.
+    # The per-version harness only proves SOURCE compatibility; a merged jar ships one
+    # profile's bytecode for its shared classes, so every method/field reference must
+    # resolve with the exact descriptor on every Minecraft version of the jar's range
+    # (1.3.0 broke there: GuiGraphics.drawString int -> void at 1.21.6, NeoForge 21.7
+    # removing PacketDistributor.sendToServer mid-line). One job per Minecraft version:
+    # it creates that version's merged Minecraft+NeoForge jar and compile classpath from
+    # the harness project (the real project for 1.21.1 and 26.x) and audits the release
+    # jar covering it (.github/scripts/audit-merged-jar-links.py). late_neo adds a second
+    # target with a later NeoForge build of the same line (its universal jar on top of
+    # the pinned game jar), which catches NeoForge API moves within a line.
+    name: Link audit MC ${{ matrix.mc }}
+    needs: [merge-121x, merge-26x]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {mc: '1.21', profile: v121_1, neo: '21.0.143', java: '21', artifact: itemmilestonelog-1.21-a}
+          - {mc: '1.21.1', profile: v121_1, neo: '', java: '21', artifact: itemmilestonelog-1.21-a}
+          - {mc: '1.21.2', profile: v121_2, neo: '21.2.0-beta', java: '21', artifact: itemmilestonelog-1.21-a}
+          - {mc: '1.21.3', profile: v121_2, neo: '21.3.56', java: '21', artifact: itemmilestonelog-1.21-a}
+          - {mc: '1.21.4', profile: v121_4, neo: '21.4.121', java: '21', artifact: itemmilestonelog-1.21-a}
+          - {mc: '1.21.5', profile: v121_5, neo: '21.5.74', java: '21', artifact: itemmilestonelog-1.21-b1, late_neo: '21.5.101'}
+          - {mc: '1.21.6', profile: v121_6, neo: '21.6.0-beta', java: '21', artifact: itemmilestonelog-1.21-b1, late_neo: '21.6.20-beta'}
+          - {mc: '1.21.7', profile: v121_7, neo: '21.7.0-beta', java: '21', artifact: itemmilestonelog-1.21-b1, late_neo: '21.7.25-beta'}
+          - {mc: '1.21.8', profile: v121_8, neo: '21.8.9', java: '21', artifact: itemmilestonelog-1.21-b1, late_neo: '21.8.57'}
+          - {mc: '1.21.9', profile: v121_9, neo: '21.9.0-beta', java: '21', artifact: itemmilestonelog-1.21-b2}
+          - {mc: '1.21.10', profile: v121_9, neo: '21.10.64', java: '21', artifact: itemmilestonelog-1.21-b2}
+          - {mc: '1.21.11', profile: v121_11, neo: '21.11.42', java: '21', artifact: itemmilestonelog-1.21-c}
+          - {mc: '26.1.2', profile: v26_1, neo: '', java: '25', artifact: itemmilestonelog-26.x}
+          - {mc: '26.2', profile: v26_2, neo: '', java: '25', artifact: itemmilestonelog-26.x}
+          - {mc: '26.3', profile: v26_3, neo: '', java: '25', artifact: itemmilestonelog-26.x}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      # The JDK also provides java.base for the audit (jimage).
+      - name: Setup JDK ${{ matrix.java }}
+        uses: actions/setup-java@v5
+        with:
+          java-version: ${{ matrix.java }}
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: true
+          gradle-home-cache-excludes: caches/neoformruntime
+
+      # Real projects (1.21.1, 26.x) read the build job's entries, harness versions the
+      # build-121x-profiles entries (same key scheme; versions without a profile job,
+      # 1.21.3 and 1.21.10, write their own).
+      - name: Restore the NeoForm runtime (real project)
+        if: matrix.neo == ''
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.gradle/caches/neoformruntime
+          key: neoform-v1-${{ runner.os }}-${{ matrix.mc }}-${{ hashFiles(format('versions/{0}/gradle.properties', matrix.mc), format('versions/{0}/*.gradle', matrix.mc)) }}
+          restore-keys: neoform-v1-${{ runner.os }}-${{ matrix.mc }}-
+
+      - name: Cache NeoForm runtime (harness project)
+        if: matrix.neo != ''
+        uses: actions/cache@v5
+        with:
+          path: ~/.gradle/caches/neoformruntime
+          key: neoform-v1-${{ runner.os }}-${{ matrix.mc }}-profile-${{ hashFiles('versions/1.21.1/gradle.properties', 'tools/new-version-project.sh', 'tools/prepare-121x-harness.sh') }}
+          restore-keys: neoform-v1-${{ runner.os }}-${{ matrix.mc }}-profile-
+
+      - name: Create the game jar and compile classpath
+        id: game
+        run: |
+          if [[ -n "${{ matrix.neo }}" ]]; then
+            tools/prepare-121x-harness.sh ${{ matrix.mc }} ${{ matrix.profile }} ${{ matrix.neo }}
+            dir="versions/verify/${{ matrix.mc }}"
+          else
+            dir="versions/${{ matrix.mc }}"
+          fi
+          (cd "$dir" && "$GITHUB_WORKSPACE/gradlew" --init-script "$GITHUB_WORKSPACE/.github/scripts/print-compile-classpath.gradle" printCompileClasspath -PcpOut="$GITHUB_WORKSPACE/build/audit/classpath.txt" --console=plain)
+          # The game jar is the Minecraft artifact on the compile classpath itself
+          # (build/moddev/artifacts/<name>.jar). ModDevGradle writes the *-merged.jar
+          # (classes + sources, same classes) only when an IDE sync or run asks for it,
+          # so a clean CI checkout does not have it.
+          mapfile -t game_jars < <(grep -E '/build/moddev/artifacts/[^/]+\.jar$' build/audit/classpath.txt \
+            | grep -vE -- '-(sources|merged|client-extra-aka-minecraft-resources)\.jar$')
+          if [[ ${#game_jars[@]} -ne 1 ]]; then
+            echo "::error::expected exactly one Minecraft artifact on the compile classpath, got ${#game_jars[@]}: ${game_jars[*]}"
+            exit 1
+          fi
+          game_jar="${game_jars[0]}"
+          test -f "$game_jar"
+          echo "Game jar: $game_jar"
+          echo "jar=$game_jar" >> "$GITHUB_OUTPUT"
+
+      - name: Download the later NeoForge ${{ matrix.late_neo }} universal jar
+        if: matrix.late_neo
+        run: |
+          curl -fsSL --retry 3 -o build/audit/neoforge-late-universal.jar \
+            "https://maven.neoforged.net/releases/net/neoforged/neoforge/${{ matrix.late_neo }}/neoforge-${{ matrix.late_neo }}-universal.jar"
+
+      - name: Download the release jar
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: build/audit/mod
+
+      - name: Audit the release jar's binary linkage
+        run: |
+          targets=(--target "${{ matrix.mc }}" ${{ matrix.profile }} "${{ steps.game.outputs.jar }}" build/audit/classpath.txt)
+          if [[ -n "${{ matrix.late_neo }}" ]]; then
+            targets+=(--target "${{ matrix.mc }}+nf${{ matrix.late_neo }}" ${{ matrix.profile }} "build/audit/neoforge-late-universal.jar:${{ steps.game.outputs.jar }}" build/audit/classpath.txt)
+          fi
+          python3 .github/scripts/audit-merged-jar-links.py --mod-jar build/audit/mod/*.jar "${targets[@]}" \
+            --override-json "build/audit/overrides-${{ matrix.mc }}.json"
+
+      - name: Upload the override table
+        uses: actions/upload-artifact@v6
+        with:
+          name: audit-overrides-${{ matrix.mc }}
+          path: build/audit/overrides-${{ matrix.mc }}.json
+          if-no-files-found: error
+          retention-days: 7
+
+  audit-121x-links-drift:
+    # Second half of the link audit: a mod method that overrides a game method on some
+    # versions of a jar's range but not on others is silently never called there. Needs
+    # the override tables of every version of the range, so it runs after the matrix.
+    name: Link audit override drift
+    needs: audit-121x-links
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Download the override tables
+        uses: actions/download-artifact@v7
+        with:
+          pattern: audit-overrides-*
+          path: build/audit
+          merge-multiple: true
+
+      # No drift is allowed. The screens' list scrollbar override, whose hook changed at
+      # 1.21.4 (getScrollbarPosition() -> scrollBarX()), lives in the profile ListCompatImpl
+      # classes, which are only checked against their own profile's versions.
+      - name: Compare the override tables per jar
+        run: python3 .github/scripts/audit-merged-jar-links.py --drift build/audit/overrides-*.json
 
   server-test:
     # Runs the release jar (compiled against the minimum NeoForge, from the "min" build
@@ -872,7 +1040,7 @@ jobs:
   release-check:
     # Runs on every build, so a broken release is found before the tag is pushed.
     name: Check the release files
-    needs: [identical-files, build, build-1201-forge, merge-26x, merged-server-test, merge-121x, merged-server-test-121x, server-test, migration, compat-test]
+    needs: [identical-files, build, build-1201-forge, merge-26x, merged-server-test, merge-121x, merged-server-test-121x, audit-121x-links, audit-121x-links-drift, server-test, migration, compat-test]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

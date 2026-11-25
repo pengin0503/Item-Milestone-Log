@@ -8,7 +8,7 @@
 # Segments (the former B [1.21.5, 1.21.10] is split at 1.21.9 because the client
 # screens' Entry rendering forks there (render -> renderContent)):
 #   A   MC [1.21, 1.21.4]    profiles v121_1, v121_2, v121_4
-#   B1  MC [1.21.5, 1.21.8]  profiles v121_5, v121_6, v121_8
+#   B1  MC [1.21.5, 1.21.8]  profiles v121_5, v121_6, v121_7, v121_8
 #   B2  MC [1.21.9, 1.21.10] profile v121_9 (client screen + gametest overrides)
 #   C   MC [1.21.11]         profile v121_11 (ResourceLocation -> Identifier rename)
 set -euo pipefail
@@ -33,11 +33,26 @@ PKG="com/pengin0503/itemmilestonelog"
 # without .class; inner classes (<path>$*.class) are skipped too.
 override_skips=()
 
+# Methods whose descriptor changed inside the 1.21.x line at MC 1.21.6 (return type only,
+# so the source is identical but the bytecode is not): GuiGraphics.drawString int -> void
+# and SoundManager.play(SoundInstance) void -> SoundEngine.PlayResult. Shared classes must
+# reach them only through McCompat.text() / McCompat.sound() (TextCompat / SoundCompat;
+# drawCenteredString is routed too). Checked for segments A, B1 and B2 (segment C scans
+# every class, compat included, so it cannot carry these patterns).
+# .github/scripts/audit-merged-jar-links.py is the general check; these patterns keep the
+# known cases visible in this script's output.
+linkage_patterns=(
+  'net/minecraft/client/gui/GuiGraphics.drawString:'
+  'net/minecraft/client/gui/GuiGraphics.drawCenteredString:'
+  'net/minecraft/client/sounds/SoundManager.play:'
+)
+
 case "$SEGMENT" in
   A)
     expected_range='[1.21,1.21.4]'
     suffixes=(v121_1 v121_2 v121_4)
     forbidden_patterns=(
+      "${linkage_patterns[@]}"
       'net/minecraft/resources/Identifier'
       'arguments/IdentifierArgument'
       'SavedDataType'
@@ -54,6 +69,7 @@ case "$SEGMENT" in
   B1|B2)
     # Shared by B1 and B2; ";;&" then continues to the segment-specific branch.
     forbidden_patterns=(
+      "${linkage_patterns[@]}"
       'net/minecraft/resources/Identifier'
       'arguments/IdentifierArgument'
       'SavedData$Factory'
@@ -67,7 +83,7 @@ case "$SEGMENT" in
     ;;&
   B1)
     expected_range='[1.21.5,1.21.8]'
-    suffixes=(v121_5 v121_6 v121_8)
+    suffixes=(v121_5 v121_6 v121_7 v121_8)
     # Only the compat/v121_* packages are skipped. B1's sole file override
     # (gametest registration, identical in v121_5/6/8) is already in 1.21.5+
     # form, so it is scanned like any other class.
@@ -157,6 +173,9 @@ fi
 for suffix in "${suffixes[@]}"; do
   expect_file "$PKG/compat/${suffix}/DataCompatImpl.class"
   expect_file "$PKG/compat/client/${suffix}/TooltipCompatImpl.class"
+  expect_file "$PKG/compat/client/${suffix}/TextCompatImpl.class"
+  expect_file "$PKG/compat/client/${suffix}/SoundCompatImpl.class"
+  expect_file "$PKG/compat/client/${suffix}/ListCompatImpl.class"
 done
 
 expect_file logo.png
@@ -223,6 +242,31 @@ for rel_path in "${classes[@]}"; do
     fi
   done
 done
+
+# 5. B1: the 1.21.7 NetworkCompatImpl must stay reflective. NeoForge 21.7 removed
+#    PacketDistributor.sendToServer mid-line (21.7.0-beta has it, 21.7.25-beta only has
+#    ClientPacketDistributor.sendToServer), so a direct reference to either class breaks
+#    linking on one side of that split.
+if [[ "$SEGMENT" == B1 ]]; then
+  net7="$PKG/compat/client/v121_7/NetworkCompatImpl.class"
+  if [[ -f "$workdir/$net7" ]] && net7_out="$(javap -v -p "$workdir/$net7")"; then
+    net7_status=0
+    for pattern in 'net/neoforged/neoforge/network/PacketDistributor' 'net/neoforged/neoforge/client/network/ClientPacketDistributor'; do
+      if grep -qF -- "$pattern" <<< "$net7_out"; then
+        echo "  FAIL  $net7 references $pattern directly (must be resolved reflectively)"
+        net7_status=1
+      fi
+    done
+    if [[ "$net7_status" -eq 0 ]]; then
+      echo "  PASS  $net7 references neither PacketDistributor nor ClientPacketDistributor directly"
+    else
+      bytecode_status=1
+    fi
+  else
+    echo "  FAIL  cannot inspect $net7"
+    bytecode_status=1
+  fi
+fi
 
 if [[ "$checked" -eq 0 ]]; then
   echo "  FAIL  no classes checked (segment $SEGMENT)"

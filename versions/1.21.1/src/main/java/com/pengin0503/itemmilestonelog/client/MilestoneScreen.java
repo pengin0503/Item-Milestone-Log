@@ -8,7 +8,6 @@ import com.pengin0503.itemmilestonelog.compat.McCompat;
 import com.pengin0503.itemmilestonelog.network.MilestoneActionPayload;
 import com.pengin0503.itemmilestonelog.network.SyncMilestonesPayload;
 import com.pengin0503.itemmilestonelog.network.TargetEntry;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.ContainerObjectSelectionList;
@@ -52,7 +51,8 @@ public final class MilestoneScreen extends Screen {
     private int feedbackY = 0;
     private long cachedAchievedCount = 0;
 
-    private MilestoneListWidget listWidget;
+    // Created by McCompat.lists(): the list subclass that positions the scrollbar is per profile.
+    private ContainerObjectSelectionList<MilestoneRow> listWidget;
     private Button targetsTabButton;
     private Button recordedTabButton;
     private Button resetAllButton;
@@ -191,7 +191,8 @@ public final class MilestoneScreen extends Screen {
         recordedTabButton.active = (viewMode != ViewMode.RECORDED);
 
         // Scrollable list
-        listWidget = addRenderableWidget(new MilestoneListWidget(this.minecraft, this.width, listHeight, listTop, 28));
+        listWidget = addRenderableWidget(McCompat.lists().containerList(
+                this.minecraft, this.width, listHeight, listTop, 28, () -> Math.min(460, this.width - 32)));
         populateList();
 
         // Bottom action buttons
@@ -251,7 +252,7 @@ public final class MilestoneScreen extends Screen {
     }
 
     private void populateList() {
-        listWidget.clearAllEntries();
+        McCompat.lists().clearRows(listWidget);
         if (viewMode == ViewMode.TARGETS) {
             for (TargetEntry target : data.targets()) {
                 TargetKey key = target.key();
@@ -259,7 +260,7 @@ public final class MilestoneScreen extends Screen {
                 Integer currentProgress = (recorded == null && key.count() > TargetKey.MIN_COUNT)
                         ? data.progress().getOrDefault(key, 0)
                         : null;
-                listWidget.addRow(new MilestoneRow(
+                McCompat.lists().addRow(listWidget, new MilestoneRow(
                         key,
                         target.personal(),
                         target.defaultTarget(),
@@ -273,7 +274,7 @@ public final class MilestoneScreen extends Screen {
             sorted.sort(Comparator.comparingInt((Map.Entry<TargetKey, MilestoneRecord> e) -> e.getValue().playTicks())
                     .thenComparing(Map.Entry::getKey));
             for (Map.Entry<TargetKey, MilestoneRecord> entry : sorted) {
-                listWidget.addRow(new MilestoneRow(
+                McCompat.lists().addRow(listWidget, new MilestoneRow(
                         entry.getKey(),
                         false,
                         false,
@@ -318,7 +319,7 @@ public final class MilestoneScreen extends Screen {
         super.render(guiGraphics, mouseX, mouseY, partialTick);
 
         // Title
-        guiGraphics.drawCenteredString(this.font, this.title, this.width / 2, 8, 0xFFFFFFFF);
+        McCompat.text().drawCenteredString(guiGraphics, this.font, this.title, this.width / 2, 8, 0xFFFFFFFF);
 
         // Header summary: current playtime (live ticking) + achieved / total targets
         Component header = Component.translatable(
@@ -327,7 +328,7 @@ public final class MilestoneScreen extends Screen {
                 cachedAchievedCount,
                 data.targets().size()
         );
-        guiGraphics.drawCenteredString(this.font, header, this.width / 2, 22, 0xFFD0D0D0);
+        McCompat.text().drawCenteredString(guiGraphics, this.font, header, this.width / 2, 22, 0xFFD0D0D0);
 
         // Empty list hint
         if (listWidget != null && listWidget.children().isEmpty()) {
@@ -335,14 +336,14 @@ public final class MilestoneScreen extends Screen {
                     ? Component.translatable("gui.itemmilestonelog.empty_targets")
                     : Component.translatable("gui.itemmilestonelog.empty_records");
             int centerY = listWidget.getY() + listWidget.getHeight() / 2 - 4;
-            guiGraphics.drawCenteredString(this.font, emptyText, this.width / 2, centerY, 0xFFA0A0A0);
+            McCompat.text().drawCenteredString(guiGraphics, this.font, emptyText, this.width / 2, centerY, 0xFFA0A0A0);
         }
 
         // Feedback banner from last action
         if (feedbackMessage != null) {
             int maxWidth = this.width - 20;
             String trimmed = this.font.plainSubstrByWidth(feedbackMessage.getString(), maxWidth);
-            guiGraphics.drawCenteredString(this.font, trimmed, this.width / 2, this.feedbackY, 0xFFFFE88A);
+            McCompat.text().drawCenteredString(guiGraphics, this.font, trimmed, this.width / 2, this.feedbackY, 0xFFFFE88A);
         }
     }
 
@@ -354,31 +355,7 @@ public final class MilestoneScreen extends Screen {
     private record ButtonSpec(Component label, Button.OnPress onPress, @Nullable Tooltip tooltip) {
     }
 
-    // --------------------------------------------------------- list widget
-
-    private final class MilestoneListWidget extends ContainerObjectSelectionList<MilestoneRow> {
-        public MilestoneListWidget(Minecraft mc, int width, int height, int y, int itemHeight) {
-            super(mc, width, height, y, itemHeight);
-        }
-
-        public void clearAllEntries() {
-            this.clearEntries();
-        }
-
-        public void addRow(MilestoneRow row) {
-            this.addEntry(row);
-        }
-
-        @Override
-        public int getRowWidth() {
-            return Math.min(460, MilestoneScreen.this.width - 32);
-        }
-
-        // No @Override: the supertype method was removed in MC 1.21.4; this still overrides it on 1.21-1.21.3.
-        protected int getScrollbarPosition() {
-            return this.getX() + this.width / 2 + getRowWidth() / 2 + 6;
-        }
-    }
+    // --------------------------------------------------------- list rows
 
     private final class MilestoneRow extends ContainerObjectSelectionList.Entry<MilestoneRow> {
         private final TargetKey targetKey;
@@ -496,7 +473,7 @@ public final class MilestoneScreen extends Screen {
                 nameStr = nameStr + " [" + Component.translatable("gui.itemmilestonelog.badge.default").getString() + "]";
             }
             String trimmedName = MilestoneScreen.this.font.plainSubstrByWidth(nameStr, maxTextWidth);
-            guiGraphics.drawString(MilestoneScreen.this.font, trimmedName, textX, top + 4, 0xFFFFFFFF, false);
+            McCompat.text().drawString(guiGraphics, MilestoneScreen.this.font, trimmedName, textX, top + 4, 0xFFFFFFFF, false);
 
             Component statusComponent;
             int statusColor;
@@ -512,7 +489,7 @@ public final class MilestoneScreen extends Screen {
                 statusColor = 0xFFA0A0A0;
             }
             String trimmedStatus = MilestoneScreen.this.font.plainSubstrByWidth(statusComponent.getString(), maxTextWidth);
-            guiGraphics.drawString(MilestoneScreen.this.font, trimmedStatus, textX, top + 15, statusColor, false);
+            McCompat.text().drawString(guiGraphics, MilestoneScreen.this.font, trimmedStatus, textX, top + 15, statusColor, false);
         }
 
         @Override
