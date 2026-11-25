@@ -299,6 +299,7 @@
   "message.itemmilestonelog.preset_applied": "プリセット '%s' を適用: %s件追加、%s件スキップ（このパックに存在しないアイテム）",
   "message.itemmilestonelog.preset_applied_with_counts": "プリセット '%s' を適用: %s件追加（うち個数つき%s件）、%s件スキップ（このパックに存在しないアイテム）",
   "message.itemmilestonelog.preset_applied_limit": "ターゲット一覧がいっぱいのため、さらに%s件のターゲットがスキップされました。",
+  "message.itemmilestonelog.preset_missing_mods": "プリセット '%s' は適用されませんでした: 必要な MOD が導入されていません: %s",
   "message.itemmilestonelog.preset_builtin_protected": "組み込みプリセット '%s' は上書き・削除できません。",
   "message.itemmilestonelog.preset_completed": "★ %s の目標をすべて達成しました！",
   "message.itemmilestonelog.preset_completed_broadcast": "★ %s が %s の目標をすべて達成しました！",

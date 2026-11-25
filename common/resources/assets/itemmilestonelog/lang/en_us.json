@@ -299,6 +299,7 @@
   "message.itemmilestonelog.preset_applied": "Preset '%s' applied: %s targets added, %s skipped (item not present in this pack).",
   "message.itemmilestonelog.preset_applied_with_counts": "Preset '%s' applied: %s targets added (%s with quantity), %s skipped (item not present in this pack).",
   "message.itemmilestonelog.preset_applied_limit": "%s more target(s) were skipped because your target list is full.",
+  "message.itemmilestonelog.preset_missing_mods": "Preset '%s' was not applied: required mod(s) are not installed: %s",
   "message.itemmilestonelog.preset_builtin_protected": "Built-in preset '%s' cannot be overwritten or deleted.",
   "message.itemmilestonelog.preset_completed": "★ All targets of %s are complete!",
   "message.itemmilestonelog.preset_completed_broadcast": "★ %s completed all targets of %s!",

@@ -651,4 +651,328 @@ class PresetsTest {
 
         Presets.reloadFrom(dir.resolve("clean"));
     }
+
+    // --------------------------------------------------------- F-140-5..11 definition format
+
+    @Test
+    void newFormatFieldsDefaultWhenAbsent(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("plain.json"), """
+                { "items": ["minecraft:dirt"] }
+                """);
+        assertEquals(1, Presets.reloadFrom(dir));
+
+        Presets.PresetDefinition plain = Presets.get("plain");
+        assertNotNull(plain);
+        assertEquals(List.of(), plain.includes());
+        assertFalse(plain.description().present());
+        assertNull(plain.category());
+        assertEquals(0, plain.order());
+        assertNull(plain.version());
+        assertEquals(List.of(), plain.requiredMods());
+        assertEquals(List.of(), plain.groups());
+        assertEquals(List.of(), plain.nextPresets());
+        assertNull(plain.unlockAfterHours());
+
+        // Built-ins use the same defaults.
+        Presets.PresetDefinition builtin = Presets.get("atm_star");
+        assertNotNull(builtin);
+        assertEquals(List.of(), builtin.includes());
+        assertFalse(builtin.description().present());
+        assertNull(builtin.category());
+        assertEquals(0, builtin.order());
+        assertNull(builtin.version());
+        assertEquals(List.of(), builtin.requiredMods());
+        assertEquals(List.of(), builtin.groups());
+        assertEquals(List.of(), builtin.nextPresets());
+        assertNull(builtin.unlockAfterHours());
+
+        Presets.reloadFrom(dir.resolve("clean"));
+    }
+
+    @Test
+    void parsesAllNewFieldsAndExpandsIncludes(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("base.json"), """
+                { "items": ["minecraft:diamond"] }
+                """);
+        Files.writeString(dir.resolve("full.json"), """
+                {
+                  "name": { "en_us": "Full", "ja_jp": "全部" },
+                  "description": { "en_us": "Full description", "ja_jp": "説明" },
+                  "category": "  Ores  ",
+                  "order": -3,
+                  "version": 4,
+                  "includes": ["base", "base", "bad id"],
+                  "requiredMods": ["create", "create", "Bad Mod"],
+                  "groups": [
+                    { "id": "ores", "name": { "en_us": "Ores" },
+                      "items": ["minecraft:diamond", "minecraft:emerald"] }
+                  ],
+                  "nextPresets": ["base", "bad id"],
+                  "unlockAfterHours": 12.5,
+                  "items": ["minecraft:emerald"]
+                }
+                """);
+        assertEquals(2, Presets.reloadFrom(dir));
+
+        Presets.PresetDefinition full = Presets.get("full");
+        assertNotNull(full);
+        // includes are recursively expanded before the preset's own items, deduped in order
+        assertEquals(List.of(TargetKey.of("minecraft:diamond"), TargetKey.of("minecraft:emerald")),
+                full.items());
+        assertEquals(List.of("base"), full.includes());
+        assertEquals("Full description", full.description().resolve("en_us", "full"));
+        assertEquals("説明", full.description().resolve("ja_jp", "full"));
+        assertEquals("Ores", full.category());
+        assertEquals(-3, full.order());
+        assertEquals(4, full.version());
+        assertEquals(List.of("create"), full.requiredMods());
+        assertEquals(List.of("base"), full.nextPresets());
+        assertEquals(12.5d, full.unlockAfterHours());
+        assertEquals(1, full.groups().size());
+        assertEquals("ores", full.groups().get(0).id());
+        assertEquals("Ores", full.groups().get(0).name().resolve("en_us", "ores"));
+        assertEquals(List.of(TargetKey.of("minecraft:diamond"), TargetKey.of("minecraft:emerald")),
+                full.groups().get(0).items());
+
+        Presets.reloadFrom(dir.resolve("clean"));
+    }
+
+    @Test
+    void invalidNewFieldElementsAreSkippedWithoutRejectingThePreset(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("bad_fields.json"), """
+                {
+                  "items": ["minecraft:dirt"],
+                  "order": "first",
+                  "version": 0,
+                  "category": 42,
+                  "includes": ["bad id", 7, true],
+                  "requiredMods": ["Bad Mod", 5, null],
+                  "groups": "not-an-array",
+                  "nextPresets": ["bad id", {}],
+                  "unlockAfterHours": -2
+                }
+                """);
+        assertEquals(1, Presets.reloadFrom(dir));
+
+        Presets.PresetDefinition preset = Presets.get("bad_fields");
+        assertNotNull(preset);
+        assertEquals(List.of(TargetKey.of("minecraft:dirt")), preset.items());
+        assertEquals(List.of(), preset.includes());
+        assertEquals(0, preset.order());
+        assertNull(preset.version());
+        assertNull(preset.category());
+        assertEquals(List.of(), preset.requiredMods());
+        assertEquals(List.of(), preset.groups());
+        assertEquals(List.of(), preset.nextPresets());
+        assertNull(preset.unlockAfterHours());
+
+        // A valid version 1 is accepted, while 0/negative are unversioned.
+        Files.writeString(dir.resolve("v1.json"), """
+                { "items": ["minecraft:dirt"], "version": 1 }
+                """);
+        Files.writeString(dir.resolve("vneg.json"), """
+                { "items": ["minecraft:dirt"], "version": -4 }
+                """);
+        assertEquals(3, Presets.reloadFrom(dir));
+        assertEquals(1, Presets.get("v1").version());
+        assertNull(Presets.get("vneg").version());
+
+        Presets.reloadFrom(dir.resolve("clean"));
+    }
+
+    @Test
+    void descriptionAcceptsPlainAndLocalizedForms(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("plain_desc.json"), """
+                { "description": "  A plain description  ", "items": ["minecraft:dirt"] }
+                """);
+        Files.writeString(dir.resolve("localized_desc.json"), """
+                {
+                  "description": { "EN_US": "Ores", "ja_jp": "鉱石", "de_de": "  ", "es_es": 42 },
+                  "items": ["minecraft:dirt"]
+                }
+                """);
+        Files.writeString(dir.resolve("bad_desc.json"), """
+                { "description": 42, "items": ["minecraft:dirt"] }
+                """);
+        assertEquals(3, Presets.reloadFrom(dir));
+
+        assertEquals("A plain description", Presets.get("plain_desc").description().resolve("ja_jp", "plain_desc"));
+        assertEquals("Ores", Presets.get("localized_desc").description().resolve("en_us", "localized_desc"));
+        assertEquals("鉱石", Presets.get("localized_desc").description().resolve("ja_jp", "localized_desc"));
+        assertEquals("Ores", Presets.get("localized_desc").description().resolve("de_de", "localized_desc"));
+        assertFalse(Presets.get("bad_desc").description().present());
+
+        Presets.reloadFrom(dir.resolve("clean"));
+    }
+
+    @Test
+    void includesChainDiamondCycleAndMissingAreResolvedAtLoad(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("leaf.json"), """
+                { "items": ["minecraft:iron_ingot"] }
+                """);
+        Files.writeString(dir.resolve("mid.json"), """
+                { "includes": ["leaf"], "items": ["minecraft:gold_ingot"] }
+                """);
+        Files.writeString(dir.resolve("top.json"), """
+                { "includes": ["mid", "ghost"], "items": ["minecraft:diamond"] }
+                """);
+        Files.writeString(dir.resolve("cycle_a.json"), """
+                { "includes": ["cycle_b"], "items": ["minecraft:stone"] }
+                """);
+        Files.writeString(dir.resolve("cycle_b.json"), """
+                { "includes": ["cycle_a"], "items": ["minecraft:dirt"] }
+                """);
+        assertEquals(5, Presets.reloadFrom(dir));
+
+        assertEquals(List.of(TargetKey.of("minecraft:iron_ingot")), Presets.get("leaf").items());
+        assertEquals(List.of(TargetKey.of("minecraft:iron_ingot"), TargetKey.of("minecraft:gold_ingot")),
+                Presets.get("mid").items());
+        assertEquals(List.of(TargetKey.of("minecraft:iron_ingot"), TargetKey.of("minecraft:gold_ingot"),
+                        TargetKey.of("minecraft:diamond")),
+                Presets.get("top").items());
+        // The cycle branch is cut for each root: cycle_a keeps cycle_b's own item plus its own,
+        // and cycle_b keeps cycle_a's own item plus its own.
+        assertEquals(List.of(TargetKey.of("minecraft:dirt"), TargetKey.of("minecraft:stone")),
+                Presets.get("cycle_a").items());
+        assertEquals(List.of(TargetKey.of("minecraft:stone"), TargetKey.of("minecraft:dirt")),
+                Presets.get("cycle_b").items());
+
+        Presets.reloadFrom(dir.resolve("clean"));
+    }
+
+    @Test
+    void presetListOrderUsesOrderAscendingThenId(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("zeta.json"), """
+                { "order": -5, "items": ["minecraft:dirt"] }
+                """);
+        Files.writeString(dir.resolve("alpha.json"), """
+                { "items": ["minecraft:dirt"] }
+                """);
+        Files.writeString(dir.resolve("beta.json"), """
+                { "order": 0, "items": ["minecraft:dirt"] }
+                """);
+        Files.writeString(dir.resolve("gamma.json"), """
+                { "order": 10, "items": ["minecraft:dirt"] }
+                """);
+        assertEquals(4, Presets.reloadFrom(dir));
+
+        List<String> expected = List.of("zeta", "alpha", "atm_star", "beta", "vanilla_endgame", "gamma");
+        assertEquals(expected, Presets.names());
+        assertEquals(expected, Presets.all().stream().map(Presets.PresetDefinition::id).toList());
+
+        Presets.reloadFrom(dir.resolve("clean"));
+    }
+
+    @Test
+    void groupsAreValidatedAgainstExpandedItems(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("base_grp.json"), """
+                { "items": ["minecraft:diamond", "minecraft:emerald"] }
+                """);
+        Files.writeString(dir.resolve("group_pack.json"), """
+                {
+                  "includes": ["base_grp"],
+                  "items": ["minecraft:iron_ingot"],
+                  "groups": [
+                    { "id": "g1", "items": ["minecraft:diamond", "missingmod:nope"] },
+                    { "id": "g2", "items": ["minecraft:diamond", "minecraft:emerald"] },
+                    { "id": "g3", "items": [] },
+                    { "id": "g1", "items": ["minecraft:iron_ingot"] }
+                  ]
+                }
+                """);
+        assertEquals(2, Presets.reloadFrom(dir));
+
+        Presets.PresetDefinition pack = Presets.get("group_pack");
+        assertNotNull(pack);
+        assertEquals(List.of(TargetKey.of("minecraft:diamond"), TargetKey.of("minecraft:emerald"),
+                TargetKey.of("minecraft:iron_ingot")), pack.items());
+        assertEquals(2, pack.groups().size());
+        assertEquals("g1", pack.groups().get(0).id());
+        assertEquals(List.of(TargetKey.of("minecraft:diamond")), pack.groups().get(0).items());
+        assertEquals("g2", pack.groups().get(1).id());
+        assertEquals(List.of(TargetKey.of("minecraft:emerald")), pack.groups().get(1).items());
+
+        Presets.reloadFrom(dir.resolve("clean"));
+    }
+
+    @Test
+    void saveCustomToCarriesNewFieldsAndRevalidatesGroupsAgainstNewItems(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("base_carry.json"), """
+                { "items": ["minecraft:diamond", "minecraft:emerald"] }
+                """);
+        Path carryFile = dir.resolve("carry.json");
+        Files.writeString(carryFile, """
+                {
+                  "name": { "en_us": "Carry Me" },
+                  "description": { "en_us": "Old description", "ja_jp": "古い説明" },
+                  "category": "Metals",
+                  "order": 7,
+                  "version": 3,
+                  "includes": ["base_carry"],
+                  "requiredMods": ["create"],
+                  "groups": [
+                    { "id": "keep", "items": ["minecraft:diamond", "minecraft:emerald"] },
+                    { "id": "own", "items": ["minecraft:gold_ingot"] }
+                  ],
+                  "nextPresets": ["base_carry"],
+                  "unlockAfterHours": 4.0,
+                  "items": ["minecraft:gold_ingot"]
+                }
+                """);
+        assertEquals(2, Presets.reloadFrom(dir));
+        assertEquals(List.of(TargetKey.of("minecraft:diamond"), TargetKey.of("minecraft:emerald"),
+                TargetKey.of("minecraft:gold_ingot")), Presets.get("carry").items());
+
+        // GUI save equivalent: the player's current targets are just diamond.
+        assertTrue(Presets.saveCustomTo(dir, "carry", List.of(TargetKey.of("minecraft:diamond"))));
+
+        JsonObject saved = JsonParser.parseString(Files.readString(carryFile)).getAsJsonObject();
+        assertEquals("Carry Me", saved.getAsJsonObject("name").get("en_us").getAsString());
+        assertEquals("Old description", saved.getAsJsonObject("description").get("en_us").getAsString());
+        assertEquals("Metals", saved.get("category").getAsString());
+        assertEquals(7, saved.get("order").getAsInt());
+        assertEquals(3, saved.get("version").getAsInt());
+        assertEquals("base_carry", saved.getAsJsonArray("includes").get(0).getAsString());
+        assertEquals("create", saved.getAsJsonArray("requiredMods").get(0).getAsString());
+        assertEquals("base_carry", saved.getAsJsonArray("nextPresets").get(0).getAsString());
+        assertEquals(4.0d, saved.get("unlockAfterHours").getAsDouble());
+        // The JSON keeps the raw GUI items; includes are still the carried reference.
+        assertEquals(1, saved.getAsJsonArray("items").size());
+        assertEquals("minecraft:diamond", saved.getAsJsonArray("items").get(0).getAsString());
+        // groups are re-validated against the new expanded items: the group pointing at the
+        // removed gold item is gone, the diamond/emerald group survives.
+        assertEquals(1, saved.getAsJsonArray("groups").size());
+        assertEquals("keep", saved.getAsJsonArray("groups").get(0).getAsJsonObject().get("id").getAsString());
+
+        Presets.PresetDefinition afterSave = Presets.get("carry");
+        assertNotNull(afterSave);
+        assertEquals(List.of(TargetKey.of("minecraft:diamond"), TargetKey.of("minecraft:emerald")),
+                afterSave.items());
+        assertEquals("Old description", afterSave.description().resolve("en_us", "carry"));
+        assertEquals("Metals", afterSave.category());
+        assertEquals(7, afterSave.order());
+        assertEquals(3, afterSave.version());
+        assertEquals(List.of("base_carry"), afterSave.includes());
+        assertEquals(List.of("create"), afterSave.requiredMods());
+        assertEquals(List.of("base_carry"), afterSave.nextPresets());
+        assertEquals(4.0d, afterSave.unlockAfterHours());
+        assertEquals(1, afterSave.groups().size());
+        assertEquals("keep", afterSave.groups().get(0).id());
+
+        // Reloading from disk produces the same expanded definition.
+        Presets.reloadFrom(dir);
+        Presets.PresetDefinition afterReload = Presets.get("carry");
+        assertEquals(afterSave.items(), afterReload.items());
+        assertEquals(afterSave.groups(), afterReload.groups());
+        assertEquals(afterSave.description(), afterReload.description());
+        assertEquals(afterSave.category(), afterReload.category());
+        assertEquals(afterSave.order(), afterReload.order());
+        assertEquals(afterSave.version(), afterReload.version());
+        assertEquals(afterSave.includes(), afterReload.includes());
+        assertEquals(afterSave.requiredMods(), afterReload.requiredMods());
+        assertEquals(afterSave.nextPresets(), afterReload.nextPresets());
+        assertEquals(afterSave.unlockAfterHours(), afterReload.unlockAfterHours());
+
+        Presets.reloadFrom(dir.resolve("clean"));
+    }
 }
