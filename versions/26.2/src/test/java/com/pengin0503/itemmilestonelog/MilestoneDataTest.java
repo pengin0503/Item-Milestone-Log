@@ -1170,4 +1170,49 @@ class MilestoneDataTest {
         assertEquals(SchemaVersionLogic.CURRENT_SCHEMA_VERSION,
                 encodeRoot(legacyMigrated).getIntOr("schemaVersion", -1));
     }
+    @Test
+    void loadReportCountsElementSkipsAndCleanLoadYieldsZero() {
+        CompoundTag playerTag = new CompoundTag();
+        ListTag targets = new ListTag();
+        targets.add(StringTag.valueOf("minecraft:diamond"));
+        targets.add(StringTag.valueOf("minecraft:emerald#0")); // invalid count -> one element skip
+        playerTag.put("targets", targets);
+        CompoundTag players = new CompoundTag();
+        players.put(PLAYER_A.toString(), playerTag);
+        CompoundTag corrupt = new CompoundTag();
+        corrupt.put("players", players);
+        corrupt.putInt("schemaVersion", 1);
+
+        MilestoneData loaded = MilestoneData.CODEC.parse(NbtOps.INSTANCE, corrupt).getOrThrow();
+        assertNotNull(loaded.loadReport());
+        assertEquals(1, loaded.loadReport().elementSkipCount());
+        assertEquals(1, loaded.loadReport().loadedSchemaVersion());
+        assertFalse(loaded.loadReport().totalFailure());
+        assertEquals(1, loaded.playerOrNull(PLAYER_A).targets.size());
+
+        CompoundTag clean = encodeRoot(loaded);
+        MilestoneData cleanLoaded = MilestoneData.CODEC.parse(NbtOps.INSTANCE, clean).getOrThrow();
+        assertNotNull(cleanLoaded.loadReport());
+        assertEquals(0, cleanLoaded.loadReport().elementSkipCount());
+        assertEquals(1, cleanLoaded.loadReport().loadedSchemaVersion());
+    }
+
+    @Test
+    void loadReportCountsMalformedSchemaVersionButNotFutureVersion() {
+        MilestoneData original = new MilestoneData();
+        original.player(PLAYER_A).targets.add(TargetKey.of("minecraft:diamond"));
+        CompoundTag tag = encodeRoot(original);
+
+        tag.putInt("schemaVersion", 99);
+        MilestoneData future = MilestoneData.CODEC.parse(NbtOps.INSTANCE, tag).getOrThrow();
+        assertNotNull(future.loadReport());
+        assertEquals(0, future.loadReport().elementSkipCount());
+        assertEquals(99, future.loadReport().loadedSchemaVersion());
+
+        tag.putString("schemaVersion", "not-a-number");
+        MilestoneData malformed = MilestoneData.CODEC.parse(NbtOps.INSTANCE, tag).getOrThrow();
+        assertNotNull(malformed.loadReport());
+        assertEquals(1, malformed.loadReport().elementSkipCount());
+        assertEquals(0, malformed.loadReport().loadedSchemaVersion());
+    }
 }

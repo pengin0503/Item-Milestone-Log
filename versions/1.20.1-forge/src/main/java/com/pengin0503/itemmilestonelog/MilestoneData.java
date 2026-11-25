@@ -75,6 +75,15 @@ public class MilestoneData extends SavedData {
     private long lastDigestEpochMillis = 0L;
     /** Schema version retained from the last load; 0 when the field was missing or invalid (F-140-1). */
     private int retainedSchemaVersion = 0;
+    /** Element-skip/schema accounting for F-140-2 (N141); set by {@link #load(CompoundTag)}. */
+    @Nullable
+    private MilestoneLoadReport loadReport;
+
+    /** Load accounting for the most recent load of this instance, or {@code null} if not loaded. */
+    @Nullable
+    MilestoneLoadReport loadReport() {
+        return loadReport;
+    }
 
     public static MilestoneData get(MinecraftServer server) {
         return McCompat.data().getOrCreate(server.overworld().getDataStorage());
@@ -203,11 +212,13 @@ public class MilestoneData extends SavedData {
 
     private static void readWorldFirstTag(Map<TargetKey, WorldFirstRecord> out, String itemId, int count, CompoundTag wfTag) {
         if (!McCompat.nbt().containsTyped(wfTag, "ticks", NbtCompat.ANY_NUMERIC)) {
+            MilestoneLoadReport.recordElementSkip();
             ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping worldFirst '{}' without ticks in SavedData", itemId);
             return;
         }
         int ticks = McCompat.nbt().getInt(wfTag, "ticks");
         if (ticks < 0) {
+            MilestoneLoadReport.recordElementSkip();
             ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping worldFirst '{}' with negative ticks {} in SavedData", itemId, ticks);
             return;
         }
@@ -215,6 +226,7 @@ public class MilestoneData extends SavedData {
         try {
             uuid = UUID.fromString(McCompat.nbt().getString(wfTag, "uuid"));
         } catch (IllegalArgumentException ignored) {
+            MilestoneLoadReport.recordElementSkip();
             ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping worldFirst '{}' with invalid player UUID '{}' in SavedData",
                     itemId, McCompat.nbt().getString(wfTag, "uuid"));
             return;
@@ -231,6 +243,18 @@ public class MilestoneData extends SavedData {
     }
 
     public static MilestoneData load(CompoundTag tag) {
+        MilestoneLoadReport report = MilestoneLoadReport.begin();
+        try {
+            MilestoneData data = loadInternal(tag);
+            data.loadReport = report;
+            report.recordLoadedSchemaVersion(data.retainedSchemaVersion);
+            return data;
+        } finally {
+            MilestoneLoadReport.end(report);
+        }
+    }
+
+    private static MilestoneData loadInternal(CompoundTag tag) {
         MilestoneData data = new MilestoneData();
         CompoundTag all = McCompat.nbt().getCompound(tag, "players");
         for (String uuidKey : McCompat.nbt().keys(all)) {
@@ -238,6 +262,7 @@ public class MilestoneData extends SavedData {
             try {
                 uuid = UUID.fromString(uuidKey);
             } catch (IllegalArgumentException ignored) {
+                MilestoneLoadReport.recordElementSkip();
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping player entry with invalid UUID '{}' in SavedData", uuidKey);
                 continue;
             }
@@ -250,12 +275,14 @@ public class MilestoneData extends SavedData {
                 if (parsed != null) {
                     pd.targets.add(parsed);
                 } else {
+                    MilestoneLoadReport.recordElementSkip();
                     ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid target entry '{}' in SavedData", raw);
                 }
             }
             CompoundTag records = McCompat.nbt().getCompound(entry, "records");
             for (String itemId : McCompat.nbt().keys(records)) {
                 if (!TargetKey.isValidItemId(itemId)) {
+                    MilestoneLoadReport.recordElementSkip();
                     ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid record item key '{}' in SavedData", itemId);
                     continue;
                 }
@@ -268,6 +295,7 @@ public class MilestoneData extends SavedData {
                         if (rec != null) {
                             pd.records.put(TargetKey.of(itemId), rec);
                         } else {
+                            MilestoneLoadReport.recordElementSkip();
                             ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping record for '{}' with missing or negative ticks in SavedData",
                                     itemId);
                         }
@@ -276,6 +304,7 @@ public class MilestoneData extends SavedData {
                         for (String countKey : McCompat.nbt().keys(itemTag)) {
                             int count = TargetKey.tryParseCount(countKey);
                             if (count < TargetKey.MIN_COUNT || !McCompat.nbt().containsTyped(itemTag, countKey, Tag.TAG_COMPOUND)) {
+                                MilestoneLoadReport.recordElementSkip();
                                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid record count '{}' for '{}' in SavedData",
                                         countKey, itemId);
                                 continue;
@@ -284,6 +313,7 @@ public class MilestoneData extends SavedData {
                             if (rec != null) {
                                 pd.records.put(new TargetKey(itemId, count), rec);
                             } else {
+                                MilestoneLoadReport.recordElementSkip();
                                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping record for '{}#{}' with missing or negative ticks in SavedData",
                                         itemId, countKey);
                             }
@@ -295,6 +325,7 @@ public class MilestoneData extends SavedData {
                     if (ticks >= 0) {
                         pd.records.put(TargetKey.of(itemId), MilestoneRecord.legacy(ticks));
                     } else {
+                        MilestoneLoadReport.recordElementSkip();
                         ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping legacy record for '{}' with negative ticks {} in SavedData",
                                 itemId, ticks);
                     }
@@ -315,16 +346,19 @@ public class MilestoneData extends SavedData {
             if (McCompat.nbt().containsTyped(entry, "muteProgressAlerts", NbtCompat.ANY_NUMERIC)) {
                 pd.muteProgressAlerts = McCompat.nbt().getBoolean(entry, "muteProgressAlerts");
             } else if (McCompat.nbt().contains(entry, "muteProgressAlerts")) {
+                MilestoneLoadReport.recordElementSkip();
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed muteProgressAlerts tag in SavedData");
             }
             if (McCompat.nbt().containsTyped(entry, "excludeFromDiscord", NbtCompat.ANY_NUMERIC)) {
                 pd.excludeFromDiscord = McCompat.nbt().getBoolean(entry, "excludeFromDiscord");
             } else if (McCompat.nbt().contains(entry, "excludeFromDiscord")) {
+                MilestoneLoadReport.recordElementSkip();
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed excludeFromDiscord tag in SavedData");
             }
             if (McCompat.nbt().containsTyped(entry, "hideFromLookup", NbtCompat.ANY_NUMERIC)) {
                 pd.hideFromLookup = McCompat.nbt().getBoolean(entry, "hideFromLookup");
             } else if (McCompat.nbt().contains(entry, "hideFromLookup")) {
+                MilestoneLoadReport.recordElementSkip();
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed hideFromLookup tag in SavedData");
             }
             if (McCompat.nbt().containsTyped(entry, "lastSeen", NbtCompat.ANY_NUMERIC)) {
@@ -332,9 +366,11 @@ public class MilestoneData extends SavedData {
                 if (lastSeen > 0L) {
                     pd.lastSeen = lastSeen;
                 } else if (lastSeen < 0L) {
+                    MilestoneLoadReport.recordElementSkip();
                     ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping negative lastSeen value {} in SavedData", lastSeen);
                 }
             } else if (McCompat.nbt().contains(entry, "lastSeen")) {
+                MilestoneLoadReport.recordElementSkip();
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed lastSeen tag in SavedData");
             }
             if (McCompat.nbt().containsTyped(entry, "progressNotified", Tag.TAG_COMPOUND)) {
@@ -342,15 +378,18 @@ public class MilestoneData extends SavedData {
                 for (String rawKey : McCompat.nbt().keys(progressTag)) {
                     TargetKey parsed = TargetKey.tryParseEncoded(rawKey);
                     if (parsed == null) {
+                        MilestoneLoadReport.recordElementSkip();
                         ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid progressNotified key '{}' in SavedData", rawKey);
                         continue;
                     }
                     if (!McCompat.nbt().containsTyped(progressTag, rawKey, NbtCompat.ANY_NUMERIC)) {
+                        MilestoneLoadReport.recordElementSkip();
                         ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping non-numeric progressNotified value for '{}' in SavedData", rawKey);
                         continue;
                     }
                     int threshold = McCompat.nbt().getInt(progressTag, rawKey);
                     if (!ProgressAlertLogic.isValidStoredThreshold(threshold)) {
+                        MilestoneLoadReport.recordElementSkip();
                         ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping out-of-range progressNotified value {} for '{}' in SavedData",
                                 threshold, rawKey);
                         continue;
@@ -358,11 +397,13 @@ public class MilestoneData extends SavedData {
                     pd.progressNotified.put(parsed, threshold);
                 }
             } else if (McCompat.nbt().contains(entry, "progressNotified")) {
+                MilestoneLoadReport.recordElementSkip();
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed progressNotified tag in SavedData");
             }
             if (McCompat.nbt().containsTyped(entry, "completedPresets", Tag.TAG_LIST)) {
                 Tag rawCompleted = entry.get("completedPresets");
                 if (rawCompleted instanceof ListTag rawList && !rawList.isEmpty() && McCompat.nbt().listElementType(rawList) != Tag.TAG_STRING) {
+                    MilestoneLoadReport.recordElementSkip();
                     ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed completedPresets tag in SavedData");
                 } else {
                     for (Tag t : McCompat.nbt().getStringList(entry, "completedPresets")) {
@@ -370,11 +411,13 @@ public class MilestoneData extends SavedData {
                         if (Presets.isValidId(presetId)) {
                             pd.completedPresets.add(presetId);
                         } else {
+                            MilestoneLoadReport.recordElementSkip();
                             ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid completedPresets entry '{}' in SavedData", presetId);
                         }
                     }
                 }
             } else if (McCompat.nbt().contains(entry, "completedPresets")) {
+                MilestoneLoadReport.recordElementSkip();
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed completedPresets tag in SavedData");
             }
             data.players.put(uuid, pd);
@@ -383,6 +426,7 @@ public class MilestoneData extends SavedData {
         CompoundTag firsts = McCompat.nbt().getCompound(tag, "worldFirsts");
         for (String itemId : McCompat.nbt().keys(firsts)) {
             if (!TargetKey.isValidItemId(itemId) || !McCompat.nbt().containsTyped(firsts, itemId, Tag.TAG_COMPOUND)) {
+                MilestoneLoadReport.recordElementSkip();
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid worldFirst item key '{}' in SavedData", itemId);
                 continue;
             }
@@ -394,6 +438,7 @@ public class MilestoneData extends SavedData {
                 for (String countKey : McCompat.nbt().keys(itemTag)) {
                     int count = TargetKey.tryParseCount(countKey);
                     if (count < TargetKey.MIN_COUNT || !McCompat.nbt().containsTyped(itemTag, countKey, Tag.TAG_COMPOUND)) {
+                        MilestoneLoadReport.recordElementSkip();
                         ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid worldFirst count '{}' for '{}' in SavedData",
                                 countKey, itemId);
                         continue;
@@ -408,9 +453,11 @@ public class MilestoneData extends SavedData {
             if (lastDigest > 0L) {
                 data.lastDigestEpochMillis = lastDigest;
             } else if (lastDigest < 0L) {
+                MilestoneLoadReport.recordElementSkip();
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping negative lastDigestEpoch value {} in SavedData", lastDigest);
             }
         } else if (McCompat.nbt().contains(tag, "lastDigestEpoch")) {
+            MilestoneLoadReport.recordElementSkip();
             ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed lastDigestEpoch tag in SavedData");
         }
 
@@ -427,6 +474,10 @@ public class MilestoneData extends SavedData {
             ItemMilestoneLog.LOGGER.warn(schemaWarning);
         }
         data.retainedSchemaVersion = schemaVersion.retainedVersion();
+        MilestoneLoadReport.recordLoadedSchemaVersion(data.retainedSchemaVersion);
+        if (schemaVersion.status() == SchemaVersionLogic.Status.INVALID) {
+            MilestoneLoadReport.recordElementSkip();
+        }
 
         return data;
     }

@@ -799,4 +799,51 @@ class MilestoneDataTest {
         assertEquals(Set.of(TargetKey.of("minecraft:diamond")),
                 malformed.playerOrNull(player).targets);
     }
+    @Test
+    void loadReportCountsElementSkipsAndCleanLoadYieldsZero() {
+        UUID player = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        CompoundTag playerTag = new CompoundTag();
+        ListTag targets = new ListTag();
+        targets.add(StringTag.valueOf("minecraft:diamond"));
+        targets.add(StringTag.valueOf("minecraft:emerald#0")); // invalid count -> one element skip
+        playerTag.put("targets", targets);
+        CompoundTag players = new CompoundTag();
+        players.put(player.toString(), playerTag);
+        CompoundTag corrupt = new CompoundTag();
+        corrupt.put("players", players);
+        corrupt.putInt("schemaVersion", 1);
+
+        MilestoneData loaded = MilestoneData.load(corrupt);
+        assertNotNull(loaded.loadReport());
+        assertEquals(1, loaded.loadReport().elementSkipCount());
+        assertEquals(1, loaded.loadReport().loadedSchemaVersion());
+        assertFalse(loaded.loadReport().totalFailure());
+        assertEquals(1, loaded.playerOrNull(player).targets.size());
+
+        CompoundTag clean = loaded.save(new CompoundTag());
+        MilestoneData cleanLoaded = MilestoneData.load(clean);
+        assertNotNull(cleanLoaded.loadReport());
+        assertEquals(0, cleanLoaded.loadReport().elementSkipCount());
+        assertEquals(1, cleanLoaded.loadReport().loadedSchemaVersion());
+    }
+
+    @Test
+    void loadReportCountsMalformedSchemaVersionButNotFutureVersion() {
+        UUID player = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        MilestoneData original = new MilestoneData();
+        original.player(player).targets.add(TargetKey.of("minecraft:diamond"));
+        CompoundTag tag = original.save(new CompoundTag());
+
+        tag.putInt("schemaVersion", 99);
+        MilestoneData future = MilestoneData.load(tag);
+        assertNotNull(future.loadReport());
+        assertEquals(0, future.loadReport().elementSkipCount());
+        assertEquals(99, future.loadReport().loadedSchemaVersion());
+
+        tag.putString("schemaVersion", "not-a-number");
+        MilestoneData malformed = MilestoneData.load(tag);
+        assertNotNull(malformed.loadReport());
+        assertEquals(1, malformed.loadReport().elementSkipCount());
+        assertEquals(0, malformed.loadReport().loadedSchemaVersion());
+    }
 }
