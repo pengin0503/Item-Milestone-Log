@@ -1,0 +1,34 @@
+{
+  "files": [
+    {
+      "file": "itemmilestonelog-neoforge-26.x-{version}.jar",
+      "game_versions": ["26.1.2", "26.2", "26.3"],
+      "neoforge_min": "26.1.2.71",
+      "java": 25
+    },
+    {
+      "file": "itemmilestonelog-neoforge-1.21-1.21.4-{version}.jar",
+      "game_versions": ["1.21", "1.21.1", "1.21.2", "1.21.3", "1.21.4"],
+      "neoforge_min": "21.0.143",
+      "java": 21
+    },
+    {
+      "file": "itemmilestonelog-neoforge-1.21.5-1.21.8-{version}.jar",
+      "game_versions": ["1.21.5", "1.21.6", "1.21.7", "1.21.8"],
+      "neoforge_min": "21.5.74",
+      "java": 21
+    },
+    {
+      "file": "itemmilestonelog-neoforge-1.21.9-1.21.10-{version}.jar",
+      "game_versions": ["1.21.9", "1.21.10"],
+      "neoforge_min": "21.9.0-beta",
+      "java": 21
+    },
+    {
+      "file": "itemmilestonelog-neoforge-1.21.11-{version}.jar",
+      "game_versions": ["1.21.11"],
+      "neoforge_min": "21.11.42",
+      "java": 21
+    }
+  ]
+}

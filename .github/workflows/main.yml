@@ -852,31 +852,37 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      # Explicit artifact names, not the itemmilestonelog-* pattern: the
-      # merge-26x job's merged jar must not land in dist until the release
-      # composition is reworked for 1.3.0 (docs/DESIGN_1.3.0.md section 6).
-      - name: Download the 1.21.1 release jar
+      # The release composition is the five merged jars listed in
+      # publish-manifest.json (docs/DESIGN_1.3.0.md section 6); explicit
+      # artifact names keep anything else out of dist.
+      - name: Download the 26.x merged jar
         uses: actions/download-artifact@v7
         with:
-          name: itemmilestonelog-1.21.1
+          name: itemmilestonelog-26.x
           path: dist
 
-      - name: Download the 26.1.2 release jar
+      - name: Download the 1.21.x jar A
         uses: actions/download-artifact@v7
         with:
-          name: itemmilestonelog-26.1.2
+          name: itemmilestonelog-1.21-a
           path: dist
 
-      - name: Download the 26.2 release jar
+      - name: Download the 1.21.x jar B1
         uses: actions/download-artifact@v7
         with:
-          name: itemmilestonelog-26.2
+          name: itemmilestonelog-1.21-b1
           path: dist
 
-      - name: Download the 26.3 release jar
+      - name: Download the 1.21.x jar B2
         uses: actions/download-artifact@v7
         with:
-          name: itemmilestonelog-26.3
+          name: itemmilestonelog-1.21-b2
+          path: dist
+
+      - name: Download the 1.21.x jar C
+        uses: actions/download-artifact@v7
+        with:
+          name: itemmilestonelog-1.21-c
           path: dist
 
       - name: Check the jars and write the release notes
@@ -894,31 +900,37 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      # Explicit artifact names, not the itemmilestonelog-* pattern: the
-      # merge-26x job's merged jar must not land in dist until the release
-      # composition is reworked for 1.3.0 (docs/DESIGN_1.3.0.md section 6).
-      - name: Download the 1.21.1 release jar
+      # The release composition is the five merged jars listed in
+      # publish-manifest.json (docs/DESIGN_1.3.0.md section 6); explicit
+      # artifact names keep anything else out of dist.
+      - name: Download the 26.x merged jar
         uses: actions/download-artifact@v7
         with:
-          name: itemmilestonelog-1.21.1
+          name: itemmilestonelog-26.x
           path: dist
 
-      - name: Download the 26.1.2 release jar
+      - name: Download the 1.21.x jar A
         uses: actions/download-artifact@v7
         with:
-          name: itemmilestonelog-26.1.2
+          name: itemmilestonelog-1.21-a
           path: dist
 
-      - name: Download the 26.2 release jar
+      - name: Download the 1.21.x jar B1
         uses: actions/download-artifact@v7
         with:
-          name: itemmilestonelog-26.2
+          name: itemmilestonelog-1.21-b1
           path: dist
 
-      - name: Download the 26.3 release jar
+      - name: Download the 1.21.x jar B2
         uses: actions/download-artifact@v7
         with:
-          name: itemmilestonelog-26.3
+          name: itemmilestonelog-1.21-b2
+          path: dist
+
+      - name: Download the 1.21.x jar C
+        uses: actions/download-artifact@v7
+        with:
+          name: itemmilestonelog-1.21-c
           path: dist
 
       - name: Create the release
@@ -928,5 +940,5 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           .github/scripts/check-release.sh dist "$TAG" build/release-notes.md
-          gh release create "$TAG" dist/*.jar --verify-tag \
+          gh release create "$TAG" dist/*.jar dist/publish-manifest.json --verify-tag \
             --title "Item Milestone Log ${TAG#v}" --notes-file build/release-notes.md

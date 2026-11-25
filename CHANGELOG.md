@@ -3,6 +3,17 @@
 The section for a version is used as it is for the GitHub Release (created when a
 `v<version>` tag is pushed) and for the CurseForge file changelog.
 
+## 1.3.0
+
+This release is about Minecraft version support. There are no gameplay changes: every 1.2.0 feature is included unchanged.
+
+### Version Support
+- **Single jar per version range**: The download list shrinks from one jar per Minecraft version to one jar per version range. The 26.x series (26.1.2, 26.2, 26.3) now shares one jar, and the 1.21.x line is covered by four jars: 1.21–1.21.4, 1.21.5–1.21.8, 1.21.9–1.21.10, and 1.21.11.
+- **New Minecraft versions supported**: 1.21, 1.21.2, 1.21.3, 1.21.4, 1.21.5, 1.21.6, 1.21.7, 1.21.8, 1.21.9, 1.21.10, and 1.21.11 join the previously supported 1.21.1, so the whole 1.21.x line is now covered.
+
+### Compatibility
+- **Existing worlds and data**: Existing worlds and milestone data are fully compatible. The data format is shared across the whole 1.21.x line, so a world can move between 1.21.x versions with the matching jar.
+
 ## 1.2.0
 
 ### New Commands

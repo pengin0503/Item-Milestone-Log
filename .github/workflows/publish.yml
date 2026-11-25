@@ -9,6 +9,11 @@ name: Publish to CurseForge and Modrinth
 #   CURSEFORGE_TOKEN  - CurseForge API token (project 1822783)
 # Tokens are passed only via env and are never echoed.
 #
+# The upload set is driven by publish-manifest.json, which check-release.sh wrote
+# (placeholders substituted) and the release job attached to the GitHub Release:
+# one upload per manifest entry, with that entry's game_versions
+# (docs/DESIGN_1.3.0.md section 6).
+#
 # No third-party actions are used at all (only the preinstalled gh/git/jq/curl),
 # so there is nothing to pin by SHA.
 
@@ -35,20 +40,42 @@ jobs:
       MODRINTH_PROJECT_ID: A4mCJN2v
       CURSEFORGE_PROJECT_ID: "1822783"
     steps:
-      - name: Download the jars and changelog for the tag
+      - name: Download the jars, manifest and changelog for the tag
         run: |
           set -euo pipefail
           mkdir -p dist
           gh release download "$TAG" --pattern '*.jar' --dir dist
+          gh release download "$TAG" --pattern 'publish-manifest.json' --dir dist
           ls -l dist
-          count=$(ls dist/*.jar | wc -l)
-          if [ "$count" -ne 4 ]; then
-            echo "::error::Expected 4 jars in release $TAG, found $count"
+          version="${TAG#v}"
+          # Validate the jars against the manifest: as many jars as manifest
+          # entries ({version} substituted), and every manifest file present.
+          manifest=dist/publish-manifest.json
+          if ! jq -e '.files | type == "array" and length > 0' "$manifest" > /dev/null 2>&1; then
+            echo "::error::$manifest from release $TAG is missing or invalid"
             exit 1
           fi
+          mapfile -t files < <(jq -r --arg v "$version" '.files[].file | gsub("\\{version\\}"; $v)' "$manifest")
+          shopt -s nullglob
+          jars=(dist/*.jar)
+          shopt -u nullglob
+          if [ "${#files[@]}" -ne "${#jars[@]}" ]; then
+            echo "::error::publish-manifest.json lists ${#files[@]} files but release $TAG has ${#jars[@]} jars"
+            exit 1
+          fi
+          for f in "${files[@]}"; do
+            if [ ! -f "dist/$f" ]; then
+              echo "::error::Manifest file $f is not in release $TAG"
+              exit 1
+            fi
+          done
+          if jq -e 'any(.files[].file; contains("{version}"))' "$manifest" > /dev/null; then
+            echo "::error::$manifest still contains {version} placeholders; expected the concrete manifest written by check-release.sh"
+            exit 1
+          fi
+          echo "MANIFEST=$manifest" >> "$GITHUB_ENV"
           # Extract the CHANGELOG.md section for this version (## <version> up to
           # the next ## heading) at the tagged ref.
-          version="${TAG#v}"
           gh api "repos/$GH_REPO/contents/CHANGELOG.md?ref=$TAG" \
             --jq '.content' | base64 -d > CHANGELOG.full.md
           awk -v ver="$version" '
@@ -72,38 +99,39 @@ jobs:
             exit 1
           fi
           changelog_json=$(jq -Rs . < changelog-section.md)
-          # Idempotency: game versions that already have this version_number
-          # on Modrinth are skipped, so re-running after a partial failure
-          # does not create duplicates.
+          # Idempotency (DESIGN section 6, compare version sets): the game
+          # versions that already have this version_number on Modrinth are
+          # fetched once; each manifest entry uploads only its game versions
+          # that are still missing, and is skipped when none are, so re-running
+          # after a partial failure does not create duplicates.
           existing=$(curl -sS "https://api.modrinth.com/v2/project/$MODRINTH_PROJECT_ID/version" \
             -H "Authorization: $MODRINTH_TOKEN" \
             -H "User-Agent: pengin0503/Item-Milestone-Log publish workflow" \
-            | jq -r --arg v "$VERSION" '.[] | select(.version_number == $v) | .game_versions[]')
+            | jq -c --arg v "$VERSION" '[.[] | select(.version_number == $v) | .game_versions[]] | unique')
           echo "Already on Modrinth for $VERSION: $existing"
-          for jar in dist/*.jar; do
+          while IFS= read -r entry <&3; do
+            jar="dist/$(jq -r '.file' <<< "$entry")"
             base=$(basename "$jar")
-            # Jar names look like itemmilestonelog-neoforge-<mc>-<version>.jar
-            mc=$(echo "$base" | sed -E 's/^itemmilestonelog-neoforge-([0-9]+\.[0-9]+(\.[0-9]+)?)-.*/\1/')
-            if [ -z "$mc" ] || [ "$mc" = "$base" ]; then
-              echo "::error::Cannot parse the Minecraft version from $base"
-              exit 1
-            fi
-            if echo "$existing" | grep -qx "$mc"; then
-              echo "Skipping $base: $VERSION for MC $mc is already on Modrinth"
+            label=$(jq -r 'if (.game_versions | length) > 1
+                then "\(.game_versions[0])–\(.game_versions[-1])"
+                else .game_versions[0] end' <<< "$entry")
+            missing=$(jq -c --argjson have "$existing" '.game_versions - $have' <<< "$entry")
+            if [ "$(jq 'length' <<< "$missing")" -eq 0 ]; then
+              echo "Skipping $base: $VERSION for MC $label is already on Modrinth"
               continue
             fi
             jq -n \
-              --arg name "Item Milestone Log $VERSION (MC $mc)" \
+              --arg name "Item Milestone Log $VERSION (MC $label)" \
               --arg version_number "$VERSION" \
               --argjson changelog "$changelog_json" \
               --arg project_id "$MODRINTH_PROJECT_ID" \
-              --arg mc "$mc" \
+              --argjson game_versions "$missing" \
               '{name: $name, version_number: $version_number, changelog: $changelog,
                 dependencies: [], version_type: "release", loaders: ["neoforge"],
                 featured: false, project_id: $project_id,
-                game_versions: [$mc], file_parts: ["file"]}' > data.json
+                game_versions: $game_versions, file_parts: ["file"]}' > data.json
             jq -e . data.json > /dev/null
-            echo "Uploading $base to Modrinth (MC $mc)..."
+            echo "Uploading $base to Modrinth (game versions $missing)..."
             code=$(curl -sS -X POST "https://api.modrinth.com/v2/version" \
               -H "Authorization: $MODRINTH_TOKEN" \
               -H "User-Agent: pengin0503/Item-Milestone-Log publish workflow" \
@@ -114,7 +142,7 @@ jobs:
               echo "::error::Modrinth upload failed with HTTP $code"
               exit 1
             fi
-          done
+          done 3< <(jq -c '.files[]' "$MANIFEST")
 
       - name: Upload to CurseForge
         env:
@@ -139,22 +167,31 @@ jobs:
             exit 1
           fi
           changelog_text=$(cat changelog-section.md)
-          for jar in dist/*.jar; do
+          while IFS= read -r entry <&3; do
+            jar="dist/$(jq -r '.file' <<< "$entry")"
             base=$(basename "$jar")
-            mc=$(echo "$base" | sed -E 's/^itemmilestonelog-neoforge-([0-9]+\.[0-9]+(\.[0-9]+)?)-.*/\1/')
-            mc_id=$(jq -r --arg mc "$mc" '.[] | select(.name == $mc) | .id' cf-versions.json | head -1)
-            if [ -z "$mc_id" ]; then
-              echo "::error::CurseForge game version id not found for Minecraft $mc"
-              exit 1
-            fi
+            label=$(jq -r 'if (.game_versions | length) > 1
+                then "\(.game_versions[0])–\(.game_versions[-1])"
+                else .game_versions[0] end' <<< "$entry")
+            # Every game version of the entry must resolve to a CurseForge id.
+            mc_ids=()
+            while IFS= read -r mc; do
+              mc_id=$(jq -r --arg mc "$mc" '.[] | select(.name == $mc) | .id' cf-versions.json | head -1)
+              if [ -z "$mc_id" ]; then
+                echo "::error::CurseForge game version id not found for Minecraft $mc"
+                exit 1
+              fi
+              mc_ids+=("$mc_id")
+            done < <(jq -r '.game_versions[]' <<< "$entry")
+            mc_id_list=$(IFS=,; echo "${mc_ids[*]}")
             metadata=$(jq -n \
               --arg changelog "$changelog_text" \
-              --arg displayName "Item Milestone Log $VERSION (MC $mc)" \
-              --argjson gameVersions "[${mc_id}, ${neoforge_id}${env_ids:+,$env_ids}]" \
+              --arg displayName "Item Milestone Log $VERSION (MC $label)" \
+              --argjson gameVersions "[${mc_id_list}, ${neoforge_id}${env_ids:+,$env_ids}]" \
               '{changelog: $changelog, changelogType: "markdown",
                 displayName: $displayName, gameVersions: $gameVersions,
                 releaseType: "release"}')
-            echo "Uploading $base to CurseForge (MC $mc)..."
+            echo "Uploading $base to CurseForge (MC $label)..."
             code=$(curl -sS -X POST \
               "https://minecraft.curseforge.com/api/projects/$CURSEFORGE_PROJECT_ID/upload-file" \
               -H "X-Api-Token: $CURSEFORGE_TOKEN" \
@@ -165,4 +202,4 @@ jobs:
               echo "::error::CurseForge upload failed with HTTP $code"
               exit 1
             fi
-          done
+          done 3< <(jq -c '.files[]' "$MANIFEST")
