@@ -3,6 +3,9 @@
 build/
 !gradle/wrapper/gradle-wrapper.jar
 !**/src/**/build/
+# Forge 1.20.1 project-local Gradle home (local/sandbox builds); build/ and run/
+# are already covered by the patterns above.
+versions/1.20.1-forge/.gradle-home/
 
 ### IntelliJ IDEA ###
 .idea/

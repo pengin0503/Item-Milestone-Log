@@ -11,8 +11,9 @@ name: Publish to CurseForge and Modrinth
 #
 # The upload set is driven by publish-manifest.json, which check-release.sh wrote
 # (placeholders substituted) and the release job attached to the GitHub Release:
-# one upload per manifest entry, with that entry's game_versions
-# (docs/DESIGN_1.3.0.md section 6).
+# one upload per manifest entry, with that entry's game_versions and loader
+# ("neoforge" when the loader field is absent; "forge" for the 1.20.1 port)
+# (docs/DESIGN_1.3.0.md section 6, docs/DESIGN_1.20.1.md section 8.1).
 #
 # No third-party actions are used at all (only the preinstalled gh/git/jq/curl),
 # so there is nothing to pin by SHA.
@@ -112,6 +113,9 @@ jobs:
           while IFS= read -r entry <&3; do
             jar="dist/$(jq -r '.file' <<< "$entry")"
             base=$(basename "$jar")
+            # "neoforge" when the manifest entry has no loader field (older
+            # manifests); the Forge 1.20.1 entry carries "forge".
+            loader=$(jq -r '.loader // "neoforge"' <<< "$entry")
             label=$(jq -r 'if (.game_versions | length) > 1
                 then "\(.game_versions[0])–\(.game_versions[-1])"
                 else .game_versions[0] end' <<< "$entry")
@@ -126,8 +130,9 @@ jobs:
               --argjson changelog "$changelog_json" \
               --arg project_id "$MODRINTH_PROJECT_ID" \
               --argjson game_versions "$missing" \
+              --arg loader "$loader" \
               '{name: $name, version_number: $version_number, changelog: $changelog,
-                dependencies: [], version_type: "release", loaders: ["neoforge"],
+                dependencies: [], version_type: "release", loaders: [$loader],
                 featured: false, project_id: $project_id,
                 game_versions: $game_versions, file_parts: ["file"]}' > data.json
             jq -e . data.json > /dev/null
@@ -154,22 +159,38 @@ jobs:
             exit 1
           fi
           # Resolve the game version ids once: the Minecraft version entries and
-          # the NeoForge loader entry, via the CurseForge versions API.
+          # the loader entries (NeoForge for 1.21.x/26.x, Forge for 1.20.1), via
+          # the CurseForge versions API.
           curl -sS -f "https://minecraft.curseforge.com/api/game/versions" \
             -H "X-Api-Token: $CURSEFORGE_TOKEN" > cf-versions.json
           echo "Version groups present in the CurseForge versions list:"
           jq -r 'group_by(.gameVersionTypeID)[] | "type \(.[0].gameVersionTypeID): \(length) entries, e.g. \(.[0].name), \(.[1].name // "-")"' cf-versions.json
-          jq -r '.[] | select(.name == "Client" or .name == "Server" or .name == "NeoForge") | "special: \(.id) \(.name) type \(.gameVersionTypeID)"' cf-versions.json
+          jq -r '.[] | select(.name == "Client" or .name == "Server" or .name == "NeoForge" or .name == "Forge") | "special: \(.id) \(.name) type \(.gameVersionTypeID)"' cf-versions.json
           neoforge_id=$(jq -r '.[] | select(.name == "NeoForge") | .id' cf-versions.json | head -1)
+          forge_id=$(jq -r '.[] | select(.name == "Forge") | .id' cf-versions.json | head -1)
           env_ids=$(jq -r '.[] | select(.name == "Client" or .name == "Server") | .id' cf-versions.json | paste -sd, -)
-          if [ -z "$neoforge_id" ]; then
+          # A loader id is only required when the manifest has an entry for that
+          # loader, so a NeoForge-only (or Forge-only) release behaves as before.
+          needs_neoforge=$(jq -r 'any(.files[]; (.loader // "neoforge") == "neoforge")' "$MANIFEST")
+          needs_forge=$(jq -r 'any(.files[]; (.loader // "neoforge") == "forge")' "$MANIFEST")
+          if [ "$needs_neoforge" = "true" ] && [ -z "$neoforge_id" ]; then
             echo "::error::NeoForge game version id not found in the CurseForge versions list"
+            exit 1
+          fi
+          if [ "$needs_forge" = "true" ] && [ -z "$forge_id" ]; then
+            echo "::error::Forge game version id not found in the CurseForge versions list"
             exit 1
           fi
           changelog_text=$(cat changelog-section.md)
           while IFS= read -r entry <&3; do
             jar="dist/$(jq -r '.file' <<< "$entry")"
             base=$(basename "$jar")
+            loader=$(jq -r '.loader // "neoforge"' <<< "$entry")
+            if [ "$loader" = "forge" ]; then
+              loader_id="$forge_id"
+            else
+              loader_id="$neoforge_id"
+            fi
             label=$(jq -r 'if (.game_versions | length) > 1
                 then "\(.game_versions[0])–\(.game_versions[-1])"
                 else .game_versions[0] end' <<< "$entry")
@@ -187,7 +208,7 @@ jobs:
             metadata=$(jq -n \
               --arg changelog "$changelog_text" \
               --arg displayName "Item Milestone Log $VERSION (MC $label)" \
-              --argjson gameVersions "[${mc_id_list}, ${neoforge_id}${env_ids:+,$env_ids}]" \
+              --argjson gameVersions "[${mc_id_list}, ${loader_id}${env_ids:+,$env_ids}]" \
               '{changelog: $changelog, changelogType: "markdown",
                 displayName: $displayName, gameVersions: $gameVersions,
                 releaseType: "release"}')
