@@ -1,7 +1,9 @@
 package com.pengin0503.itemmilestonelog;
 
 import com.mojang.datafixers.util.Either;
+import com.mojang.datafixers.util.Pair;
 import com.mojang.serialization.Codec;
+import com.mojang.serialization.DataResult;
 import com.mojang.serialization.DynamicOps;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
@@ -206,29 +208,34 @@ public class MilestoneData extends SavedData {
             if (parsed != null) {
                 pd.targets.add(parsed);
             } else {
+                MilestoneLoadReport.recordElementSkip();
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid target entry '{}' in SavedData", raw);
             }
         }
         for (Map.Entry<String, Map<String, MilestoneRecord>> itemEntry : records.entrySet()) {
             String itemId = itemEntry.getKey();
             if (!TargetKey.isValidItemId(itemId)) {
+                MilestoneLoadReport.recordElementSkip();
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid record item key '{}' in SavedData", itemId);
                 continue;
             }
             for (Map.Entry<String, MilestoneRecord> countEntry : itemEntry.getValue().entrySet()) {
                 int count = TargetKey.tryParseCount(countEntry.getKey());
                 if (count < TargetKey.MIN_COUNT) {
+                    MilestoneLoadReport.recordElementSkip();
                     ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid record count '{}' for '{}' in SavedData",
                             countEntry.getKey(), itemId);
                     continue;
                 }
                 MilestoneRecord rec = countEntry.getValue();
                 if (rec == null) {
+                    MilestoneLoadReport.recordElementSkip();
                     ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping null record for '{}#{}' in SavedData",
                             itemId, countEntry.getKey());
                     continue;
                 }
                 if (rec.playTicks() < 0) {
+                    MilestoneLoadReport.recordElementSkip();
                     ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping record for '{}#{}' with negative ticks {} in SavedData",
                             itemId, countEntry.getKey(), rec.playTicks());
                     continue;
@@ -246,17 +253,20 @@ public class MilestoneData extends SavedData {
         if (lastSeen > 0L) {
             pd.lastSeen = lastSeen;
         } else if (lastSeen < 0L) {
+            MilestoneLoadReport.recordElementSkip();
             ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping negative lastSeen value {} in SavedData", lastSeen);
         }
         for (Map.Entry<String, Integer> progEntry : progressNotified.entrySet()) {
             String rawKey = progEntry.getKey();
             TargetKey parsed = TargetKey.tryParseEncoded(rawKey);
             if (parsed == null) {
+                MilestoneLoadReport.recordElementSkip();
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid progressNotified key '{}' in SavedData", rawKey);
                 continue;
             }
             Integer threshold = progEntry.getValue();
             if (threshold == null || !ProgressAlertLogic.isValidStoredThreshold(threshold)) {
+                MilestoneLoadReport.recordElementSkip();
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping out-of-range progressNotified value '{}' for '{}' in SavedData",
                         threshold, rawKey);
                 continue;
@@ -267,6 +277,7 @@ public class MilestoneData extends SavedData {
             if (Presets.isValidId(presetId)) {
                 pd.completedPresets.add(presetId);
             } else {
+                MilestoneLoadReport.recordElementSkip();
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid completedPresets entry '{}' in SavedData", presetId);
             }
         }
@@ -281,7 +292,7 @@ public class MilestoneData extends SavedData {
     private static final Codec<Integer> LENIENT_SCHEMA_VERSION_CODEC =
             Codec.INT.orElse(SchemaVersionLogic.MALFORMED_SCHEMA_VERSION);
 
-    public static final Codec<MilestoneData> CODEC = RecordCodecBuilder.create(instance -> instance.group(
+    private static final Codec<MilestoneData> RAW_CODEC = RecordCodecBuilder.create(instance -> instance.group(
             Codec.unboundedMap(Codec.STRING, PLAYER_DATA_CODEC).optionalFieldOf("players", Map.of())
                     .forGetter(MilestoneData::playersByStringKey),
             Codec.unboundedMap(Codec.STRING, ITEM_WORLD_FIRSTS_CODEC).optionalFieldOf("worldFirsts", Map.of())
@@ -293,6 +304,30 @@ public class MilestoneData extends SavedData {
                     .optionalFieldOf("schemaVersion", SchemaVersionLogic.ABSENT_SCHEMA_VERSION)
                     .forGetter(MilestoneData::schemaVersionForSave)
     ).apply(instance, MilestoneData::fromCodec));
+
+    /**
+     * F-140-2 (N141): wraps {@link #RAW_CODEC} so every decode has an active
+     * {@link MilestoneLoadReport}, including nested per-player/per-record decoders that run
+     * before {@link #fromCodec}. The finished report is attached to the decoded instance.
+     */
+    public static final Codec<MilestoneData> CODEC = new Codec<>() {
+        @Override
+        public <T> DataResult<Pair<MilestoneData, T>> decode(DynamicOps<T> ops, T input) {
+            MilestoneLoadReport report = MilestoneLoadReport.begin();
+            try {
+                DataResult<Pair<MilestoneData, T>> result = RAW_CODEC.decode(ops, input);
+                result.result().ifPresent(pair -> pair.getFirst().loadReport = report);
+                return result;
+            } finally {
+                MilestoneLoadReport.end(report);
+            }
+        }
+
+        @Override
+        public <T> DataResult<T> encode(MilestoneData input, DynamicOps<T> ops, T prefix) {
+            return RAW_CODEC.encode(input, ops, prefix);
+        }
+    };
 
     static final SavedDataType<MilestoneData> TYPE = new SavedDataType<>(
             DATA_ID,
@@ -306,6 +341,15 @@ public class MilestoneData extends SavedData {
     private long lastDigestEpochMillis = 0L;
     /** Schema version retained from the last load; 0 when the field was missing or invalid (F-140-1). */
     private int retainedSchemaVersion = 0;
+    /** Element-skip/schema accounting for F-140-2 (N141); set by {@link #CODEC} after a decode. */
+    @Nullable
+    private MilestoneLoadReport loadReport;
+
+    /** Load accounting for the most recent decode of this instance, or {@code null} if not loaded. */
+    @Nullable
+    MilestoneLoadReport loadReport() {
+        return loadReport;
+    }
 
     /** SchemaVersion value retained from the last load (0 when the field was missing or invalid). */
     int retainedSchemaVersion() {
@@ -522,9 +566,14 @@ public class MilestoneData extends SavedData {
             ItemMilestoneLog.LOGGER.warn(schemaWarning);
         }
         data.retainedSchemaVersion = schemaVersion.retainedVersion();
+        MilestoneLoadReport.recordLoadedSchemaVersion(data.retainedSchemaVersion);
+        if (schemaVersion.status() == SchemaVersionLogic.Status.INVALID) {
+            MilestoneLoadReport.recordElementSkip();
+        }
         if (lastDigestEpoch > 0L) {
             data.lastDigestEpochMillis = lastDigestEpoch;
         } else if (lastDigestEpoch < 0L) {
+            MilestoneLoadReport.recordElementSkip();
             ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping negative lastDigestEpoch value {} in SavedData", lastDigestEpoch);
         }
         for (Map.Entry<String, PlayerData> e : rawPlayers.entrySet()) {
@@ -532,6 +581,7 @@ public class MilestoneData extends SavedData {
             try {
                 uuid = UUID.fromString(e.getKey());
             } catch (IllegalArgumentException ignored) {
+                MilestoneLoadReport.recordElementSkip();
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping player entry with invalid UUID '{}' in SavedData", e.getKey());
                 continue;
             }
@@ -540,23 +590,27 @@ public class MilestoneData extends SavedData {
         for (Map.Entry<String, Map<String, WorldFirstEntry>> itemEntry : rawFirsts.entrySet()) {
             String itemId = itemEntry.getKey();
             if (!TargetKey.isValidItemId(itemId)) {
+                MilestoneLoadReport.recordElementSkip();
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid worldFirst item key '{}' in SavedData", itemId);
                 continue;
             }
             for (Map.Entry<String, WorldFirstEntry> countEntry : itemEntry.getValue().entrySet()) {
                 int count = TargetKey.tryParseCount(countEntry.getKey());
                 if (count < TargetKey.MIN_COUNT) {
+                    MilestoneLoadReport.recordElementSkip();
                     ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid worldFirst count '{}' for '{}' in SavedData",
                             countEntry.getKey(), itemId);
                     continue;
                 }
                 WorldFirstEntry wf = countEntry.getValue();
                 if (wf == null) {
+                    MilestoneLoadReport.recordElementSkip();
                     ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping null worldFirst for '{}#{}' in SavedData",
                             itemId, countEntry.getKey());
                     continue;
                 }
                 if (wf.ticks() < 0) {
+                    MilestoneLoadReport.recordElementSkip();
                     ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping worldFirst '{}#{}' with negative ticks {} in SavedData",
                             itemId, countEntry.getKey(), wf.ticks());
                     continue;
@@ -565,6 +619,7 @@ public class MilestoneData extends SavedData {
                 try {
                     uuid = UUID.fromString(wf.uuid());
                 } catch (IllegalArgumentException ignored) {
+                    MilestoneLoadReport.recordElementSkip();
                     ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping worldFirst '{}#{}' with invalid player UUID '{}' in SavedData",
                             itemId, countEntry.getKey(), wf.uuid());
                     continue;

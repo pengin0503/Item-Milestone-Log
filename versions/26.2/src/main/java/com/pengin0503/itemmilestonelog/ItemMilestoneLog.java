@@ -53,6 +53,8 @@ public class ItemMilestoneLog {
         LOGGER.info("[ItemMilestoneLog] Loaded {} preset(s) ({} custom)", Presets.names().size(), custom);
         MilestoneService.warnUnknownFirstJoinPresets();
         MilestoneBackup.initForServer(event.getServer());
+        // F-140-2 (N141): preserve the on-disk file before the first save can overwrite it.
+        CorruptionEvacuation.onServerStarting(event.getServer());
     }
 
     /**

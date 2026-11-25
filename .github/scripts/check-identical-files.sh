@@ -63,12 +63,13 @@ IDENTICAL_ALL_4=(
 # Files that differ in 1.21.1 (ResourceLocation, NBT SavedData, player.server,
 # mods.toml loaderVersion, etc.) but must be byte-identical across 26.1.2, 26.2,
 # and 26.3. Together with the 17 src/main/java files in IDENTICAL_ALL_4, this
-# covers all 49 src/main/java files that are identical across 26.x (of 57; the
+# covers all 50 src/main/java files that are identical across 26.x (of 58; the
 # remaining files are the two javadoc-only entry points and the per-version
 # compat classes under compat/v26_*).
 IDENTICAL_26_X=(
-  # src/main/java (32 files; +17 from IDENTICAL_ALL_4 = 49 src/main/java files)
+  # src/main/java (33 files; +17 from IDENTICAL_ALL_4 = 50 src/main/java files)
   "src/main/java/com/pengin0503/itemmilestonelog/Config.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/CorruptionEvacuation.java"
   "src/main/java/com/pengin0503/itemmilestonelog/DatapackPresetReloadListener.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestoneCommands.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestoneData.java"
