@@ -8,7 +8,6 @@ import com.pengin0503.itemmilestonelog.compat.McCompat;
 import com.pengin0503.itemmilestonelog.network.MilestoneActionPayload;
 import com.pengin0503.itemmilestonelog.network.SyncMilestonesPayload;
 import com.pengin0503.itemmilestonelog.network.TargetEntry;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.ContainerObjectSelectionList;
@@ -52,7 +51,8 @@ public final class MilestoneScreen extends Screen {
     private int feedbackY = 0;
     private long cachedAchievedCount = 0;
 
-    private MilestoneListWidget listWidget;
+    // Created by McCompat.lists(): the list subclass that positions the scrollbar is per profile.
+    private ContainerObjectSelectionList<MilestoneRow> listWidget;
     private Button targetsTabButton;
     private Button recordedTabButton;
     private Button resetAllButton;
@@ -191,7 +191,8 @@ public final class MilestoneScreen extends Screen {
         recordedTabButton.active = (viewMode != ViewMode.RECORDED);
 
         // Scrollable list
-        listWidget = addRenderableWidget(new MilestoneListWidget(this.minecraft, this.width, listHeight, listTop, 28));
+        listWidget = addRenderableWidget(McCompat.lists().containerList(
+                this.minecraft, this.width, listHeight, listTop, 28, () -> Math.min(460, this.width - 32)));
         populateList();
 
         // Bottom action buttons
@@ -251,7 +252,7 @@ public final class MilestoneScreen extends Screen {
     }
 
     private void populateList() {
-        listWidget.clearAllEntries();
+        McCompat.lists().clearRows(listWidget);
         if (viewMode == ViewMode.TARGETS) {
             for (TargetEntry target : data.targets()) {
                 TargetKey key = target.key();
@@ -259,7 +260,7 @@ public final class MilestoneScreen extends Screen {
                 Integer currentProgress = (recorded == null && key.count() > TargetKey.MIN_COUNT)
                         ? data.progress().getOrDefault(key, 0)
                         : null;
-                listWidget.addRow(new MilestoneRow(
+                McCompat.lists().addRow(listWidget, new MilestoneRow(
                         key,
                         target.personal(),
                         target.defaultTarget(),
@@ -273,7 +274,7 @@ public final class MilestoneScreen extends Screen {
             sorted.sort(Comparator.comparingInt((Map.Entry<TargetKey, MilestoneRecord> e) -> e.getValue().playTicks())
                     .thenComparing(Map.Entry::getKey));
             for (Map.Entry<TargetKey, MilestoneRecord> entry : sorted) {
-                listWidget.addRow(new MilestoneRow(
+                McCompat.lists().addRow(listWidget, new MilestoneRow(
                         entry.getKey(),
                         false,
                         false,
@@ -354,31 +355,7 @@ public final class MilestoneScreen extends Screen {
     private record ButtonSpec(Component label, Button.OnPress onPress, @Nullable Tooltip tooltip) {
     }
 
-    // --------------------------------------------------------- list widget
-
-    private final class MilestoneListWidget extends ContainerObjectSelectionList<MilestoneRow> {
-        public MilestoneListWidget(Minecraft mc, int width, int height, int y, int itemHeight) {
-            super(mc, width, height, y, itemHeight);
-        }
-
-        public void clearAllEntries() {
-            this.clearEntries();
-        }
-
-        public void addRow(MilestoneRow row) {
-            this.addEntry(row);
-        }
-
-        @Override
-        public int getRowWidth() {
-            return Math.min(460, MilestoneScreen.this.width - 32);
-        }
-
-        // No @Override: the supertype method was removed in MC 1.21.4; this still overrides it on 1.21-1.21.3.
-        protected int getScrollbarPosition() {
-            return this.getX() + this.width / 2 + getRowWidth() / 2 + 6;
-        }
-    }
+    // --------------------------------------------------------- list rows
 
     private final class MilestoneRow extends ContainerObjectSelectionList.Entry<MilestoneRow> {
         private final TargetKey targetKey;

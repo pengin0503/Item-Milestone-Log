@@ -56,7 +56,8 @@ public final class ItemPickerScreen extends Screen {
 
     private EditBox searchBox;
     private EditBox countBox;
-    private ItemListWidget listWidget;
+    // Created by McCompat.lists(): the list subclass that positions the scrollbar is per profile.
+    private ObjectSelectionList<ItemRow> listWidget;
     private String currentQuery = "";
     private String currentCountText = "1";
     private int parsedCount = TargetKey.MIN_COUNT;
@@ -150,7 +151,8 @@ public final class ItemPickerScreen extends Screen {
         int listBottom = this.height - 44;
         int listHeight = Math.max(40, listBottom - listTop);
 
-        listWidget = addRenderableWidget(new ItemListWidget(this.minecraft, this.width, listHeight, listTop, 26));
+        listWidget = addRenderableWidget(McCompat.lists().objectList(
+                this.minecraft, this.width, listHeight, listTop, 26, () -> Math.min(440, this.width - 32)));
         refreshList();
 
         int backWidth = 120;
@@ -196,7 +198,7 @@ public final class ItemPickerScreen extends Screen {
         if (listWidget == null) {
             return;
         }
-        listWidget.clearAllEntries();
+        McCompat.lists().clearRows(listWidget);
         String trimmed = currentQuery.trim().toLowerCase(Locale.ROOT);
         String[] tokens = trimmed.isEmpty() ? new String[0] : trimmed.split("\\s+");
 
@@ -206,7 +208,7 @@ public final class ItemPickerScreen extends Screen {
             if (matchesQuery(item, tokens)) {
                 matches++;
                 if (shown < MAX_DISPLAYED_ROWS) {
-                    listWidget.addRow(new ItemRow(item));
+                    McCompat.lists().addRow(listWidget, new ItemRow(item));
                     shown++;
                 }
             }
@@ -295,31 +297,7 @@ public final class ItemPickerScreen extends Screen {
     ) {
     }
 
-    // --------------------------------------------------------- list widget
-
-    private final class ItemListWidget extends ObjectSelectionList<ItemRow> {
-        public ItemListWidget(Minecraft mc, int width, int height, int y, int itemHeight) {
-            super(mc, width, height, y, itemHeight);
-        }
-
-        public void clearAllEntries() {
-            this.clearEntries();
-        }
-
-        public void addRow(ItemRow row) {
-            this.addEntry(row);
-        }
-
-        @Override
-        public int getRowWidth() {
-            return Math.min(440, ItemPickerScreen.this.width - 32);
-        }
-
-        // No @Override: the supertype method was removed in MC 1.21.4; this still overrides it on 1.21-1.21.3.
-        protected int getScrollbarPosition() {
-            return this.getX() + this.width / 2 + getRowWidth() / 2 + 6;
-        }
-    }
+    // --------------------------------------------------------- list rows
 
     private final class ItemRow extends ObjectSelectionList.Entry<ItemRow> {
         private final CatalogItem item;

@@ -23,7 +23,7 @@
 #   1.21.7   v121_7   21.7.0-beta     (reflective NetworkCompatImpl: NeoForge 21.7
 #                                      moved sendToServer mid-line)
 #   1.21.8   v121_8   21.8.9
-#   1.21.9   v121_9   21.9.0-beta     1.21.10  v121_9   21.10.63
+#   1.21.9   v121_9   21.9.0-beta     1.21.10  v121_9   21.10.64
 #   1.21.11  v121_11  21.11.42
 set -euo pipefail
 

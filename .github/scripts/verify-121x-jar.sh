@@ -175,6 +175,7 @@ for suffix in "${suffixes[@]}"; do
   expect_file "$PKG/compat/client/${suffix}/TooltipCompatImpl.class"
   expect_file "$PKG/compat/client/${suffix}/TextCompatImpl.class"
   expect_file "$PKG/compat/client/${suffix}/SoundCompatImpl.class"
+  expect_file "$PKG/compat/client/${suffix}/ListCompatImpl.class"
 done
 
 expect_file logo.png
