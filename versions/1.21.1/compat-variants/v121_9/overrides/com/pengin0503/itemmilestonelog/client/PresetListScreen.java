@@ -138,11 +138,11 @@ public final class PresetListScreen extends Screen {
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
         super.render(guiGraphics, mouseX, mouseY, partialTick);
 
-        guiGraphics.drawCenteredString(this.font, this.title, this.width / 2, 8, 0xFFFFFFFF);
+        McCompat.text().drawCenteredString(guiGraphics, this.font, this.title, this.width / 2, 8, 0xFFFFFFFF);
 
         if (listWidget != null && listWidget.children().isEmpty()) {
             int centerY = listWidget.getY() + listWidget.getHeight() / 2 - 4;
-            guiGraphics.drawCenteredString(this.font,
+            McCompat.text().drawCenteredString(guiGraphics, this.font,
                     Component.translatable("gui.itemmilestonelog.presets.empty"),
                     this.width / 2, centerY, 0xFFA0A0A0);
         }
@@ -150,7 +150,7 @@ public final class PresetListScreen extends Screen {
         if (feedbackMessage != null) {
             int maxWidth = this.width - 20;
             String trimmed = this.font.plainSubstrByWidth(feedbackMessage.getString(), maxWidth);
-            guiGraphics.drawCenteredString(this.font, trimmed, this.width / 2, this.feedbackY, 0xFFFFE88A);
+            McCompat.text().drawCenteredString(guiGraphics, this.font, trimmed, this.width / 2, this.feedbackY, 0xFFFFE88A);
         }
     }
 
@@ -253,10 +253,10 @@ public final class PresetListScreen extends Screen {
             int maxTextWidth = Math.max(40, rightEdge - textX - 4);
 
             String trimmedName = PresetListScreen.this.font.plainSubstrByWidth(displayName.getString(), maxTextWidth);
-            guiGraphics.drawString(PresetListScreen.this.font, trimmedName, textX, top + 2, 0xFFFFFFFF, false);
+            McCompat.text().drawString(guiGraphics, PresetListScreen.this.font, trimmedName, textX, top + 2, 0xFFFFFFFF, false);
 
             String trimmedMeta = PresetListScreen.this.font.plainSubstrByWidth(metaLine.getString(), maxTextWidth);
-            guiGraphics.drawString(PresetListScreen.this.font, trimmedMeta, textX, top + 13, 0xFFA0A0A0, false);
+            McCompat.text().drawString(guiGraphics, PresetListScreen.this.font, trimmedMeta, textX, top + 13, 0xFFA0A0A0, false);
         }
 
         @Override

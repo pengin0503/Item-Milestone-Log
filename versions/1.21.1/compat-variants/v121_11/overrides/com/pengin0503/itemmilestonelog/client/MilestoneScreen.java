@@ -318,7 +318,7 @@ public final class MilestoneScreen extends Screen {
         super.render(guiGraphics, mouseX, mouseY, partialTick);
 
         // Title
-        guiGraphics.drawCenteredString(this.font, this.title, this.width / 2, 8, 0xFFFFFFFF);
+        McCompat.text().drawCenteredString(guiGraphics, this.font, this.title, this.width / 2, 8, 0xFFFFFFFF);
 
         // Header summary: current playtime (live ticking) + achieved / total targets
         Component header = Component.translatable(
@@ -327,7 +327,7 @@ public final class MilestoneScreen extends Screen {
                 cachedAchievedCount,
                 data.targets().size()
         );
-        guiGraphics.drawCenteredString(this.font, header, this.width / 2, 22, 0xFFD0D0D0);
+        McCompat.text().drawCenteredString(guiGraphics, this.font, header, this.width / 2, 22, 0xFFD0D0D0);
 
         // Empty list hint
         if (listWidget != null && listWidget.children().isEmpty()) {
@@ -335,14 +335,14 @@ public final class MilestoneScreen extends Screen {
                     ? Component.translatable("gui.itemmilestonelog.empty_targets")
                     : Component.translatable("gui.itemmilestonelog.empty_records");
             int centerY = listWidget.getY() + listWidget.getHeight() / 2 - 4;
-            guiGraphics.drawCenteredString(this.font, emptyText, this.width / 2, centerY, 0xFFA0A0A0);
+            McCompat.text().drawCenteredString(guiGraphics, this.font, emptyText, this.width / 2, centerY, 0xFFA0A0A0);
         }
 
         // Feedback banner from last action
         if (feedbackMessage != null) {
             int maxWidth = this.width - 20;
             String trimmed = this.font.plainSubstrByWidth(feedbackMessage.getString(), maxWidth);
-            guiGraphics.drawCenteredString(this.font, trimmed, this.width / 2, this.feedbackY, 0xFFFFE88A);
+            McCompat.text().drawCenteredString(guiGraphics, this.font, trimmed, this.width / 2, this.feedbackY, 0xFFFFE88A);
         }
     }
 
@@ -499,7 +499,7 @@ public final class MilestoneScreen extends Screen {
                 nameStr = nameStr + " [" + Component.translatable("gui.itemmilestonelog.badge.default").getString() + "]";
             }
             String trimmedName = MilestoneScreen.this.font.plainSubstrByWidth(nameStr, maxTextWidth);
-            guiGraphics.drawString(MilestoneScreen.this.font, trimmedName, textX, top + 2, 0xFFFFFFFF, false);
+            McCompat.text().drawString(guiGraphics, MilestoneScreen.this.font, trimmedName, textX, top + 2, 0xFFFFFFFF, false);
 
             Component statusComponent;
             int statusColor;
@@ -515,7 +515,7 @@ public final class MilestoneScreen extends Screen {
                 statusColor = 0xFFA0A0A0;
             }
             String trimmedStatus = MilestoneScreen.this.font.plainSubstrByWidth(statusComponent.getString(), maxTextWidth);
-            guiGraphics.drawString(MilestoneScreen.this.font, trimmedStatus, textX, top + 13, statusColor, false);
+            McCompat.text().drawString(guiGraphics, MilestoneScreen.this.font, trimmedStatus, textX, top + 13, statusColor, false);
         }
 
         @Override

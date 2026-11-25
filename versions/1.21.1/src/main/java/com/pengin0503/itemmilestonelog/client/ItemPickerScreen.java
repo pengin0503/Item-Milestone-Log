@@ -242,14 +242,14 @@ public final class ItemPickerScreen extends Screen {
         this.hoveredIconStack = null;
         super.render(guiGraphics, mouseX, mouseY, partialTick);
 
-        guiGraphics.drawCenteredString(this.font, this.title, this.width / 2, 8, 0xFFFFFFFF);
+        McCompat.text().drawCenteredString(guiGraphics, this.font, this.title, this.width / 2, 8, 0xFFFFFFFF);
 
         Component countText = matchedCount > displayedCount
                 ? Component.translatable("gui.itemmilestonelog.picker.count_capped", displayedCount, matchedCount)
                 : Component.translatable("gui.itemmilestonelog.picker.count", matchedCount, allItems.size());
         int backLeft = Math.min((this.width - 120) / 2, this.countBoxX - 124);
         if (backLeft - 16 >= this.font.width(countText)) {
-            guiGraphics.drawString(this.font, countText, 12, this.height - 20, 0xFFB0B0B0, false);
+            McCompat.text().drawString(guiGraphics, this.font, countText, 12, this.height - 20, 0xFFB0B0B0, false);
         }
 
         // Quantity label to the left of the count box (uses short "×" if narrow).
@@ -257,20 +257,20 @@ public final class ItemPickerScreen extends Screen {
         Component fullQtyLabel = Component.translatable("gui.itemmilestonelog.picker.quantity");
         int fullWidth = this.font.width(fullQtyLabel);
         if (countBoxX - backRight >= fullWidth + 10) {
-            guiGraphics.drawString(this.font, fullQtyLabel, countBoxX - fullWidth - 4, countBoxY + 6, 0xFFB0B0B0, false);
+            McCompat.text().drawString(guiGraphics, this.font, fullQtyLabel, countBoxX - fullWidth - 4, countBoxY + 6, 0xFFB0B0B0, false);
         } else if (countBoxX - backRight >= this.font.width("×") + 6) {
-            guiGraphics.drawString(this.font, "×", countBoxX - this.font.width("×") - 3, countBoxY + 6, 0xFFB0B0B0, false);
+            McCompat.text().drawString(guiGraphics, this.font, "×", countBoxX - this.font.width("×") - 3, countBoxY + 6, 0xFFB0B0B0, false);
         }
 
         if (feedbackMessage != null) {
             int maxWidth = this.width - 20;
             String trimmedFeedback = this.font.plainSubstrByWidth(feedbackMessage.getString(), maxWidth);
-            guiGraphics.drawCenteredString(this.font, trimmedFeedback, this.width / 2, this.height - 39, 0xFFFFE88A);
+            McCompat.text().drawCenteredString(guiGraphics, this.font, trimmedFeedback, this.width / 2, this.height - 39, 0xFFFFE88A);
         }
 
         if (matchedCount == 0 && listWidget != null) {
             int centerY = listWidget.getY() + listWidget.getHeight() / 2 - 4;
-            guiGraphics.drawCenteredString(this.font,
+            McCompat.text().drawCenteredString(guiGraphics, this.font,
                     Component.translatable("gui.itemmilestonelog.picker.no_results"),
                     this.width / 2, centerY, 0xFFA0A0A0);
         }
@@ -364,7 +364,7 @@ public final class ItemPickerScreen extends Screen {
             Component btnLabel = alreadyTracked
                     ? Component.translatable("gui.itemmilestonelog.picker.tracked")
                     : Component.translatable("gui.itemmilestonelog.picker.add_item");
-            guiGraphics.drawCenteredString(ItemPickerScreen.this.font, btnLabel,
+            McCompat.text().drawCenteredString(guiGraphics, ItemPickerScreen.this.font, btnLabel,
                     btnX + ACTION_BTN_WIDTH / 2, btnY + 5, labelColor);
 
             // Text column
@@ -372,11 +372,11 @@ public final class ItemPickerScreen extends Screen {
             int maxTextWidth = Math.max(40, btnX - textX - 6);
 
             String trimmedName = ItemPickerScreen.this.font.plainSubstrByWidth(item.displayName.getString(), maxTextWidth);
-            guiGraphics.drawString(ItemPickerScreen.this.font, trimmedName, textX, top + 3,
+            McCompat.text().drawString(guiGraphics, ItemPickerScreen.this.font, trimmedName, textX, top + 3,
                     alreadyTracked ? 0xFFB0B0B0 : 0xFFFFFFFF, false);
 
             String trimmedId = ItemPickerScreen.this.font.plainSubstrByWidth(item.id, maxTextWidth);
-            guiGraphics.drawString(ItemPickerScreen.this.font, trimmedId, textX, top + 14, 0xFF909090, false);
+            McCompat.text().drawString(guiGraphics, ItemPickerScreen.this.font, trimmedId, textX, top + 14, 0xFF909090, false);
         }
 
         @Override
@@ -384,8 +384,8 @@ public final class ItemPickerScreen extends Screen {
             if (button == 0 && parsedCount >= TargetKey.MIN_COUNT
                     && !trackedTargets.contains(new TargetKey(item.id, parsedCount))) {
                 if (ItemPickerScreen.this.minecraft != null) {
-                    ItemPickerScreen.this.minecraft.getSoundManager()
-                            .play(SimpleSoundInstance.forUI(SoundEvents.UI_BUTTON_CLICK, 1.0F));
+                    McCompat.sound().play(ItemPickerScreen.this.minecraft.getSoundManager(),
+                            SimpleSoundInstance.forUI(SoundEvents.UI_BUTTON_CLICK, 1.0F));
                 }
                 ClientMilestoneHandler.sendAction(MilestoneActionPayload.Action.ADD_TARGET, item.id, parsedCount);
                 return true;

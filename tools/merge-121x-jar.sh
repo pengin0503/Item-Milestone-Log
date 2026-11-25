@@ -22,6 +22,11 @@ Example (Jar A):
   tools/merge-121x-jar.sh build/v121_1.jar '[1.21,1.21.4]' \
     build/itemmilestonelog-neoforge-1.21-1.21.4-1.3.0.jar \
     build/v121_2.jar:v121_2 build/v121_4.jar:v121_4
+
+Example (Jar B1):
+  tools/merge-121x-jar.sh build/v121_5.jar '[1.21.5,1.21.8]' \
+    build/itemmilestonelog-neoforge-1.21.5-1.21.8-1.3.0.jar \
+    build/v121_6.jar:v121_6 build/v121_7.jar:v121_7 build/v121_8.jar:v121_8
 EOF
 }
 
@@ -107,6 +112,8 @@ required_compat_entries=(
 required_client_compat_entries=(
   'NetworkCompatImpl.class'
   'ScrollCompatImpl.class'
+  'SoundCompatImpl.class'
+  'TextCompatImpl.class'
   'TooltipCompatImpl.class'
 )
 

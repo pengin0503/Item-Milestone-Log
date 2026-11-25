@@ -15,7 +15,7 @@
 | 1.21.4 | 1.21.x | 21.4.121 / 21.4.161 | 21 | コンパイルOK | stage 2b: プロファイル V121_4、JAR A（上端）。ハーネスビルド + 単体テスト 479 件（検証配置由来の LangFilesTest を除き成功）。AddReloadListenerEvent → AddServerReloadListenersEvent（ReloadCompat）、getScrollAmount() → scrollAmount()（ScrollCompat）、getScrollbarPosition() の上位メソッド削除（@Override 除去）。stage 1 時点メモ: レジストリ Optional 化 + @Override 不一致（ItemMilestoneLog、イベント / ライフサイクルの署名変更） |
 | 1.21.5 | 1.21.x | 21.5.74 / 21.5.101 | 21 | コンパイルOK | stage 2b: プロファイル V121_5、JAR B（下端）→ stage 2c で JAR B1（下端）。ハーネスビルド + 単体テスト 479 件（検証配置由来の LangFilesTest を除き成功）。SavedData.Factory 削除 → SavedDataType + codec（DataCompat、ディスク上の旧 `"data"` ラッパーを維持）、Tag.TAG_ANY_NUMERIC / getAsString() 削除（NbtCompat）、ClickEvent / HoverEvent の record 化（ChatCompat）、GameTest 登録の再設計（ファイル差し替え）。stage 1 時点メモ: NBT 大改訂の開始点: CompoundTag アクセサの Optional 返却化・contains / getList の署名変更（MilestoneData に集中）。GameTest の assertTrue が Component 引数化（テスト側のみ） |
 | 1.21.6 | 1.21.x | 21.6.0-beta / 21.6.20-beta | 21 | コンパイルOK | stage 2b: プロファイル V121_6、JAR B → stage 2c で JAR B1。ハーネスビルド + 単体テスト 479 件（検証配置由来の LangFilesTest を除き成功）。WorldVersion の record アクセサ化（McVersion.versionName で反射検出）、renderTooltip(Font, ItemStack, …) 削除 → setTooltipForNextFrame（TooltipCompat）、テキスト描画が色のアルファを反映（共有クライアントコードの GUI 文字色をアルファ付き 0xFF…… に統一）。stage 1 時点メモ: 1.21.5 の差分 + ServerPlayer.server フィールドの非公開化（MilestoneCommands。getServer() への置換で吸収見込み）。この系統はベータのみ |
-| 1.21.7 | 1.21.x | 21.7.0-beta / 21.7.25-beta | 21 | コンパイルOK | stage 2b: プロファイル V121_6（1.21.6 と同一）、JAR B → stage 2c で JAR B1。ハーネスビルド + 単体テスト 479 件（検証配置由来の LangFilesTest を除き成功）。この系統はベータのみ |
+| 1.21.7 | 1.21.x | 21.7.0-beta / 21.7.25-beta | 21 | コンパイルOK | stage 2b: プロファイル V121_6（1.21.6 と同一）、JAR B → stage 2c で JAR B1。ハーネスビルド + 単体テスト 479 件（検証配置由来の LangFilesTest を除き成功）。この系統はベータのみ。【1.3.1 で更新】独立プロファイル V121_7 に分離: NeoForge 21.7 系の途中で PacketDistributor.sendToServer が削除され ClientPacketDistributor.sendToServer に移った（21.7.0-beta は前者のみ、21.7.25-beta は後者のみ）ため、v121_7 の NetworkCompatImpl は両クラスを直接参照せず反射で解決する（後述「1.3.1 バイナリリンク修正」） |
 | 1.21.8 | 1.21.x | 21.8.9 / 21.8.57 | 21 | コンパイルOK | stage 2b: プロファイル V121_8、JAR B → stage 2c で JAR B1（上端）。ハーネスビルド + 単体テスト 479 件（検証配置由来の LangFilesTest を除き成功）。PacketDistributor.sendToServer 削除 → ClientPacketDistributor（NetworkCompat）。stage 1 時点メモ: 1.21.6 と同一プロファイル（stage 2b で独立プロファイルに変更） |
 | 1.21.9 | 1.21.x | 21.9.0-beta / 21.9.16-beta | 21 | コンパイルOK | stage 2b: プロファイル V121_9、JAR B → stage 2c で JAR B2（下端。画面 Entry 描画の分岐により B から分割）。ハーネスビルド + 単体テスト 479 件全件成功。ServerPlayer.getServer() 削除 → level().getServer()（共有書き換え 48 箇所）、GameProfile の record 化（PlayerCompat）、リスト Entry の render → renderContent + MouseButtonEvent（3 画面のファイル差し替え）、KeyMapping.Category 等（ItemMilestoneLogClient のファイル差し替え）、SharedConstants.VERSION_STRING 削除。この系統はベータのみ。stage 1 時点メモ: 1.21.6 と同一プロファイル（stage 2b で独立プロファイルに変更） |
 | 1.21.10 | 1.21.x | 21.10.63 / 21.10.64 | 21 | コンパイルOK | stage 2b: プロファイル V121_9（1.21.9 と同一）、JAR B（上端）→ stage 2c で JAR B2（上端）。ハーネスビルド + 単体テスト 479 件全件成功。stage 1 時点メモ: 1.21.6 と同一プロファイル（stage 2b で V121_9 に変更） |
@@ -47,7 +47,8 @@
 | V121_2 | 1.21.2 – 1.21.3 |
 | V121_4 | 1.21.4 |
 | V121_5 | 1.21.5 |
-| V121_6 | 1.21.6 – 1.21.7 |
+| V121_6 | 1.21.6（1.3.0 では 1.21.6 – 1.21.7） |
+| V121_7 | 1.21.7（1.3.1 で V121_6 から分離。NetworkCompatImpl のみ反射実装、他は V121_6 と同一） |
 | V121_8 | 1.21.8 |
 | V121_9 | 1.21.9 – 1.21.10 |
 | V121_11 | 1.21.11（JAR C。Identifier リネームはハーネスが生成プロジェクトに適用、後述） |
@@ -56,7 +57,7 @@
 
 - 【stage 2c で更新】1.21.x 系の配布 JAR は **JAR A = [1.21, 1.21.4]、JAR B1 = [1.21.5, 1.21.8]、JAR B2 = [1.21.9, 1.21.10]、JAR C = [1.21.11]**。26.x 統合 JAR と合わせて**計 5 JAR**。
   - JAR A: プロファイル v121_1（ベース）+ v121_2 + v121_4 をマージ。`itemmilestonelog-neoforge-1.21-1.21.4-<v>.jar`
-  - JAR B1: プロファイル v121_5（ベース）+ v121_6 + v121_8 をマージ。`itemmilestonelog-neoforge-1.21.5-1.21.8-<v>.jar`
+  - JAR B1: プロファイル v121_5（ベース）+ v121_6 + v121_7 + v121_8 をマージ（v121_7 は 1.3.1 で追加）。`itemmilestonelog-neoforge-1.21.5-1.21.8-<v>.jar`
   - JAR B2: プロファイル v121_9 単独（JAR C と同様、プロファイル JAR の versionRange を書き換えるのみでマージなし）。`itemmilestonelog-neoforge-1.21.9-1.21.10-<v>.jar`
   - JAR C: プロファイル v121_11 単独。`itemmilestonelog-neoforge-1.21.11-<v>.jar`
 - 1.21.11 は独立 JAR が必要（後述のリネームのため）。当初は 1.3.0 で出荷するか pen の判断待ちとしていたが、2026-11-25 に pen が 1.3.0 への収録を決定し、JAR C として出荷する。
@@ -72,9 +73,21 @@
 - **1.21.4**: `AddReloadListenerEvent` 削除 → `AddServerReloadListenersEvent`（ReloadCompat）、`getScrollAmount()` → `scrollAmount()`（ScrollCompat）、上位型の `getScrollbarPosition()` 削除（@Override を除去）。
 - **1.21.5**: `SavedData.Factory` 削除 → `SavedDataType` + 既存 NBT load/save を経由する codec 往復。ディスク上の旧 `"data"` ラッパーを維持し、ワールドファイルを 1.21.x 全域で相互に読めるようにした（DataCompat）。`Tag.TAG_ANY_NUMERIC` と `Tag.getAsString()` 削除（NbtCompat.ANY_NUMERIC / tagAsString）。ClickEvent / HoverEvent の record 化（ChatCompat）。GameTest 登録が RegisterGameTestsEvent / GameTestInstance に再設計（ファイル差し替え）。
 - **1.21.6**: `WorldVersion` の record アクセサ化。バージョン検出は反射で行う（McVersion.versionName）。`renderTooltip(Font, ItemStack, …)` 削除 → `setTooltipForNextFrame`（TooltipCompat）。テキスト描画が色のアルファを反映するようになったため、共有クライアントコードの GUI 文字色はすべてアルファ付き（0xFF……）にした。
+- **1.21.6（1.3.1 で追記）**: `GuiGraphics.drawString(...)` の戻り値が `int` → `void`、`SoundManager.play(SoundInstance)` の戻り値が `void` → `SoundEngine.PlayResult` に変わった。ソースは同一でもディスクリプタが異なるため、マージ JAR の共有クラスからの直接呼び出しはリンクエラーになる（TextCompat / SoundCompat）。
+- **1.21.7（NeoForge 21.7 系の途中、1.3.1 で追記）**: `PacketDistributor.sendToServer` が 21.7 系の途中で削除され `ClientPacketDistributor.sendToServer` に移った（v121_7 の反射 NetworkCompatImpl）。
 - **1.21.8**: `PacketDistributor.sendToServer` 削除 → `ClientPacketDistributor`（NetworkCompat）。
 - **1.21.9**: `ServerPlayer.getServer()` 削除 → `level().getServer()`（共有書き換え、48 箇所）。GameProfile の record 化 — `name()` と `NameAndId`（PlayerCompat、isSingleplayerOwner を含む）。リスト Entry の `render` → `renderContent` + `MouseButtonEvent`（3 画面のファイル差し替え）。`KeyMapping.Category` + `registerCategory` + `InputConstants.getKey(KeyEvent)`（ItemMilestoneLogClient のファイル差し替え）。`SharedConstants.VERSION_STRING` 削除（検出は反射でフォールバック）。
 - **1.21.11**: `ResourceLocation` → `Identifier`、`ResourceLocationArgument` → `IdentifierArgument`（バイナリ非互換のリネームで、1 つの JAR で 1.21.10 ↔ 1.21.11 をまたげない）。リネームは機械的なもので、`tools/prepare-121x-harness.sh` がプロファイル v121_11 のときに生成プロジェクトへ適用する（リポジトリのソースはリネームなしのまま）。残る適応は 3 点: (1) 権限 — `PermissionCompat`（従来は `hasPermission` / `hasPermissions`、1.21.11 では `permissions()` に対して `Commands.LEVEL_*` の PermissionCheck で判定）、(2) サウンド — `PlayerCompat.playNotifySound` は 1.21.11 では `player.connection` 経由で `ClientboundSoundPacket` を送信、(3) `SavedDataType.Factory` が 1.21.11 では `ServerLevel` を直接受け取る（v121_11 の DataCompatImpl のみ）。また `Commands.LEVEL_GAMEMASTERS` の型が 1.21.11 で int → PermissionCheck に変わるため、この定数を参照していた唯一の箇所は PermissionCompat にリテラルのレベル 2 を渡す形に変更した。プロトタイプ段階（pen の判断待ち）を経て、2026-11-25 にハーネスビルド + 単体テスト 479 件全件成功を確認（検証済み）。
+
+### 1.3.1 バイナリリンク修正（2026-11-25）
+
+1.3.0 の JAR B1 が実クライアントでクラッシュした（MC 1.21.8 / NeoForge 21.8.57、MC 1.21.7 / NeoForge 21.7.25-beta、いずれも NoSuchMethodError）。stage 2 のハーネスはバージョンごとの**ソース**互換性しか証明しておらず、マージ JAR の共有クラスは 1 プロファイル分のバイトコード（B1 はベースの 1.21.5）しか持たないため、**ディスクリプタ単位のバイナリ互換性**が必要だった。原因と対処:
+
+1. **`GuiGraphics.drawString` の戻り値変更（MC 1.21.6）**: 1.21–1.21.5 は `int drawString(Font, String, int, int, int, boolean)`（ディスクリプタ末尾 `)I`）、1.21.6–1.21.11 は `void`（`)V`）。`Component` 版も同様。B1 の共有クラス（1.21.5 でコンパイル）は `)I` をリンクするため 1.21.6–1.21.8 で落ちる（MilestoneScreen$MilestoneRow.render）。→ クライアント compat ファセット **TextCompat**（`McCompat.text()`）を追加し、共有ソース（および v121_9 / v121_11 の画面差し替え）の `drawString` / `drawCenteredString` 呼び出しをすべて経由させた。実装本体は全プロファイルで同一ソースで、コンパイル後のディスクリプタだけが異なる（int 側 v121_1–v121_5、void 側 v121_6–v121_11）。戻り値を使っている呼び出しはなかった。
+2. **`SoundManager.play(SoundInstance)` の戻り値変更（MC 1.21.6）**: `void` → `SoundEngine.PlayResult`。ItemPickerScreen の行クリック音が同じ理由で 1.21.6–1.21.8 で落ちる（リンク監査で新たに判明、未報告）。→ **SoundCompat**（`McCompat.sound()`）。
+3. **NeoForge 21.7 系の途中分割**: 21.7.0-beta（固定ビルド）には `PacketDistributor.sendToServer(payload, payload...)` があり `ClientPacketDistributor` がない。21.7.25-beta（実ユーザー環境）では前者が削除され `net.neoforged.neoforge.client.network.ClientPacketDistributor.sendToServer(...)` のみ。21.5 系（最新 21.5.101）・21.6 系（最新 21.6.20-beta）は全期間 PacketDistributor、21.8 系（21.8.9 と 21.8.57 を確認）は全期間 ClientPacketDistributor。1.3.0 では v121_6 の NetworkCompatImpl（PacketDistributor 直接参照）が 1.21.6 と 1.21.7 を兼ねていたため、後期 21.7 ビルドで GUI 要求時に落ちる。→ プロファイル **V121_7** を分離し、その NetworkCompatImpl は `ClientPacketDistributor` → `PacketDistributor` の順に `MethodHandle` で解決（初期化時に 1 回、どちらのクラスも直接参照しない）。`verify-121x-jar.sh` の B1 チェックで直接参照がないことを確認する。
+
+再発防止として **バイナリリンク監査** `.github/scripts/audit-merged-jar-links.py`（stdlib のみ、クラスファイルを直接解析）を追加し、CI ジョブ `audit-121x-links`（MC バージョンごとのマトリクス）と `audit-121x-links-drift` に組み込んだ。配布 JAR の共有クラス + 該当プロファイルのクラスについて、全外部参照（クラス / フィールド / メソッドのオーナー・名前・ディスクリプタ、ラムダの関数型インターフェース、未実装の抽象メソッド）を、範囲内の各 MC バージョンのマージ済み Minecraft+NeoForge JAR + コンパイルクラスパス + JDK に対して上位型をたどって解決する。B1 は後期 NeoForge ビルド（21.5.101 / 21.6.20-beta / 21.7.25-beta / 21.8.57）の universal JAR を重ねたターゲットでも監査する。さらに「一部のバージョンでだけゲーム側メソッドをオーバーライドしている」メソッド（オーバーライドのずれ）も検出する。既知で意図どおりのずれは画面リストの `getScrollbarPosition()`（1.21–1.21.3 のみ有効、1.21.4 で上位メソッド削除）のみで、許可リストに入れている。
 
 ### 実クライアントでの後日確認事項
 
