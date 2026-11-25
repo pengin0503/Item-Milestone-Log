@@ -28,7 +28,6 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -111,11 +110,39 @@ public final class MilestoneExport {
             int skippedEntries) {
     }
 
+    /** One parsed record update inside a {@link PlayerMergePlan}, kept in file order. */
+    public record RecordUpdate(TargetKey key, MilestoneRecord record) {
+    }
+
+    /** Parsed, off-thread merge input for one player (F-140-3 importall). */
+    public record PlayerMergePlan(
+            UUID uuid,
+            List<String> ownerNames,
+            List<TargetKey> targets,
+            List<RecordUpdate> recordUpdates) {
+        public PlayerMergePlan {
+            ownerNames = List.copyOf(ownerNames);
+            targets = List.copyOf(targets);
+            recordUpdates = List.copyOf(recordUpdates);
+        }
+    }
+
     /**
-     * F31 seam: counts returned by {@link #mergeWorldFirstsSeam}.
+     * Off-thread importall computation: parsed player entries grouped by UUID, optional parsed
+     * world-first entries, and the skip counts already known from parsing. Applying this plan to
+     * the live {@link MilestoneData} stays on the server thread ({@link #applyMergePlan}).
      */
-    record WorldFirstImportStats(int updatedWorldFirsts, int skippedEntries) {
-        static final WorldFirstImportStats NONE = new WorldFirstImportStats(0, 0);
+    public record MergePlan(
+            List<PlayerMergePlan> players,
+            int skippedEntries,
+            @Nullable List<WorldFirstRecord> worldFirsts,
+            int worldFirstSkippedEntries) {
+        public MergePlan {
+            players = List.copyOf(players);
+            if (worldFirsts != null) {
+                worldFirsts = List.copyOf(worldFirsts);
+            }
+        }
     }
 
     private MilestoneExport() {
@@ -918,41 +945,132 @@ public final class MilestoneExport {
         return new ImportMergeStats(addedTargets, updatedRecords);
     }
 
-    public static ImportAllMergeStats mergeAllInto(MilestoneData data, AllPlayersImportPayload payload) {
-        Set<UUID> importedPlayers = new LinkedHashSet<>();
-        int addedTargets = 0;
-        int updatedRecords = 0;
-        int skippedEntries = payload.skippedEntries();
+    /**
+     * Parses the already-loaded import payload into an immutable merge plan. This is the only part
+     * of {@code importall} that touches JSON/world-first parsing and therefore runs on the
+     * {@code itemmilestonelog-io} executor (F-140-3).
+     */
+    public static MergePlan buildMergePlan(AllPlayersImportPayload payload) {
+        Map<UUID, List<String>> namesByPlayer = new LinkedHashMap<>();
+        Map<UUID, List<TargetKey>> targetsByPlayer = new LinkedHashMap<>();
+        Map<UUID, List<RecordUpdate>> recordsByPlayer = new LinkedHashMap<>();
 
+        int skippedEntries = payload.skippedEntries();
         for (ImportPayload entry : payload.players()) {
             UUID uuid = entry.ownerUuid();
             if (uuid == null) {
+                // Match the synchronous mergeAllInto behavior: null owner UUIDs count as skipped.
                 skippedEntries++;
                 continue;
             }
-            boolean isNewPlayer = data.playerOrNull(uuid) == null;
-            MilestoneData.PlayerData pd = data.player(uuid);
-            String ownerName = entry.ownerName();
-            if (ownerName != null && !ownerName.isBlank()
-                    && (isNewPlayer || pd.lastKnownName == null || pd.lastKnownName.isEmpty())) {
-                pd.lastKnownName = ownerName;
-                data.setDirty();
+            namesByPlayer.computeIfAbsent(uuid, ignored -> new ArrayList<>());
+            targetsByPlayer.computeIfAbsent(uuid, ignored -> new ArrayList<>()).addAll(entry.targets());
+            List<RecordUpdate> updates = recordsByPlayer.computeIfAbsent(uuid, ignored -> new ArrayList<>());
+            for (Map.Entry<TargetKey, MilestoneRecord> record : entry.records().entrySet()) {
+                updates.add(new RecordUpdate(record.getKey(), record.getValue()));
             }
-            ImportMergeStats playerStats = mergeInto(data, uuid, entry);
-            addedTargets += playerStats.addedTargets();
-            updatedRecords += playerStats.updatedRecords();
-            importedPlayers.add(uuid);
+            String ownerName = entry.ownerName();
+            if (ownerName != null && !ownerName.isBlank()) {
+                namesByPlayer.get(uuid).add(ownerName);
+            }
         }
 
-        // F31 seam: plug world-first import merge here without changing the caller or stats contract.
-        WorldFirstImportStats worldFirstStats = mergeWorldFirstsSeam(data, payload.rawWorldFirsts());
+        List<PlayerMergePlan> players = new ArrayList<>(namesByPlayer.size());
+        for (UUID uuid : namesByPlayer.keySet()) {
+            players.add(new PlayerMergePlan(uuid, namesByPlayer.get(uuid),
+                    targetsByPlayer.get(uuid), recordsByPlayer.get(uuid)));
+        }
+
+        List<WorldFirstRecord> worldFirsts = null;
+        int worldFirstSkippedEntries = 0;
+        JsonArray rawWorldFirsts = payload.rawWorldFirsts();
+        if (rawWorldFirsts != null) {
+            worldFirsts = new ArrayList<>(rawWorldFirsts.size());
+            for (JsonElement element : rawWorldFirsts) {
+                WorldFirstRecord parsed = parseWorldFirstElement(element);
+                if (parsed == null) {
+                    worldFirstSkippedEntries++;
+                } else {
+                    worldFirsts.add(parsed);
+                }
+            }
+        }
+
+        return new MergePlan(players, skippedEntries, worldFirsts, worldFirstSkippedEntries);
+    }
+
+    /**
+     * Applies a parsed merge plan to the live data. Must run on the server thread because
+     * {@link MilestoneData} is server-thread confined.
+     */
+    public static ImportAllMergeStats applyMergePlan(MilestoneData data, MergePlan plan) {
+        int addedTargets = 0;
+        int updatedRecords = 0;
+
+        for (PlayerMergePlan player : plan.players()) {
+            UUID uuid = player.uuid();
+            MilestoneData.PlayerData pd = data.player(uuid);
+            for (String ownerName : player.ownerNames()) {
+                if (pd.lastKnownName == null || pd.lastKnownName.isEmpty()) {
+                    pd.lastKnownName = ownerName;
+                    data.setDirty();
+                }
+            }
+
+            int addedForPlayer = 0;
+            for (TargetKey target : player.targets()) {
+                if (pd.targets.contains(target)) {
+                    continue;
+                }
+                if (pd.targets.size() >= MilestoneService.MAX_PERSONAL_TARGETS) {
+                    break;
+                }
+                if (pd.targets.add(target)) {
+                    addedForPlayer++;
+                }
+            }
+            int updatedForPlayer = 0;
+            for (RecordUpdate update : player.recordUpdates()) {
+                MilestoneRecord existing = pd.records.get(update.key());
+                if (existing == null || update.record().playTicks() < existing.playTicks()) {
+                    pd.records.put(update.key(), update.record());
+                    updatedForPlayer++;
+                }
+            }
+            if (addedForPlayer > 0 || updatedForPlayer > 0) {
+                data.setDirty();
+            }
+            addedTargets += addedForPlayer;
+            updatedRecords += updatedForPlayer;
+        }
+
+        int skippedEntries = plan.skippedEntries();
+        int updatedWorldFirsts = 0;
+        if (plan.worldFirsts() != null) {
+            WorldFirstImportLogic.MergeResult<TargetKey, WorldFirstRecord> merged =
+                    mergeWorldFirsts(data.worldFirsts(), plan.worldFirsts(), plan.worldFirstSkippedEntries());
+            skippedEntries += merged.skippedCount();
+            if (merged.updatedCount() > 0) {
+                data.replaceWorldFirsts(merged.worldFirsts());
+                updatedWorldFirsts = merged.updatedCount();
+            }
+        }
 
         return new ImportAllMergeStats(
-                importedPlayers.size(),
+                plan.players().size(),
                 addedTargets,
                 updatedRecords,
-                worldFirstStats.updatedWorldFirsts(),
-                skippedEntries + worldFirstStats.skippedEntries());
+                updatedWorldFirsts,
+                skippedEntries);
+    }
+
+    /**
+     * Synchronous merge used by the single-player {@code import} command and by the importall
+     * synchronous fallback. Kept as the canonical behavior; {@link #buildMergePlan} +
+     * {@link #applyMergePlan} are the asynchronous split of the same rules.
+     */
+    public static ImportAllMergeStats mergeAllInto(MilestoneData data, AllPlayersImportPayload payload) {
+        return applyMergePlan(data, buildMergePlan(payload));
     }
 
     /**
@@ -1084,20 +1202,4 @@ public final class MilestoneExport {
                 WorldFirstRecord::epochMillis);
     }
 
-    /**
-     * F31 seam: merges world-first entries from an {@code exportall} file into {@code data}.
-     * Fires no notifications, Discord posts, or events, and runs regardless of {@code worldFirstEnabled}.
-     */
-    private static WorldFirstImportStats mergeWorldFirstsSeam(
-            MilestoneData data, @Nullable JsonArray rawWorldFirsts) {
-        if (rawWorldFirsts == null || rawWorldFirsts.isEmpty()) {
-            return WorldFirstImportStats.NONE;
-        }
-        WorldFirstImportLogic.MergeResult<TargetKey, WorldFirstRecord> merged =
-                parseAndMergeWorldFirsts(data.worldFirsts(), rawWorldFirsts);
-        if (merged.updatedCount() > 0) {
-            data.replaceWorldFirsts(merged.worldFirsts());
-        }
-        return new WorldFirstImportStats(merged.updatedCount(), merged.skippedCount());
-    }
 }

@@ -1358,41 +1358,9 @@ public final class MilestoneCommands {
     }
 
     private static int importAll(CommandContext<CommandSourceStack> ctx, String fileName) {
-        CommandSourceStack source = ctx.getSource();
-        if (!Config.EXPORT_IMPORT_ENABLED.get()) {
-            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.feature_disabled"));
-        }
-        if (!MilestoneExport.isSafeFileName(fileName)) {
-            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.import_invalid_name", fileName));
-        }
-        MinecraftServer server = source.getServer();
-        Path dir = MilestoneExport.exportsDir(server).normalize();
-        Path file = dir.resolve(fileName).normalize();
-        if (!file.getParent().equals(dir)) {
-            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.import_invalid_name", fileName));
-        }
-        if (!Files.isRegularFile(file)) {
-            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.import_not_found", fileName));
-        }
-        try {
-            MilestoneExport.AllPlayersImportPayload payload = MilestoneExport.parseAllPlayersExport(file);
-            MilestoneData data = MilestoneData.get(server);
-            MilestoneExport.ImportAllMergeStats stats = MilestoneExport.mergeAllInto(data, payload);
-            ScoreboardSync.refreshAll(server);
-            MilestoneService.syncAllOnlineGuiPlayers(server, null);
-            return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.importall_done",
-                    fileName,
-                    stats.importedPlayers(),
-                    stats.addedTargets(),
-                    stats.updatedRecords(),
-                    stats.updatedWorldFirsts(),
-                    stats.skippedEntries()));
-        } catch (IllegalArgumentException e) {
-            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.import_invalid_format", fileName));
-        } catch (IOException e) {
-            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Import-all of {} failed", fileName, e);
-            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.import_failed", fileName));
-        }
+        // F-140-3 (N45): validation and two-stage feedback live in MilestoneImportAll; parsing and
+        // merge-plan construction run on the I/O executor, application on the server thread.
+        return MilestoneImportAll.run(ctx.getSource(), fileName);
     }
 
     private static int exportHtmlSelf(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {

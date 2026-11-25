@@ -56,6 +56,8 @@ public class ItemMilestoneLog {
     }
 
     private static void onServerStarting(ServerStartingEvent event) {
+        // F-140-3 (N45): fresh daemon I/O executor for every server session.
+        MilestoneServerStop.onServerStarting();
         int custom = Presets.reload();
         LOGGER.info("[ItemMilestoneLog] Loaded {} preset(s) ({} custom)", Presets.names().size(), custom);
         MilestoneService.warnUnknownFirstJoinPresets();
@@ -77,15 +79,13 @@ public class ItemMilestoneLog {
     }
 
     private static void onServerStopping(ServerStoppingEvent event) {
-        MilestoneBackup.onServerStopping(event.getServer());
-        Tracker.clearPendingNotifications();
-        MilestoneCommandRunner.clearPending();
-        MilestoneService.UNDO_SNAPSHOTS.clear();
-        ScoreboardSync.resetWarningState();
-        DiscordNotifier.shutdown();
+        // F-140-4 (N149): fixed drain -> final backup -> existing clears -> executor shutdown.
+        MilestoneServerStop.onServerStopping(event.getServer());
     }
 
     private static void onServerStopped(ServerStoppedEvent event) {
+        // F-140-4: clear executor/import state so the next world creates a fresh executor.
+        MilestoneServerStop.onServerStopped();
         MilestoneBackup.resetState();
         DiscordNotifier.resetDigestThrottler();
         // F21: data pack presets belong to this world; do not carry them into the next one.

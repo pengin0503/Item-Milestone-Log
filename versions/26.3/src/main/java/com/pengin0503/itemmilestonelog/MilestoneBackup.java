@@ -32,6 +32,12 @@ import java.util.stream.Stream;
  */
 public final class MilestoneBackup {
     private static volatile long lastBackupMillis = MilestoneBackupLogic.NO_BACKUP_RECORDED;
+    /**
+     * Guards the stop-time final backup so the asynchronous task and the synchronous timeout
+     * fallback can never write two final backups (or race on the same target name).
+     */
+    private static final Object FINAL_BACKUP_LOCK = new Object();
+    private static volatile boolean finalBackupWritten;
 
     private MilestoneBackup() {
     }
@@ -48,6 +54,7 @@ public final class MilestoneBackup {
      * backup file names in {@code <world>/itemmilestonelog/backups/}.
      */
     public static void initForServer(@Nullable MinecraftServer server) {
+        finalBackupWritten = false;
         if (server == null) {
             resetState();
             return;
@@ -81,6 +88,7 @@ public final class MilestoneBackup {
     /** Clears in-memory backup timing state (called on {@code ServerStoppedEvent} and in tests). */
     public static void resetState() {
         lastBackupMillis = MilestoneBackupLogic.NO_BACKUP_RECORDED;
+        finalBackupWritten = false;
     }
 
     static long lastBackupMillis() {
@@ -95,12 +103,7 @@ public final class MilestoneBackup {
         if (!Level.OVERWORLD.equals(level.dimension())) {
             return;
         }
-        tryAutoBackup(level.getServer(), false);
-    }
-
-    /** Triggered on {@code ServerStoppingEvent}: backs up ignoring the 1-hour rate limit. */
-    public static void onServerStopping(@Nullable MinecraftServer server) {
-        tryAutoBackup(server, true);
+        tryAutoBackup(level.getServer());
     }
 
     /**
@@ -112,6 +115,9 @@ public final class MilestoneBackup {
      *         empty or writing failed
      */
     public static boolean writeBackupNow(@Nullable MinecraftServer server) {
+        // Deliberately synchronous (N45): F24 renameitem proceeds only after the pre-rename
+        // backup is known to be on disk. Moving this to the I/O executor would let the caller
+        // mutate/delete data before the snapshot becomes durable.
         if (server == null) {
             return false;
         }
@@ -130,7 +136,11 @@ public final class MilestoneBackup {
         }
     }
 
-    private static void tryAutoBackup(@Nullable MinecraftServer server, boolean ignoreRateLimit) {
+    /**
+     * Save-triggered backup (rate-limited on the server thread). The NBT root snapshot is taken on
+     * the server thread; the disk write runs on the {@code itemmilestonelog-io} executor (N45).
+     */
+    private static void tryAutoBackup(@Nullable MinecraftServer server) {
         if (server == null) {
             return;
         }
@@ -139,22 +149,116 @@ public final class MilestoneBackup {
                 return;
             }
             Instant now = Instant.now();
-            if (!ignoreRateLimit && !MilestoneBackupLogic.isRateLimitElapsed(lastBackupMillis, now.toEpochMilli())) {
+            if (!MilestoneBackupLogic.isRateLimitElapsed(lastBackupMillis, now.toEpochMilli())) {
                 return;
             }
             MilestoneData data = MilestoneData.get(server);
             if (data.isEmpty()) {
                 return;
             }
-            writeBackup(
-                    backupsDir(server),
-                    data,
-                    server.registryAccess(),
-                    now,
-                    backupTimeZone(),
-                    Config.autoBackupGenerations());
+            Path dir = backupsDir(server);
+            CompoundTag root = data.toSavedDataFileTag(server.registryAccess());
+            ZoneId zone = backupTimeZone();
+            int maxGenerations = Config.autoBackupGenerations();
+            Runnable writeTask = () -> writeBackupSnapshot(dir, root, now, zone, maxGenerations);
+            if (!MilestoneIo.submit(MilestoneIoLogic.TaskKind.BACKUP, writeTask)) {
+                // N45: executor rejected/shut down -> run only this task synchronously.
+                ItemMilestoneLog.LOGGER.warn(
+                        "[ItemMilestoneLog] I/O executor unavailable; writing automatic SavedData backup synchronously");
+                writeTask.run();
+            }
         } catch (RuntimeException e) {
             ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Automatic SavedData backup failed: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Prepares the stop-time final backup on the server thread (N149): the rate limit is ignored,
+     * the NBT snapshot is taken now, and the returned task writes it on the executor. Returns
+     * {@code null} when no backup is needed (disabled or empty data).
+     */
+    @Nullable
+    public static Runnable prepareFinalBackup(@Nullable MinecraftServer server) {
+        if (server == null) {
+            return null;
+        }
+        try {
+            if (!Config.autoBackupEnabled()) {
+                return null;
+            }
+            MilestoneData data = MilestoneData.get(server);
+            if (data.isEmpty()) {
+                return null;
+            }
+            Path dir = backupsDir(server);
+            CompoundTag root = data.toSavedDataFileTag(server.registryAccess());
+            Instant now = Instant.now();
+            ZoneId zone = backupTimeZone();
+            int maxGenerations = Config.autoBackupGenerations();
+            synchronized (FINAL_BACKUP_LOCK) {
+                finalBackupWritten = false;
+            }
+            return () -> writeFinalBackup(dir, root, now, zone, maxGenerations);
+        } catch (RuntimeException e) {
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Could not prepare final SavedData backup: {}",
+                    e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Synchronous last-resort final backup (N149 drain timeout or missing executor). The shared
+     * lock makes this a no-op if the queued final backup already completed.
+     */
+    public static boolean writeFinalBackupNow(@Nullable MinecraftServer server) {
+        if (server == null) {
+            return false;
+        }
+        synchronized (FINAL_BACKUP_LOCK) {
+            if (finalBackupWritten) {
+                return true;
+            }
+            try {
+                if (!Config.autoBackupEnabled()) {
+                    return false;
+                }
+                MilestoneData data = MilestoneData.get(server);
+                if (data.isEmpty()) {
+                    return false;
+                }
+                boolean written = writeBackupSnapshot(
+                        backupsDir(server),
+                        data.toSavedDataFileTag(server.registryAccess()),
+                        Instant.now(),
+                        backupTimeZone(),
+                        Config.autoBackupGenerations());
+                if (written) {
+                    finalBackupWritten = true;
+                }
+                return written;
+            } catch (RuntimeException e) {
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Could not write final SavedData backup: {}",
+                        e.getMessage());
+                return false;
+            }
+        }
+    }
+
+    private static boolean writeFinalBackup(
+            Path dir,
+            CompoundTag root,
+            Instant now,
+            ZoneId zone,
+            int maxGenerations) {
+        synchronized (FINAL_BACKUP_LOCK) {
+            if (finalBackupWritten) {
+                return true;
+            }
+            boolean written = writeBackupSnapshot(dir, root, now, zone, maxGenerations);
+            if (written) {
+                finalBackupWritten = true;
+            }
+            return written;
         }
     }
 
@@ -188,6 +292,28 @@ public final class MilestoneBackup {
         }
         try {
             CompoundTag root = data.toSavedDataFileTag(registries);
+            if (!writeBackupSnapshot(dir, root, now, zone, maxGenerations)) {
+                return false;
+            }
+        } catch (RuntimeException e) {
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Could not write SavedData backup in {}: {}",
+                    dir, e.getMessage());
+            return false;
+        }
+        return true;
+    }
+
+    /** Writes an already-serialized SavedData root and prunes old generations (I/O thread). */
+    static boolean writeBackupSnapshot(
+            Path dir,
+            @Nullable CompoundTag root,
+            Instant now,
+            ZoneId zone,
+            int maxGenerations) {
+        if (dir == null || root == null) {
+            return false;
+        }
+        try {
             Files.createDirectories(dir);
             String fileName = MilestoneBackupLogic.chooseFileName(
                     now, zone, name -> Files.exists(dir.resolve(name)));
@@ -198,7 +324,8 @@ public final class MilestoneBackup {
             writeCompressedAtomically(dir, fileName, target, root);
             lastBackupMillis = now.toEpochMilli();
         } catch (IOException | RuntimeException e) {
-            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Could not write SavedData backup in {}: {}", dir, e.getMessage());
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Could not write SavedData backup in {}: {}",
+                    dir, e.getMessage());
             return false;
         }
         pruneOldBackups(dir, maxGenerations);
