@@ -10,6 +10,7 @@
 #
 # Usage:
 #   tools/prepare-121x-harness.sh <mc> <profile> <neo_version>
+#   IML_SMOKETEST=1 tools/prepare-121x-harness.sh ...   # + Layer-2 client smoke hook
 # Example:
 #   tools/prepare-121x-harness.sh 1.21.4 v121_4 21.4.121
 #
@@ -103,5 +104,11 @@ if [[ "$profile" == "v121_11" ]]; then
   echo "ResourceLocation -> Identifier rename applied under: $dest/src"
 fi
 
-# 7. Done.
+# 7. Optional: inject the Layer-2 client smoke hook (docs/CLIENT_SMOKE_TEST.md).
+#    Off by default, so profile jars built from this harness never contain it.
+if [[ "${IML_SMOKETEST:-0}" == "1" ]]; then
+  "$ROOT/tools/smoketest/inject.sh" "$dest"
+fi
+
+# 8. Done.
 echo "Harness project ($mc, profile $profile, neo $neo_version): $dest"
