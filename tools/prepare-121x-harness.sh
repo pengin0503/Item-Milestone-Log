@@ -5,6 +5,8 @@
 # block (1.21.1 mappings do not apply to other MC versions; same approach as
 # verify-121x.sh), pins neo_version, and swaps the v121_1 compat implementations for the
 # profile's variant tree under versions/1.21.1/compat-variants/<profile>/.
+# The base profile v121_1 has no variant tree and no overrides: its impls are already in
+# the generated sources (copied from versions/1.21.1), so steps 4 and 5 are skipped for it.
 #
 # Usage:
 #   tools/prepare-121x-harness.sh <mc> <profile> <neo_version>
@@ -26,7 +28,7 @@ dest="$ROOT/versions/verify/$mc"
 variant="$ROOT/versions/1.21.1/compat-variants/$profile/com/pengin0503/itemmilestonelog/compat"
 pkg_dir="$dest/src/main/java/com/pengin0503/itemmilestonelog"
 
-if [[ ! -d "$variant" ]]; then
+if [[ "$profile" != "v121_1" && ! -d "$variant" ]]; then
   echo "Error: variant tree not found: $variant" >&2
   exit 1
 fi
@@ -59,18 +61,24 @@ if ! grep -qE '^neo_version=' "$props"; then
 fi
 sed -i "s|^neo_version=.*|neo_version=${neo_version}|" "$props"
 
-# 4. Swap the compat implementations for the profile's variant tree.
-rm -rf "$pkg_dir/compat/v121_1" "$pkg_dir/compat/client/v121_1"
-cp -R "$variant/." "$pkg_dir/compat/"
+if [[ "$profile" == "v121_1" ]]; then
+  # 4-5. Base profile: compat/v121_1 and compat/client/v121_1 are already in the
+  #      generated sources and there are no overrides; nothing to swap.
+  echo "PASS: base profile v121_1 already in generated sources; variant swap and overrides skipped"
+else
+  # 4. Swap the compat implementations for the profile's variant tree.
+  rm -rf "$pkg_dir/compat/v121_1" "$pkg_dir/compat/client/v121_1"
+  cp -R "$variant/." "$pkg_dir/compat/"
 
-# 5. File overrides: some profiles need whole shared source files replaced (e.g. the
-#    GameTest registration, whose API changed completely in 1.21.5). Files under
-#    compat-variants/<profile>/overrides/ mirror src/main/java/ and replace the
-#    generated project's copies wholesale for that profile.
-overrides="$ROOT/versions/1.21.1/compat-variants/$profile/overrides"
-if [[ -d "$overrides" ]]; then
-  cp -R "$overrides/." "$dest/src/main/java/"
-  echo "File overrides applied from: $overrides"
+  # 5. File overrides: some profiles need whole shared source files replaced (e.g. the
+  #    GameTest registration, whose API changed completely in 1.21.5). Files under
+  #    compat-variants/<profile>/overrides/ mirror src/main/java/ and replace the
+  #    generated project's copies wholesale for that profile.
+  overrides="$ROOT/versions/1.21.1/compat-variants/$profile/overrides"
+  if [[ -d "$overrides" ]]; then
+    cp -R "$overrides/." "$dest/src/main/java/"
+    echo "File overrides applied from: $overrides"
+  fi
 fi
 
 # 6. 1.21.11 only: ResourceLocation was renamed to Identifier in MC 1.21.11.
