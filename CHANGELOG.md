@@ -3,6 +3,20 @@
 The section for a version is used as it is for the GitHub Release (created when a
 `v<version>` tag is pushed) and for the CurseForge file changelog.
 
+## 1.3.1
+
+This is a bug-fix release for the 1.3.0 version-range jars, and the first release that includes the Minecraft 1.20.1 (Forge) edition. There are no gameplay changes.
+
+### Fixes
+- **1.21.5–1.21.8 jar crashes**: The merged jar for Minecraft 1.21.5–1.21.8 crashed on 1.21.6–1.21.8 when opening the milestone screens (text rendering) and when clicking in the item picker (sound), and on 1.21.7 when opening the GUI from the key (networking). The broken 1.3.0 file for 1.21.5–1.21.8 was withdrawn from the stores; this release replaces it.
+- **1.21.4 list scrollbar**: On Minecraft 1.21.4, the list scrollbar in the three screens sat at the vanilla position instead of the intended one.
+
+### Version Support
+- **Minecraft 1.20.1 (Forge)**: The Minecraft 1.20.1 Forge edition joins the release from 1.3.1 (`itemmilestonelog-forge-1.20.1-1.3.1.jar`, requires Forge 47.3.0 or newer).
+
+### Notes
+- **Binary-linkage audit in CI**: Every merged jar is now checked in CI against every Minecraft version it covers, so a call that does not link on one of those versions fails the build instead of crashing in game.
+
 ## 1.3.0
 
 This release is about Minecraft version support. There are no gameplay changes: every 1.2.0 feature is included unchanged.
