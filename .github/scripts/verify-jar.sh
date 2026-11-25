@@ -44,6 +44,13 @@ expect_file com/pengin0503/itemmilestonelog/client/ItemMilestoneLogClient.class
 expect_toml 'modId="itemmilestonelog"'
 expect_toml "version=\"$(prop mod_version)\""
 expect_toml 'logoFile="logo.png"'
+case "$MC" in
+  26.*)
+    # NeoForge 26.2+ warns about a bare logoFile; 26.x ships bannerFile/iconFile too.
+    expect_toml 'bannerFile="logo.png"'
+    expect_toml 'iconFile="logo.png"'
+    ;;
+esac
 expect_toml "versionRange=\"$(prop neo_version_range)\""
 expect_toml "versionRange=\"$(prop minecraft_version_range)\""
 expect_toml 'displayTest="IGNORE_ALL_VERSION"'

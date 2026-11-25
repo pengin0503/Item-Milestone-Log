@@ -8,6 +8,12 @@ displayName="${mod_name}"
 updateJSONURL="https://raw.githubusercontent.com/pengin0503/Item-Milestone-Log/main/docs/updates.json"
 displayTest="IGNORE_ALL_VERSION"
 displayURL="https://github.com/pengin0503/Item-Milestone-Log"
+# NeoForge 26.2+ reads bannerFile / iconFile (logo.png is a square 512x512 pixel-art
+# image, so it is also the mod-list icon). logoFile stays for NeoForge 26.1.2, which only
+# reads logoFile; the merged 26.x jar ships the 26.1.2 project's mods.toml.
+bannerFile="logo.png"
+iconFile="logo.png"
+iconBlur=false
 logoFile="logo.png"
 logoBlur=false
 authors="pengin0503"
