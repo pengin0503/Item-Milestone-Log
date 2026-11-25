@@ -3,11 +3,19 @@
 #
 #   check-release.sh <jar_dir> <tag or ""> <notes_file>
 #
+# The release composition comes from publish-manifest.json (repo root): five merged
+# jars, the 26.x jar (26.1.2-26.3) and the four 1.21.x jars (A 1.21-1.21.4,
+# B1 1.21.5-1.21.8, B2 1.21.9-1.21.10, C 1.21.11), each with its game_versions,
+# neoforge_min and java (docs/DESIGN_1.3.0.md section 6).
+#
 # - every versions/*/gradle.properties has the same mod_version,
-# - jar_dir holds exactly the four jars of that version, one per Minecraft version,
+# - jar_dir holds exactly the manifest's jars for that version ({version} in each
+#   file name substituted): each listed jar present, no other *.jar,
+# - the concrete manifest (placeholders substituted) is written to
+#   <jar_dir>/publish-manifest.json so the release ships it,
 # - the tag (if given) is v<mod_version>,
 # - CHANGELOG.md has a "## <mod_version>" section; it goes into the notes, followed
-#   by a table of the files.
+#   by a table of the files built from the manifest.
 set -euo pipefail
 
 DIR="$1"
@@ -28,18 +36,56 @@ echo "Release $VERSION${TAG:+ (tag $TAG)}"
 for mc in "${MC_VERSIONS[@]}"; do
   v="$(prop "$mc" mod_version)"
   if [ "$v" = "$VERSION" ]; then pass "$mc: mod_version $v"; else fail "$mc: mod_version is $v, not $VERSION"; fi
-  jar="$DIR/itemmilestonelog-neoforge-$mc-$VERSION.jar"
-  if [ -f "$jar" ]; then pass "$(basename "$jar")"; else fail "missing $(basename "$jar")"; fi
+done
+
+# The manifest: substitute {version} in every file name, then the jars in DIR must
+# be exactly that set.
+MANIFEST="$ROOT/publish-manifest.json"
+if [ ! -f "$MANIFEST" ]; then
+  echo "  FAIL  $MANIFEST is missing"
+  exit 1
+fi
+if ! jq -e '
+    (.files | type == "array" and length > 0)
+    and all(.files[];
+      (.file | type == "string" and length > 0)
+      and (.game_versions | type == "array" and length > 0 and all(.[]; type == "string"))
+      and (.neoforge_min | type == "string" and length > 0)
+      and (.java | type == "number"))
+  ' "$MANIFEST" > /dev/null 2>&1; then
+  echo "  FAIL  $MANIFEST is not valid JSON or does not match the expected shape"
+  echo "        ({\"files\": [{\"file\", \"game_versions\": [...], \"neoforge_min\", \"java\"}, ...]})"
+  exit 1
+fi
+CONCRETE="$(jq --arg v "$VERSION" '.files |= map(.file |= gsub("\\{version\\}"; $v))' "$MANIFEST")"
+mapfile -t expected < <(jq -r '.files[].file' <<< "$CONCRETE")
+pass "publish-manifest.json lists ${#expected[@]} jars"
+
+for f in "${expected[@]}"; do
+  if [ -f "$DIR/$f" ]; then pass "$f"; else fail "missing $f"; fi
 done
 
 shopt -s nullglob
 jars=("$DIR"/*.jar)
 shopt -u nullglob
-if [ "${#jars[@]}" -eq "${#MC_VERSIONS[@]}" ]; then
+extras=()
+for jar in "${jars[@]}"; do
+  base="$(basename "$jar")"
+  known=0
+  for f in "${expected[@]}"; do
+    if [ "$base" = "$f" ]; then known=1; break; fi
+  done
+  [ "$known" -eq 1 ] || extras+=("$base")
+done
+if [ "${#extras[@]}" -eq 0 ]; then
   pass "${#jars[@]} jars, nothing else"
 else
-  fail "expected ${#MC_VERSIONS[@]} jars in $DIR, found ${#jars[@]}: $(cd "$DIR" && ls -1 *.jar 2>/dev/null | tr '\n' ' ')"
+  fail "jars in $DIR not in publish-manifest.json: ${extras[*]}"
 fi
+
+mkdir -p "$DIR"
+printf '%s\n' "$CONCRETE" > "$DIR/publish-manifest.json"
+pass "wrote the concrete manifest to $DIR/publish-manifest.json"
 
 if [ -n "$TAG" ]; then
   if [ "$TAG" = "v$VERSION" ]; then pass "tag $TAG matches mod_version"; else fail "tag $TAG does not match mod_version $VERSION (expected v$VERSION)"; fi
@@ -62,15 +108,17 @@ fi
   echo
   echo "### Files"
   echo
-  echo "Each jar only loads on its own Minecraft version."
+  echo "Each jar loads on the Minecraft versions in its row."
   echo
   echo "| Minecraft | File | NeoForge | Java |"
   echo "|---|---|---|---|"
-  for mc in "${MC_VERSIONS[@]}"; do
-    java=25
-    [ "$mc" = "1.21.1" ] && java=21
-    echo "| $mc | \`itemmilestonelog-neoforge-$mc-$VERSION.jar\` | $(prop "$mc" neo_version) or newer | $java |"
-  done
+  # Minecraft label: first–last of game_versions when more than one (en dash, as in
+  # CHANGELOG.md), else the single version.
+  jq -r '.files[]
+    | (if (.game_versions | length) > 1
+         then "\(.game_versions[0])–\(.game_versions[-1])"
+         else .game_versions[0] end) as $mc
+    | "| \($mc) | `\(.file)` | \(.neoforge_min) or newer | \(.java) |"' <<< "$CONCRETE"
 } >> "$NOTES"
 
 echo "Release notes (${NOTES}):"
