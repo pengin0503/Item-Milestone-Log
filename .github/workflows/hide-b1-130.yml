@@ -1,0 +1,55 @@
+name: Hide broken B1 1.3.0 file (one-off)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  hide:
+    runs-on: ubuntu-latest
+    env:
+      MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+      CURSEFORGE_TOKEN: ${{ secrets.CURSEFORGE_TOKEN }}
+      MODRINTH_PROJECT_ID: A4mCJN2v
+      CURSEFORGE_PROJECT_ID: "1822783"
+      TARGET_FILE: itemmilestonelog-neoforge-1.21.5-1.21.8-1.3.0.jar
+    steps:
+      - name: Delete the B1 version on Modrinth
+        run: |
+          set -euo pipefail
+          vid=$(curl -sS "https://api.modrinth.com/v2/project/$MODRINTH_PROJECT_ID/version" \
+            -H "Authorization: $MODRINTH_TOKEN" \
+            | jq -r --arg f "$TARGET_FILE" '.[] | select(.files[].filename == $f) | .id' | head -1)
+          echo "Modrinth version id for $TARGET_FILE: ${vid:-NOT FOUND}"
+          if [ -n "${vid:-}" ]; then
+            code=$(curl -sS -o /dev/null -w "%{http_code}" -X DELETE \
+              "https://api.modrinth.com/v2/version/$vid" \
+              -H "Authorization: $MODRINTH_TOKEN")
+            echo "DELETE /v2/version/$vid -> HTTP $code"
+            [ "$code" = "204" ] || { echo "::error::Modrinth delete failed"; exit 1; }
+          fi
+          echo "Remaining 1.3.0 versions on Modrinth:"
+          curl -sS "https://api.modrinth.com/v2/project/$MODRINTH_PROJECT_ID/version" \
+            -H "Authorization: $MODRINTH_TOKEN" \
+            | jq -r '.[] | select(.version_number == "1.3.0") | .id + " " + (.files[0].filename // "")'
+      - name: Delete the B1 file on CurseForge
+        run: |
+          set -uo pipefail
+          fid=$(curl -sS "https://minecraft.curseforge.com/api/projects/$CURSEFORGE_PROJECT_ID/files" \
+            -H "X-Api-Token: $CURSEFORGE_TOKEN" \
+            | jq -r --arg f "$TARGET_FILE" '.[] | select((.name // .displayName // "") == $f) | .id' | head -1)
+          echo "CurseForge file id for $TARGET_FILE: ${fid:-NOT FOUND}"
+          if [ -z "${fid:-}" ]; then echo "::warning::file not listed; nothing to delete"; exit 0; fi
+          code=$(curl -sS -o /tmp/cf_del_body -w "%{http_code}" -X DELETE \
+            "https://api.curseforge.com/v1/mods/$CURSEFORGE_PROJECT_ID/files/$fid" \
+            -H "x-api-key: $CURSEFORGE_TOKEN" -H "Accept: application/json")
+          echo "Core API DELETE file $fid -> HTTP $code"; cat /tmp/cf_del_body; echo
+          if [ "$code" != "200" ] && [ "$code" != "204" ]; then
+            code2=$(curl -sS -o /tmp/cf_del_body2 -w "%{http_code}" -X DELETE \
+              "https://minecraft.curseforge.com/api/projects/$CURSEFORGE_PROJECT_ID/files/$fid" \
+              -H "X-Api-Token: $CURSEFORGE_TOKEN")
+            echo "Legacy API DELETE file $fid -> HTTP $code2"; cat /tmp/cf_del_body2; echo
+          fi
+          echo "Files still listed for the project (1.3.0 only):"
+          curl -sS "https://minecraft.curseforge.com/api/projects/$CURSEFORGE_PROJECT_ID/files" \
+            -H "X-Api-Token: $CURSEFORGE_TOKEN" \
+            | jq -r '.[] | select((.name // "") | contains("1.3.0")) | (.id | tostring) + " " + (.name // "")'
