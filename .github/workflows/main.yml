@@ -1001,19 +1001,47 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  build-1201-forge:
+    # Builds and unit-tests the Forge 1.20.1 port (docs/DESIGN_1.20.1.md section 8.4).
+    # Forge 1.20.1 targets Java 17, unlike the NeoForge jobs above.
+    name: Build MC 1.20.1 / Forge
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Build and run unit tests
+        working-directory: versions/1.20.1-forge
+        run: ./gradlew --no-daemon test build
+
+      - name: Upload the release jar
+        uses: actions/upload-artifact@v6
+        with:
+          name: itemmilestonelog-1.20.1-forge
+          path: versions/1.20.1-forge/build/libs/itemmilestonelog-forge-1.20.1-*.jar
+          if-no-files-found: error
+
   release-check:
     # Runs on every build, so a broken release is found before the tag is pushed.
     name: Check the release files
-    needs: [identical-files, build, merge-26x, merged-server-test, merge-121x, merged-server-test-121x, audit-121x-links, audit-121x-links-drift, server-test, migration, compat-test]
+    needs: [identical-files, build, build-1201-forge, merge-26x, merged-server-test, merge-121x, merged-server-test-121x, audit-121x-links, audit-121x-links-drift, server-test, migration, compat-test]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      # The release composition is the five merged jars listed in
-      # publish-manifest.json (docs/DESIGN_1.3.0.md section 6); explicit
-      # artifact names keep anything else out of dist.
+      # The release composition is the six jars listed in publish-manifest.json
+      # (the five merged NeoForge jars plus the Forge 1.20.1 jar;
+      # docs/DESIGN_1.3.0.md section 6, docs/DESIGN_1.20.1.md section 8.1);
+      # explicit artifact names keep anything else out of dist.
       - name: Download the 26.x merged jar
         uses: actions/download-artifact@v7
         with:
@@ -1042,6 +1070,12 @@ jobs:
         uses: actions/download-artifact@v7
         with:
           name: itemmilestonelog-1.21-c
+          path: dist
+
+      - name: Download the Forge 1.20.1 jar
+        uses: actions/download-artifact@v7
+        with:
+          name: itemmilestonelog-1.20.1-forge
           path: dist
 
       - name: Check the jars and write the release notes
@@ -1059,9 +1093,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      # The release composition is the five merged jars listed in
-      # publish-manifest.json (docs/DESIGN_1.3.0.md section 6); explicit
-      # artifact names keep anything else out of dist.
+      # The release composition is the six jars listed in publish-manifest.json
+      # (the five merged NeoForge jars plus the Forge 1.20.1 jar;
+      # docs/DESIGN_1.3.0.md section 6, docs/DESIGN_1.20.1.md section 8.1);
+      # explicit artifact names keep anything else out of dist.
       - name: Download the 26.x merged jar
         uses: actions/download-artifact@v7
         with:
@@ -1090,6 +1125,12 @@ jobs:
         uses: actions/download-artifact@v7
         with:
           name: itemmilestonelog-1.21-c
+          path: dist
+
+      - name: Download the Forge 1.20.1 jar
+        uses: actions/download-artifact@v7
+        with:
+          name: itemmilestonelog-1.20.1-forge
           path: dist
 
       - name: Create the release
