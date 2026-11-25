@@ -33,23 +33,36 @@ jobs:
             | jq -r '.[] | select(.version_number == "1.3.0") | .id + " " + (.files[0].filename // "")'
       - name: Delete the B1 file on CurseForge
         run: |
-          set -uo pipefail
-          fid=$(curl -sS "https://minecraft.curseforge.com/api/projects/$CURSEFORGE_PROJECT_ID/files" \
-            -H "X-Api-Token: $CURSEFORGE_TOKEN" \
-            | jq -r --arg f "$TARGET_FILE" '.[] | select((.name // .displayName // "") == $f) | .id' | head -1)
+          echo "--- list via Core API"
+          curl -sS -o /tmp/cf_list -w "HTTP %{http_code}\n" \
+            "https://api.curseforge.com/v1/mods/$CURSEFORGE_PROJECT_ID/files?pageSize=50" \
+            -H "x-api-key: $CURSEFORGE_TOKEN" -H "Accept: application/json" || true
+          head -c 600 /tmp/cf_list; echo
+          fid=$(jq -r --arg f "$TARGET_FILE" '.data[]? | select(.fileName == $f) | .id' /tmp/cf_list 2>/dev/null | head -1)
+          if [ -z "${fid:-}" ]; then
+            echo "--- list via legacy API"
+            curl -sS -o /tmp/cf_list2 -w "HTTP %{http_code}\n" \
+              "https://minecraft.curseforge.com/api/projects/$CURSEFORGE_PROJECT_ID/files" \
+              -H "X-Api-Token: $CURSEFORGE_TOKEN" || true
+            head -c 600 /tmp/cf_list2; echo
+            fid=$(jq -r --arg f "$TARGET_FILE" '.[]? | select((.name // .displayName // "") == $f) | .id' /tmp/cf_list2 2>/dev/null | head -1)
+          fi
           echo "CurseForge file id for $TARGET_FILE: ${fid:-NOT FOUND}"
-          if [ -z "${fid:-}" ]; then echo "::warning::file not listed; nothing to delete"; exit 0; fi
-          code=$(curl -sS -o /tmp/cf_del_body -w "%{http_code}" -X DELETE \
+          if [ -z "${fid:-}" ]; then echo "::error::could not resolve the CurseForge file id"; exit 1; fi
+          code=$(curl -sS -o /tmp/cf_del -w "%{http_code}" -X DELETE \
             "https://api.curseforge.com/v1/mods/$CURSEFORGE_PROJECT_ID/files/$fid" \
             -H "x-api-key: $CURSEFORGE_TOKEN" -H "Accept: application/json")
-          echo "Core API DELETE file $fid -> HTTP $code"; cat /tmp/cf_del_body; echo
+          echo "Core API DELETE file $fid -> HTTP $code"; cat /tmp/cf_del; echo
           if [ "$code" != "200" ] && [ "$code" != "204" ]; then
-            code2=$(curl -sS -o /tmp/cf_del_body2 -w "%{http_code}" -X DELETE \
+            code2=$(curl -sS -o /tmp/cf_del2 -w "%{http_code}" -X DELETE \
               "https://minecraft.curseforge.com/api/projects/$CURSEFORGE_PROJECT_ID/files/$fid" \
               -H "X-Api-Token: $CURSEFORGE_TOKEN")
-            echo "Legacy API DELETE file $fid -> HTTP $code2"; cat /tmp/cf_del_body2; echo
+            echo "Legacy API DELETE file $fid -> HTTP $code2"; cat /tmp/cf_del2; echo
+            if [ "$code2" != "200" ] && [ "$code2" != "204" ]; then
+              echo "::error::both CurseForge delete routes failed"; exit 1
+            fi
           fi
-          echo "Files still listed for the project (1.3.0 only):"
-          curl -sS "https://minecraft.curseforge.com/api/projects/$CURSEFORGE_PROJECT_ID/files" \
-            -H "X-Api-Token: $CURSEFORGE_TOKEN" \
-            | jq -r '.[] | select((.name // "") | contains("1.3.0")) | (.id | tostring) + " " + (.name // "")'
+          echo "--- verify: Core API list after delete (1.3.0 files)"
+          curl -sS "https://api.curseforge.com/v1/mods/$CURSEFORGE_PROJECT_ID/files?pageSize=50" \
+            -H "x-api-key: $CURSEFORGE_TOKEN" -H "Accept: application/json" \
+            | jq -r '.data[]? | select(.fileName | contains("1.3.0")) | (.id | tostring) + " " + .fileName'
