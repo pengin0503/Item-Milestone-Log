@@ -7,8 +7,10 @@ import com.pengin0503.itemmilestonelog.network.SyncMilestonesPayload;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.ContainerObjectSelectionList;
 import net.minecraft.client.gui.components.EditBox;
-import net.minecraft.client.gui.components.ObjectSelectionList;
+import net.minecraft.client.gui.components.events.GuiEventListener;
+import net.minecraft.client.gui.narration.NarratableEntry;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -61,7 +63,7 @@ public final class ItemPickerScreen extends Screen {
     private EditBox searchBox;
     private EditBox countBox;
     // Created by McCompat.lists(): the list subclass that positions the scrollbar is per profile.
-    private ObjectSelectionList<ItemRow> listWidget;
+    private ContainerObjectSelectionList<ItemRow> listWidget;
     private String currentQuery = "";
     private String currentCountText = "1";
     private int parsedCount = TargetKey.MIN_COUNT;
@@ -145,7 +147,7 @@ public final class ItemPickerScreen extends Screen {
     @Override
     protected void init() {
         // #125: keep the scroll position across a resize.
-        double previousScroll = listWidget != null ? listWidget.getScrollAmount() : 0.0;
+        double previousScroll = listWidget != null ? McCompat.scroll().getScrollAmount(listWidget) : 0.0;
         int searchWidth = Math.min(340, this.width - 40);
         int searchX = (this.width - searchWidth) / 2;
 
@@ -161,7 +163,7 @@ public final class ItemPickerScreen extends Screen {
         int listBottom = this.height - 44;
         int listHeight = Math.max(40, listBottom - listTop);
 
-        listWidget = addRenderableWidget(McCompat.lists().objectList(
+        listWidget = addRenderableWidget(McCompat.lists().containerList(
                 this.minecraft, this.width, listHeight, listTop, 26, () -> Math.min(440, this.width - 32)));
         refreshList();
         listWidget.setScrollAmount(previousScroll);
@@ -327,7 +329,7 @@ public final class ItemPickerScreen extends Screen {
 
     // --------------------------------------------------------- list rows
 
-    private final class ItemRow extends ObjectSelectionList.Entry<ItemRow> {
+    private final class ItemRow extends ContainerObjectSelectionList.Entry<ItemRow> {
         private final CatalogItem item;
 
         public ItemRow(CatalogItem item) {
@@ -398,8 +400,13 @@ public final class ItemPickerScreen extends Screen {
         }
 
         @Override
-        public Component getNarration() {
-            return item.displayName;
+        public List<? extends GuiEventListener> children() {
+            return List.of();
+        }
+
+        @Override
+        public List<? extends NarratableEntry> narratables() {
+            return List.of();
         }
     }
 }
