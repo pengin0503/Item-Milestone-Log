@@ -28,6 +28,15 @@ const { values: opt } = parseArgs({
 
 const BOT_NAME = 'ImlBot';
 const SCAN_SECONDS = Number(opt['scan-interval-ticks']) / 20;
+// 1.20.5 changed the ItemStack NBT layout: before it the count key is "Count" (byte),
+// from 1.20.5 on it is "count" (int) and "Count" is no longer read. The 1.20.1 Forge
+// server does not reject the newer key, it just deserializes the stack as empty, so a
+// summoned item entity made with "count" can never be picked up.
+const MC_VERSION_PARTS = String(opt.mc ?? '').split('.').map((part) => Number(part));
+const ITEM_STACK_USES_LOWERCASE_COUNT = MC_VERSION_PARTS.length >= 2
+  && (MC_VERSION_PARTS[0] > 1
+    || (MC_VERSION_PARTS[0] === 1
+      && (MC_VERSION_PARTS[1] > 20 || (MC_VERSION_PARTS[1] === 20 && MC_VERSION_PARTS[2] >= 5))));
 let failures = 0;
 
 function pass(name) {
@@ -221,16 +230,36 @@ async function countItem(rcon, item, botName = BOT_NAME) {
   return m ? Number(m[1]) : 0;
 }
 
+// The NBT for one item inside an item entity, in the layout the server under test reads.
+function itemStackNbt(item) {
+  return ITEM_STACK_USES_LOWERCASE_COUNT
+    ? `{id:"${item}",count:1}`
+    : `{id:"${item}",Count:1b}`;
+}
+
 async function summonAndPickUp(rcon, item, botName = BOT_NAME) {
   const before = await countItem(rcon, item, botName);
-  await rcon.command(
-    `execute at ${botName} run summon minecraft:item ~ ~ ~ {Item:{id:"${item}",count:1},PickupDelay:0}`);
+  const summonOutput = await rcon.command(
+    `execute at ${botName} run summon minecraft:item ~ ~ ~ {Item:${itemStackNbt(item)},PickupDelay:0}`);
   const deadline = Date.now() + 5000;
+  let after = before;
+  let clearOutput = '';
   while (Date.now() < deadline) {
     await sleep(250);
-    if (await countItem(rcon, item, botName) > before) return;
+    clearOutput = await rcon.command(`clear ${botName} ${item} 0`);
+    const m = /Found (\d+)/.exec(clearOutput);
+    after = m ? Number(m[1]) : 0;
+    if (after > before) {
+      // Evidence for the cluster-A discriminator: the item is verifiably in the bot's
+      // inventory, so any missing milestone record cannot be blamed on the pickup.
+      console.log(`        [pickup] ${botName} holds ${item} (inventory count ${before} -> ${after})`);
+      return;
+    }
   }
-  throw new Error(`${botName} did not pick up ${item}`);
+  throw new Error(
+    `${botName} did not pick up ${item} within 5s: summoned {Item:${itemStackNbt(item)},PickupDelay:0}, `
+    + `inventory count stayed ${after} (before ${before}); `
+    + `last /clear output: ${clearOutput.trim() || '(none)'}; summon output: ${summonOutput.trim() || '(none)'}`);
 }
 
 function assertFallback(hit, key) {
@@ -315,7 +344,18 @@ async function freshBotFlow(rcon) {
     await summonAndPickUp(rcon, 'minecraft:cobblestone');
     const cleared = await rcon.command(`clear ${BOT_NAME} minecraft:cobblestone`);
     if (!/Removed 1/.test(cleared)) throw new Error(`the bot did not pick the item up: ${cleared}`);
-    const hit = await waitFor(session, from, /^★ Milestone recorded: Cobblestone at playtime \d+h \d{2}m \d{2}s$/, 4000);
+    let hit;
+    try {
+      hit = await waitFor(session, from, /^★ Milestone recorded: Cobblestone at playtime \d+h \d{2}m \d{2}s$/, 4000);
+    } catch (e) {
+      // Cluster-A discriminator: the /clear above proves the bot held the item. It is out
+      // of the inventory now, so a scan cannot record it later either. If this branch is
+      // reached on Forge, the pickup path itself failed to record and that is a mod bug,
+      // not a harness pickup problem.
+      throw new Error(
+        'the bot verifiably held Cobblestone (it was removed from the inventory), but no '
+        + `pickup record arrived within 4000 ms while the item was already cleared:\n${e.message}`);
+    }
     assertFallback(hit, 'message.itemmilestonelog.recorded');
   });
 

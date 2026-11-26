@@ -283,7 +283,18 @@ check_log() {
   # because unrelated loader warnings there are expected.
   if [ "${LOADER:-neoforge}" = "forge" ]; then
     local errors="$LOG_DIR/$(basename "$log" .log)-errors.txt"
-    if grep -nE '^\[[^]]*\] \[[^]]*/(ERROR|FATAL)\]' "$log" > "$errors"; then
+    # Two deliberate exemptions, each matched as narrowly as possible:
+    # 1) Vanilla 1.20.1 logs this at ERROR when a flat world's generator settings have no
+    #    "layers" key (prepare_server writes level-type=minecraft\:flat). It is startup
+    #    noise from vanilla code, not a mod or server failure.
+    # 2) prepare_server deliberately plants a malformed presets/broken.json; the mod
+    #    logging the caught parse failure for that exact file is the graceful handling
+    #    the scenario asserts, so it must not trip the gate.
+    # Every other ERROR/FATAL line still fails the gate.
+    if grep -nE '^\[[^]]*\] \[[^]]*/(ERROR|FATAL)\]' "$log" \
+        | grep -vE '\[minecraft/DedicatedServerProperties\]: No key layers in MapLike\[\{\}\]' \
+        | grep -vE 'Failed to parse preset file broken\.json:' \
+        > "$errors"; then
       echo "  FAIL  ERROR/FATAL lines in the server log:"
       head -n 20 "$errors"
       ok=1
