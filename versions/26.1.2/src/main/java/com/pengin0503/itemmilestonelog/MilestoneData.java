@@ -88,24 +88,53 @@ public class MilestoneData extends SavedData {
             new MilestoneRecord(-1, MilestoneRecord.UNKNOWN_DAY, MilestoneRecord.UNKNOWN_EPOCH));
 
     /**
+     * Wraps a codec so a malformed value records one element skip and decodes to {@code fallback}
+     * instead of failing its enclosing record. The old strict field codecs could make one bad
+     * field drop a whole player, or the whole SavedData; the lenient wrappers keep every valid
+     * sibling and make F-140-2 evacuate the original file (#110/#130).
+     */
+    private static <T> Codec<T> lenient(String field, Codec<T> codec, T fallback) {
+        return new Codec<>() {
+            @Override
+            public <U> DataResult<Pair<T, U>> decode(DynamicOps<U> ops, U input) {
+                DataResult<Pair<T, U>> result = codec.decode(ops, input);
+                if (result.isError()) {
+                    MilestoneLoadReport.recordElementSkip();
+                    ItemMilestoneLog.LOGGER.warn(
+                            "[ItemMilestoneLog] Skipping malformed '{}' value in SavedData; using the default", field);
+                    return DataResult.success(new Pair<>(fallback, input));
+                }
+                return result;
+            }
+
+            @Override
+            public <U> DataResult<U> encode(T input, DynamicOps<U> ops, U prefix) {
+                return codec.encode(input, ops, prefix);
+            }
+        };
+    }
+
+    /**
      * Decodes all three record formats under {@code records[itemId]}:
      * 1.0.0 plain int (count = 1), early 1.0.1 compound {ticks, day, epoch} (count = 1),
      * and quantity map { "<count>": {ticks, day, epoch}, ... }.
      */
-    private static final Codec<Map<String, MilestoneRecord>> ITEM_RECORDS_CODEC = Codec.either(
-            Codec.INT,
-            Codec.either(RECORD_OBJECT_CODEC, Codec.unboundedMap(Codec.STRING, LENIENT_RECORD_CODEC))
-    ).xmap(
-            either -> either.map(
-                    ticks -> Map.of("1", MilestoneRecord.legacy(ticks)),
-                    inner -> inner.map(
-                            single -> Map.of("1", single),
-                            countMap -> countMap
-                    )
+    private static final Codec<Map<String, MilestoneRecord>> ITEM_RECORDS_CODEC = lenient("records item",
+            Codec.either(
+                    Codec.INT,
+                    Codec.either(RECORD_OBJECT_CODEC, Codec.unboundedMap(Codec.STRING, LENIENT_RECORD_CODEC))
+            ).xmap(
+                    either -> either.map(
+                            ticks -> Map.of("1", MilestoneRecord.legacy(ticks)),
+                            inner -> inner.map(
+                                    single -> Map.of("1", single),
+                                    countMap -> countMap
+                            )
+                    ),
+                    countMap -> Either.right(Either.right(countMap))
             ),
-            countMap -> Either.right(Either.right(countMap))
-    // An item whose value matches none of the formats decodes to no records instead of failing the player.
-    ).orElse(Map.of());
+            // An item whose value matches none of the formats decodes to no records instead of failing the player.
+            Map.of());
 
     private static final Codec<WorldFirstEntry> WORLD_FIRST_CODEC = RecordCodecBuilder.create(instance -> instance.group(
             Codec.STRING.fieldOf("uuid").forGetter(WorldFirstEntry::uuid),
@@ -123,17 +152,19 @@ public class MilestoneData extends SavedData {
      * Decodes both early 1.0.1 worldFirsts (itemId -> entry, count = 1)
      * and quantity worldFirsts (itemId -> { "<count>": entry, ... }).
      */
-    private static final Codec<Map<String, WorldFirstEntry>> ITEM_WORLD_FIRSTS_CODEC = Codec.either(
-            WORLD_FIRST_CODEC,
-            Codec.unboundedMap(Codec.STRING, LENIENT_WORLD_FIRST_CODEC)
-    ).xmap(
-            either -> either.map(
-                    single -> Map.of("1", single),
-                    countMap -> countMap
+    private static final Codec<Map<String, WorldFirstEntry>> ITEM_WORLD_FIRSTS_CODEC = lenient("worldFirst item",
+            Codec.either(
+                    WORLD_FIRST_CODEC,
+                    Codec.unboundedMap(Codec.STRING, LENIENT_WORLD_FIRST_CODEC)
+            ).xmap(
+                    either -> either.map(
+                            single -> Map.of("1", single),
+                            countMap -> countMap
+                    ),
+                    Either::right
             ),
-            Either::right
-    // An item whose value matches neither format decodes to no entries instead of failing the file.
-    ).orElse(Map.of());
+            // An item whose value matches neither format decodes to no entries instead of failing the file.
+            Map.of());
 
     private static List<String> encodeTargets(PlayerData pd) {
         if (pd.targets.isEmpty()) {
@@ -161,6 +192,9 @@ public class MilestoneData extends SavedData {
 
     /** Lenient per-entry wrapper for {@code progressNotified} values: non-numeric values decode to -1 and are skipped. */
     private static final Codec<Integer> LENIENT_PROGRESS_THRESHOLD_CODEC = Codec.INT.orElse(-1);
+
+    /** Lenient per-entry wrapper for string list elements: non-string values decode to "" and are skipped. */
+    private static final Codec<String> LENIENT_STRING_CODEC = Codec.STRING.orElse("");
 
     /** Lenient per-entry wrapper for {@code completedPresets} elements: non-string values decode to "" and are skipped. */
     private static final Codec<String> LENIENT_COMPLETED_PRESET_CODEC = Codec.STRING.orElse("");
@@ -191,34 +225,45 @@ public class MilestoneData extends SavedData {
     }
 
     private static final Codec<PlayerData> PLAYER_DATA_CODEC = RecordCodecBuilder.create(instance -> instance.group(
-            Codec.STRING.listOf().optionalFieldOf("targets", List.of())
+            lenient("targets", Codec.list(LENIENT_STRING_CODEC), List.of())
+                    .optionalFieldOf("targets", List.of())
                     .forGetter(MilestoneData::encodeTargets),
             Codec.unboundedMap(Codec.STRING, ITEM_RECORDS_CODEC).optionalFieldOf("records", Map.of())
                     .forGetter(MilestoneData::encodeRecords),
-            Codec.STRING.listOf().optionalFieldOf("carriedFromCreative", List.of())
+            lenient("carriedFromCreative", Codec.list(LENIENT_STRING_CODEC), List.of())
+                    .optionalFieldOf("carriedFromCreative", List.of())
                     .forGetter(pd -> pd.carriedFromCreative.isEmpty() ? List.of() : new ArrayList<>(pd.carriedFromCreative)),
-            Codec.STRING.optionalFieldOf("lastKnownName", "")
+            lenient("lastKnownName", Codec.STRING, "")
+                    .optionalFieldOf("lastKnownName", "")
                     .forGetter(pd -> pd.lastKnownName != null ? pd.lastKnownName : ""),
-            Codec.BOOL.optionalFieldOf("firstJoinHintShown", false)
+            lenient("firstJoinHintShown", Codec.BOOL, false)
+                    .optionalFieldOf("firstJoinHintShown", false)
                     .forGetter(pd -> pd.firstJoinHintShown),
-            Codec.BOOL.optionalFieldOf("muteBroadcasts", false)
+            lenient("muteBroadcasts", Codec.BOOL, false)
+                    .optionalFieldOf("muteBroadcasts", false)
                     .forGetter(pd -> pd.muteBroadcasts),
-            Codec.BOOL.lenientOptionalFieldOf("muteProgressAlerts", false)
+            lenient("muteProgressAlerts", Codec.BOOL, false)
+                    .optionalFieldOf("muteProgressAlerts", false)
                     .forGetter(pd -> pd.muteProgressAlerts),
-            Codec.BOOL.lenientOptionalFieldOf("excludeFromDiscord", false)
+            lenient("excludeFromDiscord", Codec.BOOL, false)
+                    .optionalFieldOf("excludeFromDiscord", false)
                     .forGetter(pd -> pd.excludeFromDiscord),
-            Codec.BOOL.lenientOptionalFieldOf("hideFromLookup", false)
+            lenient("hideFromLookup", Codec.BOOL, false)
+                    .optionalFieldOf("hideFromLookup", false)
                     .forGetter(pd -> pd.hideFromLookup),
-            Codec.LONG.lenientOptionalFieldOf("lastSeen", 0L)
+            lenient("lastSeen", Codec.LONG, 0L)
+                    .optionalFieldOf("lastSeen", 0L)
                     .forGetter(pd -> pd.lastSeen > 0L ? pd.lastSeen : 0L),
-            Codec.unboundedMap(Codec.STRING, LENIENT_PROGRESS_THRESHOLD_CODEC)
-                    .lenientOptionalFieldOf("progressNotified", Map.of())
+            lenient("progressNotified",
+                    Codec.unboundedMap(Codec.STRING, LENIENT_PROGRESS_THRESHOLD_CODEC), Map.of())
+                    .optionalFieldOf("progressNotified", Map.of())
                     .forGetter(MilestoneData::encodeProgressNotified),
-            Codec.list(LENIENT_COMPLETED_PRESET_CODEC)
-                    .lenientOptionalFieldOf("completedPresets", List.of())
+            lenient("completedPresets", Codec.list(LENIENT_COMPLETED_PRESET_CODEC), List.of())
+                    .optionalFieldOf("completedPresets", List.of())
                     .forGetter(pd -> pd.completedPresets.isEmpty() ? List.of() : new ArrayList<>(pd.completedPresets)),
-            Codec.unboundedMap(Codec.STRING, LENIENT_PRESET_STATE_CODEC)
-                    .lenientOptionalFieldOf("presetState", Map.of())
+            lenient("presetState",
+                    Codec.unboundedMap(Codec.STRING, LENIENT_PRESET_STATE_CODEC), Map.of())
+                    .optionalFieldOf("presetState", Map.of())
                     .forGetter(MilestoneData::encodePresetState)
     ).apply(instance, (targets, records, carriedFromCreative, lastKnownName, firstJoinHintShown, muteBroadcasts, muteProgressAlerts, excludeFromDiscord, hideFromLookup, lastSeen, progressNotified, completedPresets, presetState) -> {
         PlayerData pd = new PlayerData();
@@ -262,7 +307,14 @@ public class MilestoneData extends SavedData {
                 pd.records.put(new TargetKey(itemId, count), rec);
             }
         }
-        pd.carriedFromCreative.addAll(carriedFromCreative);
+        for (String raw : carriedFromCreative) {
+            if (TargetKey.isValidItemId(raw)) {
+                pd.carriedFromCreative.add(raw);
+            } else {
+                MilestoneLoadReport.recordElementSkip();
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid carriedFromCreative entry '{}' in SavedData", raw);
+            }
+        }
         pd.lastKnownName = lastKnownName;
         pd.firstJoinHintShown = firstJoinHintShown;
         pd.muteBroadcasts = muteBroadcasts;
@@ -326,7 +378,8 @@ public class MilestoneData extends SavedData {
                     .forGetter(MilestoneData::playersByStringKey),
             Codec.unboundedMap(Codec.STRING, ITEM_WORLD_FIRSTS_CODEC).optionalFieldOf("worldFirsts", Map.of())
                     .forGetter(MilestoneData::worldFirstsAsNestedMap),
-            Codec.LONG.lenientOptionalFieldOf("lastDigestEpoch", 0L)
+            lenient("lastDigestEpoch", Codec.LONG, 0L)
+                    .optionalFieldOf("lastDigestEpoch", 0L)
                     .forGetter(d -> d.lastDigestEpochMillis > 0L ? d.lastDigestEpochMillis : 0L),
             // F-140-1 (N88): always written; never downgrade a value loaded from a newer release.
             LENIENT_SCHEMA_VERSION_CODEC
@@ -335,17 +388,51 @@ public class MilestoneData extends SavedData {
     ).apply(instance, MilestoneData::fromCodec));
 
     /**
+     * Accepts the buggy 1.21.5-1.21.11 payload that manually wrapped {@code data.save(...)} in a
+     * second {@code "data"} compound (#99). Vanilla already strips the outer SavedData wrapper, so
+     * an affected file reaches this decoder as {@code {"data": {players, worldFirsts, ...}}}; a
+     * correctly written payload has the root fields directly and is returned unchanged. Kept
+     * idempotent so a doubly nested file is recovered as well.
+     */
+    static CompoundTag unwrapDoubleWrappedData(CompoundTag tag) {
+        CompoundTag current = tag;
+        while (current.contains("data")
+                && !current.contains("players")
+                && !current.contains("worldFirsts")
+                && current.get("data") instanceof CompoundTag nested) {
+            current = nested;
+        }
+        return current;
+    }
+
+    /**
      * F-140-2 (N141): wraps {@link #RAW_CODEC} so every decode has an active
      * {@link MilestoneLoadReport}, including nested per-player/per-record decoders that run
      * before {@link #fromCodec}. The finished report is attached to the decoded instance.
      */
     public static final Codec<MilestoneData> CODEC = new Codec<>() {
         @Override
+        @SuppressWarnings("unchecked")
         public <T> DataResult<Pair<MilestoneData, T>> decode(DynamicOps<T> ops, T input) {
             MilestoneLoadReport report = MilestoneLoadReport.begin();
             try {
-                DataResult<Pair<MilestoneData, T>> result = RAW_CODEC.decode(ops, input);
-                result.result().ifPresent(pair -> pair.getFirst().loadReport = report);
+                T effectiveInput = input;
+                if (input instanceof CompoundTag compound) {
+                    CompoundTag unwrapped = unwrapDoubleWrappedData(compound);
+                    if (unwrapped != compound) {
+                        effectiveInput = (T) unwrapped;
+                    }
+                }
+                DataResult<Pair<MilestoneData, T>> result = RAW_CODEC.decode(ops, effectiveInput);
+                // #130: vanilla keeps a partial result (resultOrPartial(...).orElse(null)), so the
+                // report must be attached to that result too. Any error means at least one element
+                // was dropped; record it so F-140-2 evacuates the original before the next save.
+                if (result.isError()) {
+                    MilestoneLoadReport.recordElementSkip();
+                }
+                result.resultOrPartial(error -> ItemMilestoneLog.LOGGER.warn(
+                                "[ItemMilestoneLog] Problem decoding SavedData: {}", error))
+                        .ifPresent(pair -> pair.getFirst().loadReport = report);
                 return result;
             } finally {
                 MilestoneLoadReport.end(report);

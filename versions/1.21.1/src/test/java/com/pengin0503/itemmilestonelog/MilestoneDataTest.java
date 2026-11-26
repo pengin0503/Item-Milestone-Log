@@ -915,4 +915,39 @@ class MilestoneDataTest {
         assertNotNull(loaded.loadReport());
         assertEquals(4, loaded.loadReport().elementSkipCount());
     }
+    @Test
+    void loadUnwrapsDoubleWrappedPayloadWrittenByBuggy1215Build() {
+        MilestoneData original = new MilestoneData();
+        UUID player = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        TargetKey diamond = TargetKey.of("minecraft:diamond", 3);
+        MilestoneData.PlayerData pd = original.player(player);
+        pd.targets.add(diamond);
+        MilestoneRecord record = new MilestoneRecord(4567, 5L, 1795600000000L);
+        pd.records.put(diamond, record);
+        pd.carriedFromCreative.add("minecraft:emerald");
+        pd.lastKnownName = "Alice";
+        original.recordWorldFirstIfAbsent(diamond, player, "Alice", record);
+
+        // Vanilla strips the SavedData wrapper, so a buggy #99 file reaches load() as
+        // {"data": payload}. It must be recovered, not read as an empty world.
+        CompoundTag payload = original.save(new CompoundTag(), null);
+        CompoundTag wrapped = new CompoundTag();
+        wrapped.put("data", payload.copy());
+
+        MilestoneData loaded = MilestoneData.load(wrapped, null);
+        MilestoneData.PlayerData loadedPd = loaded.playerOrNull(player);
+        assertNotNull(loadedPd);
+        assertEquals(List.of(diamond), List.copyOf(loadedPd.targets));
+        assertEquals(record, loadedPd.records.get(diamond));
+        assertEquals(Set.of("minecraft:emerald"), loadedPd.carriedFromCreative);
+        assertEquals("Alice", loadedPd.lastKnownName);
+        assertNotNull(loaded.worldFirstOrNull(diamond));
+        assertNotNull(loaded.loadReport());
+        assertEquals(0, loaded.loadReport().elementSkipCount());
+
+        // CorruptionEvacuation uses this helper to read schemaVersion through the wrapper.
+        CompoundTag unwrapped = MilestoneData.unwrapDoubleWrappedData(wrapped.copy());
+        assertEquals(SchemaVersionLogic.CURRENT_SCHEMA_VERSION, unwrapped.getInt("schemaVersion"));
+    }
+
 }

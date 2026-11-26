@@ -47,7 +47,10 @@ public final class CorruptionEvacuation {
             int rawSchemaVersion = CorruptionEvacuationLogic.UNKNOWN_SCHEMA_VERSION;
             if (!rootUnreadable) {
                 if (McCompat.nbt().containsTyped(root, "data", Tag.TAG_COMPOUND)) {
-                    CompoundTag dataTag = McCompat.nbt().getCompound(root, "data");
+                    // #99: inspect through a leftover inner "data" wrapper written by the
+                    // buggy 1.21.5-1.21.11 codec; otherwise schema/root checks see no fields.
+                    CompoundTag dataTag = MilestoneData.unwrapDoubleWrappedData(
+                            McCompat.nbt().getCompound(root, "data"));
                     rawSchemaVersion = readSchemaVersion(dataTag);
                     // Vanilla's NBT getters silently treat a wrong-typed players/worldFirsts
                     // container as empty; 26.x's Codec fails the whole decode for the same input.
