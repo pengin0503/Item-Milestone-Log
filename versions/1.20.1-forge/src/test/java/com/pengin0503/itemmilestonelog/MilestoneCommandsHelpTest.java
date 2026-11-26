@@ -6,6 +6,7 @@ import com.google.gson.JsonParser;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.ParseResults;
 import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.tree.ArgumentCommandNode;
 import com.mojang.brigadier.tree.CommandNode;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.network.chat.MutableComponent;
@@ -15,6 +16,7 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.Reader;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -132,40 +134,60 @@ class MilestoneCommandsHelpTest {
     }
 
     @Test
-    void renameTagIsRegisteredAtRootWithAdminRequirementAndOptionalConfirm() {
+    void renameTagUsesOneVanillaStringArgumentAndKeepsUnquotedSyntax() {
         CommandDispatcher<CommandSourceStack> op = buildDispatcher(src -> true);
         CommandNode<CommandSourceStack> root = op.getRoot().getChild("milestonelog");
         assertNotNull(root);
         CommandNode<CommandSourceStack> rename = root.getChild("renametag");
         assertNotNull(rename, "renametag must be registered at root");
-        assertNotNull(rename.getChild("oldTag"), "renametag must take <oldTag>");
-        CommandNode<CommandSourceStack> newTag = rename.getChild("oldTag").getChild("newTag");
-        assertNotNull(newTag, "renametag must take <newTag>");
-        assertNotNull(newTag.getCommand(), "renametag <oldTag> <newTag> must execute preview");
-        CommandNode<CommandSourceStack> confirm = newTag.getChild("confirm");
-        assertNotNull(confirm, "renametag must take optional confirm literal");
-        assertNotNull(confirm.getCommand(), "renametag <oldTag> <newTag> confirm must execute apply");
+        CommandNode<CommandSourceStack> tags = rename.getChild("tags");
+        assertNotNull(tags, "renametag must take one greedy string argument");
+        assertTrue(tags instanceof ArgumentCommandNode<?, ?>, "tags must be an argument node");
+        assertEquals(StringArgumentType.class,
+                ((ArgumentCommandNode<CommandSourceStack, ?>) tags).getType().getClass(),
+                "renametag must use the vanilla StringArgumentType so vanilla clients can decode the tree");
+        assertNotNull(tags.getCommand(), "renametag <oldTag> <newTag> must execute preview");
         assertEquals(List.of("/milestonelog renametag <oldTag> <newTag> [confirm]"),
                 MilestoneCommands.helpUsages(op, null, entryByName("renametag")));
 
         CommandDispatcher<CommandSourceStack> regular = buildDispatcher(src -> false);
-        ParseResults<CommandSourceStack> parse = regular.parse("milestonelog renametag #old:a #new:a", null);
-        assertTrue(parse.getReader().canRead(), "Non-admin must not match /milestonelog renametag");
+        ParseResults<CommandSourceStack> denied = regular.parse("milestonelog renametag #old:a #new:a", null);
+        assertTrue(denied.getReader().canRead(), "Non-admin must not match /milestonelog renametag");
 
-        // #129: for an admin, the unquoted #namespace:path form (what suggestions offer) must
-        // parse completely; only the permission predicate should reject a non-admin.
-        ParseResults<CommandSourceStack> adminPreview = op.parse("milestonelog renametag #old:a #new:a", null);
-        assertFalse(adminPreview.getReader().canRead(), "Admin must fully parse an unquoted tag ID");
-        assertTrue(adminPreview.getExceptions().isEmpty());
-        assertNotNull(adminPreview.getContext().getCommand());
+        // #129: unquoted #namespace:path, quoted forms, and the trailing confirm literal must
+        // all still parse completely; the greedy argument captures them and is split at execution.
+        for (String line : List.of(
+                "milestonelog renametag #oldmod:gems #newmod:gems",
+                "milestonelog renametag \"#old:a\" '#new:a'",
+                "milestonelog renametag #c:ingots/iron #c:iron_ingots confirm")) {
+            ParseResults<CommandSourceStack> parse = op.parse(line, null);
+            assertFalse(parse.getReader().canRead(), "Admin must fully parse: " + line);
+            assertTrue(parse.getExceptions().isEmpty(), line + ": " + parse.getExceptions());
+            assertNotNull(parse.getContext().getCommand(), line);
+            assertEquals(line.substring("milestonelog renametag ".length()), parsedArgument(parse, "tags"), line);
+        }
+    }
 
-        ParseResults<CommandSourceStack> adminConfirm = op.parse(
-                "milestonelog renametag #c:ingots/iron #c:iron_ingots confirm", null);
-        assertFalse(adminConfirm.getReader().canRead());
-        assertTrue(adminConfirm.getExceptions().isEmpty());
-        assertNotNull(adminConfirm.getContext().getCommand());
-        assertEquals("#c:ingots/iron", parsedArgument(adminConfirm, "oldTag"));
-        assertEquals("#c:iron_ingots", parsedArgument(adminConfirm, "newTag"));
+    @Test
+    void everyArgumentTypeInTheTreeIsVanillaDecodable() {
+        CommandDispatcher<CommandSourceStack> op = buildDispatcher(src -> true);
+        List<String> custom = new ArrayList<>();
+        collectCustomArgumentTypes(op.getRoot(), custom);
+        assertEquals(List.of(), custom,
+                "Every synchronized argument type must be a vanilla Brigadier/Minecraft class (#146)");
+    }
+
+    private static void collectCustomArgumentTypes(CommandNode<CommandSourceStack> node, List<String> custom) {
+        for (CommandNode<CommandSourceStack> child : node.getChildren()) {
+            if (child instanceof ArgumentCommandNode<CommandSourceStack, ?> argumentNode) {
+                String name = argumentNode.getType().getClass().getName();
+                if (!name.startsWith("com.mojang.brigadier.arguments.")
+                        && !name.startsWith("net.minecraft.commands.arguments.")) {
+                    custom.add(name);
+                }
+            }
+            collectCustomArgumentTypes(child, custom);
+        }
     }
 
     @Test

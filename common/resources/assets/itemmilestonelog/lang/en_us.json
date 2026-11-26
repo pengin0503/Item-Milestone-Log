@@ -380,6 +380,7 @@
   "message.itemmilestonelog.renameitem_done": "Renamed %s to %s for %s player(s): %s target(s), %s record(s), %s world first(s).",
   "message.itemmilestonelog.renameitem_preview": "Renaming %s to %s would change %s player(s): %s target(s), %s record(s), %s world first(s). Add 'confirm' to apply (a backup is written first).",
   "message.itemmilestonelog.renameitem_same": "The old and new IDs are the same.",
+  "message.itemmilestonelog.renametag_bad_arguments": "renametag expects exactly two tag IDs (<oldTag> <newTag>), optionally followed by confirm.",
   "message.itemmilestonelog.renametag_backup_failed": "Could not write a backup, so nothing was changed.",
   "message.itemmilestonelog.renametag_config_note": "defaultTargets or a preset still contains %s. Edit them by hand.",
   "message.itemmilestonelog.renametag_done": "Renamed tag %s to %s for %s player(s): %s target(s), %s record(s), %s world first(s).",
