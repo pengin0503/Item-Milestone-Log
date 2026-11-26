@@ -22,6 +22,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.UUID;
 import java.util.function.Predicate;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -89,6 +90,23 @@ class MilestoneCommandsHelpTest {
                 com.pengin0503.itemmilestonelog.api.TargetKey.of("#c:ingots/iron"),
                 com.pengin0503.itemmilestonelog.api.TargetKey.of("#c:ingots/iron", 10),
                 com.pengin0503.itemmilestonelog.api.TargetKey.of("minecraft:diamond"))));
+    }
+
+    @Test
+    void ownImportFileSuggestionsIncludeLegacyAndUuidFormsWithoutDuplicates() {
+        UUID uuid = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        List<String> files = List.of(
+                "Alice.json", "Alice-" + uuid + ".json", "Bob.json", "Bob-" + uuid + ".json");
+        assertEquals(List.of("Alice-" + uuid + ".json", "Alice.json"),
+                MilestoneCommands.ownImportFileSuggestions(files, "Alice", uuid));
+        // Only a legacy file exists for Carol: still suggested, without inventing a UUID form.
+        assertEquals(List.of("Carol.json"),
+                MilestoneCommands.ownImportFileSuggestions(List.of("Carol.json"), "Carol", uuid));
+        // With no UUID both computed names coincide; a single suggestion is offered.
+        assertEquals(List.of("Carol.json"),
+                MilestoneCommands.ownImportFileSuggestions(List.of("Carol.json"), "Carol", null));
+        assertEquals(List.of(),
+                MilestoneCommands.ownImportFileSuggestions(List.of("Bob.json"), "Alice", uuid));
     }
 
     @Test

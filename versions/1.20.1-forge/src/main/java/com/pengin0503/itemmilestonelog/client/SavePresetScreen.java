@@ -140,11 +140,21 @@ public final class SavePresetScreen extends Screen {
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        if (keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER) {
+        // #151: Enter submits only from the name field; let the focused widget handle it first
+        // so Enter on Save/Cancel activates that button. Fall back to submit when nothing handled it.
+        boolean confirmation = keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER;
+        if (confirmation && this.getFocused() == nameBox) {
             submit();
             return true;
         }
-        return super.keyPressed(keyCode, scanCode, modifiers);
+        if (super.keyPressed(keyCode, scanCode, modifiers)) {
+            return true;
+        }
+        if (confirmation) {
+            submit();
+            return true;
+        }
+        return false;
     }
 
     @Override

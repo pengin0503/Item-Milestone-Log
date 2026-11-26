@@ -64,6 +64,8 @@ public final class PresetListScreen extends Screen {
 
     @Override
     protected void init() {
+        // #125: keep the scroll position across a resize or a return from a child screen.
+        double previousScroll = listWidget != null ? McCompat.scroll().getScrollAmount(listWidget) : 0.0;
         boolean canManage = data.canManagePresets();
         int footerHeight = canManage ? 68 : 46;
         this.feedbackY = this.height - footerHeight + 4;
@@ -77,6 +79,7 @@ public final class PresetListScreen extends Screen {
         for (PresetEntry entry : data.presets()) {
             McCompat.lists().addRow(listWidget, new PresetRow(entry));
         }
+        listWidget.setScrollAmount(previousScroll);
 
         if (canManage) {
             int saveWidth = Math.min(260, this.width - 32);

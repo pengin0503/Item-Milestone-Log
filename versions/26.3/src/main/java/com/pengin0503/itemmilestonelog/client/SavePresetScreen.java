@@ -141,11 +141,20 @@ public final class SavePresetScreen extends Screen {
 
     @Override
     public boolean keyPressed(KeyEvent event) {
+        // #151: Enter submits only from the name field; let the focused widget handle it first
+        // so Enter on Save/Cancel activates that button. Fall back to submit when nothing handled it.
+        if (event.isConfirmation() && this.getFocused() == nameBox) {
+            submit();
+            return true;
+        }
+        if (super.keyPressed(event)) {
+            return true;
+        }
         if (event.isConfirmation()) {
             submit();
             return true;
         }
-        return super.keyPressed(event);
+        return false;
     }
 
     @Override

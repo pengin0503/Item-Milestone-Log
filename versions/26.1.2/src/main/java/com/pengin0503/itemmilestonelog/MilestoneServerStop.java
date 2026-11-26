@@ -12,11 +12,13 @@ import java.util.concurrent.TimeUnit;
  * <ol>
  *   <li>Stop accepting new normal tasks (later submissions use their sync fallback).</li>
  *   <li>Drain the queue for at most 30 seconds, info-logging remaining work every 5 seconds.</li>
- *   <li>Apply an importall result that finished during the drain, then queue the final automatic
- *       backup as the last executor task and include it in the drain.</li>
+ *   <li>Apply an importall result that finished during the drain, then flush the reward commands
+ *       (#150) so records they create are included in the final backup.</li>
+ *   <li>Queue the final automatic backup as the last executor task and include it in the drain.</li>
  *   <li>On timeout, interrupt unfinished tasks, warn with their count/kinds, and write the final
  *       backup synchronously.</li>
- *   <li>Run the existing stop work, then shut the executor down.</li>
+ *   <li>Deliver pending notifications while players are still connected, clear the remaining stop
+ *       state, then shut the executor down.</li>
  * </ol>
  *
  * <p>{@code ServerStopped} clears the executor state so the next world start creates a new queue.
@@ -53,6 +55,12 @@ public final class MilestoneServerStop {
         boolean timedOut = !firstDrain.completed();
         int unfinishedTasks = firstDrain.remainingTasks();
         Map<MilestoneIoLogic.TaskKind, Integer> unfinishedKinds = firstDrain.remainingByKind();
+
+        // #150: reward commands can create further milestone records (#135). Run them before any
+        // final-backup snapshot so those records are in the backup file, while players are still
+        // connected. The first drain stays before this step so command work does not consume the
+        // I/O drain budget; notifications stay in the tail block for the same reason.
+        MilestoneCommandRunner.runAllOnStop(server);
 
         if (timedOut) {
             if (queue != null) {
@@ -119,11 +127,9 @@ public final class MilestoneServerStop {
                     unfinishedTasks, MilestoneIoLogic.describeKinds(unfinishedKinds));
         }
 
-        // Existing stop work, after the drain/final backup as required by F-140-4. Execute the
-        // reward commands first (they can run other commands and queue further records), then
-        // deliver the notifications (chat + Discord) while players are still connected. Clear any
-        // leftovers defensively afterwards (#135).
-        MilestoneCommandRunner.runAllOnStop(server);
+        // Existing stop work after the final backup: deliver the pending notifications (chat +
+        // Discord) while players are still connected, then clear leftovers defensively (#135).
+        // Reward commands already ran before the backup snapshot (#150).
         Tracker.flushPendingOnStop(server);
         MilestoneCommandRunner.clearPending();
         Tracker.clearPendingNotifications();

@@ -158,8 +158,13 @@ public final class ItemMilestoneLogClient {
         ClientMilestoneHandler.addHoveredTarget(slot.getItem());
     }
 
-    /** F42: rebuild the tooltip index after the client's tag bindings change. */
+    /** F42: rebuild the tooltip index after the client's tag-packet update. */
     private static void onTagsUpdated(TagsUpdatedEvent event) {
+        // #155: Forge's TagsUpdatedEvent carries the same UpdateCause as NeoForge; ignore
+        // SERVER_DATA_LOAD so an integrated-server rebuild cannot restore discarded tooltip state.
+        if (event.getUpdateCause() != TagsUpdatedEvent.UpdateCause.CLIENT_PACKET_RECEIVED) {
+            return;
+        }
         ClientMilestoneHandler.onTagsUpdated();
     }
 }

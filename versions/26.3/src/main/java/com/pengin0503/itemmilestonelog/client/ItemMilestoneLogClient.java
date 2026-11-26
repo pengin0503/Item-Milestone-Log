@@ -161,8 +161,14 @@ public final class ItemMilestoneLogClient {
         ClientMilestoneHandler.addHoveredTarget(slot.getItem());
     }
 
-    /** F42: rebuild the tooltip index after the client's tag bindings change. */
+    /** F42: rebuild the tooltip index after the client's tag-packet update. */
     private static void onTagsUpdated(TagsUpdatedEvent event) {
+        // #155: only the client-packet event is a client-thread update. A server-data load on the
+        // integrated server must not rebuild tooltip state the client thread discarded; the
+        // subtype check is the only API common to 26.1/26.2/26.3 (getUpdateCause() is gone in 26.3).
+        if (!(event instanceof TagsUpdatedEvent.ClientPacketReceived)) {
+            return;
+        }
         ClientMilestoneHandler.onTagsUpdated();
     }
 }
