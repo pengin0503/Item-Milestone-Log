@@ -401,4 +401,24 @@ class NotificationGroupingTest {
                 "- ★ [World First] Diamond",
                 "...and 2 more"), lines);
     }
+
+    @Test
+    void discordGroupNullItemEntriesAreIgnoredInHeaderCountAndLines() {
+        List<NotificationGrouping.DiscordItem> items = new ArrayList<>();
+        items.add(new NotificationGrouping.DiscordItem("Coal", false));
+        items.add(null);
+        items.add(new NotificationGrouping.DiscordItem("Diamond", true));
+
+        String text = NotificationGrouping.buildDiscordGroupPlainText(
+                "Alice", "0h 10m 00s", items, NotificationGrouping.DiscordTemplates.ENGLISH_DEFAULTS);
+
+        assertEquals(String.join("\n",
+                "★ Milestones recorded: Alice obtained 2 targets at 0h 10m 00s",
+                "- Coal",
+                "- ★ [World First] Diamond"), text);
+        assertEquals("- Coal\n- ★ [World First] Diamond",
+                NotificationGrouping.buildDiscordGroupLines(
+                        items, NotificationGrouping.DiscordTemplates.ENGLISH_DEFAULTS, 20, 2000));
+    }
+
 }

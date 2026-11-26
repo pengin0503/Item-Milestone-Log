@@ -122,7 +122,7 @@ public final class PresetName {
         }
         if (!localized.isEmpty()) {
             if (languageCode != null && !languageCode.isBlank()) {
-                String match = localized.get(languageCode.toLowerCase(Locale.ROOT));
+                String match = localized.get(languageCode.trim().toLowerCase(Locale.ROOT));
                 if (match != null) {
                     return match;
                 }

@@ -160,6 +160,11 @@ class TrackerTest {
 
             Map<String, Integer> drainedB = Tracker.takePendingCraftChecks(b);
             assertEquals(Map.of("minecraft:gold_ingot", 4), drainedB);
+
+            // Stop-time cleanup also drops craft checks queued just before a world close.
+            Tracker.queueCraftCheck(a, "minecraft:diamond", 2);
+            Tracker.clearPendingNotifications();
+            assertNull(Tracker.takePendingCraftChecks(a));
         } finally {
             Tracker.takePendingCraftChecks(a);
             Tracker.takePendingCraftChecks(b);
@@ -1279,6 +1284,16 @@ class TrackerTest {
                 List.of(), knownItems::contains, literalName, true, true,
                 (k, r) -> logCalls.incrementAndGet(), targetMessages::add, postedEvents::add);
         assertEquals(Tracker.GrantStatus.INVALID_ITEM, badAir.status());
+        assertNull(data.playerOrNull(PLAYER_A));
+
+        // A tag-shaped ID reports the tag message (invalid_tag), not invalid_item.
+        Tracker.GrantResult badTag = Tracker.grantMilestone(
+                data, PLAYER_A, "Alice", true, null, null,
+                "#missing:tag", 1, Set.of(), () -> rec,
+                List.of(), knownItems::contains, literalName, true, true,
+                (k, r) -> logCalls.incrementAndGet(), targetMessages::add, postedEvents::add);
+        assertEquals(Tracker.GrantStatus.INVALID_ITEM, badTag.status());
+        assertEquals("Invalid, unknown or empty item tag: #missing:tag", badTag.executorMessage().getString());
         assertNull(data.playerOrNull(PLAYER_A));
 
         // 3. Auto-add personal target when missing from effective targets (un-namespaced input normalized)

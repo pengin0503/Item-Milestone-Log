@@ -221,14 +221,18 @@ public final class MilestoneIoQueue {
 
     /** Returns a snapshot of unfinished task counts by kind. */
     public Map<MilestoneIoLogic.TaskKind, Integer> pendingByKindSnapshot() {
-        Map<MilestoneIoLogic.TaskKind, Integer> snapshot = new LinkedHashMap<>();
-        for (Map.Entry<MilestoneIoLogic.TaskKind, AtomicInteger> entry : pendingByKind.entrySet()) {
-            int value = entry.getValue().get();
-            if (value > 0) {
-                snapshot.put(entry.getKey(), value);
+        // Share the monitor with finishTask()/submitInternal()/shutdownNow() so an external
+        // caller never observes a per-kind count that disagrees with the total tasks.
+        synchronized (monitor) {
+            Map<MilestoneIoLogic.TaskKind, Integer> snapshot = new LinkedHashMap<>();
+            for (Map.Entry<MilestoneIoLogic.TaskKind, AtomicInteger> entry : pendingByKind.entrySet()) {
+                int value = entry.getValue().get();
+                if (value > 0) {
+                    snapshot.put(entry.getKey(), value);
+                }
             }
+            return Collections.unmodifiableMap(snapshot);
         }
-        return Collections.unmodifiableMap(snapshot);
     }
 
     /** Returns the number of accepted tasks that have not finished yet. */

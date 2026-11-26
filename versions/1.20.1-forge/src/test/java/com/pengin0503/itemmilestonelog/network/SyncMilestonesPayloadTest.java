@@ -326,4 +326,24 @@ class SyncMilestonesPayloadTest {
                 0, List.of(), false, false, null);
         assertEquals(Map.of(TargetKey.of("minecraft:diamond", 10), 0), roundTrip(negProgress).progress());
     }
+
+    @Test
+    void encodeRejectsOverlongItemAndPresetIdsLikeTheDecodeLimit() {
+        String tooLong = "a".repeat(MAX_STRING_LEN + 1);
+        TargetKey longKey = new TargetKey(tooLong, 1);
+
+        assertThrows(EncoderException.class, () -> roundTrip(new SyncMilestonesPayload(
+                List.of(new TargetEntry(tooLong, 1, true, false)),
+                Map.of(), Map.of(), 0, List.of(), false, false, null)));
+        assertThrows(EncoderException.class, () -> roundTrip(new SyncMilestonesPayload(
+                List.of(), Map.of(longKey, new MilestoneRecord(1, 1L, 1L)),
+                Map.of(), 0, List.of(), false, false, null)));
+        assertThrows(EncoderException.class, () -> roundTrip(new SyncMilestonesPayload(
+                List.of(), Map.of(), Map.of(longKey, 1), 0, List.of(), false, false, null)));
+        assertThrows(EncoderException.class, () -> roundTrip(new SyncMilestonesPayload(
+                List.of(), Map.of(), Map.of(), 0,
+                List.of(new PresetEntry(tooLong, "", 1, false)),
+                false, false, null)));
+    }
+
 }

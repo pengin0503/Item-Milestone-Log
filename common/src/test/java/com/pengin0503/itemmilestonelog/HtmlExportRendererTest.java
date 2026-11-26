@@ -173,4 +173,26 @@ class HtmlExportRendererTest {
         }
         return count;
     }
+
+    @Test
+    void renderAllPlayersCountsAndTocIgnoreNullReports() {
+        UUID aliceId = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        HtmlExportRenderer.PlayerReport alice = new HtmlExportRenderer.PlayerReport(
+                aliceId,
+                "Alice",
+                new HtmlExportRenderer.CompletionSummary(1, 1, 1),
+                List.of(new HtmlExportRenderer.RecordRow(
+                        "Diamond", "minecraft:diamond", 1, "0h 10m 00s", "Day 1", "2026-11-24", false)));
+
+        String html = HtmlExportRenderer.renderAllPlayers(
+                java.util.Arrays.asList(alice, null),
+                Instant.parse("2026-11-24T00:00:00Z"),
+                ZoneId.of("UTC"));
+
+        assertTrue(html.contains("Players: 1"));
+        assertTrue(html.contains("Total records: 1"));
+        assertFalse(html.contains("aria-label=\"Players\""));
+        assertTrue(html.contains("id=\"player-0\""));
+    }
+
 }

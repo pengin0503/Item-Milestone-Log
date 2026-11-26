@@ -970,6 +970,8 @@ public final class MilestoneExport {
             MilestoneRecord existing = pd.records.get(key);
             if (existing == null || incoming.playTicks() < existing.playTicks()) {
                 pd.records.put(key, incoming);
+                // The imported record supersedes any pending progress alert for this key.
+                pd.progressNotified.remove(key);
                 updatedRecords++;
             }
         }
@@ -1068,6 +1070,8 @@ public final class MilestoneExport {
                 MilestoneRecord existing = pd.records.get(update.key());
                 if (existing == null || update.record().playTicks() < existing.playTicks()) {
                     pd.records.put(update.key(), update.record());
+                    // The imported record supersedes any pending progress alert for this key.
+                    pd.progressNotified.remove(update.key());
                     updatedForPlayer++;
                 }
             }

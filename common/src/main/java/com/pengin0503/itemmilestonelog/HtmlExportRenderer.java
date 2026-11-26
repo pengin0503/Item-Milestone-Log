@@ -368,7 +368,9 @@ public final class HtmlExportRenderer {
 
     /** Renders a standalone HTML summary document containing all players' sections. */
     public static String renderAllPlayers(List<PlayerReport> reports, Instant generatedAt, ZoneId zone) {
-        List<PlayerReport> safeReports = reports != null ? reports : List.of();
+        List<PlayerReport> safeReports = reports != null
+                ? reports.stream().filter(report -> report != null).toList()
+                : List.of();
         String generatedText = TextEscaping.escapeHtml(formatGeneratedAt(generatedAt, zone));
         int totalRecords = 0;
         for (PlayerReport r : safeReports) {

@@ -246,6 +246,9 @@ public final class Presets {
     private static volatile Map<String, PresetDefinition> filePresets = Map.of();
     /** Datapack presets set by the server's reload listener (DATAPACK kind), cleared on ServerStoppedEvent. */
     private static volatile Map<String, PresetDefinition> datapackPresets = Map.of();
+    /** Subset of {@link #loadedPresets} with an {@code unlockAfterHours} value, rebuilt with the table. */
+    private static volatile List<PresetDefinition> unlockAfterHoursPresets =
+            loadedPresets.values().stream().filter(preset -> preset.unlockAfterHours() != null).toList();
 
     private Presets() {
     }
@@ -546,7 +549,11 @@ public final class Presets {
         for (PresetDefinition preset : resolved) {
             next.put(preset.id(), preset);
         }
+        List<PresetDefinition> unlocked = next.values().stream()
+                .filter(preset -> preset.unlockAfterHours() != null)
+                .toList();
         loadedPresets = Collections.unmodifiableMap(next);
+        unlockAfterHoursPresets = unlocked;
     }
 
     /** F-140-20: one error line with the preset ID and the first collected problem's reason. */
@@ -1247,6 +1254,11 @@ public final class Presets {
         return List.copyOf(loadedPresets.values());
     }
 
+    /** Presets with a non-null {@code unlockAfterHours}, cached at rebuild for the per-scan check. */
+    public static List<PresetDefinition> allWithUnlockAfterHours() {
+        return unlockAfterHoursPresets;
+    }
+
     /** Preset IDs in the F-140-7 list order ({@code order} ascending, then ID). */
     public static List<String> names() {
         return List.copyOf(loadedPresets.keySet());
@@ -1383,6 +1395,11 @@ public final class Presets {
                 continue;
             }
             if (alreadyCompletedIds != null && alreadyCompletedIds.contains(preset.id())) {
+                continue;
+            }
+            // The recorded key must be in the preset's own item list; skip the registry
+            // filtering for every unrelated preset (the scan tick path is hot).
+            if (preset.items() == null || !preset.items().contains(justRecordedKey)) {
                 continue;
             }
             List<TargetKey> resolvable = resolvableTargets(preset.items(), itemExists);
