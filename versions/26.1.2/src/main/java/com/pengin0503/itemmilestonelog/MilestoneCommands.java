@@ -603,6 +603,18 @@ public final class MilestoneCommands {
                                         .executes(ctx -> presetDelete(ctx, StringArgumentType.getString(ctx, "name")))))
                         .then(literal("reload")
                                 .executes(MilestoneCommands::presetReload))
+                        .then(literal("show")
+                                .then(argument("name", StringArgumentType.word())
+                                        .suggests(presetSuggestions)
+                                        .executes(ctx -> presetShow(ctx, StringArgumentType.getString(ctx, "name")))))
+                        .then(literal("diff")
+                                .then(argument("nameA", StringArgumentType.word())
+                                        .suggests(presetSuggestions)
+                                        .then(argument("nameB", StringArgumentType.word())
+                                                .suggests(presetSuggestions)
+                                                .executes(ctx -> presetDiff(ctx,
+                                                        StringArgumentType.getString(ctx, "nameA"),
+                                                        StringArgumentType.getString(ctx, "nameB"))))))
                         .then(argument("name", StringArgumentType.word())
                                 .suggests(presetSuggestions)
                                 .executes(ctx -> preset(ctx, StringArgumentType.getString(ctx, "name")))))
@@ -1095,6 +1107,136 @@ public final class MilestoneCommands {
             send(ctx, ServerLang.tr(player, "message.itemmilestonelog.presetprogress_skipped", progress.skipped()));
         }
         return 1;
+    }
+
+    // --------------------------------------------------------- F-140-16 preset show
+
+    private static int presetShow(CommandContext<CommandSourceStack> ctx, String name) throws CommandSyntaxException {
+        ServerPlayer player = player(ctx);
+        Presets.PresetDefinition preset = Presets.get(name);
+        PresetShowLogic.Result result = PresetShowLogic.show(
+                preset != null ? showData(preset, MilestoneService.clientLanguage(player)) : null,
+                Config.PRESETS_ENABLED.get(), Presets.PROGRESS_MAX_ROWS);
+        return switch (result.status()) {
+            case DISABLED -> fail(ctx,
+                    ServerLang.tr(player, "message.itemmilestonelog.feature_disabled"));
+            case UNKNOWN -> fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.preset_unknown",
+                    name, String.join(", ", Presets.names())));
+            case OK -> {
+                send(ctx, ServerLang.tr(player, "message.itemmilestonelog.preset_show_header",
+                        MilestoneService.presetDisplayName(player, preset), preset.id(),
+                        presetKindLabel(player, preset)));
+                for (PresetShowLogic.Line line : result.lines()) {
+                    send(ctx, ServerLang.tr(player, presetShowLineKey(line.kind()), line.values().toArray()));
+                }
+                yield 1;
+            }
+        };
+    }
+
+    private static PresetShowLogic.ShowData showData(Presets.PresetDefinition preset, @Nullable String langCode) {
+        List<PresetShowLogic.GroupSummary> groups = new ArrayList<>();
+        for (PresetGroup group : preset.groups()) {
+            groups.add(new PresetShowLogic.GroupSummary(
+                    group.name().resolve(langCode, group.id()), group.items().size()));
+        }
+        return new PresetShowLogic.ShowData(
+                preset.description().present() ? preset.description().resolve(langCode, "") : null,
+                preset.category(), preset.version(), preset.order(),
+                preset.requiredMods(), preset.unlockAfterHours(), preset.nextPresets(),
+                groups, preset.items());
+    }
+
+    /** Existing {@code preset_type_*} messages, reused by the show header. */
+    private static Component presetKindLabel(ServerPlayer player, Presets.PresetDefinition preset) {
+        return ServerLang.tr(player, switch (preset.kind()) {
+            case BUILTIN -> "message.itemmilestonelog.preset_type_builtin";
+            case FILE -> "message.itemmilestonelog.preset_type_file";
+            case DATAPACK -> "message.itemmilestonelog.preset_type_datapack";
+        });
+    }
+
+    private static String presetShowLineKey(PresetShowLogic.LineKind kind) {
+        return switch (kind) {
+            case DESCRIPTION -> "message.itemmilestonelog.preset_show_description";
+            case CATEGORY -> "message.itemmilestonelog.preset_show_category";
+            case VERSION -> "message.itemmilestonelog.preset_show_version";
+            case ORDER -> "message.itemmilestonelog.preset_show_order";
+            case REQUIRED_MODS -> "message.itemmilestonelog.preset_show_required_mods";
+            case UNLOCK_AFTER_HOURS -> "message.itemmilestonelog.preset_show_unlock_after_hours";
+            case NEXT_PRESETS -> "message.itemmilestonelog.preset_show_next_presets";
+            case GROUP -> "message.itemmilestonelog.preset_show_group";
+            case ITEM -> "message.itemmilestonelog.preset_show_item";
+            case ITEMS_MORE -> "message.itemmilestonelog.preset_show_more";
+        };
+    }
+
+    // --------------------------------------------------------- F-140-17 preset diff
+
+    private static int presetDiff(CommandContext<CommandSourceStack> ctx, String nameA, String nameB) throws CommandSyntaxException {
+        ServerPlayer player = player(ctx);
+        Presets.PresetDefinition a = Presets.get(nameA);
+        Presets.PresetDefinition b = Presets.get(nameB);
+        PresetDiffLogic.Result result = PresetDiffLogic.diff(
+                a != null ? a.items() : null,
+                b != null ? b.items() : null,
+                Config.PRESETS_ENABLED.get(), Presets.PROGRESS_MAX_ROWS);
+        return switch (result.status()) {
+            case DISABLED -> fail(ctx,
+                    ServerLang.tr(player, "message.itemmilestonelog.feature_disabled"));
+            case UNKNOWN_A -> fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.preset_unknown",
+                    nameA, String.join(", ", Presets.names())));
+            case UNKNOWN_B -> fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.preset_unknown",
+                    nameB, String.join(", ", Presets.names())));
+            case OK -> {
+                Component nameAComponent = MilestoneService.presetDisplayName(player, a);
+                Component nameBComponent = MilestoneService.presetDisplayName(player, b);
+                send(ctx, ServerLang.tr(player, "message.itemmilestonelog.preset_diff_header",
+                        nameAComponent, nameBComponent));
+                if (!result.hasDifferences()) {
+                    send(ctx, ServerLang.tr(player, "message.itemmilestonelog.preset_diff_no_differences"));
+                } else {
+                    if (!result.onlyA().isEmpty() || result.onlyAHidden() > 0) {
+                        send(ctx, ServerLang.tr(player, "message.itemmilestonelog.preset_diff_only",
+                                nameAComponent));
+                        for (PresetDiffLogic.ItemCount item : result.onlyA()) {
+                            sendPresetDiffItem(ctx, player, item);
+                        }
+                        sendOmittedDiffRows(ctx, player, result.onlyAHidden());
+                    }
+                    if (!result.onlyB().isEmpty() || result.onlyBHidden() > 0) {
+                        send(ctx, ServerLang.tr(player, "message.itemmilestonelog.preset_diff_only",
+                                nameBComponent));
+                        for (PresetDiffLogic.ItemCount item : result.onlyB()) {
+                            sendPresetDiffItem(ctx, player, item);
+                        }
+                        sendOmittedDiffRows(ctx, player, result.onlyBHidden());
+                    }
+                    if (!result.countDifferences().isEmpty() || result.countDifferencesHidden() > 0) {
+                        send(ctx, ServerLang.tr(player,
+                                "message.itemmilestonelog.preset_diff_counts_header"));
+                        for (PresetDiffLogic.CountDifference difference : result.countDifferences()) {
+                            send(ctx, ServerLang.tr(player, "message.itemmilestonelog.preset_diff_count",
+                                    difference.itemId(), difference.countA(), difference.countB()));
+                        }
+                        sendOmittedDiffRows(ctx, player, result.countDifferencesHidden());
+                    }
+                }
+                yield 1;
+            }
+        };
+    }
+
+    private static void sendPresetDiffItem(CommandContext<CommandSourceStack> ctx, ServerPlayer player,
+                                           PresetDiffLogic.ItemCount item) {
+        send(ctx, ServerLang.tr(player, "message.itemmilestonelog.preset_show_item",
+                item.itemId(), item.count()));
+    }
+
+    private static void sendOmittedDiffRows(CommandContext<CommandSourceStack> ctx, ServerPlayer player, int hidden) {
+        if (hidden > 0) {
+            send(ctx, ServerLang.tr(player, "message.itemmilestonelog.preset_show_more", hidden));
+        }
     }
 
     private static int presetList(CommandContext<CommandSourceStack> ctx) {

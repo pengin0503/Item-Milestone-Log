@@ -286,4 +286,27 @@ class MilestoneCommandsHelpTest {
                     "ClickEvent suggest_command mismatch for " + entry.name());
         }
     }
+
+    @Test
+    void presetShowAndDiffAreRegisteredUnderPreset() {
+        CommandDispatcher<CommandSourceStack> dispatcher = buildDispatcher(src -> true);
+        CommandNode<CommandSourceStack> preset = dispatcher.getRoot().getChild("milestonelog").getChild("preset");
+        assertNotNull(preset);
+
+        CommandNode<CommandSourceStack> show = preset.getChild("show");
+        assertNotNull(show, "preset show must be registered");
+        assertNull(show.getCommand(), "bare preset show must not execute");
+        CommandNode<CommandSourceStack> showName = show.getChild("name");
+        assertNotNull(showName, "preset show must take <name>");
+        assertNotNull(showName.getCommand(), "preset show <name> must execute");
+
+        CommandNode<CommandSourceStack> diff = preset.getChild("diff");
+        assertNotNull(diff, "preset diff must be registered");
+        CommandNode<CommandSourceStack> nameA = diff.getChild("nameA");
+        assertNotNull(nameA, "preset diff must take <nameA>");
+        assertNull(nameA.getCommand(), "preset diff <nameA> alone must not execute");
+        CommandNode<CommandSourceStack> nameB = nameA.getChild("nameB");
+        assertNotNull(nameB, "preset diff must take <nameB>");
+        assertNotNull(nameB.getCommand(), "preset diff <nameA> <nameB> must execute");
+    }
 }
