@@ -129,4 +129,26 @@ class PaginationTest {
         assertThrows(IllegalArgumentException.class, () -> Pagination.pageCommand("/milestonelog list", 0));
         assertThrows(IllegalArgumentException.class, () -> Pagination.pageCommand("   ", 1));
     }
+
+    @Test
+    void filterSuffixOverloadsPreserveLegacyPrefixStringsAndCarryActiveFilters() {
+        // Legacy no-argument forms must stay byte-identical.
+        assertEquals("/milestonelog list", Pagination.listCommandPrefix());
+        assertEquals("/milestonelog list", Pagination.listCommandPrefix(""));
+        assertEquals("/milestonelog targets", Pagination.targetsCommandPrefix(Pagination.TargetFilter.ALL));
+        assertEquals("/milestonelog targets pending", Pagination.targetsCommandPrefix(Pagination.TargetFilter.PENDING));
+        assertEquals("/milestonelog targets done", Pagination.targetsCommandPrefix(Pagination.TargetFilter.DONE));
+        for (Pagination.TargetFilter f : Pagination.TargetFilter.values()) {
+            assertEquals(Pagination.targetsCommandPrefix(f), Pagination.targetsCommandPrefix(f, ""));
+        }
+
+        // Active filters are retained verbatim in the clickable page link.
+        assertEquals("/milestonelog list filter \"iron block\"",
+                Pagination.listCommandPrefix("filter \"iron block\""));
+        assertEquals("/milestonelog targets pending filter \"iron block\" kind counts 2",
+                Pagination.pageCommand(Pagination.targetsCommandPrefix(Pagination.TargetFilter.PENDING,
+                        "filter \"iron block\" kind counts"), 2));
+        assertEquals("/milestonelog search \"iron block\" all 2",
+                Pagination.pageCommand(Pagination.searchCommandPrefix("iron block", "all"), 2));
+    }
 }
