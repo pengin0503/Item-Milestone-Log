@@ -37,7 +37,7 @@ public final class ChatItemHover {
         String itemId = targetId.charAt(0) == '#'
                 ? (tags == null ? null : tags.lexicographicFirstMember(targetId))
                 : targetId;
-        if (itemId == null || !isRegisteredItem.test(itemId)) {
+        if (itemId == null || isRegisteredItem == null || !isRegisteredItem.test(itemId)) {
             return null;
         }
         return itemId;

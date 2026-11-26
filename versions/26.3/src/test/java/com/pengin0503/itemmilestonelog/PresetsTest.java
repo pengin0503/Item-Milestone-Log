@@ -732,6 +732,7 @@ class PresetsTest {
         assertEquals(List.of("create"), full.requiredMods());
         assertEquals(List.of("base"), full.nextPresets());
         assertEquals(12.5d, full.unlockAfterHours());
+        assertEquals(List.of(full), Presets.allWithUnlockAfterHours());
         assertEquals(1, full.groups().size());
         assertEquals("ores", full.groups().get(0).id());
         assertEquals("Ores", full.groups().get(0).name().resolve("en_us", "ores"));
@@ -739,6 +740,7 @@ class PresetsTest {
                 full.groups().get(0).items());
 
         Presets.reloadFrom(dir.resolve("clean"));
+        assertTrue(Presets.allWithUnlockAfterHours().isEmpty());
     }
 
     @Test
@@ -1243,6 +1245,35 @@ class PresetsTest {
         assertNotNull(preset);
         assertTrue(preset.problems().contains("Skipping invalid 'includes' ID '{}' in preset brace_id.json"),
                 () -> "argument text must not be re-scanned for placeholders: " + preset.problems());
+    }
+
+
+    @Test
+    void findNewlyCompletedPresetsPrefiltersPresetsWithoutTheRecordedItem() {
+        TargetKey diamond = TargetKey.of("minecraft:diamond");
+        TargetKey emerald = TargetKey.of("minecraft:emerald");
+        MilestoneRecord rec = new MilestoneRecord(1200, 1L, 1_700_000_000_000L);
+        Presets.PresetDefinition diamondPreset = new Presets.PresetDefinition(
+                "diamond_pack", "Diamond Pack", List.of(diamond), true);
+        Presets.PresetDefinition emeraldPreset = new Presets.PresetDefinition(
+                "emerald_pack", "Emerald Pack", List.of(emerald), true);
+        java.util.concurrent.atomic.AtomicInteger registryChecks =
+                new java.util.concurrent.atomic.AtomicInteger();
+
+        List<Presets.PresetDefinition> completed = Presets.findNewlyCompletedPresets(
+                diamond,
+                Map.of(diamond, rec),
+                List.of(diamondPreset, emeraldPreset),
+                id -> {
+                    registryChecks.incrementAndGet();
+                    return true;
+                },
+                Set.of(),
+                true);
+
+        assertEquals(List.of(diamondPreset), completed);
+        assertEquals(1, registryChecks.get(),
+                "presets that cannot contain the recorded key must not be registry-scanned");
     }
 
 }

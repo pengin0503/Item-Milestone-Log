@@ -64,6 +64,12 @@ class ChatItemHoverTest {
     }
 
     @Test
+    void nullRegistryPredicateMeansNoHoverInsteadOfNpe() {
+        assertNull(ChatItemHover.hoverItemId(true, "minecraft:diamond", tags(), null));
+        assertNull(ChatItemHover.hoverItemId(true, "#c:gems", tags(), null));
+    }
+
+    @Test
     void nullOrEmptyTargetMeansNoHover() {
         assertNull(ChatItemHover.hoverItemId(true, null, tags(), REGISTERED));
         assertNull(ChatItemHover.hoverItemId(true, "", tags(), REGISTERED));

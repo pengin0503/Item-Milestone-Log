@@ -539,12 +539,10 @@ public final class MilestoneCommands {
                 return builder.buildFuture();
             }
             MilestoneData.PlayerData pd = MilestoneData.get(sp.level().getServer()).playerOrNull(sp.getUUID());
-            if (pd == null) {
-                return builder.buildFuture();
-            }
             String itemId = ResourceLocationArgument.getId(ctx, "item").toString();
+            // Default targets still provide count suggestions before the player's data exists.
             Set<String> counts = new LinkedHashSet<>(countsForItem(Tracker.effectiveTargets(pd), itemId));
-            counts.addAll(countsForItem(pd.records.keySet(), itemId));
+            counts.addAll(countsForItem(pd != null ? pd.records.keySet() : Set.of(), itemId));
             return SharedSuggestionProvider.suggest(counts, builder);
         };
 
@@ -1301,7 +1299,18 @@ public final class MilestoneCommands {
             return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_unknown",
                     name, String.join(", ", Presets.names())));
         }
+        if (preset.items().size() > PresetShareLogic.MAX_ITEMS) {
+            // importcode rejects such a code, so never emit one that cannot be imported.
+            return fail(ctx, ServerLang.tr(source,
+                    "message.itemmilestonelog.preset_importcode_too_many_items",
+                    PresetShareLogic.MAX_ITEMS));
+        }
         String code = PresetShareLogic.encode(shareData(preset));
+        if (code.length() > PresetShareLogic.MAX_CODE_CHARS) {
+            return fail(ctx, ServerLang.tr(source,
+                    "message.itemmilestonelog.preset_importcode_too_long",
+                    code.length(), PresetShareLogic.MAX_CODE_CHARS));
+        }
         // One message: the label plus the code, which is click-to-copy.
         MutableComponent message = ServerLang.tr(source, "message.itemmilestonelog.preset_share_message",
                 MilestoneService.presetDisplayNameForLang(

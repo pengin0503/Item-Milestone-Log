@@ -1446,6 +1446,9 @@ public final class Tracker {
     /** Discards queued notifications without sending (called on ServerStoppingEvent). */
     public static void clearPendingNotifications() {
         PENDING_NOTIFICATIONS.clear();
+        // An integrated server can stop right after a craft: do not carry the queued check
+        // into the next world's first tick.
+        PENDING_CRAFT_CHECKS.clear();
     }
 
     /**
@@ -1683,7 +1686,7 @@ public final class Tracker {
         if (normalizedId == null || !isKnownNonAirItem.test(normalizedId)) {
             return new GrantResult(
                     GrantStatus.INVALID_ITEM,
-                    ServerLang.tr(executorPlayer, "message.itemmilestonelog.invalid_item", String.valueOf(itemId)),
+                    MilestoneService.invalidTargetMessage(executorPlayer, itemId),
                     null, null, false, List.of());
         }
         TargetKey key = new TargetKey(normalizedId, count);

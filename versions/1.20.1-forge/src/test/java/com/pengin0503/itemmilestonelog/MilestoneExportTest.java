@@ -133,6 +133,7 @@ class MilestoneExportTest {
         dstPd.records.put(diamond1, new MilestoneRecord(5000, 5L, 1795700000000L));
         MilestoneRecord fasterEmerald = new MilestoneRecord(2000, 2L, 1795400000000L);
         dstPd.records.put(emerald1, fasterEmerald);
+        dstPd.progressNotified.put(diamond1, 20);
         dstPd.completedPresets.add("vanilla_endgame");
 
         MilestoneExport.ImportPayload payload = MilestoneExport.parseSinglePlayerExport(exportedFile);
@@ -144,6 +145,8 @@ class MilestoneExportTest {
         assertEquals(fasterDiamond, dstPd.records.get(diamond1));
         assertEquals(diamond100Rec, dstPd.records.get(diamond100));
         assertEquals(fasterEmerald, dstPd.records.get(emerald1));
+        assertTrue(dstPd.progressNotified.isEmpty(),
+                "records applied by import must clear their pending progress alert");
         assertEquals(List.of("vanilla_endgame"), List.copyOf(dstPd.completedPresets));
     }
 
@@ -887,7 +890,9 @@ class MilestoneExportTest {
         alicePd.records.put(diamond1, new MilestoneRecord(5000, 5L, 1795700000000L));
         alicePd.records.put(emerald1, fasterEmerald);
         alicePd.completedPresets.add("vanilla_endgame");
+        alicePd.progressNotified.put(diamond1, 20);
         alicePd.progressNotified.put(diamond100, 50);
+        alicePd.progressNotified.put(iron1, 30);
         alicePd.hideFromLookup = true;
         alicePd.muteProgressAlerts = true;
         alicePd.excludeFromDiscord = true;
@@ -973,7 +978,7 @@ class MilestoneExportTest {
 
         // Verify the F22/F31 completion message templates in both en_us and ja_jp.
         assertEquals(
-                "Imported all-players.json: 3 player(s), 4 target(s) added, 2 record(s) updated, 5 world first(s) added or updated, 1 entr(ies) skipped.",
+                "Imported all-players.json: 3 player(s), 4 target(s) added, 2 record(s) updated, 5 world first(s) added or updated, entries skipped: 1.",
                 ServerLang.formatForLang("en_us", "message.itemmilestonelog.importall_done",
                         "all-players.json", 3, 4, 2, 5, 1));
         assertEquals(

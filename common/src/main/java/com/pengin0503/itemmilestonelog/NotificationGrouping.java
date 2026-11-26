@@ -282,6 +282,10 @@ public final class NotificationGrouping {
         if (items == null || items.isEmpty()) {
             return "";
         }
+        List<DiscordItem> safeItems = nonNullItems(items);
+        if (safeItems.isEmpty()) {
+            return "";
+        }
         DiscordTemplates t = templates != null ? templates : DiscordTemplates.ENGLISH_DEFAULTS;
         String safeName = playerName != null ? playerName : "";
         String safeTime = formattedRecord != null ? formattedRecord : "";
@@ -289,9 +293,9 @@ public final class NotificationGrouping {
                 t.groupHeader(),
                 DiscordTemplates.ENGLISH_DEFAULTS.groupHeader(),
                 safeName,
-                items.size(),
+                safeItems.size(),
                 safeTime);
-        return assembleDiscordBody(header, formatDiscordItemLines(items, t), t.moreLine(), maxLines, maxChars);
+        return assembleDiscordBody(header, formatDiscordItemLines(safeItems, t), t.moreLine(), maxLines, maxChars);
     }
 
     /**
@@ -306,13 +310,31 @@ public final class NotificationGrouping {
         if (items == null || items.isEmpty()) {
             return "";
         }
+        List<DiscordItem> safeItems = nonNullItems(items);
+        if (safeItems.isEmpty()) {
+            return "";
+        }
         DiscordTemplates t = templates != null ? templates : DiscordTemplates.ENGLISH_DEFAULTS;
-        return assembleDiscordBody(null, formatDiscordItemLines(items, t), t.moreLine(), maxLines, maxChars);
+        return assembleDiscordBody(null, formatDiscordItemLines(safeItems, t), t.moreLine(), maxLines, maxChars);
+    }
+
+    /** Drops null entries so header counts and rendered lines always agree. */
+    private static List<DiscordItem> nonNullItems(List<DiscordItem> items) {
+        List<DiscordItem> safe = new ArrayList<>(items.size());
+        for (DiscordItem item : items) {
+            if (item != null) {
+                safe.add(item);
+            }
+        }
+        return safe;
     }
 
     private static List<String> formatDiscordItemLines(List<DiscordItem> items, DiscordTemplates templates) {
         List<String> lines = new ArrayList<>(items.size());
         for (DiscordItem item : items) {
+            if (item == null) {
+                continue;
+            }
             String label = item.label() != null ? item.label() : "";
             if (item.worldFirst()) {
                 lines.add(formatSafe(

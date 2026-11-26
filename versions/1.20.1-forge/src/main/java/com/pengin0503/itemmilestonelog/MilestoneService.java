@@ -716,10 +716,7 @@ public final class MilestoneService {
             return List.of();
         }
         List<NextPresetAddition> additions = new ArrayList<>();
-        for (Presets.PresetDefinition preset : Presets.all()) {
-            if (preset.unlockAfterHours() == null) {
-                continue;
-            }
+        for (Presets.PresetDefinition preset : Presets.allWithUnlockAfterHours()) {
             PresetState state = presetState(pd, preset.id());
             if (state.autoApplied()) {
                 continue;
@@ -1857,7 +1854,7 @@ public final class MilestoneService {
      * <p>When {@code confirm} is {@code true}, writes an F10 backup first (ignoring
      * {@code autoBackupEnabled} and the 1-hour rate limit) unless {@link MilestoneData#isEmpty()},
      * aborts without modifying anything if the backup fails, then logs an info line, re-syncs
-     * online GUI players, and refreshes F17 scoreboard scores for affected players. Fires no
+     * online GUI players, and refreshes F17 scoreboard scores once. Fires no
      * events, notifications, or F7 commands.
      */
     public static ActionResult renameItem(
@@ -1885,9 +1882,8 @@ public final class MilestoneService {
                     counts.players(), counts.targets(), counts.records(), counts.worldFirsts());
             if (counts.hasChanges()) {
                 syncAllOnlineGuiPlayers(server, null);
-                for (UUID uuid : counts.scoreboardPlayers()) {
-                    ScoreboardSync.refreshScores(server, uuid);
-                }
+                // One full refresh instead of an all-players scan per affected player (O(P^2)).
+                ScoreboardSync.refreshAll(server);
             }
         }
         return outcome.result();

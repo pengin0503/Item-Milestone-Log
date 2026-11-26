@@ -89,6 +89,9 @@ public final class CorruptionEvacuationIO {
     private static List<String> prune(Path corruptDir) {
         List<String> warnings = new ArrayList<>();
         List<String> names = listNames(corruptDir, warnings);
+        if (names == null) {
+            return warnings;
+        }
         for (String oldName : CorruptionEvacuationLogic.selectDataFilesToPrune(
                 names, CorruptionEvacuationLogic.MAX_EVACUATIONS)) {
             delete(corruptDir.resolve(oldName), warnings);
@@ -101,8 +104,12 @@ public final class CorruptionEvacuationIO {
         return warnings;
     }
 
-    private static int countRetained(Path corruptDir, List<String> warnings) {
+    /** Counts retained evacuation data files, or returns {@code -1} when the directory cannot be listed. */
+    static int countRetained(Path corruptDir, List<String> warnings) {
         List<String> names = listNames(corruptDir, warnings);
+        if (names == null) {
+            return -1;
+        }
         int count = 0;
         for (String name : names) {
             if (CorruptionEvacuationLogic.isEvacuationDataFileName(name)) {
@@ -112,16 +119,18 @@ public final class CorruptionEvacuationIO {
         return count;
     }
 
+    /** Returns the directory's regular-file names, or {@code null} when it cannot be listed. */
     private static List<String> listNames(Path dir, List<String> warnings) {
         List<String> names = new ArrayList<>();
         try (Stream<Path> stream = Files.list(dir)) {
             stream.filter(Files::isRegularFile)
                     .map(path -> path.getFileName().toString())
                     .forEach(names::add);
+            return names;
         } catch (IOException e) {
             warnings.add("could not list " + dir + ": " + e.getMessage());
+            return null;
         }
-        return names;
     }
 
     private static void delete(Path path, List<String> warnings) {

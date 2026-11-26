@@ -161,4 +161,15 @@ class CorruptionEvacuationIOTest {
         assertTrue(lines.stream().anyMatch(line -> line.equals("totalLoadFailure: false")));
         assertTrue(lines.stream().anyMatch(line -> line.equals("loadedSchemaVersion: 0")));
     }
+
+    @Test
+    void retainedCountIsUnknownWhenDirectoryCannotBeListed(@TempDir Path dir) throws IOException {
+        Path regularFile = dir.resolve("not-a-directory");
+        Files.writeString(regularFile, "x");
+        java.util.List<String> warnings = new java.util.ArrayList<>();
+
+        assertEquals(-1, CorruptionEvacuationIO.countRetained(regularFile, warnings));
+        assertFalse(warnings.isEmpty());
+    }
+
 }

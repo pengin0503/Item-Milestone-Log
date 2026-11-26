@@ -6,6 +6,7 @@ import com.pengin0503.itemmilestonelog.Tracker;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 
+import javax.annotation.Nullable;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Objects;
@@ -167,10 +168,7 @@ public final class ItemMilestoneLogApi {
             return Optional.empty();
         }
         MilestoneData.PlayerData pd = MilestoneData.get(server).playerOrNull(player);
-        if (pd == null) {
-            return Optional.empty();
-        }
-        return Optional.ofNullable(pd.records.get(target));
+        return recordFor(pd, target);
     }
 
     /**
@@ -260,6 +258,40 @@ public final class ItemMilestoneLogApi {
         if (target == null) {
             return Optional.empty();
         }
-        return Optional.ofNullable(MilestoneData.get(server).worldFirstOrNull(target));
+        return worldFirstFor(MilestoneData.get(server), target);
     }
+
+    /**
+     * Normalizes {@code target} exactly like the write API ({@link TargetKey#normalize(String, int)})
+     * before looking it up, so an implicit {@code minecraft:} namespace reads back the record that a
+     * write with the same ID stored. Returns empty for {@code null} player data, a {@code null} target,
+     * or a target that cannot be normalized.
+     */
+    static Optional<MilestoneRecord> recordFor(@Nullable MilestoneData.PlayerData pd, @Nullable TargetKey target) {
+        if (pd == null || target == null) {
+            return Optional.empty();
+        }
+        TargetKey normalized = TargetKey.normalize(target.itemId(), target.count());
+        if (normalized == null) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(pd.records.get(normalized));
+    }
+
+    /**
+     * Normalizes {@code target} exactly like the write API before looking it up in the world-first
+     * table. Returns empty for {@code null} data, a {@code null} target, or a target that cannot be
+     * normalized.
+     */
+    static Optional<WorldFirstRecord> worldFirstFor(@Nullable MilestoneData data, @Nullable TargetKey target) {
+        if (data == null || target == null) {
+            return Optional.empty();
+        }
+        TargetKey normalized = TargetKey.normalize(target.itemId(), target.count());
+        if (normalized == null) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(data.worldFirstOrNull(normalized));
+    }
+
 }

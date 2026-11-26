@@ -1,7 +1,9 @@
 package com.pengin0503.itemmilestonelog.api;
 
+import com.pengin0503.itemmilestonelog.MilestoneData;
 import org.junit.jupiter.api.Test;
 
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
@@ -52,4 +54,30 @@ class ItemMilestoneLogApiTest {
         assertThrows(IllegalArgumentException.class, () -> new TargetKey("##minecraft:logs", 1));
         assertNull(TargetKey.normalize("#:logs", 1));
     }
+
+    @Test
+    void readApiNormalizesImplicitMinecraftNamespaceLikeWriteApi() {
+        MilestoneData data = new MilestoneData();
+        MilestoneData.PlayerData pd = data.player(PLAYER);
+        TargetKey stored = TargetKey.normalize("diamond", 1);
+        assertEquals(DIAMOND, stored);
+        MilestoneRecord rec = new MilestoneRecord(1200, 3L, 1_700_000_000_000L);
+        pd.records.put(stored, rec);
+        data.recordWorldFirstIfAbsent(stored, PLAYER, "Alice", rec);
+
+        // Read APIs use the same implicit-namespace normalization as addTarget/recordNow.
+        assertEquals(Optional.of(rec), ItemMilestoneLogApi.recordFor(pd, TargetKey.of("diamond")));
+        assertEquals(Optional.of(rec), ItemMilestoneLogApi.recordFor(pd, DIAMOND));
+        assertEquals(Optional.of(data.worldFirstOrNull(stored)),
+                ItemMilestoneLogApi.worldFirstFor(data, TargetKey.of("diamond")));
+        assertEquals(Optional.of(data.worldFirstOrNull(stored)),
+                ItemMilestoneLogApi.worldFirstFor(data, DIAMOND));
+
+        // Only the normalized key is stored; the read path does not rewrite SavedData.
+        assertTrue(pd.records.containsKey(DIAMOND));
+        assertFalse(pd.records.containsKey(TargetKey.of("diamond")));
+        assertEquals(Optional.empty(), ItemMilestoneLogApi.recordFor(pd, TargetKey.of("diamond", 2)));
+        assertEquals(Optional.empty(), ItemMilestoneLogApi.worldFirstFor(null, DIAMOND));
+    }
+
 }

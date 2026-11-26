@@ -79,6 +79,9 @@ class PresetNameTest {
         assertEquals("Starter Kit", both.resolve("EN_US", "id"));
         assertEquals("スターターキット", both.resolve("ja_jp", "id"));
         assertEquals("スターターキット", both.resolve("JA_JP", "id"));
+        // Surrounding whitespace is normalized like map keys on registration.
+        assertEquals("Starter Kit", both.resolve("  EN_US  ", "id"));
+        assertEquals("スターターキット", both.resolve(" ja_jp\t", "id"));
 
         // 2. No exact match -> en_us
         assertEquals("Starter Kit", both.resolve("de_de", "id"));

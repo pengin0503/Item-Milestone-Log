@@ -43,7 +43,7 @@ public record SyncMilestonesPayload(
         List<TargetEntry> targets = payload.targets.subList(0, Math.min(payload.targets.size(), MAX_LIST_ENTRIES));
         buf.writeVarInt(targets.size());
         for (TargetEntry entry : targets) {
-            buf.writeUtf(entry.itemId());
+            buf.writeUtf(entry.itemId(), MAX_STRING_LEN);
             buf.writeVarInt(entry.count());
             buf.writeBoolean(entry.personal());
             buf.writeBoolean(entry.defaultTarget());
@@ -57,7 +57,7 @@ public record SyncMilestonesPayload(
             }
             TargetKey key = e.getKey();
             MilestoneRecord rec = e.getValue();
-            buf.writeUtf(key.itemId());
+            buf.writeUtf(key.itemId(), MAX_STRING_LEN);
             buf.writeVarInt(key.count());
             buf.writeVarInt(rec.playTicks());
             buf.writeLong(rec.day());
@@ -71,7 +71,7 @@ public record SyncMilestonesPayload(
                 break;
             }
             TargetKey key = e.getKey();
-            buf.writeUtf(key.itemId());
+            buf.writeUtf(key.itemId(), MAX_STRING_LEN);
             buf.writeVarInt(key.count());
             buf.writeVarInt(Math.max(0, e.getValue()));
         }
@@ -81,7 +81,7 @@ public record SyncMilestonesPayload(
         List<PresetEntry> presets = payload.presets.subList(0, Math.min(payload.presets.size(), MAX_LIST_ENTRIES));
         buf.writeVarInt(presets.size());
         for (PresetEntry preset : presets) {
-            buf.writeUtf(preset.id());
+            buf.writeUtf(preset.id(), MAX_STRING_LEN);
             buf.writeUtf(preset.displayName() == null ? "" : preset.displayName(), MAX_STRING_LEN);
             buf.writeVarInt(preset.itemCount());
             buf.writeBoolean(preset.builtin());
