@@ -322,7 +322,7 @@ public final class MilestoneCommands {
             if (sp == null) {
                 return builder.buildFuture();
             }
-            String ownFile = MilestoneExport.sanitizePlayerFileName(McCompat.player().profileName(sp.getGameProfile()));
+            String ownFile = MilestoneExport.sanitizePlayerFileName(McCompat.player().profileName(sp.getGameProfile()), sp.getUUID());
             return SharedSuggestionProvider.suggest(files.contains(ownFile) ? List.of(ownFile) : List.of(), builder);
         };
         SuggestionProvider<CommandSourceStack> adminPlayerSuggestions = (ctx, builder) -> {

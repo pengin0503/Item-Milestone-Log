@@ -1638,6 +1638,59 @@ class TrackerTest {
     }
 
     @Test
+    void largeTagTargetsAreCountedFromInventoryStacksWithUnchangedTotals() {
+        // #113 regression: a tag with thousands of members must still count only the members the
+        // player actually holds, with exactly the expansion-path totals (and no per-member walk).
+        int memberCount = 10_000;
+        List<String> members = new ArrayList<>(memberCount);
+        for (int i = 0; i < memberCount; i++) {
+            members.add("testmod:member" + i);
+        }
+        Set<String> overlapMembers = Set.of("testmod:member0", "testmod:member1");
+        TagIndex index = TagIndex.of(Map.of(
+                "c:large", members,
+                "c:overlap", overlapMembers,
+                "c:not-requested", List.of("testmod:member0", "testmod:member9999")));
+
+        TargetKey large = TargetKey.of("#c:large", 64);
+        TargetKey overlap = TargetKey.of("#c:overlap", 2);
+        TargetKey concrete = TargetKey.of("testmod:member0", 1);
+        List<Tracker.StackCount> stacks = List.of(
+                new Tracker.StackCount("testmod:member0", 3),
+                new Tracker.StackCount("testmod:member1", 5),
+                new Tracker.StackCount("testmod:member9999", 7),
+                new Tracker.StackCount("minecraft:dirt", 64),
+                new Tracker.StackCount("othermod:not_in_any_tag", 9));
+
+        Set<String> stillCarried = new HashSet<>();
+        Map<String, Integer> counts = Tracker.countPendingPossession(
+                stacks, Set.of(large, overlap, concrete), Set.of("testmod:member1"), stillCarried, index);
+
+        // member0 is not carried: 3. member1 is carried: excluded from every tag. member9999: 7.
+        assertEquals(10, counts.get("#c:large"));
+        assertEquals(3, counts.get("#c:overlap"));
+        assertEquals(3, counts.get("testmod:member0"));
+        assertEquals(7, counts.get("testmod:member9999"));
+        assertNull(counts.get("minecraft:dirt"));
+        assertNull(counts.get("testmod:member1"));
+        assertNull(counts.get("#c:not-requested"));
+        assertEquals(Set.of("testmod:member1"), stillCarried);
+
+        // countRequestedPossession keeps the expandForCounting rule: a requested concrete item is
+        // counted even while carried, while a carried tag member is excluded from the tag total.
+        Map<String, Integer> requested = Tracker.countRequestedPossession(
+                stacks,
+                Set.of("#c:large", "testmod:member0", "minecraft:dirt"),
+                Set.of("testmod:member0"),
+                index);
+        assertEquals(12, requested.get("#c:large"));
+        assertEquals(3, requested.get("testmod:member0"));
+        assertEquals(5, requested.get("testmod:member1"));
+        assertEquals(64, requested.get("minecraft:dirt"));
+        assertNull(requested.get("#c:not-requested"));
+    }
+
+    @Test
     void evaluateTagAcquisitionChecksOnlyUnrecordedTagsContainingTheItem() {
         TargetKey iron1 = TargetKey.of("#c:ingots/iron");
         TargetKey iron10 = TargetKey.of("#c:ingots/iron", 10);

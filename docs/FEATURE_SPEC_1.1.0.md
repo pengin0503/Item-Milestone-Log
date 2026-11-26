@@ -234,7 +234,7 @@ G・T・F1〜F54 を2回のリリースに分ける。1.1.0 には保存デー�
   - `/milestonelog exporthtmlall`: 全プレイヤー分を `all-players.html` に出力する（権限レベル2、既存の exportall と同じ）
   - `exportImportEnabled` が false のときは T の無効化メッセージを返す
 - 出力先: 既存 export と同じ exports ディレクトリ（`<world>/itemmilestonelog/exports/`）に、単体で開ける HTML ファイル（外部リソース参照なし、CSS はインライン、JavaScript なし）を書き出す。一時ファイル + 移動で書く（既存 export と同じ）
-- ファイル名は既存の `sanitizePlayerFileName` の規則に従い、拡張子を `.html` とする（全体版は `all-players.html`。`all-players` と衝突する名前を `all-players-player` に変える既存の規則も同じく適用する）
+- ファイル名は既存の `sanitizePlayerFileName` の規則に従い、プレイヤー UUID を付けた `<プレイヤー名>-<UUID>.html` とする（全体版は `all-players.html`。`all-players` と衝突する名前を `all-players-player` に変える既存の規則も同じく適用する）
 - 内容: プレイヤー名、生成日時、記録の一覧表（アイテム名、アイテム ID、数量、プレイ時間、Day、日付、世界初の印）、ターゲット達成率のサマリー
   - 〔X9〕アイテム名はサーバー側の `Component.getString()` で得る（専用サーバーでは英語、シングルプレイ / LAN ではホストのクライアント言語になる）。名前を解決できないアイテム（Mod を外した等）は ID だけを出す
   - 〔X9〕世界初の印: そのキーの世界初の保持者 UUID が本人と一致する記録に付ける

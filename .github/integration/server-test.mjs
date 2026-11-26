@@ -185,6 +185,10 @@ async function command(session, cmd, pattern, timeoutMs) {
   return waitFor(session, from, pattern, timeoutMs);
 }
 
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function assertNotRecorded(session, from, name) {
   const hit = session.messages.slice(from).find((m) => m.text.startsWith(`★ Milestone recorded: ${name} at`));
   if (hit) throw new Error(`${name} was recorded: ${hit.text}`);
@@ -509,10 +513,11 @@ async function multiPlayerAndPresetManagementFlow(session, rcon) {
   });
 
   await check('F6: non-OP player cannot import another player\'s export file', async () => {
-    await command(session, 'milestonelog export',
-      /^Exported your milestones to itemmilestonelog\/exports\/ImlBot\.json$/);
-    await command(bot2, 'milestonelog import ImlBot.json',
-      /^Cannot import ImlBot\.json: this export belongs to another player\.$/);
+    const exportHit = await command(session, 'milestonelog export',
+      /^Exported your milestones to itemmilestonelog\/exports\/ImlBot-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$/);
+    const exportedFile = exportHit.text.replace(/^Exported your milestones to itemmilestonelog\/exports\//, '');
+    await command(bot2, `milestonelog import ${exportedFile}`,
+      new RegExp(`^Cannot import ${escapeRegExp(exportedFile)}: this export belongs to another player\\.$`));
   });
 
   await check('Custom preset: OP can save current targets to JSON and delete it', async () => {
@@ -563,11 +568,12 @@ async function restartBotFlow(rcon) {
   });
 
   await check('F6: export -> resetall -> import restores all records', async () => {
-    await command(session, 'milestonelog export',
-      /^Exported your milestones to itemmilestonelog\/exports\/ImlBot\.json$/);
+    const exportHit = await command(session, 'milestonelog export',
+      /^Exported your milestones to itemmilestonelog\/exports\/ImlBot-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$/);
+    const exportedFile = exportHit.text.replace(/^Exported your milestones to itemmilestonelog\/exports\//, '');
     await command(session, 'milestonelog resetall', /^Cleared 4 records\. Targets were kept\.$/);
-    await command(session, 'milestonelog import ImlBot.json',
-      /^Imported from ImlBot\.json: 0 target\(s\) added, 4 record\(s\) updated\.$/);
+    await command(session, `milestonelog import ${exportedFile}`,
+      new RegExp(`^Imported from ${escapeRegExp(exportedFile)}: 0 target\\(s\\) added, 4 record\\(s\\) updated\\.$`));
     await command(session, 'milestonelog list', /^Recorded milestones \(4\), earliest first:$/);
   });
 

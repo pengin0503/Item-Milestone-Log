@@ -23,6 +23,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -38,6 +39,64 @@ class MilestoneExportTest {
         assertFalse(MilestoneExport.isSafeFileName("sub/file.json"));
         assertFalse(MilestoneExport.isSafeFileName("sub\\file.json"));
         assertFalse(MilestoneExport.isSafeFileName("bad name.json"));
+    }
+
+    @Test
+    void playerExportNamesAreStableAndUniqueForCollidingSanitizedNames(@TempDir Path dir) throws Exception {
+        UUID alice = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        UUID bob = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        String aliceName = "Bob!";
+        String bobName = "Bob?";
+
+        // #137: the sanitizer alone maps both names to the same base, so later exports overwrite.
+        String legacyBase = MilestoneExport.sanitizePlayerFileBaseName(aliceName);
+        assertEquals(legacyBase, MilestoneExport.sanitizePlayerFileBaseName(bobName));
+
+        String aliceJson = MilestoneExport.sanitizePlayerFileName(aliceName, alice);
+        String bobJson = MilestoneExport.sanitizePlayerFileName(bobName, bob);
+        assertNotEquals(aliceJson, bobJson);
+        assertEquals(aliceJson, MilestoneExport.sanitizePlayerFileName(aliceName, alice));
+        assertTrue(aliceJson.startsWith(legacyBase + "-"));
+        assertTrue(MilestoneExport.isSafeFileName(aliceJson));
+        assertNotEquals(aliceJson, MilestoneExport.sanitizePlayerFileName(aliceName, bob));
+        assertNotEquals(MilestoneExport.sanitizePlayerHtmlFileName(aliceName, alice),
+                MilestoneExport.sanitizePlayerHtmlFileName(bobName, bob));
+        assertNotEquals(MilestoneExport.sanitizePlayerCsvFileName(aliceName, alice),
+                MilestoneExport.sanitizePlayerCsvFileName(bobName, bob));
+
+        MilestoneData data = new MilestoneData();
+        MilestoneData.PlayerData alicePd = data.player(alice);
+        alicePd.lastKnownName = aliceName;
+        MilestoneData.PlayerData bobPd = data.player(bob);
+        bobPd.lastKnownName = bobName;
+
+        String aliceJsonRel = MilestoneExport.exportPlayer(dir, alice, aliceName, alicePd);
+        String bobJsonRel = MilestoneExport.exportPlayer(dir, bob, bobName, bobPd);
+        assertNotEquals(aliceJsonRel, bobJsonRel);
+        assertEquals("itemmilestonelog/exports/" + aliceJson, aliceJsonRel);
+        assertEquals("itemmilestonelog/exports/" + bobJson, bobJsonRel);
+        assertEquals(alice, MilestoneExport.parseSinglePlayerExport(dir.resolve(aliceJson)).ownerUuid());
+        assertEquals(bob, MilestoneExport.parseSinglePlayerExport(dir.resolve(bobJson)).ownerUuid());
+
+        String aliceHtml = MilestoneExport.sanitizePlayerHtmlFileName(aliceName, alice);
+        String bobHtml = MilestoneExport.sanitizePlayerHtmlFileName(bobName, bob);
+        String aliceHtmlRel = MilestoneExport.exportPlayerHtml(dir, alice, aliceName, alicePd,
+                Set.of(), Map.of(), id -> id, Instant.EPOCH, ZoneId.of("UTC"));
+        String bobHtmlRel = MilestoneExport.exportPlayerHtml(dir, bob, bobName, bobPd,
+                Set.of(), Map.of(), id -> id, Instant.EPOCH, ZoneId.of("UTC"));
+        assertNotEquals(aliceHtmlRel, bobHtmlRel);
+        assertTrue(Files.isRegularFile(dir.resolve(aliceHtml)));
+        assertTrue(Files.isRegularFile(dir.resolve(bobHtml)));
+
+        String aliceCsv = MilestoneExport.sanitizePlayerCsvFileName(aliceName, alice);
+        String bobCsv = MilestoneExport.sanitizePlayerCsvFileName(bobName, bob);
+        String aliceCsvRel = MilestoneExport.exportPlayerCsv(dir, alice, aliceName, alicePd,
+                Map.of(), id -> id, ZoneId.of("UTC"));
+        String bobCsvRel = MilestoneExport.exportPlayerCsv(dir, bob, bobName, bobPd,
+                Map.of(), id -> id, ZoneId.of("UTC"));
+        assertNotEquals(aliceCsvRel, bobCsvRel);
+        assertTrue(Files.isRegularFile(dir.resolve(aliceCsv)));
+        assertTrue(Files.isRegularFile(dir.resolve(bobCsv)));
     }
 
     @Test
@@ -62,8 +121,9 @@ class MilestoneExportTest {
         srcPd.records.put(emerald1, slowerEmerald);
 
         String rel = MilestoneExport.exportPlayer(dir, uuid, "Alice", srcPd);
-        assertEquals("itemmilestonelog/exports/Alice.json", rel);
-        Path exportedFile = dir.resolve("Alice.json");
+        String exportedName = MilestoneExport.sanitizePlayerFileName("Alice", uuid);
+        assertEquals("itemmilestonelog/exports/" + exportedName, rel);
+        Path exportedFile = dir.resolve(exportedName);
         assertTrue(Files.isRegularFile(exportedFile));
 
         MilestoneData targetData = new MilestoneData();
@@ -170,7 +230,8 @@ class MilestoneExportTest {
 
         MilestoneData data = new MilestoneData();
         MilestoneExport.exportPlayer(dir, alice, "Alice", data.player(alice));
-        MilestoneExport.ImportPayload alicePayload = MilestoneExport.parseSinglePlayerExport(dir.resolve("Alice.json"));
+        MilestoneExport.ImportPayload alicePayload = MilestoneExport.parseSinglePlayerExport(
+                dir.resolve(MilestoneExport.sanitizePlayerFileName("Alice", alice)));
 
         assertEquals(alice, alicePayload.ownerUuid());
         assertTrue(MilestoneExport.canImport(alicePayload, alice, false));
@@ -352,7 +413,7 @@ class MilestoneExportTest {
                 generatedAt,
                 ZoneId.of("Asia/Tokyo"));
 
-        String expectedFile = MilestoneExport.sanitizePlayerHtmlFileName("<Alice & 'A'>");
+        String expectedFile = MilestoneExport.sanitizePlayerHtmlFileName("<Alice & 'A'>", alice);
         assertEquals("itemmilestonelog/exports/" + expectedFile, rel);
         Path htmlFile = dir.resolve(expectedFile);
         assertTrue(Files.isRegularFile(htmlFile));
@@ -509,7 +570,7 @@ class MilestoneExportTest {
                 id -> knownNames.getOrDefault(id, ""),
                 ZoneId.of("Asia/Tokyo"));
 
-        String expectedFile = MilestoneExport.sanitizePlayerCsvFileName(playerName);
+        String expectedFile = MilestoneExport.sanitizePlayerCsvFileName(playerName, alice);
         assertEquals("itemmilestonelog/exports/" + expectedFile, rel);
         Path csvFile = dir.resolve(expectedFile);
         assertTrue(Files.isRegularFile(csvFile));
@@ -784,7 +845,7 @@ class MilestoneExportTest {
         UUID alice = UUID.fromString("11111111-1111-1111-1111-111111111111");
         MilestoneData data = new MilestoneData();
         MilestoneExport.exportPlayer(dir, alice, "Alice", data.player(alice));
-        Path singleFile = dir.resolve("Alice.json");
+        Path singleFile = dir.resolve(MilestoneExport.sanitizePlayerFileName("Alice", alice));
         assertThrows(IllegalArgumentException.class, () -> MilestoneExport.parseAllPlayersExport(singleFile));
 
         Path badFormat = dir.resolve("bad-format.json");

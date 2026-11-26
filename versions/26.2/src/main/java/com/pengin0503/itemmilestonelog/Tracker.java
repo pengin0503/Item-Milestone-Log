@@ -618,13 +618,50 @@ public final class Tracker {
     static Map<String, Integer> countPendingPossession(List<StackCount> stacks, Set<TargetKey> pending,
                                                        Set<String> carried, Set<String> stillCarried,
                                                        TagIndex tagIndex) {
-        Set<String> neededItemIds = tagIndex.expandForCounting(pendingItemIdsToCount(pending, carried), carried);
-        Map<String, Integer> counts = new HashMap<>();
-        for (StackCount stack : stacks) {
-            accumulateItem(stack.itemId(), stack.count(), carried, stillCarried, neededItemIds, counts);
+        // #113: walk the player's ~46 stacks and consult the tag reverse index for each one instead
+        // of expanding every pending tag into all of its member IDs on every scan tick. The counts
+        // map, the tag totals, and the creative-carry bookkeeping stay identical to the expansion
+        // path (a tag member that is present counts once; a carried item counts toward neither).
+        Set<String> concreteItemIds = new HashSet<>();
+        for (String id : pendingItemIdsToCount(pending, carried)) {
+            if (!TargetKey.isTagId(id)) {
+                concreteItemIds.add(id);
+            }
         }
         Set<String> tagIds = tagIdsOf(pending);
-        return tagIds.isEmpty() ? counts : tagIndex.withTagTotals(counts, tagIds, carried);
+        Map<String, Integer> counts = new HashMap<>();
+        Map<String, Long> tagTotals = new HashMap<>();
+        for (StackCount stack : stacks) {
+            String id = stack.itemId();
+            if (carried.contains(id)) {
+                stillCarried.add(id);
+                continue;
+            }
+            boolean counted = concreteItemIds.contains(id);
+            if (counted) {
+                counts.merge(id, stack.count(), Integer::sum);
+            }
+            if (!tagIds.isEmpty()) {
+                for (String tagId : tagIndex.tagsContaining(id)) {
+                    if (tagIds.contains(tagId)) {
+                        tagTotals.merge(tagId, (long) stack.count(), Long::sum);
+                        if (!counted) {
+                            counts.merge(id, stack.count(), Integer::sum);
+                            counted = true;
+                        }
+                    }
+                }
+            }
+        }
+        for (String tagId : tagIds) {
+            long total = tagTotals.getOrDefault(tagId, 0L);
+            if (total > 0) {
+                counts.put(tagId, (int) Math.min(Integer.MAX_VALUE, total));
+            } else {
+                counts.remove(tagId);
+            }
+        }
+        return counts;
     }
 
     static void accumulateItem(String id, int stackCount, Set<String> carried, Set<String> stillCarried,
@@ -831,20 +868,47 @@ public final class Tracker {
         if (requestedIds.isEmpty()) {
             return Map.of();
         }
-        Set<String> concrete = tagIndex.expandForCounting(requestedIds, carried);
-        Map<String, Integer> counts = new HashMap<>();
-        for (StackCount stack : stacks) {
-            if (concrete.contains(stack.itemId())) {
-                counts.merge(stack.itemId(), stack.count(), Integer::sum);
-            }
-        }
+        // #113: same reverse-index strategy as countPendingPossession. Non-tag IDs are counted
+        // as-is (including a carried one, matching expandForCounting); tag members are skipped
+        // while carried and are also kept in the concrete counts map like the expansion path.
+        Set<String> concrete = new HashSet<>();
         Set<String> tagIds = new LinkedHashSet<>();
         for (String id : requestedIds) {
             if (TargetKey.isTagId(id)) {
                 tagIds.add(id);
+            } else if (id != null && !id.isEmpty()) {
+                concrete.add(id);
             }
         }
-        return tagIds.isEmpty() ? counts : tagIndex.withTagTotals(counts, tagIds, carried);
+        Map<String, Integer> counts = new HashMap<>();
+        Map<String, Long> tagTotals = new HashMap<>();
+        for (StackCount stack : stacks) {
+            String id = stack.itemId();
+            boolean counted = concrete.contains(id);
+            if (counted) {
+                counts.merge(id, stack.count(), Integer::sum);
+            }
+            if (!tagIds.isEmpty() && !carried.contains(id)) {
+                for (String tagId : tagIndex.tagsContaining(id)) {
+                    if (tagIds.contains(tagId)) {
+                        tagTotals.merge(tagId, (long) stack.count(), Long::sum);
+                        if (!counted) {
+                            counts.merge(id, stack.count(), Integer::sum);
+                            counted = true;
+                        }
+                    }
+                }
+            }
+        }
+        for (String tagId : tagIds) {
+            long total = tagTotals.getOrDefault(tagId, 0L);
+            if (total > 0) {
+                counts.put(tagId, (int) Math.min(Integer.MAX_VALUE, total));
+            } else {
+                counts.remove(tagId);
+            }
+        }
+        return counts;
     }
 
     record ItemAcquisitionOutcome(
