@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -60,6 +61,72 @@ class MilestoneServerStopOrderTest {
             count++;
         }
         return count;
+    }
+
+
+    @Test
+    void startingClearsImportStateBeforeCreatingTheFreshExecutor() throws IOException {
+        String src = Files.readString(resolveStopSource());
+        int reset = src.indexOf("MilestoneImportAll.resetState()");
+        int start = src.indexOf("MilestoneIo.start(");
+        assertTrue(reset >= 0, "a stale importall must be cleared at server start");
+        assertTrue(start > reset, "the fresh executor must be created after clearing stale state");
+        int stopped = src.indexOf("public static void onServerStopped()");
+        assertTrue(stopped > start, "ServerStopped must reset the session state again");
+    }
+
+    @Test
+    void timeoutPathShutsDownBeforeApplyingAndCancellingThenWritesTheBackupSync() throws IOException {
+        String src = Files.readString(resolveStopSource());
+        int timeout = src.indexOf("if (timedOut) {");
+        assertTrue(timeout >= 0, "the timeout branch must exist");
+        int branchEnd = src.indexOf("} else {", timeout);
+        assertTrue(branchEnd > timeout);
+        String branch = src.substring(timeout, branchEnd);
+        assertTrue(branch.contains("queue.shutdownNow()"), "timeout must interrupt unfinished I/O work");
+        assertTrue(branch.contains("MilestoneImportAll.applyPendingOnStop(server)"),
+                "a parsed importall must be applied even on the timeout path");
+        assertTrue(branch.contains("MilestoneImportAll.cancelPending("),
+                "an unfinished importall must be abandoned on timeout");
+        assertTrue(branch.contains("MilestoneBackup.writeFinalBackupNow(server)"),
+                "the final backup must be written synchronously on timeout");
+        assertFalse(branch.contains("MilestoneIo.submitFinal"),
+                "no task may be submitted to an executor that was just shut down");
+        assertTrue(branch.indexOf("queue.shutdownNow()") < branch.indexOf("MilestoneImportAll.applyPendingOnStop(server)"));
+        assertTrue(branch.indexOf("MilestoneImportAll.applyPendingOnStop(server)")
+                < branch.indexOf("MilestoneImportAll.cancelPending("));
+        assertTrue(branch.indexOf("MilestoneImportAll.cancelPending(")
+                < branch.indexOf("MilestoneBackup.writeFinalBackupNow(server)"));
+    }
+
+    @Test
+    void insufficientBudgetSkipsSubmissionAndSerializesOnceSynchronously() throws IOException {
+        String src = Files.readString(resolveStopSource());
+        int guard = src.indexOf("MilestoneIoLogic.needsSynchronousFinalBackup(remaining)");
+        int sync = src.indexOf("MilestoneBackup.writeFinalBackupNow(server)", guard);
+        int prepare = src.indexOf("MilestoneBackup.prepareFinalBackup(server)");
+        int submit = src.indexOf("MilestoneIo.submitFinal(finalBackup)");
+        assertTrue(guard >= 0 && sync > guard, "the remaining-budget check must guard the sync fallback");
+        assertTrue(sync < prepare && sync < submit,
+                "an exhausted budget must skip snapshot preparation and submission entirely");
+        assertTrue(submit > prepare, "the async path still prepares the snapshot before submitting");
+    }
+
+    @Test
+    void finalDrainTimeoutShutsDownAndFallsBackToASyncBackup() throws IOException {
+        String src = Files.readString(resolveStopSource());
+        int finalDrain = src.indexOf("queue.awaitDrain(finalBudget");
+        assertTrue(finalDrain >= 0, "the prepared final backup must be included in a bounded final drain");
+        int recheck = src.indexOf("MilestoneIoLogic.needsSynchronousFinalBackup(finalBudget)");
+        assertTrue(recheck > 0 && recheck < finalDrain, "the budget must be re-checked after preparing the snapshot");
+        int shutdown = src.indexOf("queue.shutdownNow()", finalDrain);
+        int sync = src.indexOf("MilestoneBackup.writeFinalBackupNow(server)", finalDrain);
+        assertTrue(shutdown > finalDrain && sync > shutdown,
+                "a final-drain timeout must stop the executor before the synchronous backup");
+        int prepared = src.indexOf("MilestoneBackup.writePreparedFinalBackupNow(finalBackup)");
+        int submit = src.indexOf("MilestoneIo.submitFinal(finalBackup)");
+        assertTrue(prepared > submit && prepared < finalDrain,
+                "the prepared snapshot must be serialized exactly once, before the final drain");
     }
 
     @Test

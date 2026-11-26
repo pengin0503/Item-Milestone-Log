@@ -159,7 +159,6 @@ IDENTICAL_FORGE_1201=(
   "src/test/java/com/pengin0503/itemmilestonelog/MilestoneServiceTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/PlaytimeTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/PresetsTest.java"
-  "src/test/java/com/pengin0503/itemmilestonelog/ServerLangTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/WorldFirstNamesTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/TargetKeyTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/api/ItemMilestoneLogApiTest.java"
@@ -203,7 +202,9 @@ IDENTICAL_FORGE_1201=(
 #     Per-version compat implementations under compat/v26_1, compat/v26_2, compat/v26_3
 #     intentionally differ per version (N251, docs/DESIGN_1.3.0.md).
 # - src/test/java/.../ServerLangTest.java:
-#     Fallback source directory path embeds each project's own Minecraft version.
+#     Fallback source directory path embeds each project's own Minecraft version. Since #123 the
+#     1.20.1-forge copy also differs from 1.21.1 by that corrected fallback path (it used to point
+#     at 1.21.1). The version-independent scan logic (including common/src/main/java) is identical.
 # - src/test/java/.../MilestoneImportAllTest.java:
 #     Not in IDENTICAL_ALL_4: the 1.21.1, 26.1.2/26.2 and 26.3 copies differ (async
 #     import-all work). The 1.21.1 and 1.20.1-forge copies are identical, so it is

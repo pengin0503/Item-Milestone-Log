@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
@@ -39,16 +40,54 @@ class ServerLangTest {
         return Path.of("versions", "26.3", "src", "main", "java");
     }
 
+    /**
+     * Shared pure-logic sources, compiled into every version's test task. Walking up from the
+     * version source root works both from the repository root and from a version's run directory.
+     */
+    private static Path resolveCommonSourceDir() {
+        Path cur = resolveMainSourceDir().toAbsolutePath().normalize();
+        for (int i = 0; i < 8 && cur != null; i++) {
+            Path candidate = cur.resolve("common").resolve("src").resolve("main").resolve("java");
+            if (Files.isDirectory(candidate)) {
+                return candidate;
+            }
+            cur = cur.getParent();
+        }
+        for (Path candidate : new Path[]{
+                Path.of("common", "src", "main", "java"),
+                Path.of("..", "common", "src", "main", "java"),
+                Path.of("..", "..", "common", "src", "main", "java")}) {
+            if (Files.isDirectory(candidate)) {
+                return candidate;
+            }
+        }
+        throw new AssertionError("common/src/main/java not found; "
+                + "set -Ditemmilestonelog.mainSourceDir=<version>/src/main/java");
+    }
+
+    /** Version sources plus the shared {@code common/} tree; lang keys may live in either. */
+    private static List<Path> sourceRoots() {
+        return List.of(resolveMainSourceDir(), resolveCommonSourceDir());
+    }
+
+    /** All Java sources in both roots; closing the returned stream closes every walked root. */
+    private static Stream<Path> javaSources() throws IOException {
+        List<Path> roots = sourceRoots();
+        Stream<Path> files = Stream.empty();
+        for (Path root : roots) {
+            assertTrue(Files.isDirectory(root), "sources not found at " + root.toAbsolutePath());
+            files = Stream.concat(files, Files.walk(root));
+        }
+        return files.filter(p -> p.toString().endsWith(".java"));
+    }
+
     @Test
     void everyKeyUsedByServerCodeHasAnEnglishFallback() throws IOException {
-        Path sources = resolveMainSourceDir();
-        assertTrue(Files.isDirectory(sources), "sources not found at " + sources.toAbsolutePath());
-
         Pattern literal = Pattern.compile("\"(message\\.itemmilestonelog\\.[a-z0-9_.]+)\"");
         Pattern dynamicPrefix = Pattern.compile("\"(message\\.itemmilestonelog\\.[a-z0-9_.]*)\"\\s*\\+");
         Set<String> used = new TreeSet<>();
-        try (Stream<Path> files = Files.walk(sources)) {
-            for (Path file : files.filter(p -> p.toString().endsWith(".java")).toList()) {
+        try (Stream<Path> files = javaSources()) {
+            for (Path file : files.toList()) {
                 String content = Files.readString(file);
                 Matcher dyn = dynamicPrefix.matcher(content);
                 assertFalse(dyn.find(), "Dynamic message key concatenation in " + file.getFileName()
@@ -70,15 +109,12 @@ class ServerLangTest {
 
     @Test
     void everyGuiKeyUsedByClientScreensHasAnEnglishEntry() throws IOException {
-        Path sources = resolveMainSourceDir();
-        assertTrue(Files.isDirectory(sources), "sources not found at " + sources.toAbsolutePath());
-
         Pattern literal = Pattern.compile("\"(gui\\.itemmilestonelog\\.[a-z0-9_.]+)\"");
         Pattern dynamicPrefix = Pattern.compile("\"(gui\\.itemmilestonelog\\.[a-z0-9_.]*)\"\\s*\\+");
         Set<String> allowedDynamicPrefixes = Set.of("gui.itemmilestonelog.preset.");
         Set<String> used = new TreeSet<>();
-        try (Stream<Path> files = Files.walk(sources)) {
-            for (Path file : files.filter(p -> p.toString().endsWith(".java")).toList()) {
+        try (Stream<Path> files = javaSources()) {
+            for (Path file : files.toList()) {
                 String content = Files.readString(file);
                 Matcher dyn = dynamicPrefix.matcher(content);
                 while (dyn.find()) {
@@ -142,14 +178,11 @@ class ServerLangTest {
 
     @Test
     void everyDiscordKeyUsedByServerCodeHasAnEnglishFallback() throws IOException {
-        Path sources = resolveMainSourceDir();
-        assertTrue(Files.isDirectory(sources), "sources not found at " + sources.toAbsolutePath());
-
         Pattern literal = Pattern.compile("\"(discord\\.itemmilestonelog\\.[a-z0-9_.]+)\"");
         Pattern dynamicPrefix = Pattern.compile("\"(discord\\.itemmilestonelog\\.[a-z0-9_.]*)\"\\s*\\+");
         Set<String> used = new TreeSet<>();
-        try (Stream<Path> files = Files.walk(sources)) {
-            for (Path file : files.filter(p -> p.toString().endsWith(".java")).toList()) {
+        try (Stream<Path> files = javaSources()) {
+            for (Path file : files.toList()) {
                 String content = Files.readString(file);
                 Matcher dyn = dynamicPrefix.matcher(content);
                 assertFalse(dyn.find(), "Dynamic discord key concatenation in " + file.getFileName()

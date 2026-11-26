@@ -7,9 +7,15 @@
 # Needs the jars in versions/1.21.1/build/libs and versions/26.1.2/build/libs,
 # Java 21 and 25 (JAVA_21 and JAVA_25, default: JAVA_HOME_21_X64 and JAVA_HOME_25_X64
 # as set by actions/setup-java), curl, Node 22 and "npm ci --prefix .github/integration".
+# F-140-1 / #122: also verifies that the 1.21.1 jar writes schemaVersion=1 and that the 26.1.2
+# migration preserves it in the new SavedData file (docs/FEATURE_SPEC_1.4.0.md §F-140-1).
 set -euo pipefail
 
 source "$(dirname "$0")/server-lib.sh"
+
+SCHEMA_JS="$ROOT/.github/scripts/check-schema-version.mjs"
+# Keep in sync with SchemaVersionLogic.CURRENT_SCHEMA_VERSION (common/src/main/java).
+EXPECTED_SCHEMA_VERSION=1
 
 NEO_OLD="$1"
 NEO_NEW="$2"
@@ -26,6 +32,16 @@ list_data() {
     -not -path './playerdata/*' -not -path '*/playerdata/*' | sort | sed 's/^/    /')
 }
 
+check_schema_version() {
+  local file="$1" label="$2" expected="$3" out
+  if out=$(node "$SCHEMA_JS" "$file" "$expected" 2>&1); then
+    echo "  PASS  $label: $out"
+  else
+    echo "  FAIL  $label: $out"
+    status=1
+  fi
+}
+
 # ------------------------------------------------- 1.21.1: make some records
 JAVA="$JAVA_21"
 use_server 1.21.1 "$NEO_OLD"
@@ -39,6 +55,8 @@ check_log "$LOG_DIR/migration-1.log" || status=1
 check_data_file || status=1
 list_data "written by 1.21.1"
 OLD_WORLD="$SERVER_DIR/world"
+check_schema_version "$OLD_WORLD/data/itemmilestonelog_data.dat" \
+  "the 1.21.1 SavedData carries schemaVersion=$EXPECTED_SCHEMA_VERSION" "$EXPECTED_SCHEMA_VERSION"
 
 # ------------------------------------- 26.1.2: open the same world, see them
 JAVA="$JAVA_25"
@@ -61,6 +79,8 @@ else
   status=1
 fi
 check_data_file || status=1
+check_schema_version "$DATA_FILE" \
+  "the 26.1.2 migration preserved schemaVersion=$EXPECTED_SCHEMA_VERSION" "$EXPECTED_SCHEMA_VERSION"
 legacy="$SERVER_DIR/world/data/itemmilestonelog_data.dat"
 if [ -f "$legacy" ]; then
   echo "  PASS  the 1.21.1 file is still there (data/itemmilestonelog_data.dat)"

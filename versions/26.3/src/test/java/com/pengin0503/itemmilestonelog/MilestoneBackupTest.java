@@ -81,6 +81,7 @@ class MilestoneBackupTest {
         pdA.lastSeen = 1795800000000L;
         pdA.progressNotified.put(TargetKey.of("minecraft:gold_ingot", 500), 50);
         pdA.completedPresets.add("vanilla_endgame");
+        pdA.presetState.put("vanilla_endgame", new PresetState(true, 3));
 
         MilestoneData.PlayerData pdB = data.player(PLAYER_B);
         pdB.lastKnownName = "Bob";
@@ -110,6 +111,7 @@ class MilestoneBackupTest {
             assertEquals(exp.lastSeen, act.lastSeen);
             assertEquals(exp.progressNotified, act.progressNotified);
             assertEquals(List.copyOf(exp.completedPresets), List.copyOf(act.completedPresets));
+            assertEquals(exp.presetState, act.presetState);
         }
         assertEquals(expected.worldFirsts(), actual.worldFirsts());
     }

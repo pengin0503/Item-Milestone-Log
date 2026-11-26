@@ -996,45 +996,50 @@ class DiscordNotifierTest {
             t.setDaemon(true);
             t.start();
         };
-        DiscordTestResult firstImmediate = DiscordNotifier.sendTestMessage(
-                "env:IML_GOOD", env::get, true, "en_us", sendTime,
-                bgThread,
-                (u, body) -> {
-                    enteredTransport.countDown();
-                    assertTrue(allowFinish.await(5, TimeUnit.SECONDS));
-                    return new DiscordNotifier.HttpPostResult(204, null);
-                },
-                d -> {},
-                warns::add,
-                res -> {
-                    delivered.set(res);
-                    completed.countDown();
-                });
-        assertNull(firstImmediate);
-        assertTrue(enteredTransport.await(5, TimeUnit.SECONDS));
-        assertTrue(DiscordNotifier.isTestInProgress());
+        try {
+            DiscordTestResult firstImmediate = DiscordNotifier.sendTestMessage(
+                    "env:IML_GOOD", env::get, true, "en_us", sendTime,
+                    bgThread,
+                    (u, body) -> {
+                        enteredTransport.countDown();
+                        assertTrue(allowFinish.await(5, TimeUnit.SECONDS));
+                        return new DiscordNotifier.HttpPostResult(204, null);
+                    },
+                    d -> {},
+                    warns::add,
+                    res -> {
+                        delivered.set(res);
+                        completed.countDown();
+                    });
+            assertNull(firstImmediate);
+            assertTrue(enteredTransport.await(5, TimeUnit.SECONDS));
+            assertTrue(DiscordNotifier.isTestInProgress());
 
-        DiscordTestResult concurrentImmediate = DiscordNotifier.sendTestMessage(
-                "env:IML_GOOD", env::get, false, "en_us", sendTime,
-                neverRun,
-                (u, body) -> new DiscordNotifier.HttpPostResult(204, null),
-                d -> {},
-                warns::add,
-                r -> {
-                    throw new AssertionError("callback must not run for IN_PROGRESS");
-                });
-        assertEquals(DiscordTestResult.inProgress(), concurrentImmediate);
+            DiscordTestResult concurrentImmediate = DiscordNotifier.sendTestMessage(
+                    "env:IML_GOOD", env::get, false, "en_us", sendTime,
+                    neverRun,
+                    (u, body) -> new DiscordNotifier.HttpPostResult(204, null),
+                    d -> {},
+                    warns::add,
+                    r -> {
+                        throw new AssertionError("callback must not run for IN_PROGRESS");
+                    });
+            assertEquals(DiscordTestResult.inProgress(), concurrentImmediate);
 
-        allowFinish.countDown();
-        assertTrue(completed.await(5, TimeUnit.SECONDS));
-        assertEquals(new DiscordTestResult(DiscordTestResult.Kind.SUCCESS, "204"), delivered.get());
+            allowFinish.countDown(); // release before waiting; finally below covers early failures
+            assertTrue(completed.await(5, TimeUnit.SECONDS));
+            assertEquals(new DiscordTestResult(DiscordTestResult.Kind.SUCCESS, "204"), delivered.get());
 
-        // Wait briefly for the worker thread's finally block to clear TEST_IN_PROGRESS.
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
-        while (DiscordNotifier.isTestInProgress() && System.nanoTime() < deadline) {
-            Thread.sleep(5);
+            // Wait briefly for the worker thread's finally block to clear TEST_IN_PROGRESS.
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            while (DiscordNotifier.isTestInProgress() && System.nanoTime() < deadline) {
+                Thread.sleep(5);
+            }
+            assertFalse(DiscordNotifier.isTestInProgress());
+        } finally {
+            // #123: an assertion failure above must never leave the worker waiting 5 s.
+            allowFinish.countDown();
         }
-        assertFalse(DiscordNotifier.isTestInProgress());
 
         // Synchronous executor failure releases TEST_IN_PROGRESS immediately.
         assertThrows(RejectedExecutionException.class, () -> DiscordNotifier.sendTestMessage(
@@ -1964,29 +1969,34 @@ class DiscordNotifierTest {
             t.setDaemon(true);
             t.start();
         };
-        assertNull(DiscordNotifier.sendTestMessage(
-                DiscordRouting.Destination.WORLD_FIRST, "env:IML_WF_GOOD", env::get, false, "en_us", sendTime,
-                bgThread,
-                (u, body) -> {
-                    entered.countDown();
-                    assertTrue(allowFinish.await(5, TimeUnit.SECONDS));
-                    return new DiscordNotifier.HttpPostResult(204, null);
-                },
-                d -> {}, warns::add, r -> finished.countDown()));
-        assertTrue(entered.await(5, TimeUnit.SECONDS));
-        assertEquals(DiscordTestResult.inProgress(), DiscordNotifier.sendTestMessage(
-                DiscordRouting.Destination.MAIN, SECRET_WEBHOOK_1, env::get, false, "en_us", sendTime,
-                neverRun, (u, b) -> new DiscordNotifier.HttpPostResult(204, null),
-                d -> {}, warns::add, r -> {
-                    throw new AssertionError("callback must not run for IN_PROGRESS");
-                }));
-        allowFinish.countDown();
-        assertTrue(finished.await(5, TimeUnit.SECONDS));
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
-        while (DiscordNotifier.isTestInProgress() && System.nanoTime() < deadline) {
-            Thread.sleep(5);
+        try {
+            assertNull(DiscordNotifier.sendTestMessage(
+                    DiscordRouting.Destination.WORLD_FIRST, "env:IML_WF_GOOD", env::get, false, "en_us", sendTime,
+                    bgThread,
+                    (u, body) -> {
+                        entered.countDown();
+                        assertTrue(allowFinish.await(5, TimeUnit.SECONDS));
+                        return new DiscordNotifier.HttpPostResult(204, null);
+                    },
+                    d -> {}, warns::add, r -> finished.countDown()));
+            assertTrue(entered.await(5, TimeUnit.SECONDS));
+            assertEquals(DiscordTestResult.inProgress(), DiscordNotifier.sendTestMessage(
+                    DiscordRouting.Destination.MAIN, SECRET_WEBHOOK_1, env::get, false, "en_us", sendTime,
+                    neverRun, (u, b) -> new DiscordNotifier.HttpPostResult(204, null),
+                    d -> {}, warns::add, r -> {
+                        throw new AssertionError("callback must not run for IN_PROGRESS");
+                    }));
+            allowFinish.countDown(); // release before waiting; finally below covers early failures
+            assertTrue(finished.await(5, TimeUnit.SECONDS));
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            while (DiscordNotifier.isTestInProgress() && System.nanoTime() < deadline) {
+                Thread.sleep(5);
+            }
+            assertFalse(DiscordNotifier.isTestInProgress());
+        } finally {
+            // #123: an assertion failure above must never leave the worker waiting 5 s.
+            allowFinish.countDown();
         }
-        assertFalse(DiscordNotifier.isTestInProgress());
 
         // 4. WORLD_FIRST error classification (404 marks only WORLD_FIRST dead; 429, 500, and network error match F49).
         AtomicReference<DiscordTestResult> err404 = new AtomicReference<>();
