@@ -119,6 +119,19 @@ public final class MilestoneCommands {
         return ids;
     }
 
+    /** F-140-19: tag IDs (with the leading {@code '#'}) present in any player's targets. */
+    static Set<String> allStoredTagIds(MilestoneData data) {
+        Set<String> ids = new LinkedHashSet<>();
+        for (MilestoneData.PlayerData pd : data.allPlayers().values()) {
+            for (TargetKey key : pd.targets) {
+                if (key.isTag()) {
+                    ids.add(key.itemId());
+                }
+            }
+        }
+        return ids;
+    }
+
     /** F8b: tag IDs (without the leading {@code '#'}) of the tag keys, as typed into the tag commands. */
     static Set<String> tagIdsOf(Collection<TargetKey> keys) {
         Set<String> ids = new LinkedHashSet<>();
@@ -491,6 +504,19 @@ public final class MilestoneCommands {
                     .toList();
             return SharedSuggestionProvider.suggest(items, builder);
         };
+        SuggestionProvider<CommandSourceStack> renameOldTagSuggestions = (ctx, builder) -> {
+            MinecraftServer server = ctx.getSource().getServer();
+            if (server == null) {
+                return builder.buildFuture();
+            }
+            return SharedSuggestionProvider.suggest(allStoredTagIds(MilestoneData.get(server)), builder);
+        };
+        SuggestionProvider<CommandSourceStack> renameNewTagSuggestions = (ctx, builder) -> {
+            List<String> tags = TagTargets.suggestableTagIds().stream()
+                    .map(id -> "#" + id)
+                    .toList();
+            return SharedSuggestionProvider.suggest(tags, builder);
+        };
         // F51: own effective targets + own records + items recorded by anyone the F6 gate allows.
         SuggestionProvider<CommandSourceStack> infoItemSuggestions = (ctx, builder) -> {
             ServerPlayer sp = ctx.getSource().getPlayer();
@@ -750,6 +776,21 @@ public final class MilestoneCommands {
                                                 .executes(ctx -> renameItem(ctx,
                                                         IdentifierArgument.getId(ctx, "oldId").toString(),
                                                         IdentifierArgument.getId(ctx, "newId").toString(),
+                                                        true))))))
+                .then(literal("renametag")
+                        .requires(renameItemRequirement)
+                        .then(argument("oldTag", StringArgumentType.string())
+                                .suggests(renameOldTagSuggestions)
+                                .then(argument("newTag", StringArgumentType.string())
+                                        .suggests(renameNewTagSuggestions)
+                                        .executes(ctx -> renameTag(ctx,
+                                                StringArgumentType.getString(ctx, "oldTag"),
+                                                StringArgumentType.getString(ctx, "newTag"),
+                                                false))
+                                        .then(literal("confirm")
+                                                .executes(ctx -> renameTag(ctx,
+                                                        StringArgumentType.getString(ctx, "oldTag"),
+                                                        StringArgumentType.getString(ctx, "newTag"),
                                                         true))))))
                 .then(literal("admin")
                         .requires(adminRequirementWithNode)
@@ -2425,6 +2466,13 @@ public final class MilestoneCommands {
     private static int renameItem(CommandContext<CommandSourceStack> ctx, String oldId, String newId, boolean confirm) {
         CommandSourceStack source = ctx.getSource();
         return respond(ctx, MilestoneService.renameItem(source.getServer(), source, oldId, newId, confirm));
+    }
+
+    // --------------------------------------------------------- F-140-19 renametag
+
+    private static int renameTag(CommandContext<CommandSourceStack> ctx, String oldTag, String newTag, boolean confirm) {
+        CommandSourceStack source = ctx.getSource();
+        return respond(ctx, MilestoneService.renameTag(source.getServer(), source, oldTag, newTag, confirm));
     }
 
     // --------------------------------------------------------- F29 help

@@ -1921,6 +1921,194 @@ public final class MilestoneService {
         return new RenameOutcome(new ActionResult(true, message), oldNorm, newNorm, counts);
     }
 
+    // --------------------------------------------------------- F-140-19 renametag
+
+    /**
+     * F-140-19: counts returned by {@link #renameTagInData(MilestoneData, String, String, boolean)}.
+     *
+     * @param players         number of players whose {@code targets} change
+     * @param targets         number of personal target entries rewritten across all players
+     * @param affectedPlayers UUIDs of players whose {@code targets} change
+     */
+    public record TagRenameCounts(int players, int targets, Set<UUID> affectedPlayers) {
+        public static final TagRenameCounts EMPTY = new TagRenameCounts(0, 0, Set.of());
+
+        public TagRenameCounts {
+            affectedPlayers = Collections.unmodifiableSet(new LinkedHashSet<>(affectedPlayers));
+        }
+
+        public boolean hasChanges() {
+            return players > 0 || targets > 0;
+        }
+    }
+
+    record RenameTagOutcome(
+            ActionResult result,
+            @Nullable String oldTag,
+            @Nullable String newTag,
+            @Nullable TagRenameCounts counts) {
+    }
+
+    /** F-140-19: applies a tag-ID rewrite to {@code data} in place and returns the change counts. */
+    public static TagRenameCounts renameTagInData(MilestoneData data, String oldTag, String newTag) {
+        return renameTagInData(data, oldTag, newTag, true);
+    }
+
+    /**
+     * F-140-19: computes (and when {@code apply} is {@code true}, commits) the tag-ID rewrite
+     * {@code oldTag -> newTag} in every player's {@code targets}. Collisions with an existing new
+     * tag are merged by the target set's de-duplication. Records, world firsts, presets and Config
+     * are intentionally untouched. When {@code apply} is {@code false}, {@code data} and its dirty
+     * flag are left untouched.
+     */
+    public static TagRenameCounts renameTagInData(MilestoneData data, String oldTag, String newTag, boolean apply) {
+        String oldNorm = normalizeTagId(oldTag);
+        String newNorm = normalizeTagId(newTag);
+        if (data == null || oldNorm == null || newNorm == null || oldNorm.equals(newNorm)) {
+            return TagRenameCounts.EMPTY;
+        }
+
+        Predicate<TargetKey> isOld = key -> oldNorm.equals(key.itemId());
+        Function<TargetKey, TargetKey> toNew = key -> new TargetKey(newNorm, key.count());
+
+        int totalTargets = 0;
+        Set<UUID> affectedPlayers = new LinkedHashSet<>();
+        boolean anyPlayerMutated = false;
+
+        for (Map.Entry<UUID, MilestoneData.PlayerData> entry : data.allPlayers().entrySet()) {
+            MilestoneData.PlayerData pd = entry.getValue();
+            RenameItemLogic.SetRewrite<TargetKey> targetsRes =
+                    RenameItemLogic.rewriteTargets(pd.targets, isOld, toNew);
+            if (targetsRes.changedCount() == 0) {
+                continue;
+            }
+
+            affectedPlayers.add(entry.getKey());
+            totalTargets += targetsRes.changedCount();
+            if (apply) {
+                pd.targets.clear();
+                pd.targets.addAll(targetsRes.values());
+                anyPlayerMutated = true;
+            }
+        }
+
+        if (apply && anyPlayerMutated) {
+            data.setDirty();
+        }
+
+        return new TagRenameCounts(affectedPlayers.size(), totalTargets, affectedPlayers);
+    }
+
+    /** F-140-19: {@code "#namespace:path"} normalization for tag arguments, or {@code null} if invalid. */
+    @Nullable
+    static String normalizeTagId(@Nullable String raw) {
+        return TargetKey.isTagId(raw) ? TargetKey.normalizeItemId(raw, true) : null;
+    }
+
+    /**
+     * F-140-19 {@code /milestonelog renametag <oldTag> <newTag> [confirm]}: previews or applies a
+     * tag-ID rewrite in every player's {@code targets}.
+     *
+     * <p>When {@code confirm} is {@code true}, writes an F10 backup first (ignoring
+     * {@code autoBackupEnabled} and the 1-hour rate limit) unless {@link MilestoneData#isEmpty()},
+     * aborts without modifying anything if the backup fails, then logs an info line and re-syncs
+     * online GUI players. Records and world firsts are per item and contain no tags, so they are
+     * out of scope; presets and Config are never rewritten.
+     */
+    public static ActionResult renameTag(
+            MinecraftServer server,
+            CommandSourceStack source,
+            String oldTag,
+            String newTag,
+            boolean confirm) {
+        MilestoneData data = MilestoneData.get(server);
+        RenameTagOutcome outcome = executeRenameTag(
+                data,
+                source.getPlayer(),
+                oldTag,
+                newTag,
+                confirm,
+                TagTargets::isNonEmptyTag,
+                () -> MilestoneBackup.writeBackupNow(server),
+                Tracker.defaultTargets(),
+                Presets.all());
+        if (confirm && outcome.result().success() && outcome.counts() != null) {
+            TagRenameCounts counts = outcome.counts();
+            ItemMilestoneLog.LOGGER.info(
+                    "[ItemMilestoneLog] Admin {} renamed tag {} -> {} ({} player(s): {} target(s))",
+                    source.getTextName(), outcome.oldTag(), outcome.newTag(),
+                    counts.players(), counts.targets());
+            if (counts.hasChanges()) {
+                syncAllOnlineGuiPlayers(server, null);
+            }
+        }
+        return outcome.result();
+    }
+
+    static RenameTagOutcome executeRenameTag(
+            MilestoneData data,
+            @Nullable ServerPlayer executor,
+            String oldTag,
+            String newTag,
+            boolean confirm,
+            Predicate<String> isRegisteredTag,
+            BooleanSupplier backupWriter,
+            @Nullable Collection<TargetKey> defaultTargets,
+            @Nullable Collection<Presets.PresetDefinition> presets) {
+        String oldNorm = normalizeTagId(oldTag);
+        if (oldNorm == null) {
+            return new RenameTagOutcome(
+                    new ActionResult(false, ServerLang.tr(executor, "message.itemmilestonelog.invalid_tag",
+                            Component.literal(String.valueOf(oldTag)))),
+                    null, null, null);
+        }
+        String newNorm = normalizeTagId(newTag);
+        if (newNorm == null) {
+            return new RenameTagOutcome(
+                    new ActionResult(false, ServerLang.tr(executor, "message.itemmilestonelog.invalid_tag",
+                            Component.literal(String.valueOf(newTag)))),
+                    oldNorm, null, null);
+        }
+        if (oldNorm.equals(newNorm)) {
+            return new RenameTagOutcome(
+                    new ActionResult(false, ServerLang.tr(executor, "message.itemmilestonelog.renametag_same")),
+                    oldNorm, newNorm, null);
+        }
+        if (confirm && !data.isEmpty() && !backupWriter.getAsBoolean()) {
+            return new RenameTagOutcome(
+                    new ActionResult(false, ServerLang.tr(executor, "message.itemmilestonelog.renametag_backup_failed")),
+                    oldNorm, newNorm, null);
+        }
+
+        TagRenameCounts counts = renameTagInData(data, oldNorm, newNorm, confirm);
+        String messageKey = confirm
+                ? "message.itemmilestonelog.renametag_done"
+                : "message.itemmilestonelog.renametag_preview";
+        Component message = ServerLang.tr(executor, messageKey,
+                Component.literal(oldNorm),
+                Component.literal(newNorm),
+                counts.players(),
+                counts.targets());
+        message = message.copy().append(Component.literal("\n"))
+                .append(ServerLang.tr(executor, "message.itemmilestonelog.renametag_scope_note"));
+        if (!isRegisteredTag.test(oldNorm)) {
+            message = message.copy().append(Component.literal("\n"))
+                    .append(ServerLang.tr(executor, "message.itemmilestonelog.renametag_unknown_tag",
+                            Component.literal(oldNorm)));
+        }
+        if (!isRegisteredTag.test(newNorm)) {
+            message = message.copy().append(Component.literal("\n"))
+                    .append(ServerLang.tr(executor, "message.itemmilestonelog.renametag_unknown_tag",
+                            Component.literal(newNorm)));
+        }
+        if (containsItemIdInConfigOrPresets(oldNorm, defaultTargets, presets)) {
+            message = message.copy().append(Component.literal("\n"))
+                    .append(ServerLang.tr(executor, "message.itemmilestonelog.renametag_config_note",
+                            Component.literal(oldNorm)));
+        }
+        return new RenameTagOutcome(new ActionResult(true, message), oldNorm, newNorm, counts);
+    }
+
     /**
      * F25: sends the optional {@link SyncExtraPayload} (only when the client supports its channel)
      * followed immediately by {@link SyncMilestonesPayload}, so the extra metadata arrives before

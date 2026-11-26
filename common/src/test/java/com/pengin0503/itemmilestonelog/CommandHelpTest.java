@@ -16,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class CommandHelpTest {
     private static final Set<String> ADMIN_ONLY = Set.of(
             "exportall", "exporthtmlall", "exportcsvall", "importall",
-            "admin", "prunedata", "renameitem", "discordtest");
+            "admin", "prunedata", "renameitem", "renametag", "discordtest");
 
     private static List<String> namesOf(List<CommandHelp.Entry> entries) {
         return entries.stream().map(CommandHelp.Entry::name).toList();
@@ -32,7 +32,7 @@ class CommandHelpTest {
                 "privacy", "mutebroadcast", "muteprogress", "discordoptout",
                 "export", "exporthtml", "exportcsv", "import",
                 "exportall", "exporthtmlall", "exportcsvall", "importall",
-                "admin", "prunedata", "renameitem", "discordtest", "help"
+                "admin", "prunedata", "renameitem", "renametag", "discordtest", "help"
         );
         List<String> actual = namesOf(CommandHelp.ENTRIES);
         assertEquals(expectedOrder, actual);
@@ -60,7 +60,7 @@ class CommandHelpTest {
         assertEquals(List.of(
                 "preset", "firsts", "top", "toptag", "recent", "stats", "lookup",
                 "exportall", "exporthtmlall", "exportcsvall", "importall",
-                "admin", "prunedata", "renameitem", "discordtest", "help"
+                "admin", "prunedata", "renameitem", "renametag", "discordtest", "help"
         ), visible);
 
         assertNull(CommandHelp.findVisible("summary", console, e -> true));

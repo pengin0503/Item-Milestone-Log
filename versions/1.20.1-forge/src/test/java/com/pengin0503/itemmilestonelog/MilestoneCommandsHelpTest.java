@@ -35,7 +35,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class MilestoneCommandsHelpTest {
     private static final Set<String> ADMIN_ONLY = Set.of(
             "exportall", "exporthtmlall", "exportcsvall", "importall",
-            "admin", "prunedata", "renameitem", "discordtest");
+            "admin", "prunedata", "renameitem", "renametag", "discordtest");
 
     private static CommandDispatcher<CommandSourceStack> buildDispatcher(Predicate<CommandSourceStack> adminRequirement) {
         CommandDispatcher<CommandSourceStack> dispatcher = new CommandDispatcher<>();
@@ -129,6 +129,28 @@ class MilestoneCommandsHelpTest {
         assertNotNull(confirm.getCommand(), "renameitem <oldId> <newId> confirm must execute apply");
         assertEquals(List.of("/milestonelog renameitem <oldId> <newId> [confirm]"),
                 MilestoneCommands.helpUsages(op, null, entryByName("renameitem")));
+    }
+
+    @Test
+    void renameTagIsRegisteredAtRootWithAdminRequirementAndOptionalConfirm() {
+        CommandDispatcher<CommandSourceStack> op = buildDispatcher(src -> true);
+        CommandNode<CommandSourceStack> root = op.getRoot().getChild("milestonelog");
+        assertNotNull(root);
+        CommandNode<CommandSourceStack> rename = root.getChild("renametag");
+        assertNotNull(rename, "renametag must be registered at root");
+        assertNotNull(rename.getChild("oldTag"), "renametag must take <oldTag>");
+        CommandNode<CommandSourceStack> newTag = rename.getChild("oldTag").getChild("newTag");
+        assertNotNull(newTag, "renametag must take <newTag>");
+        assertNotNull(newTag.getCommand(), "renametag <oldTag> <newTag> must execute preview");
+        CommandNode<CommandSourceStack> confirm = newTag.getChild("confirm");
+        assertNotNull(confirm, "renametag must take optional confirm literal");
+        assertNotNull(confirm.getCommand(), "renametag <oldTag> <newTag> confirm must execute apply");
+        assertEquals(List.of("/milestonelog renametag <oldTag> <newTag> [confirm]"),
+                MilestoneCommands.helpUsages(op, null, entryByName("renametag")));
+
+        CommandDispatcher<CommandSourceStack> regular = buildDispatcher(src -> false);
+        ParseResults<CommandSourceStack> parse = regular.parse("milestonelog renametag #old:a #new:a", null);
+        assertTrue(parse.getReader().canRead(), "Non-admin must not match /milestonelog renametag");
     }
 
     @Test
