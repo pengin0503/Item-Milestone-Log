@@ -26,7 +26,7 @@ class CommandHelpTest {
     void entriesFollowSpecOrderWithUniqueNamesAndExpectedCommands() {
         List<String> expectedOrder = List.of(
                 "summary", "playtime", "add", "addhand", "addtag", "remove", "removetag", "removeall",
-                "targets", "list",
+                "targets", "list", "search",
                 "preset", "presetremove", "presetprogress", "reset", "resettag", "resetall", "undo",
                 "firsts", "info", "top", "toptag", "recent", "stats", "lookup",
                 "privacy", "mutebroadcast", "muteprogress", "discordoptout",

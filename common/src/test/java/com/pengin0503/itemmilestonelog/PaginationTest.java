@@ -151,4 +151,16 @@ class PaginationTest {
         assertEquals("/milestonelog search \"iron block\" all 2",
                 Pagination.pageCommand(Pagination.searchCommandPrefix("iron block", "all"), 2));
     }
+
+    @Test
+    void searchPageLinksKeepTheQuotedQueryAndEveryScope() {
+        // PR-1's helper shape is unchanged; the command layer passes the 'scope' literal as part
+        // of the second argument so the generated clickable link parses with the real command tree.
+        for (String scope : List.of("all", "targets", "records", "presets")) {
+            assertEquals("/milestonelog search \"iron block\" " + scope + " 2",
+                    Pagination.pageCommand(Pagination.searchCommandPrefix("iron block", scope), 2));
+            assertEquals("/milestonelog search \"iron block\" scope " + scope + " 3",
+                    Pagination.pageCommand(Pagination.searchCommandPrefix("iron block", "scope " + scope), 3));
+        }
+    }
 }

@@ -104,6 +104,7 @@ public final class CommandHelp {
             new Entry("removeall", true, Gate.NONE),
             new Entry("targets", true, Gate.NONE),
             new Entry("list", true, Gate.NONE),
+            new Entry("search", true, Gate.NONE),
             new Entry("preset", false, Gate.PRESETS),
             new Entry("presetremove", true, Gate.PRESETS),
             new Entry("presetprogress", true, Gate.PRESETS),
