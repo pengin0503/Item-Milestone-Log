@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Predicate;
+import java.util.regex.Pattern;
 
 /**
  * Pure-Java encode/decode logic for preset share codes (spec 1.4.0 F-140-18 / N54),
@@ -39,6 +40,14 @@ public final class PresetShareLogic {
 
     /** Maximum accepted number of entries in the decoded {@code items} array. */
     public static final int MAX_ITEMS = 512;
+
+    /**
+     * Safe preset-ID format. Must stay in sync with {@code Presets.isValidId} (the version layer
+     * additionally rejects that class's reserved IDs). Validation happens before any decoded ID is
+     * used as a path segment, so traversal strings and characters such as {@code \u0000} are
+     * rejected as {@link Status#INVALID_ID} instead of reaching {@code Path.resolve}.
+     */
+    private static final Pattern VALID_ID_PATTERN = Pattern.compile("^[a-z0-9_-]{1,32}$");
 
     /** Outcome of decoding a share code; the command maps each status to its own message. */
     public enum Status {
@@ -65,8 +74,9 @@ public final class PresetShareLogic {
     /**
      * A decoded share code.
      *
-     * @param status    outcome; only {@link Status#OK} carries the other values
-     * @param id        the preset ID carried by the code, otherwise null
+     * @param status    outcome; only {@link Status#OK} carries the JSON and item count
+     * @param id        the preset ID carried by the code when it could be read (including
+     *                  {@link Status#INVALID_ID} and {@link Status#ID_COLLISION}), otherwise null
      * @param json      the decoded preset JSON document, otherwise null
      * @param itemCount number of entries in the decoded {@code items} array (0 on errors)
      */
@@ -78,6 +88,11 @@ public final class PresetShareLogic {
 
         public static Decoded error(Status status) {
             return new Decoded(status, null, null, 0);
+        }
+
+        /** Error that still carries the decoded ID, so messages can show the offending value. */
+        public static Decoded error(Status status, @Nullable String id) {
+            return new Decoded(status, id, null, 0);
         }
     }
 
@@ -99,6 +114,7 @@ public final class PresetShareLogic {
             @Nullable Double unlockAfterHours) {
 
         public ShareData {
+            id = Objects.requireNonNull(id, "id");
             name = name == null ? PresetName.absent() : name;
             items = items == null ? List.of() : List.copyOf(items);
             description = description == null ? PresetName.absent() : description;
@@ -161,7 +177,9 @@ public final class PresetShareLogic {
         if (!data.nextPresets().isEmpty()) {
             root.add("nextPresets", stringArray(data.nextPresets()));
         }
-        if (data.unlockAfterHours() != null) {
+        if (data.unlockAfterHours() != null
+                && Double.isFinite(data.unlockAfterHours())
+                && data.unlockAfterHours() >= 0.0d) {
             root.addProperty("unlockAfterHours", data.unlockAfterHours());
         }
         root.add("items", itemsArray(data.items()));
@@ -202,7 +220,8 @@ public final class PresetShareLogic {
                 return Decoded.error(Status.INVALID_JSON);
             }
             root = element.getAsJsonObject();
-        } catch (RuntimeException e) {
+        } catch (RuntimeException | StackOverflowError e) {
+            // Deeply nested JSON can exhaust the parser's stack; treat it as malformed input.
             return Decoded.error(Status.INVALID_JSON);
         }
 
@@ -212,8 +231,11 @@ public final class PresetShareLogic {
             return Decoded.error(Status.INVALID_ID);
         }
         String id = idElement.getAsString().trim();
-        if (id.isEmpty()) {
-            return Decoded.error(Status.INVALID_ID);
+        // Validate the ID format BEFORE the collision predicate runs: the predicate resolves the
+        // ID as a file name, so an unvalidated value would be a path-traversal / invalid-path
+        // hazard (issue #98).
+        if (!VALID_ID_PATTERN.matcher(id).matches()) {
+            return Decoded.error(Status.INVALID_ID, id);
         }
 
         JsonElement itemsElement = root.get("items");
@@ -228,7 +250,7 @@ public final class PresetShareLogic {
             return Decoded.error(Status.TOO_MANY_ITEMS);
         }
         if (idExists != null && idExists.test(id)) {
-            return Decoded.error(Status.ID_COLLISION);
+            return Decoded.error(Status.ID_COLLISION, id);
         }
         return new Decoded(Status.OK, id, json, itemCount);
     }

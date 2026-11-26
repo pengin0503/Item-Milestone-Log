@@ -151,6 +151,21 @@ class MilestoneCommandsHelpTest {
         CommandDispatcher<CommandSourceStack> regular = buildDispatcher(src -> false);
         ParseResults<CommandSourceStack> parse = regular.parse("milestonelog renametag #old:a #new:a", null);
         assertTrue(parse.getReader().canRead(), "Non-admin must not match /milestonelog renametag");
+
+        // #129: for an admin, the unquoted #namespace:path form (what suggestions offer) must
+        // parse completely; only the permission predicate should reject a non-admin.
+        ParseResults<CommandSourceStack> adminPreview = op.parse("milestonelog renametag #old:a #new:a", null);
+        assertFalse(adminPreview.getReader().canRead(), "Admin must fully parse an unquoted tag ID");
+        assertTrue(adminPreview.getExceptions().isEmpty());
+        assertNotNull(adminPreview.getContext().getCommand());
+
+        ParseResults<CommandSourceStack> adminConfirm = op.parse(
+                "milestonelog renametag #c:ingots/iron #c:iron_ingots confirm", null);
+        assertFalse(adminConfirm.getReader().canRead());
+        assertTrue(adminConfirm.getExceptions().isEmpty());
+        assertNotNull(adminConfirm.getContext().getCommand());
+        assertEquals("#c:ingots/iron", parsedArgument(adminConfirm, "oldTag"));
+        assertEquals("#c:iron_ingots", parsedArgument(adminConfirm, "newTag"));
     }
 
     @Test
@@ -351,5 +366,27 @@ class MilestoneCommandsHelpTest {
         CommandNode<CommandSourceStack> code = importcode.getChild("code");
         assertNotNull(code, "preset importcode must take <code>");
         assertNotNull(code.getCommand(), "preset importcode <code> must execute");
+
+        // #97: StringArgumentType.word() stopped at the ':' in IML1:... so the command could
+        // never reach its handler. The greedy argument must consume the whole share code,
+        // including one longer than a chat client's 256-character input limit (console / RCON).
+        ParseResults<CommandSourceStack> shortCode =
+                dispatcher.parse("milestonelog preset importcode IML1:abc", null);
+        assertFalse(shortCode.getReader().canRead(), "importcode must consume the whole IML1: code");
+        assertTrue(shortCode.getExceptions().isEmpty());
+        assertNotNull(shortCode.getContext().getCommand());
+
+        String longCode = "IML1:" + "A".repeat(4_000);
+        ParseResults<CommandSourceStack> longParse =
+                dispatcher.parse("milestonelog preset importcode " + longCode, null);
+        assertFalse(longParse.getReader().canRead());
+        assertTrue(longParse.getExceptions().isEmpty());
+        assertNotNull(longParse.getContext().getCommand());
+        assertEquals(longCode, parsedArgument(longParse, "code"));
+    }
+
+    /** Parsed argument value from a {@link ParseResults}; {@code getString} needs an executed context. */
+    private static String parsedArgument(ParseResults<CommandSourceStack> parse, String name) {
+        return (String) parse.getContext().getArguments().get(name).getResult();
     }
 }

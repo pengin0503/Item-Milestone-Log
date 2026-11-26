@@ -1210,22 +1210,23 @@ public final class MilestoneService {
     }
 
     /**
-     * F-140-18: imports an {@code IML1:} preset share code. The permission predicate and the
-     * save location/format match {@link #savePreset(ServerPlayer, String)}; the decoded JSON is
-     * validated by the normal preset parse path and existing IDs are never overwritten.
+     * F-140-18: imports an {@code IML1:} preset share code. Accepts player, console and RCON
+     * sources (issue #97); the permission predicate and the save location/format match
+     * {@link #savePreset(ServerPlayer, String)}. The decoded JSON is validated by the normal
+     * preset parse path and existing IDs are never overwritten.
      */
-    public static ActionResult importPresetCode(ServerPlayer player, String code) {
-        return importPresetCode(player, canManagePresets(player), code, Presets::presetsDir,
+    public static ActionResult importPresetCode(CommandSourceStack source, String code) {
+        return importPresetCode(source, canManagePresets(source), code, Presets::presetsDir,
                 Config.PRESETS_ENABLED.get());
     }
 
-    static ActionResult importPresetCode(@Nullable ServerPlayer player, boolean allowed, String code,
+    static ActionResult importPresetCode(@Nullable CommandSourceStack source, boolean allowed, String code,
                                          Supplier<Path> presetsDir, boolean presetsEnabled) {
         if (!presetsEnabled) {
-            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.feature_disabled"));
+            return new ActionResult(false, ServerLang.tr(source, "message.itemmilestonelog.feature_disabled"));
         }
         if (!allowed) {
-            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.preset_no_permission"));
+            return new ActionResult(false, ServerLang.tr(source, "message.itemmilestonelog.preset_no_permission"));
         }
 
         PresetShareLogic.Decoded decoded = PresetShareLogic.decode(code,
@@ -1236,65 +1237,65 @@ public final class MilestoneService {
             }
             case INVALID_PREFIX -> {
                 return new ActionResult(false,
-                        ServerLang.tr(player, "message.itemmilestonelog.preset_importcode_invalid_prefix"));
+                        ServerLang.tr(source, "message.itemmilestonelog.preset_importcode_invalid_prefix"));
             }
             case INVALID_CODE -> {
                 return new ActionResult(false,
-                        ServerLang.tr(player, "message.itemmilestonelog.preset_importcode_invalid_code"));
+                        ServerLang.tr(source, "message.itemmilestonelog.preset_importcode_invalid_code"));
             }
             case INVALID_JSON -> {
                 return new ActionResult(false,
-                        ServerLang.tr(player, "message.itemmilestonelog.preset_importcode_invalid_json"));
+                        ServerLang.tr(source, "message.itemmilestonelog.preset_importcode_invalid_json"));
             }
             case TOO_LONG -> {
-                return new ActionResult(false, ServerLang.tr(player,
+                return new ActionResult(false, ServerLang.tr(source,
                         "message.itemmilestonelog.preset_importcode_too_long",
                         code != null ? code.length() : 0, PresetShareLogic.MAX_CODE_CHARS));
             }
             case TOO_MANY_ITEMS -> {
-                return new ActionResult(false, ServerLang.tr(player,
+                return new ActionResult(false, ServerLang.tr(source,
                         "message.itemmilestonelog.preset_importcode_too_many_items",
                         PresetShareLogic.MAX_ITEMS));
             }
             case EMPTY_ITEMS -> {
                 return new ActionResult(false,
-                        ServerLang.tr(player, "message.itemmilestonelog.preset_importcode_empty"));
+                        ServerLang.tr(source, "message.itemmilestonelog.preset_importcode_empty"));
             }
             case INVALID_ID -> {
                 return new ActionResult(false,
-                        ServerLang.tr(player, "message.itemmilestonelog.preset_importcode_invalid_id",
+                        ServerLang.tr(source, "message.itemmilestonelog.preset_importcode_invalid_id",
                                 String.valueOf(decoded.id())));
             }
             case ID_COLLISION -> {
                 return new ActionResult(false,
-                        ServerLang.tr(player, "message.itemmilestonelog.preset_importcode_collision",
+                        ServerLang.tr(source, "message.itemmilestonelog.preset_importcode_collision",
                                 String.valueOf(decoded.id())));
             }
         }
 
         String id = decoded.id();
         if (!Presets.isValidId(id)) {
-            return new ActionResult(false, ServerLang.tr(player,
+            return new ActionResult(false, ServerLang.tr(source,
                     "message.itemmilestonelog.preset_importcode_invalid_id", String.valueOf(id)));
         }
         Presets.PresetDefinition parsed =
                 Presets.parsePresetContent(decoded.json(), "IML1 share code", id, Presets.PresetKind.FILE);
         if (parsed == null || parsed.items().isEmpty()) {
             return new ActionResult(false,
-                    ServerLang.tr(player, "message.itemmilestonelog.preset_importcode_invalid_json"));
+                    ServerLang.tr(source, "message.itemmilestonelog.preset_importcode_invalid_json"));
         }
         if (parsed.items().size() > PresetShareLogic.MAX_ITEMS) {
-            return new ActionResult(false, ServerLang.tr(player,
+            return new ActionResult(false, ServerLang.tr(source,
                     "message.itemmilestonelog.preset_importcode_too_many_items",
                     PresetShareLogic.MAX_ITEMS));
         }
         try {
             Presets.saveImportedTo(presetsDir.get(), parsed);
-            return new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.preset_saved",
+            return new ActionResult(true, ServerLang.tr(source, "message.itemmilestonelog.preset_saved",
                     id, parsed.items().size()));
         } catch (IOException | IllegalArgumentException e) {
             ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Failed to import preset {}", id, e);
-            return new ActionResult(false, ServerLang.tr(player,
+            return new ActionResult(false, ServerLang.tr(source,
                     "message.itemmilestonelog.preset_save_failed", id));
         }
     }
@@ -1926,19 +1927,29 @@ public final class MilestoneService {
     /**
      * F-140-19: counts returned by {@link #renameTagInData(MilestoneData, String, String, boolean)}.
      *
-     * @param players         number of players whose {@code targets} change
-     * @param targets         number of personal target entries rewritten across all players
-     * @param affectedPlayers UUIDs of players whose {@code targets} change
+     * @param players           number of players whose {@link MilestoneData.PlayerData} changes
+     * @param targets           number of personal target entries rewritten across all players
+     * @param records           number of milestone record entries rewritten across all players
+     * @param worldFirsts       number of world-first entries rewritten
+     * @param affectedPlayers   UUIDs of players whose {@link MilestoneData.PlayerData} changes
+     * @param scoreboardPlayers UUIDs of players whose F17 scoreboard counts (records or world firsts) may change
      */
-    public record TagRenameCounts(int players, int targets, Set<UUID> affectedPlayers) {
-        public static final TagRenameCounts EMPTY = new TagRenameCounts(0, 0, Set.of());
+    public record TagRenameCounts(
+            int players,
+            int targets,
+            int records,
+            int worldFirsts,
+            Set<UUID> affectedPlayers,
+            Set<UUID> scoreboardPlayers) {
+        public static final TagRenameCounts EMPTY = new TagRenameCounts(0, 0, 0, 0, Set.of(), Set.of());
 
         public TagRenameCounts {
             affectedPlayers = Collections.unmodifiableSet(new LinkedHashSet<>(affectedPlayers));
+            scoreboardPlayers = Collections.unmodifiableSet(new LinkedHashSet<>(scoreboardPlayers));
         }
 
         public boolean hasChanges() {
-            return players > 0 || targets > 0;
+            return players > 0 || worldFirsts > 0;
         }
     }
 
@@ -1956,10 +1967,13 @@ public final class MilestoneService {
 
     /**
      * F-140-19: computes (and when {@code apply} is {@code true}, commits) the tag-ID rewrite
-     * {@code oldTag -> newTag} in every player's {@code targets}. Collisions with an existing new
-     * tag are merged by the target set's de-duplication. Records, world firsts, presets and Config
-     * are intentionally untouched. When {@code apply} is {@code false}, {@code data} and its dirty
-     * flag are left untouched.
+     * {@code oldTag -> newTag} across every player's {@code targets}, {@code records} and
+     * {@code progressNotified}, plus the server-wide {@code worldFirsts}. Tag targets are recorded
+     * under the tag key itself, so moving only {@code targets} would make the new tag pending again
+     * and re-fire notifications, Discord posts, rewards and world firsts (issue #128). Collisions
+     * with an existing destination key follow the same F24 rules as {@code renameItemInData}.
+     * Presets and Config are intentionally untouched. When {@code apply} is {@code false},
+     * {@code data} and its dirty flag are left untouched.
      */
     public static TagRenameCounts renameTagInData(MilestoneData data, String oldTag, String newTag, boolean apply) {
         String oldNorm = normalizeTagId(oldTag);
@@ -1969,34 +1983,96 @@ public final class MilestoneService {
         }
 
         Predicate<TargetKey> isOld = key -> oldNorm.equals(key.itemId());
+        Predicate<TargetKey> isNew = key -> newNorm.equals(key.itemId());
         Function<TargetKey, TargetKey> toNew = key -> new TargetKey(newNorm, key.count());
+        Function<TargetKey, TargetKey> newToOld = key -> new TargetKey(oldNorm, key.count());
 
         int totalTargets = 0;
+        int totalRecords = 0;
         Set<UUID> affectedPlayers = new LinkedHashSet<>();
+        Set<UUID> scoreboardPlayers = new LinkedHashSet<>();
         boolean anyPlayerMutated = false;
 
         for (Map.Entry<UUID, MilestoneData.PlayerData> entry : data.allPlayers().entrySet()) {
+            UUID uuid = entry.getKey();
             MilestoneData.PlayerData pd = entry.getValue();
             RenameItemLogic.SetRewrite<TargetKey> targetsRes =
                     RenameItemLogic.rewriteTargets(pd.targets, isOld, toNew);
-            if (targetsRes.changedCount() == 0) {
+            RenameItemLogic.MapRewrite<TargetKey, MilestoneRecord> recordsRes =
+                    RenameItemLogic.rewriteRecords(pd.records, isOld, isNew, toNew, MilestoneRecord::playTicks);
+            RenameItemLogic.ProgressRewrite<TargetKey> progressRes =
+                    RenameItemLogic.rewriteProgressNotified(
+                            pd.progressNotified,
+                            pd.records.keySet(),
+                            recordsRes.values().keySet(),
+                            isOld,
+                            isNew,
+                            toNew,
+                            newToOld);
+
+            boolean playerChanged = targetsRes.changedCount() > 0
+                    || recordsRes.changedCount() > 0
+                    || progressRes.changed();
+            if (!playerChanged) {
                 continue;
             }
 
-            affectedPlayers.add(entry.getKey());
+            affectedPlayers.add(uuid);
+            scoreboardPlayers.add(uuid);
             totalTargets += targetsRes.changedCount();
+            totalRecords += recordsRes.changedCount();
+
             if (apply) {
-                pd.targets.clear();
-                pd.targets.addAll(targetsRes.values());
+                if (targetsRes.changedCount() > 0) {
+                    pd.targets.clear();
+                    pd.targets.addAll(targetsRes.values());
+                }
+                if (recordsRes.changedCount() > 0) {
+                    pd.records.clear();
+                    pd.records.putAll(recordsRes.values());
+                }
+                if (progressRes.changed()) {
+                    pd.progressNotified.clear();
+                    pd.progressNotified.putAll(progressRes.values());
+                }
                 anyPlayerMutated = true;
             }
         }
 
-        if (apply && anyPlayerMutated) {
-            data.setDirty();
+        RenameItemLogic.WorldFirstRewrite<TargetKey, WorldFirstRecord> firstsRes =
+                RenameItemLogic.rewriteWorldFirsts(
+                        data.worldFirsts(),
+                        isOld,
+                        isNew,
+                        toNew,
+                        wf -> new WorldFirstRecord(
+                                newNorm,
+                                wf.count(),
+                                wf.playerUuid(),
+                                wf.playerName(),
+                                wf.playTicks(),
+                                wf.day(),
+                                wf.epochMillis()),
+                        WorldFirstRecord::epochMillis,
+                        WorldFirstRecord::playerUuid);
+
+        scoreboardPlayers.addAll(firstsRes.affectedPlayers());
+
+        if (apply) {
+            if (firstsRes.changedCount() > 0) {
+                data.replaceWorldFirsts(firstsRes.values());
+            } else if (anyPlayerMutated) {
+                data.setDirty();
+            }
         }
 
-        return new TagRenameCounts(affectedPlayers.size(), totalTargets, affectedPlayers);
+        return new TagRenameCounts(
+                affectedPlayers.size(),
+                totalTargets,
+                totalRecords,
+                firstsRes.changedCount(),
+                affectedPlayers,
+                scoreboardPlayers);
     }
 
     /** F-140-19: {@code "#namespace:path"} normalization for tag arguments, or {@code null} if invalid. */
@@ -2007,13 +2083,14 @@ public final class MilestoneService {
 
     /**
      * F-140-19 {@code /milestonelog renametag <oldTag> <newTag> [confirm]}: previews or applies a
-     * tag-ID rewrite in every player's {@code targets}.
+     * tag-ID rewrite across every player's {@code targets}, {@code records},
+     * {@code progressNotified} and the server-wide {@code worldFirsts}.
      *
      * <p>When {@code confirm} is {@code true}, writes an F10 backup first (ignoring
      * {@code autoBackupEnabled} and the 1-hour rate limit) unless {@link MilestoneData#isEmpty()},
-     * aborts without modifying anything if the backup fails, then logs an info line and re-syncs
-     * online GUI players. Records and world firsts are per item and contain no tags, so they are
-     * out of scope; presets and Config are never rewritten.
+     * aborts without modifying anything if the backup fails, then logs an info line, re-syncs
+     * online GUI players and refreshes F17 scoreboard counts. Presets and Config are never
+     * rewritten.
      */
     public static ActionResult renameTag(
             MinecraftServer server,
@@ -2035,11 +2112,14 @@ public final class MilestoneService {
         if (confirm && outcome.result().success() && outcome.counts() != null) {
             TagRenameCounts counts = outcome.counts();
             ItemMilestoneLog.LOGGER.info(
-                    "[ItemMilestoneLog] Admin {} renamed tag {} -> {} ({} player(s): {} target(s))",
+                    "[ItemMilestoneLog] Admin {} renamed tag {} -> {} ({} player(s): {} target(s), {} record(s), {} world first(s))",
                     source.getTextName(), outcome.oldTag(), outcome.newTag(),
-                    counts.players(), counts.targets());
+                    counts.players(), counts.targets(), counts.records(), counts.worldFirsts());
             if (counts.hasChanges()) {
                 syncAllOnlineGuiPlayers(server, null);
+                for (UUID uuid : counts.scoreboardPlayers()) {
+                    ScoreboardSync.refreshScores(server, uuid);
+                }
             }
         }
         return outcome.result();
@@ -2088,7 +2168,9 @@ public final class MilestoneService {
                 Component.literal(oldNorm),
                 Component.literal(newNorm),
                 counts.players(),
-                counts.targets());
+                counts.targets(),
+                counts.records(),
+                counts.worldFirsts());
         message = message.copy().append(Component.literal("\n"))
                 .append(ServerLang.tr(executor, "message.itemmilestonelog.renametag_scope_note"));
         if (!isRegisteredTag.test(oldNorm)) {

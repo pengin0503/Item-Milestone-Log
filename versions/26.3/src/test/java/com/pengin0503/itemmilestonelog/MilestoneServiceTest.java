@@ -410,6 +410,25 @@ class MilestoneServiceTest {
         assertFalse(collision.success());
         assertTrue(collision.message().getString().contains("already exists"),
                 collision.message().getString());
+        assertTrue(collision.message().getString().contains("'shared_set'"),
+                "Collision message must carry the decoded ID, not 'null' (#98): "
+                        + collision.message().getString());
+
+        // Invalid ID formats are rejected by the decoder before it touches the file system (#98).
+        // A NUL character used to reach Files.isRegularFile and throw InvalidPathException.
+        String nulIdCode = PresetShareLogic.encode(new PresetShareLogic.ShareData(
+                "bad\u0000id", PresetName.absent(), List.of(TargetKey.of("minecraft:dirt")),
+                PresetName.absent(), null, 0, null, List.of(), List.of(), List.of(), null));
+        MilestoneService.ActionResult nulId = MilestoneService.importPresetCode(null, true, nulIdCode, () -> dir, true);
+        assertFalse(nulId.success());
+        assertTrue(nulId.message().getString().contains("bad\u0000id"),
+                "Invalid-ID message must carry the decoded ID: " + nulId.message().getString());
+        String traversalCode = PresetShareLogic.encode(new PresetShareLogic.ShareData(
+                "../../escape", PresetName.absent(), List.of(TargetKey.of("minecraft:dirt")),
+                PresetName.absent(), null, 0, null, List.of(), List.of(), List.of(), null));
+        MilestoneService.ActionResult traversal = MilestoneService.importPresetCode(null, true, traversalCode, () -> dir, true);
+        assertFalse(traversal.success());
+        assertTrue(traversal.message().getString().contains("../../escape"));
 
         // Broken codes write nothing and use the dedicated messages.
         assertFalse(MilestoneService.importPresetCode(null, true, "NOPE", () -> dir, true).success());
@@ -2024,7 +2043,7 @@ class MilestoneServiceTest {
     // ---- F-140-19: renametag ----
 
     @Test
-    void renameTagInDataRewritesOnlyTargetsDeduplicatesAndCountsPlayers() {
+    void renameTagInDataRewritesTargetsRecordsWorldFirstsAndProgressAndCountsPlayers() {
         String oldTag = "#oldmod:gems";
         String newTag = "#newmod:gems";
         String otherTag = "#othermod:gems";
@@ -2039,6 +2058,10 @@ class MilestoneServiceTest {
         pdA.targets.add(TargetKey.of(otherTag, 16));
         MilestoneRecord oldRecord = new MilestoneRecord(120, 1L, 1_000L);
         pdA.records.put(TargetKey.of(oldTag), oldRecord);
+        // count 1 has a record, so its progress entry becomes unnecessary; count 64 has no record,
+        // so its progress threshold must move to the new tag.
+        pdA.progressNotified.put(TargetKey.of(oldTag), 8);
+        pdA.progressNotified.put(TargetKey.of(oldTag, 64), 32);
 
         MilestoneData.PlayerData pdB = data.player(playerB);
         pdB.targets.add(TargetKey.of(oldTag, 64));
@@ -2051,9 +2074,15 @@ class MilestoneServiceTest {
         MilestoneService.TagRenameCounts preview = MilestoneService.renameTagInData(data, oldTag, newTag, false);
         assertEquals(2, preview.players());
         assertEquals(3, preview.targets());
+        assertEquals(1, preview.records());
+        assertEquals(1, preview.worldFirsts());
         assertEquals(Set.of(PLAYER_A, playerB), preview.affectedPlayers());
+        assertEquals(Set.of(PLAYER_A, playerB), preview.scoreboardPlayers());
+        // Preview must not mutate targets, records, progress or world firsts.
         assertTrue(pdA.targets.contains(TargetKey.of(oldTag)));
         assertTrue(pdB.targets.contains(TargetKey.of(oldTag, 64)));
+        assertTrue(pdA.records.containsKey(TargetKey.of(oldTag)));
+        assertNotNull(data.worldFirstOrNull(TargetKey.of(oldTag)));
 
         MilestoneService.TagRenameCounts applied = MilestoneService.renameTagInData(data, oldTag, newTag);
         assertEquals(preview, applied);
@@ -2064,9 +2093,40 @@ class MilestoneServiceTest {
         ), pdA.targets);
         assertEquals(Set.of(TargetKey.of(newTag, 64)), pdB.targets);
         assertEquals(Set.of(TargetKey.of(otherTag)), pdC.targets);
-        // Records and world firsts are per item and stay untouched.
-        assertEquals(Map.of(TargetKey.of(oldTag), oldRecord), pdA.records);
-        assertNotNull(data.worldFirstOrNull(TargetKey.of(oldTag)));
+        // #128: the tag achievement records move with the target; nothing is left behind.
+        assertEquals(Map.of(TargetKey.of(newTag), oldRecord), pdA.records);
+        assertFalse(pdA.records.containsKey(TargetKey.of(oldTag)));
+        assertEquals(Map.of(TargetKey.of(newTag, 64), 32), pdA.progressNotified);
+        assertNotNull(data.worldFirstOrNull(TargetKey.of(newTag)));
+        assertEquals(newTag, data.worldFirstOrNull(TargetKey.of(newTag)).itemId());
+        assertNull(data.worldFirstOrNull(TargetKey.of(oldTag)));
+    }
+
+    @Test
+    void renameTagKeepsAchievedTagTargetsRecordedSoTheNextScanDoesNotRefire() {
+        String oldTag = "#c:ingots/iron";
+        String newTag = "#c:iron_ingots";
+        MilestoneData data = new MilestoneData();
+        MilestoneData.PlayerData pd = data.player(PLAYER_A);
+        pd.targets.add(TargetKey.of(oldTag, 64));
+        MilestoneRecord record = new MilestoneRecord(120, 1L, 1_000L);
+        pd.records.put(TargetKey.of(oldTag, 64), record);
+        data.recordWorldFirstIfAbsent(TargetKey.of(oldTag, 64), PLAYER_A, "Alice", record);
+
+        MilestoneService.renameTagInData(data, oldTag, newTag);
+
+        // The inventory scan computes pending targets as effective targets minus record keys. If
+        // the record stayed under the old tag, the new tag would be achieved again on the next
+        // scan and would fire a duplicate record/world-first/reward (#128).
+        Set<TargetKey> pending = new HashSet<>(pd.targets);
+        pending.removeAll(pd.records.keySet());
+        assertTrue(pending.isEmpty(), "The achieved tag target must not become pending: " + pending);
+        assertTrue(Tracker.findAchievedTargets(pending, Set.of(), Map.of(newTag, 64)).isEmpty(),
+                "The next scan must not re-achieve the renamed tag target");
+        assertEquals(record, pd.records.get(TargetKey.of(newTag, 64)));
+        assertNotNull(data.worldFirstOrNull(TargetKey.of(newTag, 64)));
+        assertNull(data.worldFirstOrNull(TargetKey.of(oldTag, 64)));
+        assertTrue(data.isDirty());
     }
 
     @Test
@@ -2134,12 +2194,14 @@ class MilestoneServiceTest {
         assertTrue(preview.success());
         assertEquals(0, backupCalls.get());
         assertEquals(
-                "Renaming tag #oldmod:gems to #newmod:gems would change 1 player(s): 1 target(s). "
+                "Renaming tag #oldmod:gems to #newmod:gems would change 1 player(s): 1 target(s), 1 record(s), 1 world first(s). "
                         + "Add 'confirm' to apply (a backup is written first).\n"
-                        + "Only personal targets are renamed; records and world firsts are per item and are not changed.\n"
+                        + "Personal targets, records and world firsts that use the old tag are renamed together; presets and Config are not changed.\n"
                         + "Tag #oldmod:gems is not registered in this server's item tags; the rename is still applied.",
                 preview.message().getString());
         assertTrue(pd.targets.contains(TargetKey.of(oldTag)));
+        assertTrue(pd.records.containsKey(TargetKey.of(oldTag)));
+        assertNotNull(data.worldFirstOrNull(TargetKey.of(oldTag)));
 
         // Preview with neither tag registered lists both warnings, old first
         MilestoneService.ActionResult bothUnknown = MilestoneService.executeRenameTag(
@@ -2166,6 +2228,7 @@ class MilestoneServiceTest {
                 data, null, oldTag, newTag, true, registered::contains,
                 () -> {
                     assertTrue(pd.targets.contains(TargetKey.of(oldTag)), "Backup must run before mutating data");
+                    assertTrue(pd.records.containsKey(TargetKey.of(oldTag)), "Backup must run before mutating records");
                     backupCalls.incrementAndGet();
                     return true;
                 },
@@ -2173,15 +2236,16 @@ class MilestoneServiceTest {
         assertTrue(applied.success());
         assertEquals(2, backupCalls.get());
         assertEquals(
-                "Renamed tag #oldmod:gems to #newmod:gems for 1 player(s): 1 target(s).\n"
-                        + "Only personal targets are renamed; records and world firsts are per item and are not changed.\n"
+                "Renamed tag #oldmod:gems to #newmod:gems for 1 player(s): 1 target(s), 1 record(s), 1 world first(s).\n"
+                        + "Personal targets, records and world firsts that use the old tag are renamed together; presets and Config are not changed.\n"
                         + "Tag #oldmod:gems is not registered in this server's item tags; the rename is still applied.\n"
                         + "defaultTargets or a preset still contains #oldmod:gems. Edit them by hand.",
                 applied.message().getString());
         assertTrue(pd.targets.contains(TargetKey.of(newTag)));
         assertFalse(pd.targets.contains(TargetKey.of(oldTag)));
-        assertEquals(Map.of(TargetKey.of(oldTag), oldRecord), pd.records);
-        assertNotNull(data.worldFirstOrNull(TargetKey.of(oldTag)));
+        assertEquals(Map.of(TargetKey.of(newTag), oldRecord), pd.records);
+        assertNotNull(data.worldFirstOrNull(TargetKey.of(newTag)));
+        assertNull(data.worldFirstOrNull(TargetKey.of(oldTag)));
         assertEquals(List.of(TargetKey.of(oldTag)), presetWithOld.items());
 
         // Confirm on empty MilestoneData succeeds with 0s without needing a backup
@@ -2191,19 +2255,19 @@ class MilestoneServiceTest {
         assertTrue(emptyRes.success());
         assertFalse(empty.isDirty());
         assertEquals(
-                "Renamed tag #oldmod:gems to #newmod:gems for 0 player(s): 0 target(s).\n"
-                        + "Only personal targets are renamed; records and world firsts are per item and are not changed.",
+                "Renamed tag #oldmod:gems to #newmod:gems for 0 player(s): 0 target(s), 0 record(s), 0 world first(s).\n"
+                        + "Personal targets, records and world firsts that use the old tag are renamed together; presets and Config are not changed.",
                 emptyRes.message().getString());
 
         // Japanese translations
         assertEquals(
-                "タグ #oldmod:gems を #newmod:gems に付け替えると、2 人分（目標 3 件）が変わります。実行するには末尾に confirm を付けてください（先にバックアップを書きます）。",
+                "タグ #oldmod:gems を #newmod:gems に付け替えると、2 人分（目標 3 件、記録 4 件、世界初 1 件）が変わります。実行するには末尾に confirm を付けてください（先にバックアップを書きます）。",
                 ServerLang.trForLang("ja_jp", "message.itemmilestonelog.renametag_preview",
-                        "#oldmod:gems", "#newmod:gems", 2, 3).getString());
+                        "#oldmod:gems", "#newmod:gems", 2, 3, 4, 1).getString());
         assertEquals(
-                "タグ #oldmod:gems を #newmod:gems に付け替えました: 2 人分（目標 3 件）。",
+                "タグ #oldmod:gems を #newmod:gems に付け替えました: 2 人分（目標 3 件、記録 4 件、世界初 1 件）。",
                 ServerLang.trForLang("ja_jp", "message.itemmilestonelog.renametag_done",
-                        "#oldmod:gems", "#newmod:gems", 2, 3).getString());
+                        "#oldmod:gems", "#newmod:gems", 2, 3, 4, 1).getString());
         assertEquals(
                 "付け替え前と後のタグ ID が同じです。",
                 ServerLang.trForLang("ja_jp", "message.itemmilestonelog.renametag_same").getString());
@@ -2211,7 +2275,7 @@ class MilestoneServiceTest {
                 "バックアップを書けなかったため、何も変更していません。",
                 ServerLang.trForLang("ja_jp", "message.itemmilestonelog.renametag_backup_failed").getString());
         assertEquals(
-                "付け替えの対象は個人の目標だけです。記録と世界初はアイテム単位でタグを持たないため変更されません。",
+                "旧タグを使う個人の目標・記録・世界初はまとめて付け替えられます。プリセットと Config は変更されません。",
                 ServerLang.trForLang("ja_jp", "message.itemmilestonelog.renametag_scope_note").getString());
         assertEquals(
                 "タグ #oldmod:gems はこのサーバーのアイテムタグに登録されていませんが、付け替えは実行されます。",
