@@ -179,6 +179,26 @@ public final class Pagination {
         return ROOT_COMMAND + " firsts unclaimed scope " + scope;
     }
 
+    /** Page-link prefix for {@code /milestonelog whohas <item> <count>} (F-150-9). */
+    public static String whohasCommandPrefix(String itemId, int count) {
+        Objects.requireNonNull(itemId, "itemId");
+        return ROOT_COMMAND + " whohas " + itemId + " " + count;
+    }
+
+    /**
+     * Page-link prefix for {@code /milestonelog whohastag <tag> <count>} (F-150-9). The command's
+     * {@code <tag>} argument is an identifier written without {@code '#'}; a stored key ID coming
+     * from {@code tagArg} is normalized by dropping that prefix so the generated link parses.
+     */
+    public static String whohastagCommandPrefix(String tag, int count) {
+        Objects.requireNonNull(tag, "tag");
+        String bare = tag.startsWith("#") ? tag.substring(1) : tag;
+        if (bare.isBlank()) {
+            throw new IllegalArgumentException("tag must not be blank");
+        }
+        return ROOT_COMMAND + " whohastag " + bare + " " + count;
+    }
+
     /** Preserves {@code playerQuery} spelled exactly as typed by the caller. */
     public static String lookupCommandPrefix(String playerQuery) {
         Objects.requireNonNull(playerQuery, "playerQuery");

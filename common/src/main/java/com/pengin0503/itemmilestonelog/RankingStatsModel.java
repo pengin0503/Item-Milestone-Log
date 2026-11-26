@@ -14,7 +14,8 @@ import java.util.UUID;
 
 /**
  * Pure-Java aggregation for the 1.5.0 ranking queries (D-150-34): per-preset rankings (N03),
- * world-first holder counts (N04) and reachable unclaimed world firsts (N05).
+ * world-first holder counts (N04), reachable unclaimed world firsts (N05), item completion-time
+ * statistics (N49), visible-ranking gaps (N91) and recorded/targeting player lists (N92).
  *
  * <p>Minecraft-free and Java 17 compatible, like {@link TargetFilterModel}: the version trees
  * convert their own {@code TargetKey} / {@code MilestoneRecord} / {@code WorldFirstRecord}
@@ -131,6 +132,189 @@ public final class RankingStatsModel {
         public UnclaimedResult {
             entries = List.copyOf(entries);
         }
+    }
+
+    // ------------------------------------------------------------- N49 item time statistics
+
+    /**
+     * Completion-time aggregate for one target key. An empty population yields {@code count == 0}
+     * and zeroed values so the tree can select its own empty message (D-150-22/24).
+     */
+    public record ItemTimeStats(int count, long meanTicks, long medianTicks, long minTicks, long maxTicks) {
+    }
+
+    /**
+     * Statistics over the played-time ticks of every visible holder of a key. Unknown epochs do not
+     * remove a record: only {@code playTicks} is used here. All intermediate maths is {@code long}.
+     */
+    public static ItemTimeStats itemTimes(List<Integer> playTicks) {
+        Objects.requireNonNull(playTicks, "playTicks");
+        List<Integer> sorted = new ArrayList<>(playTicks.size());
+        for (Integer ticks : playTicks) {
+            if (ticks != null) {
+                sorted.add(ticks);
+            }
+        }
+        if (sorted.isEmpty()) {
+            return new ItemTimeStats(0, 0L, 0L, 0L, 0L);
+        }
+        sorted.sort(Integer::compareTo);
+        long sum = 0L;
+        for (int ticks : sorted) {
+            sum += ticks;
+        }
+        int middle = sorted.size() / 2;
+        long median = sorted.size() % 2 == 1
+                ? sorted.get(middle).longValue()
+                : (sorted.get(middle - 1).longValue() + sorted.get(middle).longValue()) / 2L;
+        return new ItemTimeStats(sorted.size(), sum / sorted.size(), median,
+                sorted.get(0).longValue(), sorted.get(sorted.size() - 1).longValue());
+    }
+
+    // ------------------------------------------------------------- N91 visible-ranking gaps
+
+    /** One visible item-ranking row reduced to the fields used for gap calculation (D-150-26). */
+    public record GapRow(int rank, UUID uuid, String name, int playTicks) {
+    }
+
+    /**
+     * Gaps for one row: ticks to the preceding visible row and to the first visible row.
+     * {@code -1} means "unavailable" (first row, or no self row) and is rendered as {@code gap_none}.
+     * Epoch milliseconds are deliberately absent so unknown epochs cannot skew a gap.
+     */
+    public record TimeGap(long aboveTicks, long firstTicks) {
+        /** The sentinel returned for the first row and for an unranked viewer. */
+        public static TimeGap none() {
+            return new TimeGap(-1L, -1L);
+        }
+
+        public boolean hasAbove() {
+            return aboveTicks >= 0L;
+        }
+
+        public boolean hasFirst() {
+            return firstTicks >= 0L;
+        }
+    }
+
+    /** One gap per supplied row plus the gap for the viewer's own row. */
+    public record GapResult(List<TimeGap> rows, TimeGap self) {
+        public GapResult {
+            rows = List.copyOf(rows);
+            self = Objects.requireNonNull(self, "self");
+        }
+    }
+
+    /**
+     * Computes non-negative gaps over the <em>already visibility-filtered</em> ranking passed in by
+     * the tree; a hidden player's time never enters this calculation. {@code selfIndex} is the
+     * viewer's position in that full ranking (or {@code -1} when the viewer has no row) so a viewer
+     * outside the displayed top rows still gets the gap to their real predecessor.
+     */
+    public static GapResult gapsFor(List<GapRow> rows, int selfIndex) {
+        Objects.requireNonNull(rows, "rows");
+        List<TimeGap> gaps = new ArrayList<>(rows.size());
+        for (int i = 0; i < rows.size(); i++) {
+            if (i == 0) {
+                gaps.add(TimeGap.none());
+            } else {
+                int ticks = rows.get(i).playTicks();
+                gaps.add(new TimeGap(nonNegativeGap(ticks, rows.get(i - 1).playTicks()),
+                        nonNegativeGap(ticks, rows.get(0).playTicks())));
+            }
+        }
+        TimeGap self = selfIndex >= 0 && selfIndex < rows.size() ? gaps.get(selfIndex) : TimeGap.none();
+        return new GapResult(gaps, self);
+    }
+
+    private static long nonNegativeGap(int ticks, int baseTicks) {
+        return Math.max(0L, (long) ticks - (long) baseTicks);
+    }
+
+    // ------------------------------------------------------------- N92 whohas
+
+    /** One visibility-filtered player, with only the records and effective targets needed for N92. */
+    public record WhoHasPlayer(UUID uuid, String name, Collection<RecordValue> records,
+                               Collection<TargetRef> targets) {
+        public WhoHasPlayer {
+            Objects.requireNonNull(uuid, "uuid");
+            Objects.requireNonNull(name, "name");
+            records = List.copyOf(records);
+            targets = List.copyOf(targets);
+        }
+    }
+
+    /** A recorded row (with competition rank) or a targeting row ({@code rank == 0}). */
+    public record WhoHasEntry(boolean recorded, int rank, UUID uuid, String name, int playTicks) {
+    }
+
+    /**
+     * Recorded rows first, then targeting rows, capped at {@link #UNCLAIMED_RESULT_LIMIT}.
+     * The counts describe the uncapped population so the chat header stays accurate.
+     */
+    public record WhoHasResult(List<WhoHasEntry> entries, int recordedCount, int targetingCount,
+                               int moreCount) {
+        public WhoHasResult {
+            entries = List.copyOf(entries);
+        }
+    }
+
+    /**
+     * Derives the flat "recorded then targeting" list for one key from already visibility-filtered
+     * players. Recorded rows reuse the {@code topByItem} order (ticks asc, unknown epoch last,
+     * name/UUID) and competition ranks; targeting rows are name-ordered. Raw possession counts and
+     * notification thresholds are never read (D-150-27).
+     */
+    public static WhoHasResult whoHas(Collection<WhoHasPlayer> players, TargetRef key) {
+        Objects.requireNonNull(players, "players");
+        Objects.requireNonNull(key, "key");
+        record RecordedRow(UUID uuid, String name, int playTicks, long epoch) {
+        }
+        List<RecordedRow> recordedRows = new ArrayList<>();
+        List<WhoHasPlayer> targetingPlayers = new ArrayList<>();
+        for (WhoHasPlayer player : players) {
+            if (player == null) {
+                continue;
+            }
+            RecordedRow recordedRow = null;
+            for (RecordValue record : player.records()) {
+                if (record.itemId().equals(key.itemId()) && record.count() == key.count()) {
+                    recordedRow = new RecordedRow(player.uuid(), player.name(),
+                            record.playTicks(), record.epochMillis());
+                    break;
+                }
+            }
+            if (recordedRow != null) {
+                recordedRows.add(recordedRow);
+            } else if (player.targets().contains(key)) {
+                targetingPlayers.add(player);
+            }
+        }
+        recordedRows.sort((a, b) -> {
+            int c = Integer.compare(a.playTicks(), b.playTicks());
+            if (c != 0) {
+                return c;
+            }
+            c = compareEpochUnknownLast(a.epoch(), b.epoch());
+            return c != 0 ? c : compareNames(a.name(), a.uuid(), b.name(), b.uuid());
+        });
+        List<WhoHasEntry> all = new ArrayList<>(recordedRows.size() + targetingPlayers.size());
+        int rank = 0;
+        for (int i = 0; i < recordedRows.size(); i++) {
+            RecordedRow row = recordedRows.get(i);
+            if (i == 0 || row.playTicks() != recordedRows.get(i - 1).playTicks()) {
+                rank = i + 1;
+            }
+            all.add(new WhoHasEntry(true, rank, row.uuid(), row.name(), row.playTicks()));
+        }
+        targetingPlayers.sort((a, b) -> compareNames(a.name(), a.uuid(), b.name(), b.uuid()));
+        for (WhoHasPlayer player : targetingPlayers) {
+            all.add(new WhoHasEntry(false, 0, player.uuid(), player.name(), 0));
+        }
+        int recordedCount = recordedRows.size();
+        int kept = Math.min(all.size(), UNCLAIMED_RESULT_LIMIT);
+        return new WhoHasResult(all.subList(0, kept), recordedCount,
+                all.size() - recordedCount, all.size() - kept);
     }
 
     // ------------------------------------------------------------- shared ordering

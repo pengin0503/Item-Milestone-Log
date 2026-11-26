@@ -622,10 +622,16 @@ public final class MilestoneCommands {
                 .then(literal("toptag")
                         .then(argument("tag", tagArgumentType())
                                 .suggests(topTagSuggestions)
-                                .executes(ctx -> topItem(ctx, tagArg(ctx), TargetKey.MIN_COUNT))
+                                .executes(ctx -> topItem(ctx, tagArg(ctx), TargetKey.MIN_COUNT, false))
+                                .then(literal("gaps")
+                                        .executes(ctx -> topItem(ctx, tagArg(ctx), TargetKey.MIN_COUNT, true)))
                                 .then(argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
                                         .suggests(topTagCountSuggestions)
-                                        .executes(ctx -> topItem(ctx, tagArg(ctx), IntegerArgumentType.getInteger(ctx, "count"))))))
+                                        .executes(ctx -> topItem(ctx, tagArg(ctx),
+                                                IntegerArgumentType.getInteger(ctx, "count"), false))
+                                        .then(literal("gaps")
+                                                .executes(ctx -> topItem(ctx, tagArg(ctx),
+                                                        IntegerArgumentType.getInteger(ctx, "count"), true))))))
                 .then(literal("remove")
                         .then(argument("item", IdentifierArgument.id())
                                 .suggests(personalTargetSuggestions)
@@ -821,17 +827,63 @@ public final class MilestoneCommands {
                         .executes(MilestoneCommands::top)
                         .then(argument("item", IdentifierArgument.id())
                                 .suggests(topItemSuggestions)
-                                .executes(ctx -> topItem(ctx, IdentifierArgument.getId(ctx, "item").toString(), TargetKey.MIN_COUNT))
+                                .executes(ctx -> topItem(ctx, IdentifierArgument.getId(ctx, "item").toString(), TargetKey.MIN_COUNT, false))
+                                .then(literal("gaps")
+                                        .executes(ctx -> topItem(ctx, IdentifierArgument.getId(ctx, "item").toString(),
+                                                TargetKey.MIN_COUNT, true)))
                                 .then(argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
                                         .suggests(topItemCountSuggestions)
                                         .executes(ctx -> topItem(ctx, IdentifierArgument.getId(ctx, "item").toString(),
-                                                IntegerArgumentType.getInteger(ctx, "count"))))))
+                                                IntegerArgumentType.getInteger(ctx, "count"), false))
+                                        .then(literal("gaps")
+                                                .executes(ctx -> topItem(ctx, IdentifierArgument.getId(ctx, "item").toString(),
+                                                        IntegerArgumentType.getInteger(ctx, "count"), true))))))
                 .then(literal("recent")
                         .executes(ctx -> recent(ctx, MilestoneRankings.RECENT_DEFAULT))
                         .then(argument("n", IntegerArgumentType.integer(MilestoneRankings.RECENT_MIN, MilestoneRankings.RECENT_MAX))
                                 .executes(ctx -> recent(ctx, IntegerArgumentType.getInteger(ctx, "n")))))
                 .then(literal("stats")
-                        .executes(MilestoneCommands::stats))
+                        .executes(MilestoneCommands::stats)
+                        .then(argument("item", IdentifierArgument.id())
+                                .suggests(topItemSuggestions)
+                                .executes(ctx -> statsItem(ctx, IdentifierArgument.getId(ctx, "item").toString(), TargetKey.MIN_COUNT))
+                                .then(argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                        .suggests(topItemCountSuggestions)
+                                        .executes(ctx -> statsItem(ctx, IdentifierArgument.getId(ctx, "item").toString(),
+                                                IntegerArgumentType.getInteger(ctx, "count"))))))
+                .then(literal("statstag")
+                        .then(argument("tag", tagArgumentType())
+                                .suggests(topTagSuggestions)
+                                .executes(ctx -> statsItem(ctx, tagArg(ctx), TargetKey.MIN_COUNT))
+                                .then(argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                        .suggests(topTagCountSuggestions)
+                                        .executes(ctx -> statsItem(ctx, tagArg(ctx),
+                                                IntegerArgumentType.getInteger(ctx, "count"))))))
+                .then(literal("whohas")
+                        .then(argument("item", IdentifierArgument.id())
+                                .suggests(topItemSuggestions)
+                                .executes(ctx -> whohas(ctx, IdentifierArgument.getId(ctx, "item").toString(),
+                                        TargetKey.MIN_COUNT, null))
+                                .then(argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                        .suggests(topItemCountSuggestions)
+                                        .executes(ctx -> whohas(ctx, IdentifierArgument.getId(ctx, "item").toString(),
+                                                IntegerArgumentType.getInteger(ctx, "count"), null))
+                                        .then(argument("page", IntegerArgumentType.integer(1))
+                                                .executes(ctx -> whohas(ctx, IdentifierArgument.getId(ctx, "item").toString(),
+                                                        IntegerArgumentType.getInteger(ctx, "count"),
+                                                        IntegerArgumentType.getInteger(ctx, "page")))))))
+                .then(literal("whohastag")
+                        .then(argument("tag", tagArgumentType())
+                                .suggests(topTagSuggestions)
+                                .executes(ctx -> whohas(ctx, tagArg(ctx), TargetKey.MIN_COUNT, null))
+                                .then(argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                        .suggests(topTagCountSuggestions)
+                                        .executes(ctx -> whohas(ctx, tagArg(ctx),
+                                                IntegerArgumentType.getInteger(ctx, "count"), null))
+                                        .then(argument("page", IntegerArgumentType.integer(1))
+                                                .executes(ctx -> whohas(ctx, tagArg(ctx),
+                                                        IntegerArgumentType.getInteger(ctx, "count"),
+                                                        IntegerArgumentType.getInteger(ctx, "page")))))))
                 .then(literal("prunedata")
                         .requires(pruneDataRequirement)
                         .then(argument("days", IntegerArgumentType.integer(PruneDataLogic.MIN_DAYS, PruneDataLogic.MAX_DAYS))
@@ -2613,6 +2665,11 @@ public final class MilestoneCommands {
     }
 
     private static int topItem(CommandContext<CommandSourceStack> ctx, String itemId, int count) {
+        return topItem(ctx, itemId, count, false);
+    }
+
+    /** F-150-8 (N91): {@code gaps == false} keeps the legacy rows byte-for-byte unchanged. */
+    private static int topItem(CommandContext<CommandSourceStack> ctx, String itemId, int count, boolean gaps) {
         CommandSourceStack source = ctx.getSource();
         if (!canUseRankings(source)) {
             return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.feature_disabled"));
@@ -2624,6 +2681,23 @@ public final class MilestoneCommands {
         MilestoneRankings.Viewer viewer = rankingViewer(source);
         MilestoneRankings.Ranking<MilestoneRankings.ItemEntry> ranking =
                 MilestoneRankings.topByItem(MilestoneData.get(source.getServer()).allPlayers(), key, viewer);
+        // Gaps are computed from the full visibility-filtered ranking, never from world-first data
+        // or from hidden players (D-150-26). The self index survives truncation of the display.
+        List<RankingStatsModel.GapRow> gapRows = new ArrayList<>();
+        int selfIndex = -1;
+        if (gaps) {
+            for (int i = 0; i < ranking.entries().size(); i++) {
+                MilestoneRankings.ItemEntry row = ranking.entries().get(i);
+                gapRows.add(new RankingStatsModel.GapRow(row.rank(), row.uuid(), row.name(),
+                        row.record().playTicks()));
+                if (ranking.self() != null && row.uuid().equals(ranking.self().uuid())) {
+                    selfIndex = i;
+                }
+            }
+        }
+        RankingStatsModel.GapResult gapResult = gaps
+                ? RankingStatsModel.gapsFor(gapRows, selfIndex)
+                : null;
         if (ranking.entries().isEmpty()) {
             return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.top_empty"));
         }
@@ -2631,18 +2705,49 @@ public final class MilestoneCommands {
         Component targetName = MilestoneService.targetDisplayName(key);
         source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.top_item_header",
                 targetName, ranking.entries().size()), false);
-        for (MilestoneRankings.ItemEntry e : ranking.entries().subList(0, Math.min(MilestoneRankings.TOP_LIMIT, ranking.entries().size()))) {
-            source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.top_item_entry",
-                    e.rank(), Component.literal(e.name()), Playtime.formatRecordComponent(source, e.record(), zone)), false);
+        if (gaps) {
+            source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.top_item_gaps_note"), false);
+        }
+        List<MilestoneRankings.ItemEntry> displayed = ranking.entries().subList(0,
+                Math.min(MilestoneRankings.TOP_LIMIT, ranking.entries().size()));
+        for (int i = 0; i < displayed.size(); i++) {
+            MilestoneRankings.ItemEntry e = displayed.get(i);
+            if (gaps) {
+                RankingStatsModel.TimeGap gap = gapResult.rows().get(i);
+                source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.top_item_entry_gaps",
+                        e.rank(), Component.literal(e.name()),
+                        Playtime.formatRecordComponent(source, e.record(), zone),
+                        gapText(source, gap.aboveTicks()), gapText(source, gap.firstTicks())), false);
+            } else {
+                source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.top_item_entry",
+                        e.rank(), Component.literal(e.name()),
+                        Playtime.formatRecordComponent(source, e.record(), zone)), false);
+            }
         }
         if (viewer.uuid() != null) {
             MilestoneRankings.ItemEntry self = ranking.self();
-            Component selfLine = self != null
-                    ? ServerLang.tr(source, "message.itemmilestonelog.top_item_self", self.rank(), Playtime.formatRecordComponent(source, self.record(), zone))
-                    : ServerLang.tr(source, "message.itemmilestonelog.top_item_self_none");
+            Component selfLine;
+            if (self == null) {
+                selfLine = ServerLang.tr(source, "message.itemmilestonelog.top_item_self_none");
+            } else if (gaps) {
+                RankingStatsModel.TimeGap gap = gapResult.self();
+                selfLine = ServerLang.tr(source, "message.itemmilestonelog.top_item_self_gaps",
+                        self.rank(), Playtime.formatRecordComponent(source, self.record(), zone),
+                        gapText(source, gap.aboveTicks()), gapText(source, gap.firstTicks()));
+            } else {
+                selfLine = ServerLang.tr(source, "message.itemmilestonelog.top_item_self",
+                        self.rank(), Playtime.formatRecordComponent(source, self.record(), zone));
+            }
             source.sendSuccess(() -> selfLine, false);
         }
         return ranking.entries().size();
+    }
+
+    /** Renders an unavailable gap as the shared {@code gap_none} literal. */
+    private static Component gapText(CommandSourceStack source, long ticks) {
+        return ticks < 0L
+                ? ServerLang.tr(source, "message.itemmilestonelog.gap_none")
+                : Component.literal(Playtime.format((int) ticks));
     }
 
     private static int recent(CommandContext<CommandSourceStack> ctx, int limit) {
@@ -2693,6 +2798,127 @@ public final class MilestoneCommands {
                     e.rank(), MilestoneService.targetDisplayName(e.key()), e.players()), false);
         }
         return stats.totalRecords();
+    }
+
+    // --------------------------------------------------------- F-150-7 / F-150-9 item queries
+
+    /** F-150-7 (N49): mean/median/range over every visible holder's playTicks; no paging. */
+    private static int statsItem(CommandContext<CommandSourceStack> ctx, String itemId, int count) {
+        CommandSourceStack source = ctx.getSource();
+        if (!canUseRankings(source)) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.feature_disabled"));
+        }
+        TargetKey key = TargetKey.normalize(itemId, count);
+        if (key == null) {
+            return fail(ctx, ServerLang.tr(source, MilestoneService.invalidTargetKey(itemId), String.valueOf(itemId)));
+        }
+        MilestoneRankings.Viewer viewer = rankingViewer(source);
+        List<Integer> ticks = new ArrayList<>();
+        for (Map.Entry<UUID, MilestoneData.PlayerData> e :
+                MilestoneData.get(source.getServer()).allPlayers().entrySet()) {
+            MilestoneData.PlayerData pd = e.getValue();
+            if (pd == null || !MilestoneRankings.isVisible(viewer, e.getKey(), pd)) {
+                continue;
+            }
+            MilestoneRecord record = pd.records.get(key);
+            if (record != null) {
+                ticks.add(record.playTicks()); // epoch 0 is unknown, not absent (D-150-22)
+            }
+        }
+        RankingStatsModel.ItemTimeStats stats = RankingStatsModel.itemTimes(ticks);
+        Component targetName = MilestoneService.targetDisplayName(key);
+        if (stats.count() == 0) {
+            return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.stats_item_empty", targetName));
+        }
+        source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.stats_item_header",
+                targetName, stats.count()), false);
+        source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.stats_item_values",
+                Playtime.format((int) stats.meanTicks()), Playtime.format((int) stats.medianTicks()),
+                Playtime.format((int) stats.minTicks()), Playtime.format((int) stats.maxTicks())), false);
+        return stats.count();
+    }
+
+    /**
+     * F-150-9 (N92): recorded holders (same order/ranks as {@code top <item>}) followed by
+     * players with an unrecorded effective target. Both sections use {@code isVisible}.
+     */
+    private static int whohas(CommandContext<CommandSourceStack> ctx, String itemId, int count,
+                              @Nullable Integer page) {
+        CommandSourceStack source = ctx.getSource();
+        if (!canUseRankings(source)) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.feature_disabled"));
+        }
+        TargetKey key = TargetKey.normalize(itemId, count);
+        if (key == null) {
+            return fail(ctx, ServerLang.tr(source, MilestoneService.invalidTargetKey(itemId), String.valueOf(itemId)));
+        }
+        MilestoneRankings.Viewer viewer = rankingViewer(source);
+        List<RankingStatsModel.WhoHasPlayer> players = new ArrayList<>();
+        for (Map.Entry<UUID, MilestoneData.PlayerData> e :
+                MilestoneData.get(source.getServer()).allPlayers().entrySet()) {
+            MilestoneData.PlayerData pd = e.getValue();
+            if (pd == null || !MilestoneRankings.isVisible(viewer, e.getKey(), pd)) {
+                continue;
+            }
+            List<RankingStatsModel.RecordValue> records = new ArrayList<>();
+            for (Map.Entry<TargetKey, MilestoneRecord> r : pd.records.entrySet()) {
+                records.add(new RankingStatsModel.RecordValue(r.getKey().itemId(), r.getKey().count(),
+                        r.getValue().playTicks(), r.getValue().epochMillis()));
+            }
+            List<RankingStatsModel.TargetRef> targets = new ArrayList<>();
+            for (TargetKey target : Tracker.effectiveTargets(pd)) {
+                targets.add(new RankingStatsModel.TargetRef(target.itemId(), target.count()));
+            }
+            players.add(new RankingStatsModel.WhoHasPlayer(e.getKey(),
+                    MilestoneRankings.displayName(e.getKey(), pd), records, targets));
+        }
+        RankingStatsModel.WhoHasResult result = RankingStatsModel.whoHas(players,
+                new RankingStatsModel.TargetRef(key.itemId(), key.count()));
+        if (result.entries().isEmpty()) {
+            return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.whohas_empty",
+                    MilestoneService.targetDisplayName(key)));
+        }
+        // Header counts describe the uncapped population, even when the 200-row cap applies.
+        int recorded = result.recordedCount();
+        int targeting = result.targetingCount();
+
+        Pagination.PageSlice<RankingStatsModel.WhoHasEntry> slice = null;
+        List<RankingStatsModel.WhoHasEntry> displayed;
+        if (page != null) {
+            slice = Pagination.slice(result.entries(), page);
+            if (slice.isOutOfRange()) {
+                return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.page_out_of_range",
+                        page, slice.totalPages()));
+            }
+            displayed = slice.items();
+        } else {
+            displayed = result.entries();
+        }
+
+        source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.whohas_header",
+                MilestoneService.targetDisplayName(key), recorded, targeting), false);
+        for (RankingStatsModel.WhoHasEntry e : displayed) {
+            if (e.recorded()) {
+                source.sendSuccess(() -> ServerLang.tr(source,
+                        "message.itemmilestonelog.whohas_recorded_entry",
+                        e.rank(), Component.literal(e.name()),
+                        Playtime.format((int) e.playTicks())), false);
+            } else {
+                source.sendSuccess(() -> ServerLang.tr(source,
+                        "message.itemmilestonelog.whohas_targeting_entry",
+                        Component.literal(e.name())), false);
+            }
+        }
+        if (page == null && result.moreCount() > 0) {
+            send(ctx, ServerLang.tr(source, "message.itemmilestonelog.whohas_more", result.moreCount()));
+        }
+        if (slice != null) {
+            String prefix = key.isTag()
+                    ? Pagination.whohastagCommandPrefix(key.itemId(), key.count())
+                    : Pagination.whohasCommandPrefix(key.itemId(), key.count());
+            sendPageFooter(source, slice, prefix);
+        }
+        return displayed.size();
     }
 
     // --------------------------------------------------------- F51 info
