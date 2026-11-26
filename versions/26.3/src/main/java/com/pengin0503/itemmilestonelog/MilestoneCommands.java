@@ -87,6 +87,26 @@ public final class MilestoneCommands {
         return ids;
     }
 
+    /**
+     * #153: imports still accept the legacy {@code <playerName>.json} export as well as the
+     * current {@code <playerName>-<uuid>.json} form, so a non-OP player should be offered both
+     * forms when the corresponding files actually exist. Deduplicated (the two names coincide
+     * when no UUID is available); the import acceptance rules are unchanged.
+     */
+    static List<String> ownImportFileSuggestions(
+            List<String> files, @Nullable String playerName, @Nullable UUID uuid) {
+        LinkedHashSet<String> own = new LinkedHashSet<>();
+        String current = MilestoneExport.sanitizePlayerFileName(playerName, uuid);
+        if (files.contains(current)) {
+            own.add(current);
+        }
+        String legacy = MilestoneExport.sanitizePlayerFileName(playerName);
+        if (files.contains(legacy)) {
+            own.add(legacy);
+        }
+        return List.copyOf(own);
+    }
+
     /** F24: non-tag item IDs present anywhere in {@code data} (for {@code renameitem <oldId>} suggestions). */
     static Set<String> allStoredItemIds(MilestoneData data) {
         Set<String> ids = new LinkedHashSet<>();
@@ -324,8 +344,8 @@ public final class MilestoneCommands {
             if (sp == null) {
                 return builder.buildFuture();
             }
-            String ownFile = MilestoneExport.sanitizePlayerFileName(sp.getGameProfile().name(), sp.getUUID());
-            return SharedSuggestionProvider.suggest(files.contains(ownFile) ? List.of(ownFile) : List.of(), builder);
+            return SharedSuggestionProvider.suggest(
+                    ownImportFileSuggestions(files, sp.getGameProfile().name(), sp.getUUID()), builder);
         };
         SuggestionProvider<CommandSourceStack> adminPlayerSuggestions = (ctx, builder) -> {
             MinecraftServer server = ctx.getSource().getServer();

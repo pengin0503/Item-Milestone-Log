@@ -163,8 +163,13 @@ public final class ItemMilestoneLogClient {
         ClientMilestoneHandler.addHoveredTarget(slot.getItem());
     }
 
-    /** F42: rebuild the tooltip index after the client's tag bindings change. */
+    /** F42: rebuild the tooltip index after the client's tag-packet update. */
     private static void onTagsUpdated(TagsUpdatedEvent event) {
+        // #155: ignore SERVER_DATA_LOAD (on an integrated server it fires on the server thread and
+        // could write back tooltip state the client thread discarded).
+        if (event.getUpdateCause() != TagsUpdatedEvent.UpdateCause.CLIENT_PACKET_RECEIVED) {
+            return;
+        }
         ClientMilestoneHandler.onTagsUpdated();
     }
 }

@@ -2144,9 +2144,8 @@ public final class MilestoneService {
                     counts.players(), counts.targets(), counts.records(), counts.worldFirsts());
             if (counts.hasChanges()) {
                 syncAllOnlineGuiPlayers(server, null);
-                for (UUID uuid : counts.scoreboardPlayers()) {
-                    ScoreboardSync.refreshScores(server, uuid);
-                }
+                // One full refresh instead of an all-players scan per affected player (O(P^2)).
+                ScoreboardSync.refreshAll(server);
             }
         }
         return outcome.result();

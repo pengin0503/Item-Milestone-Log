@@ -215,29 +215,65 @@ public final class MilestoneImportAll {
         }
     }
 
+    /** #157: where the two-stage importall feedback is delivered. */
+    enum FeedbackTarget {
+        /** The executor was a player who is no longer online: no stale packet send. */
+        NONE,
+        /** The executor relogged as a different ServerPlayer instance: message that new player. */
+        ONLINE_PLAYER,
+        /** Console/RCON, or the same player session: use the original command source. */
+        SOURCE
+    }
+
+    /**
+     * #157 test seam: the feedback-routing decision shared by success and failure. It is a pure
+     * function of the executor's presence and player-instance identity, so the logout / relogin /
+     * console branches can be pinned without a live MinecraftServer or ServerPlayer instance.
+     */
+    static FeedbackTarget feedbackTarget(
+            boolean hasExecutorUuid, boolean onlineExecutorPresent, boolean samePlayerInstance) {
+        if (hasExecutorUuid) {
+            if (!onlineExecutorPresent) {
+                return FeedbackTarget.NONE;
+            }
+            if (!samePlayerInstance) {
+                return FeedbackTarget.ONLINE_PLAYER;
+            }
+        }
+        return FeedbackTarget.SOURCE;
+    }
+
+    private static FeedbackTarget feedbackTarget(Job job, @Nullable ServerPlayer onlineExecutor) {
+        return feedbackTarget(job.executorUuid != null, onlineExecutor != null,
+                onlineExecutor != null && job.source != null && onlineExecutor == job.source.getPlayer());
+    }
+
     /** Re-resolves a player executor by UUID so a relogin during a long parse still gets feedback. */
     @Nullable
-    private static ServerPlayer resolveOnlineExecutor(Job job) {
-        if (job.executorUuid == null || job.server == null) {
+    static ServerPlayer resolveOnlineExecutor(Job job) {
+        if (job.executorUuid == null) {
+            return null;
+        }
+        // #157 test seam: a per-job lookup exercises the re-resolution branches without a live
+        // MinecraftServer. Production leaves this null and uses the real player list below.
+        if (job.onlineLookupForTest != null) {
+            return job.onlineLookupForTest.apply(job.executorUuid);
+        }
+        if (job.server == null) {
             return null;
         }
         return job.server.getPlayerList().getPlayer(job.executorUuid);
     }
 
-    private static void sendSuccess(Job job, @Nullable ServerPlayer onlineExecutor, Component message) {
-        if (job.executorUuid != null) {
-            if (onlineExecutor == null) {
-                ItemMilestoneLog.LOGGER.info(
-                        "[ItemMilestoneLog] importall {} finished, but executor {} is no longer online",
-                        job.fileName, job.executorUuid);
-                return;
-            }
-            if (job.source == null || onlineExecutor != job.source.getPlayer()) {
-                onlineExecutor.sendSystemMessage(message);
-                return;
-            }
-        }
-        if (job.source != null) {
+    static void sendSuccess(Job job, @Nullable ServerPlayer onlineExecutor, Component message) {
+        FeedbackTarget target = feedbackTarget(job, onlineExecutor);
+        if (target == FeedbackTarget.NONE) {
+            ItemMilestoneLog.LOGGER.info(
+                    "[ItemMilestoneLog] importall {} finished, but executor {} is no longer online",
+                    job.fileName, job.executorUuid);
+        } else if (target == FeedbackTarget.ONLINE_PLAYER) {
+            onlineExecutor.sendSystemMessage(message);
+        } else if (job.source != null) {
             job.source.sendSuccess(() -> message, false);
         }
     }
@@ -306,20 +342,21 @@ public final class MilestoneImportAll {
         }
     }
 
-    private static void sendFailure(Job job, Throwable failure) {
+    static void sendFailure(Job job, Throwable failure) {
         if (failure == null) {
             return;
         }
         try {
             ServerPlayer onlineExecutor = resolveOnlineExecutor(job);
-            if (job.executorUuid != null && onlineExecutor == null) {
+            FeedbackTarget target = feedbackTarget(job, onlineExecutor);
+            if (target == FeedbackTarget.NONE) {
                 ItemMilestoneLog.LOGGER.warn(
                         "[ItemMilestoneLog] importall {} failed, but executor {} is no longer online: {}",
                         job.fileName, job.executorUuid, failure.getMessage());
                 return;
             }
             Component message = failureMessage(onlineExecutor, job.source, job.fileName, failure);
-            if (onlineExecutor != null && (job.source == null || onlineExecutor != job.source.getPlayer())) {
+            if (target == FeedbackTarget.ONLINE_PLAYER) {
                 onlineExecutor.sendSystemMessage(message);
             } else if (job.source != null) {
                 job.source.sendFailure(message);
@@ -371,6 +408,9 @@ public final class MilestoneImportAll {
         final AtomicBoolean applied = new AtomicBoolean();
         final AtomicReference<MilestoneExport.MergePlan> plan = new AtomicReference<>();
         final AtomicReference<Throwable> failure = new AtomicReference<>();
+        /** #157 test seam; null in production (the real player list is used there). */
+        @Nullable
+        java.util.function.Function<UUID, ServerPlayer> onlineLookupForTest;
 
         Job(MinecraftServer server, Path file, String fileName, CommandSourceStack source) {
             this(server, file, fileName, source,
