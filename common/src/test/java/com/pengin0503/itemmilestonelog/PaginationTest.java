@@ -154,6 +154,20 @@ class PaginationTest {
                         "filter \"iron block\" kind counts"), 2));
         assertEquals("/milestonelog search \"iron block\" all 2",
                 Pagination.pageCommand(Pagination.searchCommandPrefix("iron block", "all"), 2));
+
+        // F-150-21/27/19: opt-in literals appear before page numbers; legacy links stay unchanged.
+        assertEquals("/milestonelog list compact 2",
+                Pagination.pageCommand(Pagination.listCommandPrefix(true, ""), 2));
+        assertEquals("/milestonelog list compact sort name 2",
+                Pagination.pageCommand(Pagination.listCommandPrefix(true, "sort name"), 2));
+        assertEquals("/milestonelog targets compact pending 2",
+                Pagination.pageCommand(Pagination.targetsCommandPrefix(Pagination.TargetFilter.PENDING,
+                        true, ""), 2));
+        assertEquals("/milestonelog targets near threshold 50 2",
+                Pagination.pageCommand(Pagination.targetsNearCommandPrefix(50), 2));
+        assertEquals("/milestonelog trends days 7 2",
+                Pagination.pageCommand(Pagination.trendsCommandPrefix(7), 2));
+        assertThrows(IllegalArgumentException.class, () -> Pagination.targetsNearCommandPrefix(0));
     }
 
     @Test

@@ -122,6 +122,14 @@ public final class Pagination {
         return withSuffix(ROOT_COMMAND + " list", filterSuffix);
     }
 
+    /**
+     * Opt-in {@code compact} page-link prefix (F-150-27). The leading literal goes directly after
+     * {@code list}; the legacy overloads stay byte-identical.
+     */
+    public static String listCommandPrefix(boolean compact, String filterSuffix) {
+        return withSuffix(ROOT_COMMAND + " list" + (compact ? " compact" : ""), filterSuffix);
+    }
+
     public static String targetsCommandPrefix(TargetFilter filter) {
         return targetsCommandPrefix(filter, "");
     }
@@ -138,6 +146,34 @@ public final class Pagination {
             case DONE -> ROOT_COMMAND + " targets done";
         };
         return withSuffix(base, filterSuffix);
+    }
+
+    /** Opt-in {@code compact} page-link prefix; the filter literal stays after the compact literal. */
+    public static String targetsCommandPrefix(TargetFilter filter, boolean compact, String filterSuffix) {
+        Objects.requireNonNull(filter, "filter");
+        String state = switch (filter) {
+            case ALL -> "";
+            case PENDING -> " pending";
+            case DONE -> " done";
+        };
+        String base = ROOT_COMMAND + " targets" + (compact ? " compact" : "") + state;
+        return withSuffix(base, filterSuffix);
+    }
+
+    /** Page-link prefix for {@code /milestonelog targets near threshold <n>} (F-150-19). */
+    public static String targetsNearCommandPrefix(int threshold) {
+        if (threshold < 1 || threshold > 99) {
+            throw new IllegalArgumentException("threshold must be between 1 and 99: " + threshold);
+        }
+        return ROOT_COMMAND + " targets near threshold " + threshold;
+    }
+
+    /** Page-link prefix for {@code /milestonelog trends days <n>} (F-150-35). */
+    public static String trendsCommandPrefix(int days) {
+        if (days <= 0) {
+            throw new IllegalArgumentException("days must be positive: " + days);
+        }
+        return ROOT_COMMAND + " trends days " + days;
     }
 
     /** Page-link prefix for the (PR-2) cross-command search, quoted so phrases stay one argument. */
