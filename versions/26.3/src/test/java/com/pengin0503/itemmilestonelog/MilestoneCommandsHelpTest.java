@@ -132,7 +132,7 @@ class MilestoneCommandsHelpTest {
         // No .requires: the command tree itself is open to every source; the handler requires a
         // player (the F29 help row is player-only).
         assertTrue(MilestoneCommands.canUseHelpEntry(dispatcher, null, entryByName("info")));
-        assertEquals(List.of("/milestonelog info <item> [<count>]", "/milestonelog info hand"),
+        assertEquals(List.of("/milestonelog info <item> [<count>|preview]", "/milestonelog info hand [preview]"),
                 MilestoneCommands.helpUsages(dispatcher, null, entryByName("info")));
     }
 
@@ -791,8 +791,14 @@ class MilestoneCommandsHelpTest {
                 actualHelpKeys.add(key);
             }
         }
+        // F-150-21/27/32 define auxiliary opt-in descriptions that are not top-level ENTRIES.
+        Set<String> auxiliaryHelpKeys = Set.of(
+                "message.itemmilestonelog.help.compact",
+                "message.itemmilestonelog.help.info_preview",
+                "message.itemmilestonelog.help.list_sort");
+        actualHelpKeys.removeAll(auxiliaryHelpKeys);
         assertEquals(expectedHelpKeys, actualHelpKeys,
-                "en_us.json help.* keys must exactly match CommandHelp.ENTRIES");
+                "en_us.json help.* keys must match CommandHelp.ENTRIES plus PR-1 auxiliary keys");
     }
 
     @Test

@@ -31,6 +31,7 @@ class CommandHelpTest {
                 "firsts", "info", "top", "presettop", "toptag", "recent", "stats", "statstag",
                 "whohas", "whohastag", "lookup",
                 "privacy", "mutebroadcast", "muteprogress", "discordoptout",
+                "settings", "randomtarget", "trends", "recap",
                 "export", "exporthtml", "exportcsv", "import",
                 "exportall", "exporthtmlall", "exportcsvall", "importall",
                 "admin", "prunedata", "renameitem", "renametag", "discordtest", "help"

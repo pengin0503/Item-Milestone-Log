@@ -4,6 +4,7 @@ import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.ArgumentType;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.builder.ArgumentBuilder;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.builder.RequiredArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
@@ -36,6 +37,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.ZoneId;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -285,6 +287,17 @@ public final class MilestoneCommands {
         // F-150-3 (N100): vanilla suggestion provider for the four search scopes.
         SuggestionProvider<CommandSourceStack> scopeSuggestions = (ctx, builder) ->
                 SharedSuggestionProvider.suggest(List.of("all", "targets", "records", "presets"), builder);
+        // PR-1 (N57/N58/N93/N159/N160): fixed vanilla suggestion sets for the opt-in arguments.
+        SuggestionProvider<CommandSourceStack> listSortSuggestions = (ctx, builder) ->
+                SharedSuggestionProvider.suggest(List.of("recent", "name", "day"), builder);
+        SuggestionProvider<CommandSourceStack> settingToggleSuggestions = (ctx, builder) ->
+                SharedSuggestionProvider.suggest(List.of("broadcast", "progress", "discord", "privacy"), builder);
+        SuggestionProvider<CommandSourceStack> randomTargetKindSuggestions = (ctx, builder) ->
+                SharedSuggestionProvider.suggest(List.of("item", "tag", "both"), builder);
+        SuggestionProvider<CommandSourceStack> trendDaysSuggestions = (ctx, builder) ->
+                SharedSuggestionProvider.suggest(List.of("7", "30", "90"), builder);
+        SuggestionProvider<CommandSourceStack> recapKindSuggestions = (ctx, builder) ->
+                SharedSuggestionProvider.suggest(List.of("return", "daily", "legacy"), builder);
         // F-150-6 (N05): vanilla suggestion provider for the three unclaimed scopes (D-150-21).
         SuggestionProvider<CommandSourceStack> unclaimedScopeSuggestions = (ctx, builder) ->
                 SharedSuggestionProvider.suggest(List.of("targets", "presets", "all"), builder);
@@ -641,37 +654,8 @@ public final class MilestoneCommands {
                                         .executes(ctx -> remove(ctx, IdentifierArgument.getId(ctx, "item").toString(),
                                                 IntegerArgumentType.getInteger(ctx, "count"))))))
                 .then(literal("removeall").executes(MilestoneCommands::removeAll))
-                .then(literal("targets")
-                        .executes(ctx -> targets(ctx, Pagination.TargetFilter.ALL, null))
-                        .then(literal("pending")
-                                .executes(ctx -> targets(ctx, Pagination.TargetFilter.PENDING, null))
-                                .then(argument("page", IntegerArgumentType.integer(1))
-                                        .executes(ctx -> targets(ctx, Pagination.TargetFilter.PENDING,
-                                                IntegerArgumentType.getInteger(ctx, "page"))))
-                                .then(filterBranch(Pagination.TargetFilter.PENDING, kindSuggestions))
-                                .then(kindBranch(Pagination.TargetFilter.PENDING, kindSuggestions)))
-                        .then(literal("done")
-                                .executes(ctx -> targets(ctx, Pagination.TargetFilter.DONE, null))
-                                .then(argument("page", IntegerArgumentType.integer(1))
-                                        .executes(ctx -> targets(ctx, Pagination.TargetFilter.DONE,
-                                                IntegerArgumentType.getInteger(ctx, "page"))))
-                                .then(filterBranch(Pagination.TargetFilter.DONE, kindSuggestions))
-                                .then(kindBranch(Pagination.TargetFilter.DONE, kindSuggestions)))
-                        .then(argument("page", IntegerArgumentType.integer(1))
-                                .executes(ctx -> targets(ctx, Pagination.TargetFilter.ALL,
-                                        IntegerArgumentType.getInteger(ctx, "page"))))
-                        .then(filterBranch(Pagination.TargetFilter.ALL, kindSuggestions))
-                        .then(kindBranch(Pagination.TargetFilter.ALL, kindSuggestions)))
-                .then(literal("list")
-                        .executes(ctx -> list(ctx, null))
-                        .then(argument("page", IntegerArgumentType.integer(1))
-                                .executes(ctx -> list(ctx, IntegerArgumentType.getInteger(ctx, "page"))))
-                        .then(literal("filter")
-                                .then(argument("query", StringArgumentType.string())
-                                        .executes(ctx -> list(ctx, null, StringArgumentType.getString(ctx, "query")))
-                                        .then(argument("page", IntegerArgumentType.integer(1))
-                                                .executes(ctx -> list(ctx, IntegerArgumentType.getInteger(ctx, "page"),
-                                                        StringArgumentType.getString(ctx, "query")))))))
+                .then(targetsBranch(kindSuggestions))
+                .then(listBranch(listSortSuggestions))
                 .then(searchBranch(scopeSuggestions))
                 .then(literal("preset")
                         .then(literal("list").executes(MilestoneCommands::presetList))
@@ -784,13 +768,20 @@ public final class MilestoneCommands {
                 .then(literal("info")
                         .then(argument("item", IdentifierArgument.id())
                                 .suggests(infoItemSuggestions)
-                                .executes(ctx -> infoItem(ctx, IdentifierArgument.getId(ctx, "item").toString(), TargetKey.MIN_COUNT))
+                                .executes(ctx -> infoItem(ctx, IdentifierArgument.getId(ctx, "item").toString(), TargetKey.MIN_COUNT, false))
                                 .then(argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
                                         .suggests(infoItemCountSuggestions)
                                         .executes(ctx -> infoItem(ctx, IdentifierArgument.getId(ctx, "item").toString(),
-                                                IntegerArgumentType.getInteger(ctx, "count")))))
+                                                IntegerArgumentType.getInteger(ctx, "count"), false))
+                                        .then(literal("preview")
+                                                .executes(ctx -> infoItem(ctx, IdentifierArgument.getId(ctx, "item").toString(),
+                                                        IntegerArgumentType.getInteger(ctx, "count"), true))))
+                                .then(literal("preview")
+                                        .executes(ctx -> infoItem(ctx, IdentifierArgument.getId(ctx, "item").toString(),
+                                                TargetKey.MIN_COUNT, true))))
                         .then(literal("hand")
-                                .executes(MilestoneCommands::infoHand)))
+                                .executes(ctx -> infoHand(ctx, false))
+                                .then(literal("preview").executes(ctx -> infoHand(ctx, true)))))
                 .then(literal("export").executes(MilestoneCommands::exportSelf))
                 .then(literal("exporthtml").executes(MilestoneCommands::exportHtmlSelf))
                 .then(literal("exportcsv").executes(MilestoneCommands::exportCsvSelf))
@@ -983,6 +974,42 @@ public final class MilestoneCommands {
                                                                 tagArg(ctx), IntegerArgumentType.getInteger(ctx, "count"))))))
                                 .then(literal("resetall").executes(ctx -> adminResetAll(ctx, StringArgumentType.getString(ctx, "player"))))
                                 .then(literal("purge").executes(ctx -> adminPurge(ctx, StringArgumentType.getString(ctx, "player"))))))
+                .then(literal("settings")
+                        .executes(MilestoneCommands::settings)
+                        .then(argument("toggle", StringArgumentType.word())
+                                .suggests(settingToggleSuggestions)
+                                .then(literal("on").executes(ctx -> settingsChange(ctx, true)))
+                                .then(literal("off").executes(ctx -> settingsChange(ctx, false)))))
+                .then(literal("randomtarget")
+                        .executes(ctx -> randomTarget(ctx, null))
+                        .then(literal("kind")
+                                .then(argument("kind", StringArgumentType.word())
+                                        .suggests(randomTargetKindSuggestions)
+                                        .executes(ctx -> randomTarget(ctx,
+                                                StringArgumentType.getString(ctx, "kind"))))))
+                .then(literal("trends")
+                        .executes(ctx -> trends(ctx, null, null))
+                        .then(literal("days")
+                                .then(argument("days", StringArgumentType.word())
+                                        .suggests(trendDaysSuggestions)
+                                        .executes(ctx -> trends(ctx,
+                                                StringArgumentType.getString(ctx, "days"), null))
+                                        .then(literal("page")
+                                                .then(argument("page", IntegerArgumentType.integer(1))
+                                                        .executes(ctx -> trends(ctx,
+                                                                StringArgumentType.getString(ctx, "days"),
+                                                                IntegerArgumentType.getInteger(ctx, "page")))))))
+                        .then(literal("page")
+                                .then(argument("page", IntegerArgumentType.integer(1))
+                                        .executes(ctx -> trends(ctx, null,
+                                                IntegerArgumentType.getInteger(ctx, "page"))))))
+                .then(literal("recap")
+                        .executes(ctx -> recap(ctx, null))
+                        .then(literal("kind")
+                                .then(argument("kind", StringArgumentType.word())
+                                        .suggests(recapKindSuggestions)
+                                        .executes(ctx -> recap(ctx,
+                                                StringArgumentType.getString(ctx, "kind"))))))
                 .then(literal("help")
                         .executes(ctx -> helpList(ctx, dispatcher))
                         .then(argument("subcommand", StringArgumentType.word())
@@ -1173,38 +1200,152 @@ public final class MilestoneCommands {
         return new FilterCriteria(tokens, kind, rawQuery, kindArg);
     }
 
+    // ------------------------------------------------------------- PR-1 opt-in display branches
+
+    /** F-150-19/27: the existing targets tree plus a leading {@code compact} and a {@code near} child. */
+    private static LiteralArgumentBuilder<CommandSourceStack> targetsBranch(
+            SuggestionProvider<CommandSourceStack> kindSuggestions) {
+        LiteralArgumentBuilder<CommandSourceStack> node = literal("targets");
+        attachTargetsChildren(node, kindSuggestions, false);
+        LiteralArgumentBuilder<CommandSourceStack> compact = literal("compact");
+        attachTargetsChildren(compact, kindSuggestions, true);
+        node.then(compact);
+        node.then(literal("near")
+                .executes(ctx -> targetsNear(ctx, CommandAnalysisModel.DEFAULT_NEAR_THRESHOLD, null))
+                .then(literal("threshold")
+                        .then(argument("threshold", IntegerArgumentType.integer(1, 99))
+                                .executes(ctx -> targetsNear(ctx,
+                                        IntegerArgumentType.getInteger(ctx, "threshold"), null))
+                                .then(argument("page", IntegerArgumentType.integer(1))
+                                        .executes(ctx -> targetsNear(ctx,
+                                                IntegerArgumentType.getInteger(ctx, "threshold"),
+                                                IntegerArgumentType.getInteger(ctx, "page"))))))
+                .then(argument("page", IntegerArgumentType.integer(1))
+                        .executes(ctx -> targetsNear(ctx, CommandAnalysisModel.DEFAULT_NEAR_THRESHOLD,
+                                IntegerArgumentType.getInteger(ctx, "page")))));
+        return node;
+    }
+
+    private static void attachTargetsChildren(LiteralArgumentBuilder<CommandSourceStack> node,
+                                              SuggestionProvider<CommandSourceStack> kindSuggestions,
+                                              boolean compact) {
+        node.executes(ctx -> targets(ctx, Pagination.TargetFilter.ALL, null, compact));
+        node.then(literal("pending")
+                .executes(ctx -> targets(ctx, Pagination.TargetFilter.PENDING, null, compact))
+                .then(argument("page", IntegerArgumentType.integer(1))
+                        .executes(ctx -> targets(ctx, Pagination.TargetFilter.PENDING,
+                                IntegerArgumentType.getInteger(ctx, "page"), compact)))
+                .then(filterBranch(Pagination.TargetFilter.PENDING, kindSuggestions, compact))
+                .then(kindBranch(Pagination.TargetFilter.PENDING, kindSuggestions, compact)));
+        node.then(literal("done")
+                .executes(ctx -> targets(ctx, Pagination.TargetFilter.DONE, null, compact))
+                .then(argument("page", IntegerArgumentType.integer(1))
+                        .executes(ctx -> targets(ctx, Pagination.TargetFilter.DONE,
+                                IntegerArgumentType.getInteger(ctx, "page"), compact)))
+                .then(filterBranch(Pagination.TargetFilter.DONE, kindSuggestions, compact))
+                .then(kindBranch(Pagination.TargetFilter.DONE, kindSuggestions, compact)));
+        node.then(argument("page", IntegerArgumentType.integer(1))
+                .executes(ctx -> targets(ctx, Pagination.TargetFilter.ALL,
+                        IntegerArgumentType.getInteger(ctx, "page"), compact)));
+        node.then(filterBranch(Pagination.TargetFilter.ALL, kindSuggestions, compact));
+        node.then(kindBranch(Pagination.TargetFilter.ALL, kindSuggestions, compact));
+    }
+
+    /** F-150-21/27: {@code sort} may appear before or after {@code filter}; both work under compact. */
+    private static LiteralArgumentBuilder<CommandSourceStack> listBranch(
+            SuggestionProvider<CommandSourceStack> sortSuggestions) {
+        LiteralArgumentBuilder<CommandSourceStack> node = literal("list");
+        attachListChildren(node, false, false, false, sortSuggestions);
+        LiteralArgumentBuilder<CommandSourceStack> compact = literal("compact");
+        attachListChildren(compact, true, false, false, sortSuggestions);
+        node.then(compact);
+        return node;
+    }
+
+    private static void attachListChildren(ArgumentBuilder<CommandSourceStack, ?> node,
+                                           boolean compact, boolean sortAlready, boolean queryAlready,
+                                           SuggestionProvider<CommandSourceStack> sortSuggestions) {
+        node.executes(ctx -> list(ctx, null,
+                queryAlready ? StringArgumentType.getString(ctx, "query") : null,
+                sortAlready ? StringArgumentType.getString(ctx, "sort") : null, compact));
+        node.then(argument("page", IntegerArgumentType.integer(1))
+                .executes(ctx -> list(ctx, IntegerArgumentType.getInteger(ctx, "page"),
+                        queryAlready ? StringArgumentType.getString(ctx, "query") : null,
+                        sortAlready ? StringArgumentType.getString(ctx, "sort") : null, compact)));
+        if (!sortAlready) {
+            node.then(literal("sort").then(listSortNode(compact, queryAlready, sortSuggestions)));
+        }
+        if (!queryAlready) {
+            node.then(literal("filter").then(listQueryNode(compact, sortAlready, sortSuggestions)));
+        }
+    }
+
+    private static RequiredArgumentBuilder<CommandSourceStack, String> listSortNode(
+            boolean compact, boolean queryAlready, SuggestionProvider<CommandSourceStack> sortSuggestions) {
+        RequiredArgumentBuilder<CommandSourceStack, String> sort = argument("sort", StringArgumentType.word())
+                .suggests(sortSuggestions)
+                .executes(ctx -> list(ctx, null,
+                        queryAlready ? StringArgumentType.getString(ctx, "query") : null,
+                        StringArgumentType.getString(ctx, "sort"), compact));
+        sort.then(argument("page", IntegerArgumentType.integer(1))
+                .executes(ctx -> list(ctx, IntegerArgumentType.getInteger(ctx, "page"),
+                        queryAlready ? StringArgumentType.getString(ctx, "query") : null,
+                        StringArgumentType.getString(ctx, "sort"), compact)));
+        if (!queryAlready) {
+            sort.then(literal("filter").then(listQueryNode(compact, true, sortSuggestions)));
+        }
+        return sort;
+    }
+
+    private static RequiredArgumentBuilder<CommandSourceStack, String> listQueryNode(
+            boolean compact, boolean sortAlready, SuggestionProvider<CommandSourceStack> sortSuggestions) {
+        RequiredArgumentBuilder<CommandSourceStack, String> query = argument("query", StringArgumentType.string())
+                .executes(ctx -> list(ctx, null, StringArgumentType.getString(ctx, "query"),
+                        sortAlready ? StringArgumentType.getString(ctx, "sort") : null, compact));
+        query.then(argument("page", IntegerArgumentType.integer(1))
+                .executes(ctx -> list(ctx, IntegerArgumentType.getInteger(ctx, "page"),
+                        StringArgumentType.getString(ctx, "query"),
+                        sortAlready ? StringArgumentType.getString(ctx, "sort") : null, compact)));
+        if (!sortAlready) {
+            query.then(literal("sort").then(listSortNode(compact, true, sortSuggestions)));
+        }
+        return query;
+    }
+
     /** Fresh {@code filter <query> [kind <kind>] [<page>]} branch for one record-state filter. */
     private static LiteralArgumentBuilder<CommandSourceStack> filterBranch(
-            Pagination.TargetFilter filter, SuggestionProvider<CommandSourceStack> kindSuggestions) {
+            Pagination.TargetFilter filter, SuggestionProvider<CommandSourceStack> kindSuggestions,
+            boolean compact) {
         return literal("filter")
                 .then(argument("query", StringArgumentType.string())
-                        .executes(ctx -> targets(ctx, filter, null, StringArgumentType.getString(ctx, "query"), null))
+                        .executes(ctx -> targets(ctx, filter, null, StringArgumentType.getString(ctx, "query"), null, compact))
                         .then(argument("page", IntegerArgumentType.integer(1))
                                 .executes(ctx -> targets(ctx, filter, IntegerArgumentType.getInteger(ctx, "page"),
-                                        StringArgumentType.getString(ctx, "query"), null)))
+                                        StringArgumentType.getString(ctx, "query"), null, compact)))
                         .then(literal("kind")
                                 .then(argument("kind", StringArgumentType.word())
                                         .suggests(kindSuggestions)
                                         .executes(ctx -> targets(ctx, filter, null,
                                                 StringArgumentType.getString(ctx, "query"),
-                                                StringArgumentType.getString(ctx, "kind")))
+                                                StringArgumentType.getString(ctx, "kind"), compact))
                                         .then(argument("page", IntegerArgumentType.integer(1))
                                                 .executes(ctx -> targets(ctx, filter,
                                                         IntegerArgumentType.getInteger(ctx, "page"),
                                                         StringArgumentType.getString(ctx, "query"),
-                                                        StringArgumentType.getString(ctx, "kind")))))));
+                                                        StringArgumentType.getString(ctx, "kind"), compact))))));
     }
 
     /** Fresh standalone {@code kind <kind> [<page>]} branch for one record-state filter. */
     private static LiteralArgumentBuilder<CommandSourceStack> kindBranch(
-            Pagination.TargetFilter filter, SuggestionProvider<CommandSourceStack> kindSuggestions) {
+            Pagination.TargetFilter filter, SuggestionProvider<CommandSourceStack> kindSuggestions,
+            boolean compact) {
         return literal("kind")
                 .then(argument("kind", StringArgumentType.word())
                         .suggests(kindSuggestions)
-                        .executes(ctx -> targets(ctx, filter, null, null, StringArgumentType.getString(ctx, "kind")))
+                        .executes(ctx -> targets(ctx, filter, null, null, StringArgumentType.getString(ctx, "kind"), compact))
                         .then(argument("page", IntegerArgumentType.integer(1))
                                 .executes(ctx -> targets(ctx, filter, IntegerArgumentType.getInteger(ctx, "page"),
-                                        null, StringArgumentType.getString(ctx, "kind")))));
+                                        null, StringArgumentType.getString(ctx, "kind"), compact))));
     }
 
     /** F-150-3: additive {@code search <query> [scope <scope>] [<page>]} branch. */
@@ -1230,7 +1371,14 @@ public final class MilestoneCommands {
     private static int targets(CommandContext<CommandSourceStack> ctx,
                                Pagination.TargetFilter filter,
                                @Nullable Integer page) throws CommandSyntaxException {
-        return targets(ctx, filter, page, null, null);
+        return targets(ctx, filter, page, false);
+    }
+
+    private static int targets(CommandContext<CommandSourceStack> ctx,
+                               Pagination.TargetFilter filter,
+                               @Nullable Integer page,
+                               boolean compact) throws CommandSyntaxException {
+        return targets(ctx, filter, page, null, null, compact);
     }
 
     private static int targets(CommandContext<CommandSourceStack> ctx,
@@ -1238,6 +1386,15 @@ public final class MilestoneCommands {
                                @Nullable Integer page,
                                @Nullable String rawQuery,
                                @Nullable String kindArg) throws CommandSyntaxException {
+        return targets(ctx, filter, page, rawQuery, kindArg, false);
+    }
+
+    private static int targets(CommandContext<CommandSourceStack> ctx,
+                               Pagination.TargetFilter filter,
+                               @Nullable Integer page,
+                               @Nullable String rawQuery,
+                               @Nullable String kindArg,
+                               boolean compact) throws CommandSyntaxException {
         ServerPlayer player = player(ctx);
         FilterCriteria criteria = parseCriteria(ctx, player, rawQuery, kindArg);
         if (criteria == null) {
@@ -1246,9 +1403,10 @@ public final class MilestoneCommands {
         MilestoneData.PlayerData pd = dataOrNull(player);
         Set<TargetKey> targets = Tracker.effectiveTargets(pd);
         if (targets.isEmpty()) {
-            return send(ctx, ServerLang.tr(player, criteria.active()
-                    ? "message.itemmilestonelog.targets_filter_none"
-                    : "message.itemmilestonelog.no_targets"));
+            String emptyKey = compact ? "message.itemmilestonelog.compact_empty"
+                    : criteria.active() ? "message.itemmilestonelog.targets_filter_none"
+                    : "message.itemmilestonelog.no_targets";
+            return send(ctx, ServerLang.tr(player, emptyKey));
         }
         Map<TargetKey, MilestoneRecord> records = pd != null ? pd.records : Map.of();
         List<TargetKey> sorted = new ArrayList<>();
@@ -1267,6 +1425,9 @@ public final class MilestoneCommands {
                     criteria.tokens(), criteria.kind(), criteria.defaults()));
         }
         if (sorted.isEmpty()) {
+            if (compact) {
+                return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.compact_empty"));
+            }
             if (criteria.active()) {
                 return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.targets_filter_none"));
             }
@@ -1276,6 +1437,12 @@ public final class MilestoneCommands {
             return send(ctx, ServerLang.tr(player, emptyKey));
         }
         sorted.sort(TargetKey::compareTo);
+        if (compact) {
+            // F-150-27: only the shared dedupe/order helper is used; row rendering stays here.
+            sorted = CommandAnalysisModel.compactKeys(sorted.stream()
+                    .map(k -> new CommandAnalysisModel.TargetRef(k.itemId(), k.count())).toList()).stream()
+                    .map(k -> new TargetKey(k.itemId(), k.count())).toList();
+        }
 
         Pagination.PageSlice<TargetKey> slice = null;
         List<TargetKey> displayed;
@@ -1293,25 +1460,35 @@ public final class MilestoneCommands {
         Set<String> carried = Tracker.carriedFromCreative(pd);
         TagIndex tagIndex = TagTargets.index();
         Set<String> progressItemIds = new LinkedHashSet<>();
-        for (TargetKey key : displayed) {
-            // Tag totals already exclude creative-carried members (F8b), so tags are always counted.
-            if (key.count() > TargetKey.MIN_COUNT && !records.containsKey(key)
-                    && (key.isTag() || !carried.contains(key.itemId()))) {
-                progressItemIds.add(key.itemId());
+        if (!compact) {
+            for (TargetKey key : displayed) {
+                // Tag totals already exclude creative-carried members (F8b), so tags are always counted.
+                if (key.count() > TargetKey.MIN_COUNT && !records.containsKey(key)
+                        && (key.isTag() || !carried.contains(key.itemId()))) {
+                    progressItemIds.add(key.itemId());
+                }
             }
         }
         Map<String, Integer> possessionCounts = progressItemIds.isEmpty()
                 ? Map.of()
                 : Tracker.countItemsInPossession(player, progressItemIds);
 
-        String headerKey = switch (filter) {
-            case ALL -> "message.itemmilestonelog.targets_header";
-            case PENDING -> "message.itemmilestonelog.targets_pending_header";
-            case DONE -> "message.itemmilestonelog.targets_done_header";
-        };
-        int headerCount = sorted.size();
-        ctx.getSource().sendSuccess(() -> ServerLang.tr(player, headerKey, headerCount), false);
+        if (!compact) {
+            String headerKey = switch (filter) {
+                case ALL -> "message.itemmilestonelog.targets_header";
+                case PENDING -> "message.itemmilestonelog.targets_pending_header";
+                case DONE -> "message.itemmilestonelog.targets_done_header";
+            };
+            int headerCount = sorted.size();
+            ctx.getSource().sendSuccess(() -> ServerLang.tr(player, headerKey, headerCount), false);
+        }
         for (TargetKey key : displayed) {
+            if (compact) {
+                Component line = ServerLang.tr(player, "message.itemmilestonelog.compact_entry",
+                        Component.literal(key.formatDisplayId()));
+                ctx.getSource().sendSuccess(() -> line, false);
+                continue;
+            }
             MilestoneRecord rec = records.get(key);
             Component line;
             if (rec != null) {
@@ -1334,26 +1511,107 @@ public final class MilestoneCommands {
             ctx.getSource().sendSuccess(() -> line, false);
         }
         if (slice != null) {
-            sendPageFooter(ctx.getSource(), slice, Pagination.targetsCommandPrefix(filter, criteria.targetSuffix()));
+            sendPageFooter(ctx.getSource(), slice,
+                    Pagination.targetsCommandPrefix(filter, compact, criteria.targetSuffix()));
         }
         return displayed.size();
     }
 
+    /** F-150-19: one possession query for all candidates, then the shared near-complete analysis. */
+    private static int targetsNear(CommandContext<CommandSourceStack> ctx, int threshold,
+                                   @Nullable Integer page) throws CommandSyntaxException {
+        ServerPlayer player = player(ctx);
+        if (!CommandAnalysisModel.isValidNearThreshold(threshold)) {
+            return fail(ctx, ServerLang.tr(player,
+                    "message.itemmilestonelog.targets_near_invalid_threshold", 1, 99));
+        }
+        MilestoneData.PlayerData pd = dataOrNull(player);
+        Set<TargetKey> effective = Tracker.effectiveTargets(pd);
+        Map<TargetKey, MilestoneRecord> records = pd != null ? pd.records : Map.of();
+        Set<String> carried = Tracker.carriedFromCreative(pd);
+        Set<String> queryIds = new LinkedHashSet<>();
+        for (TargetKey key : effective) {
+            if (records.containsKey(key) || key.count() <= TargetKey.MIN_COUNT) {
+                continue;
+            }
+            if (!key.isTag() && carried.contains(key.itemId())) {
+                continue;
+            }
+            queryIds.add(key.itemId());
+        }
+        Map<String, Integer> possession = queryIds.isEmpty()
+                ? Map.of()
+                : Tracker.countItemsInPossession(player, queryIds);
+        List<CommandAnalysisModel.NearCandidate> candidates = new ArrayList<>();
+        for (TargetKey key : effective) {
+            if (records.containsKey(key) || key.count() <= TargetKey.MIN_COUNT) {
+                continue;
+            }
+            if (!key.isTag() && carried.contains(key.itemId())) {
+                continue;
+            }
+            candidates.add(new CommandAnalysisModel.NearCandidate(key.itemId(), key.count(),
+                    possession.getOrDefault(key.itemId(), 0), key.isTag()));
+        }
+        CommandAnalysisModel.NearResult result = CommandAnalysisModel.nearTargets(candidates, threshold);
+        ctx.getSource().sendSuccess(() -> ServerLang.tr(player,
+                "message.itemmilestonelog.targets_near_header",
+                result.entries().size() + result.moreCount()), false);
+        if (result.entries().isEmpty()) {
+            return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.targets_near_none"));
+        }
+        List<CommandAnalysisModel.NearEntry> rows = result.entries();
+        Pagination.PageSlice<CommandAnalysisModel.NearEntry> slice = null;
+        if (page != null) {
+            slice = Pagination.slice(rows, page);
+            if (slice.isOutOfRange()) {
+                return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.page_out_of_range",
+                        page, slice.totalPages()));
+            }
+            rows = slice.items();
+        }
+        for (CommandAnalysisModel.NearEntry row : rows) {
+            Component line = ServerLang.tr(player, "message.itemmilestonelog.targets_near_entry",
+                    MilestoneService.targetDisplayName(new TargetKey(row.itemId(), row.count())),
+                    row.current(), row.count(), row.progressPercent());
+            ctx.getSource().sendSuccess(() -> line, false);
+        }
+        if (page == null && result.moreCount() > 0) {
+            ctx.getSource().sendSuccess(() -> ServerLang.tr(player,
+                    "message.itemmilestonelog.targets_near_more", result.moreCount()), false);
+        }
+        if (slice != null) {
+            sendPageFooter(ctx.getSource(), slice, Pagination.targetsNearCommandPrefix(threshold));
+        }
+        return rows.size();
+    }
+
     private static int list(CommandContext<CommandSourceStack> ctx, @Nullable Integer page) throws CommandSyntaxException {
-        return list(ctx, page, null);
+        return list(ctx, page, null, null, false);
     }
 
     private static int list(CommandContext<CommandSourceStack> ctx, @Nullable Integer page,
                             @Nullable String rawQuery) throws CommandSyntaxException {
+        return list(ctx, page, rawQuery, null, false);
+    }
+
+    private static int list(CommandContext<CommandSourceStack> ctx, @Nullable Integer page,
+                            @Nullable String rawQuery, @Nullable String rawSort,
+                            boolean compact) throws CommandSyntaxException {
         ServerPlayer player = player(ctx);
         FilterCriteria criteria = parseCriteria(ctx, player, rawQuery, null);
         if (criteria == null) {
             return 0;
         }
+        CommandAnalysisModel.RecordSort sort = CommandAnalysisModel.RecordSort.parse(rawSort);
+        if (rawSort != null && sort == null) {
+            return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.list_invalid_sort", rawSort));
+        }
         MilestoneData.PlayerData pd = dataOrNull(player);
         if (pd == null || pd.records.isEmpty()) {
-            return send(ctx, ServerLang.tr(player, criteria.active()
-                    ? "message.itemmilestonelog.list_filter_none"
+            return send(ctx, ServerLang.tr(player, compact
+                    ? "message.itemmilestonelog.compact_empty"
+                    : criteria.active() ? "message.itemmilestonelog.list_filter_none"
                     : "message.itemmilestonelog.no_records"));
         }
         List<Map.Entry<TargetKey, MilestoneRecord>> entries = new ArrayList<>(pd.records.entrySet());
@@ -1367,7 +1625,32 @@ public final class MilestoneCommands {
                     criteria.tokens(), null, Set.of()));
         }
         if (entries.isEmpty()) {
-            return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.list_filter_none"));
+            return send(ctx, ServerLang.tr(player, compact
+                    ? "message.itemmilestonelog.compact_empty"
+                    : "message.itemmilestonelog.list_filter_none"));
+        }
+        // F-150-21: re-sort the filtered list only for explicit non-recent sort keys.
+        if (sort == CommandAnalysisModel.RecordSort.NAME || sort == CommandAnalysisModel.RecordSort.DAY) {
+            Map<TargetKey, MilestoneRecord> byKey = new HashMap<>();
+            for (Map.Entry<TargetKey, MilestoneRecord> e : entries) {
+                byKey.put(e.getKey(), e.getValue());
+            }
+            List<CommandAnalysisModel.RecordValue> values = new ArrayList<>();
+            for (Map.Entry<TargetKey, MilestoneRecord> e : entries) {
+                MilestoneRecord r = e.getValue();
+                values.add(new CommandAnalysisModel.RecordValue(e.getKey().itemId(), e.getKey().count(),
+                        r.playTicks(), r.day(), r.epochMillis()));
+            }
+            entries = CommandAnalysisModel.sortRecords(values, sort).stream()
+                    .map(v -> Map.entry(new TargetKey(v.itemId(), v.count()),
+                            byKey.get(new TargetKey(v.itemId(), v.count()))))
+                    .toList();
+        }
+        if (compact) {
+            entries = CommandAnalysisModel.compactKeys(entries.stream()
+                    .map(e -> new CommandAnalysisModel.TargetRef(e.getKey().itemId(), e.getKey().count())).toList())
+                    .stream().map(k -> Map.entry(new TargetKey(k.itemId(), k.count()),
+                            pd.records.get(new TargetKey(k.itemId(), k.count())))).toList();
         }
 
         Pagination.PageSlice<Map.Entry<TargetKey, MilestoneRecord>> slice = null;
@@ -1383,19 +1666,262 @@ public final class MilestoneCommands {
             displayed = entries;
         }
 
-        int headerCount = entries.size();
-        ctx.getSource().sendSuccess(() -> ServerLang.tr(player, "message.itemmilestonelog.records_header", headerCount), false);
+        if (!compact) {
+            int headerCount = entries.size();
+            ctx.getSource().sendSuccess(() -> ServerLang.tr(player,
+                    "message.itemmilestonelog.records_header", headerCount), false);
+        }
         ZoneId zone = Config.displayTimeZone();
         for (var e : displayed) {
-            Component line = ServerLang.tr(player, "message.itemmilestonelog.target_done",
-                    MilestoneService.targetDisplayName(e.getKey()), Playtime.formatRecordComponent(player, e.getValue(), zone));
+            Component line = compact
+                    ? ServerLang.tr(player, "message.itemmilestonelog.compact_entry",
+                            Component.literal(e.getKey().formatDisplayId()))
+                    : ServerLang.tr(player, "message.itemmilestonelog.target_done",
+                            MilestoneService.targetDisplayName(e.getKey()),
+                            Playtime.formatRecordComponent(player, e.getValue(), zone));
             ctx.getSource().sendSuccess(() -> line, false);
         }
         if (slice != null) {
-            sendPageFooter(ctx.getSource(), slice, Pagination.listCommandPrefix(criteria.listSuffix()));
+            String suffix = (rawSort == null ? "" : "sort " + rawSort)
+                    + (criteria.listSuffix().isEmpty() ? "" :
+                    (rawSort == null ? "" : " ") + criteria.listSuffix());
+            sendPageFooter(ctx.getSource(), slice, Pagination.listCommandPrefix(compact, suffix));
         }
         return displayed.size();
     }
+
+    // --------------------------------------------------------- PR-1 F-150-22 settings
+
+    /** Read-only view of the four existing personal flags; never writes anything. */
+    private static int settings(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+        ServerPlayer player = player(ctx);
+        MilestoneData.PlayerData pd = MilestoneData.get(player.level().getServer()).player(player.getUUID());
+        List<CommandAnalysisModel.SettingLine> lines = CommandAnalysisModel.settingsSnapshot(
+                pd.muteBroadcasts, pd.muteProgressAlerts, pd.excludeFromDiscord, pd.hideFromLookup);
+        ctx.getSource().sendSuccess(() -> ServerLang.tr(player,
+                "message.itemmilestonelog.settings_header"), false);
+        for (CommandAnalysisModel.SettingLine line : lines) {
+            Component state = ServerLang.tr(player, line.enabled()
+                    ? "message.itemmilestonelog.settings_on"
+                    : "message.itemmilestonelog.settings_off");
+            ctx.getSource().sendSuccess(() -> ServerLang.tr(player,
+                    "message.itemmilestonelog.settings_line", Component.literal(line.name()), state), false);
+        }
+        return lines.size() + 1;
+    }
+
+    /** Sets one existing flag through the legacy handlers; an already-equal value is a no-op. */
+    private static int settingsChange(CommandContext<CommandSourceStack> ctx, boolean desired)
+            throws CommandSyntaxException {
+        ServerPlayer player = player(ctx);
+        String raw = StringArgumentType.getString(ctx, "toggle");
+        CommandAnalysisModel.Toggle toggle = CommandAnalysisModel.Toggle.parse(raw);
+        if (toggle == null) {
+            return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.settings_unknown", raw));
+        }
+        if (!CommandAnalysisModel.settingsToggleAllowed(toggle, Config.ALLOW_DISCORD_OPT_OUT.get())) {
+            return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.feature_disabled"));
+        }
+        MilestoneData.PlayerData pd = MilestoneData.get(player.level().getServer()).player(player.getUUID());
+        return switch (toggle) {
+            case BROADCAST -> pd.muteBroadcasts == desired
+                    ? send(ctx, ServerLang.tr(player, desired
+                            ? "message.itemmilestonelog.mutebroadcast_on"
+                            : "message.itemmilestonelog.mutebroadcast_off"))
+                    : muteBroadcast(ctx);
+            case PROGRESS -> pd.muteProgressAlerts == desired
+                    ? send(ctx, ServerLang.tr(player, desired
+                            ? "message.itemmilestonelog.muteprogress_on"
+                            : "message.itemmilestonelog.muteprogress_off"))
+                    : muteProgress(ctx);
+            case DISCORD -> pd.excludeFromDiscord == desired
+                    ? send(ctx, ServerLang.tr(player, desired
+                            ? "message.itemmilestonelog.discordoptout_on"
+                            : "message.itemmilestonelog.discordoptout_off"))
+                    : respond(ctx, MilestoneService.toggleDiscordOptOut(player));
+            case PRIVACY -> pd.hideFromLookup == desired
+                    ? send(ctx, ServerLang.tr(player, desired
+                            ? "message.itemmilestonelog.privacy_on"
+                            : "message.itemmilestonelog.privacy_off"))
+                    : respond(ctx, MilestoneService.togglePrivacy(player));
+        };
+    }
+
+    // --------------------------------------------------------- PR-1 F-150-23 randomtarget
+
+    private static int randomTarget(CommandContext<CommandSourceStack> ctx, @Nullable String rawKind)
+            throws CommandSyntaxException {
+        ServerPlayer player = player(ctx);
+        CommandAnalysisModel.TargetKind kind = rawKind == null
+                ? CommandAnalysisModel.TargetKind.BOTH : CommandAnalysisModel.TargetKind.parse(rawKind);
+        if (kind == null) {
+            return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.randomtarget_invalid_kind", rawKind));
+        }
+        MilestoneData.PlayerData pd = dataOrNull(player);
+        Set<TargetKey> effective = Tracker.effectiveTargets(pd);
+        Map<TargetKey, MilestoneRecord> records = pd != null ? pd.records : Map.of();
+        Set<String> carried = Tracker.carriedFromCreative(pd);
+        List<CommandAnalysisModel.TargetRef> candidates = CommandAnalysisModel.randomTargetCandidates(
+                effective.stream().map(k -> new CommandAnalysisModel.TargetRef(k.itemId(), k.count())).toList(),
+                records.keySet().stream().map(k -> new CommandAnalysisModel.TargetRef(k.itemId(), k.count())).toList(),
+                carried, kind);
+        CommandAnalysisModel.TargetRef picked = CommandAnalysisModel.pickRandomTarget(
+                candidates, ThreadLocalRandom.current());
+        if (picked == null) {
+            return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.randomtarget_none"));
+        }
+        TargetKey key = new TargetKey(picked.itemId(), picked.count());
+        Component label = MilestoneService.targetDisplayName(key);
+        ctx.getSource().sendSuccess(() -> ServerLang.tr(player,
+                "message.itemmilestonelog.randomtarget_suggestion", label), false);
+        int current = Tracker.countItemsInPossession(player, Set.of(picked.itemId()))
+                .getOrDefault(picked.itemId(), 0);
+        return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.target_progress", label, current));
+    }
+
+    // --------------------------------------------------------- PR-1 F-150-35 trends
+
+    private static int trends(CommandContext<CommandSourceStack> ctx, @Nullable String rawDays,
+                              @Nullable Integer page) throws CommandSyntaxException {
+        ServerPlayer player = player(ctx);
+        int days = CommandAnalysisModel.DEFAULT_TREND_DAYS;
+        if (rawDays != null) {
+            try {
+                int parsed = Integer.parseInt(rawDays);
+                if (parsed == 7 || parsed == 30 || parsed == 90) {
+                    days = parsed;
+                }
+            } catch (NumberFormatException ignored) {
+                // Suggestions only offer the three documented windows; unknown words use the default.
+            }
+        }
+        MilestoneData.PlayerData pd = dataOrNull(player);
+        List<CommandAnalysisModel.RecordValue> records = new ArrayList<>();
+        if (pd != null) {
+            for (Map.Entry<TargetKey, MilestoneRecord> e : pd.records.entrySet()) {
+                MilestoneRecord r = e.getValue();
+                records.add(new CommandAnalysisModel.RecordValue(e.getKey().itemId(), e.getKey().count(),
+                        r.playTicks(), r.day(), r.epochMillis()));
+            }
+        }
+        CommandAnalysisModel.TrendsResult result = CommandAnalysisModel.trends(
+                records, Config.displayTimeZone(), days, System.currentTimeMillis());
+        ZoneId zone = Config.displayTimeZone();
+        final int effectiveDays = days;
+        ctx.getSource().sendSuccess(() -> ServerLang.tr(player,
+                "message.itemmilestonelog.trends_header", effectiveDays), false);
+        List<Component> rows = new ArrayList<>();
+        if (result.datedInWindow() == 0) {
+            rows.add(ServerLang.tr(player, "message.itemmilestonelog.trends_empty"));
+        } else {
+            for (CommandAnalysisModel.TrendDay day : result.days()) {
+                String pace = day.milestonesPerHour() <= 0.0
+                        ? "0" : String.valueOf(Math.round(day.milestonesPerHour()));
+                rows.add(ServerLang.tr(player, "message.itemmilestonelog.trends_day",
+                        day.date().toString(), day.count(), pace));
+            }
+            String glyphs = "▁▁▃▅▇";
+            StringBuilder chart = new StringBuilder();
+            for (CommandAnalysisModel.TrendDay day : result.days()) {
+                chart.append(glyphs.charAt(day.level()));
+            }
+            rows.add(Component.literal(chart.toString()));
+        }
+        Pagination.PageSlice<Component> slice = null;
+        if (page != null) {
+            slice = Pagination.slice(rows, page);
+            if (slice.isOutOfRange()) {
+                return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.page_out_of_range",
+                        page, slice.totalPages()));
+            }
+            rows = slice.items();
+        }
+        for (Component row : rows) {
+            ctx.getSource().sendSuccess(() -> row, false);
+        }
+        ctx.getSource().sendSuccess(() -> ServerLang.tr(player,
+                "message.itemmilestonelog.trends_streak", result.streak()), false);
+        if (result.unknownDateCount() > 0) {
+            ctx.getSource().sendSuccess(() -> ServerLang.tr(player,
+                    "message.itemmilestonelog.trends_unknown_date", result.unknownDateCount()), false);
+        }
+        if (slice != null) {
+            sendPageFooter(ctx.getSource(), slice, Pagination.trendsCommandPrefix(days));
+        }
+        return rows.size();
+    }
+
+    // --------------------------------------------------------- PR-1 F-150-36 recap
+
+    private static int recap(CommandContext<CommandSourceStack> ctx, @Nullable String rawKind)
+            throws CommandSyntaxException {
+        ServerPlayer player = player(ctx);
+        CommandAnalysisModel.RecapKind kind = rawKind == null
+                ? CommandAnalysisModel.RecapKind.RETURN : CommandAnalysisModel.RecapKind.parse(rawKind);
+        if (kind == null) {
+            kind = CommandAnalysisModel.RecapKind.RETURN;
+        }
+        MilestoneData data = MilestoneData.get(player.level().getServer());
+        MilestoneData.PlayerData pd = data.player(player.getUUID());
+        ZoneId zone = Config.displayTimeZone();
+        CommandAnalysisModel.RecapResult result;
+        if (kind == CommandAnalysisModel.RecapKind.RETURN) {
+            LoginWorldFirstSummaryLogic.Selection selection = LoginWorldFirstSummaryLogic.select(
+                    data.worldFirsts(), player.getUUID(), pd.lastSeen, System.currentTimeMillis());
+            List<CommandAnalysisModel.ReturnCandidate> candidates = new ArrayList<>();
+            for (WorldFirstRecord worldFirst : selection.entries()) {
+                MilestoneData.PlayerData holder = data.playerOrNull(worldFirst.playerUuid());
+                String name = WorldFirstNames.choose(worldFirst.playerUuid(), worldFirst.playerName(),
+                        holder != null, holder != null ? holder.lastKnownName : null).name();
+                candidates.add(new CommandAnalysisModel.ReturnCandidate(
+                        worldFirst.itemId(), worldFirst.count(), name, worldFirst.epochMillis()));
+            }
+            result = CommandAnalysisModel.recapReturn(candidates);
+        } else if (kind == CommandAnalysisModel.RecapKind.DAILY) {
+            List<CommandAnalysisModel.RecordValue> values = new ArrayList<>();
+            for (Map.Entry<TargetKey, MilestoneRecord> e : pd.records.entrySet()) {
+                MilestoneRecord r = e.getValue();
+                values.add(new CommandAnalysisModel.RecordValue(e.getKey().itemId(), e.getKey().count(),
+                        r.playTicks(), r.day(), r.epochMillis()));
+            }
+            result = CommandAnalysisModel.recapDaily(values, System.currentTimeMillis());
+        } else {
+            Set<TargetKey> effective = Tracker.effectiveTargets(pd);
+            int unknown = 0;
+            int stillTracked = 0;
+            for (Map.Entry<TargetKey, MilestoneRecord> e : pd.records.entrySet()) {
+                if (e.getValue().epochMillis() == 0L) {
+                    unknown++;
+                    if (effective.contains(e.getKey())) {
+                        stillTracked++;
+                    }
+                }
+            }
+            result = CommandAnalysisModel.recapLegacy(unknown, stillTracked);
+        }
+        final CommandAnalysisModel.RecapKind effectiveKind = kind;
+        ctx.getSource().sendSuccess(() -> ServerLang.tr(player,
+                "message.itemmilestonelog.recap_header", effectiveKind.commandValue()), false);
+        if (kind == CommandAnalysisModel.RecapKind.LEGACY) {
+            return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.recap_legacy",
+                    result.unknownDateCount(), result.stillTrackedCount()));
+        }
+        if (result.entries().isEmpty()) {
+            return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.recap_empty"));
+        }
+        for (CommandAnalysisModel.RecapEntry entry : result.entries()) {
+            Component detail = kind == CommandAnalysisModel.RecapKind.RETURN
+                    ? Component.literal(entry.holderName() + " ")
+                            .append(Component.literal(Playtime.formatDate(entry.epochMillis(), zone)))
+                    : Component.literal(Playtime.formatDate(entry.epochMillis(), zone));
+            ctx.getSource().sendSuccess(() -> ServerLang.tr(player,
+                    "message.itemmilestonelog.recap_entry",
+                    MilestoneService.targetDisplayName(new TargetKey(entry.itemId(), entry.count())),
+                    detail), false);
+        }
+        return result.entries().size();
+    }
+
 
     // ------------------------------------------------------------- F-150-3 unified search
 
@@ -3031,33 +3557,35 @@ public final class MilestoneCommands {
      * {@code <item>} is the same {@code IdentifierArgument} as {@code reset}, so records of items
      * from removed mods can be inspected too.
      */
-    private static int infoItem(CommandContext<CommandSourceStack> ctx, String itemId, int count)
-            throws CommandSyntaxException {
+    private static int infoItem(CommandContext<CommandSourceStack> ctx, String itemId, int count,
+                                boolean preview) throws CommandSyntaxException {
         ServerPlayer player = player(ctx);
         TargetKey key = TargetKey.normalize(itemId, count);
         if (key == null) {
             return fail(ctx, ServerLang.tr(player, MilestoneService.invalidTargetKey(itemId),
                     String.valueOf(itemId)));
         }
-        return sendInfo(ctx, player, key);
+        return sendInfo(ctx, player, key, preview);
     }
 
     /**
      * F51 {@code /milestonelog info hand}: the main-hand item with count 1. An empty hand replies
      * with the same message as {@code addhand}.
      */
-    private static int infoHand(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+    private static int infoHand(CommandContext<CommandSourceStack> ctx, boolean preview)
+            throws CommandSyntaxException {
         ServerPlayer player = player(ctx);
         ItemStack held = player.getMainHandItem();
         if (held.isEmpty()) {
             return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.addhand_empty"));
         }
         String itemId = BuiltInRegistries.ITEM.getKey(held.getItem()).toString();
-        return sendInfo(ctx, player, TargetKey.of(itemId, TargetKey.MIN_COUNT));
+        return sendInfo(ctx, player, TargetKey.of(itemId, TargetKey.MIN_COUNT), preview);
     }
 
     /** Renders the five F51 info steps for {@code key}; returns the number of lines sent. */
-    private static int sendInfo(CommandContext<CommandSourceStack> ctx, ServerPlayer player, TargetKey key) {
+    private static int sendInfo(CommandContext<CommandSourceStack> ctx, ServerPlayer player, TargetKey key,
+                                boolean preview) {
         CommandSourceStack source = ctx.getSource();
         MilestoneData data = MilestoneData.get(source.getServer());
         MilestoneData.PlayerData pd = data.playerOrNull(player.getUUID());
@@ -3135,6 +3663,44 @@ public final class MilestoneCommands {
             if (relatedTags.more() > 0) {
                 source.sendSuccess(() -> ServerLang.tr(player, "message.itemmilestonelog.info_tag_more",
                         relatedTags.more()), false);
+                lines++;
+            }
+        }
+        if (preview) {
+            Map<TargetKey, ItemInfoLogic.TagEntry> byKey = new HashMap<>();
+            Map<CommandAnalysisModel.TargetRef, CommandAnalysisModel.PreviewState> states = new HashMap<>();
+            for (ItemInfoLogic.TagEntry entry : relatedTags.entries()) {
+                byKey.put(entry.key(), entry);
+                String statusKey = switch (entry.status().kind()) {
+                    case RECORDED -> "recorded";
+                    case TARGET -> "target";
+                    case TARGET_PROGRESS -> "target_progress";
+                    case NONE -> "none";
+                };
+                states.put(new CommandAnalysisModel.TargetRef(entry.key().itemId(), entry.key().count()),
+                        new CommandAnalysisModel.PreviewState(statusKey, entry.status().current(),
+                                entry.status().goal(), entry.status().record() != null
+                                ? entry.status().record().playTicks() : 0L));
+            }
+            List<CommandAnalysisModel.TargetRef> relatedRefs = relatedKeys.stream()
+                    .map(k -> new CommandAnalysisModel.TargetRef(k.itemId(), k.count())).toList();
+            CommandAnalysisModel.PreviewResult result = CommandAnalysisModel.infoPreview(relatedRefs, states);
+            source.sendSuccess(() -> ServerLang.tr(player, "message.itemmilestonelog.info_preview_header",
+                    result.entries().size() + result.moreCount()), false);
+            lines++;
+            for (CommandAnalysisModel.PreviewTag row : result.entries()) {
+                TargetKey previewKey = new TargetKey(row.key().itemId(), row.key().count());
+                ItemInfoLogic.TagEntry original = byKey.get(previewKey);
+                Component status = original != null
+                        ? infoStatusComponent(player, original.status(), zone)
+                        : ServerLang.tr(player, "message.itemmilestonelog.info_status_none");
+                source.sendSuccess(() -> ServerLang.tr(player, "message.itemmilestonelog.info_tag_entry",
+                        MilestoneService.targetDisplayName(previewKey), status), false);
+                lines++;
+            }
+            if (result.moreCount() > 0) {
+                source.sendSuccess(() -> ServerLang.tr(player, "message.itemmilestonelog.info_tag_more",
+                        result.moreCount()), false);
                 lines++;
             }
         }
