@@ -44,6 +44,7 @@ class MilestoneServiceTest {
     void resetPresets(@TempDir Path emptyDir) {
         Presets.reloadFrom(emptyDir);
         Presets.clearDatapackPresets();
+        MilestoneService.UNDO_SNAPSHOTS.clear();
     }
 
     @Test

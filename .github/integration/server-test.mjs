@@ -61,7 +61,13 @@ class Rcon {
 
   async connect() {
     this.socket = net.connect({ host: this.host, port: this.port });
-    this.socket.on('error', (err) => console.log(`        [rcon] ${err.message}`));
+    this.socket.on('error', (err) => {
+      console.log(`        [rcon] ${err.message}`);
+      this.failAll(err);
+    });
+    this.socket.on('close', () => {
+      this.failAll(new Error('RCON connection closed'));
+    });
     await once(this.socket, 'connect');
     this.socket.on('data', (chunk) => {
       this.buffer = Buffer.concat([this.buffer, chunk]);
@@ -71,18 +77,36 @@ class Rcon {
     if (auth.id === -1) throw new Error('RCON authentication failed');
   }
 
+  // Reject every in-flight request when the socket closes or errors, instead of
+  // leaving those promises (and the test run) waiting for their timeouts.
+  failAll(err) {
+    for (const { reject, timer } of this.waiting.values()) {
+      clearTimeout(timer);
+      reject(err);
+    }
+    this.waiting.clear();
+  }
+
   drain() {
     while (this.buffer.length >= 4) {
       const length = this.buffer.readInt32LE(0);
+      // A valid packet has at least id + type + the two trailing NUL bytes.
+      if (length < 10) {
+        this.buffer = Buffer.alloc(0);
+        this.failAll(new Error(`Invalid RCON packet length: ${length}`));
+        this.socket?.destroy();
+        return;
+      }
       if (this.buffer.length < 4 + length) return;
       const id = this.buffer.readInt32LE(4);
       const body = this.buffer.toString('utf8', 12, 4 + length - 2);
       this.buffer = this.buffer.subarray(4 + length);
       const key = this.waiting.has(id) ? id : [...this.waiting.keys()][0];
-      const resolve = this.waiting.get(key);
-      if (resolve) {
+      const entry = this.waiting.get(key);
+      if (entry) {
         this.waiting.delete(key);
-        resolve({ id, body });
+        clearTimeout(entry.timer);
+        entry.resolve({ id, body });
       }
     }
   }
@@ -100,10 +124,7 @@ class Rcon {
         this.waiting.delete(id);
         reject(new Error(`RCON timeout for: ${body}`));
       }, 15000);
-      this.waiting.set(id, (res) => {
-        clearTimeout(timer);
-        resolve(res);
-      });
+      this.waiting.set(id, { resolve, reject, timer });
       this.socket.write(packet);
     });
   }

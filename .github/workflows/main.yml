@@ -3,7 +3,8 @@ name: Build
 on:
   push:
     branches: [main]
-    # A version tag (v1.0.0) also publishes a GitHub Release with the four jars.
+    # A version tag (v1.0.0) also publishes a GitHub Release with the six jars
+    # listed in publish-manifest.json.
     tags: ['v*']
   pull_request:
   workflow_dispatch:
@@ -225,7 +226,6 @@ jobs:
     # so the 26.3 run also proves the LOCAL config compat dispatch.
     name: Merged jar on Server MC ${{ matrix.mc }} / NeoForge ${{ matrix.neo }}
     needs: merge-26x
-    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -507,7 +507,6 @@ jobs:
     # real projects.
     name: Merged 1.21.x jar on Server MC ${{ matrix.mc }}
     needs: merge-121x
-    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -546,7 +545,7 @@ jobs:
             jar: itemmilestonelog-neoforge-1.21.9-1.21.10-*.jar
             bot: false
           - mc: '1.21.10'
-            neo: '21.10.63'
+            neo: '21.10.64'
             artifact: itemmilestonelog-1.21-b2
             jar: itemmilestonelog-neoforge-1.21.9-1.21.10-*.jar
             bot: false
@@ -736,7 +735,6 @@ jobs:
     # the override tables of every version of the range, so it runs after the matrix.
     name: Link audit override drift
     needs: audit-121x-links
-    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -1026,6 +1024,11 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: true
+
       - name: Build and run unit tests
         working-directory: versions/1.20.1-forge
         run: ./gradlew --no-daemon test build
@@ -1036,6 +1039,9 @@ jobs:
         working-directory: versions/1.20.1-forge
         run: ./gradlew --no-daemon compileJava -Pforge_version=47.3.0
 
+      - name: Check the jar contents
+        run: .github/scripts/verify-1201-forge-jar.sh
+
       - name: Upload the release jar
         uses: actions/upload-artifact@v6
         with:
@@ -1043,12 +1049,86 @@ jobs:
           path: versions/1.20.1-forge/build/libs/itemmilestonelog-forge-1.20.1-*.jar
           if-no-files-found: error
 
+      - name: Upload unit test reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: unit-test-reports-1.20.1-forge
+          path: versions/1.20.1-forge/build/reports/tests/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  server-test-1201-forge:
+    # docs/DESIGN_1.20.1.md section 8.4 and verification gate 2: build-1201-forge
+    # only compiles and unit-tests, so this job actually starts a production Forge
+    # server with the declared minimum (47.3.0) and the latest 47.4.x, loads the
+    # release jar, runs the RCON and vanilla-client checks from server-test.mjs,
+    # stops the server and checks the logs (server-lib.sh's Forge path).
+    name: Server MC 1.20.1 / Forge ${{ matrix.forge }}
+    needs: build-1201-forge
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        forge: ['47.3.0', '47.4.29']
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: .github/integration/package-lock.json
+
+      - name: Download the release jar
+        uses: actions/download-artifact@v7
+        with:
+          name: itemmilestonelog-1.20.1-forge
+          path: versions/1.20.1-forge/build/libs
+
+      - name: Restore the Forge server
+        uses: actions/cache@v5
+        with:
+          path: build/server/1.20.1-${{ matrix.forge }}/libraries
+          key: forge-server-v1-${{ runner.os }}-1.20.1-${{ matrix.forge }}
+
+      - name: Install integration test client
+        run: npm ci --prefix .github/integration --no-audit --no-fund
+
+      # mineflayer supports 1.20.1, so run the same vanilla-client flow as the
+      # 1.21.1 server test in addition to the RCON checks.
+      - name: Run the jar on a Forge dedicated server
+        run: .github/scripts/run-server-tests.sh 1.20.1 ${{ matrix.forge }} true "" forge
+
+      - name: Upload server logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: test-logs-forge-1.20.1-${{ matrix.forge }}
+          path: |
+            build/server-logs/
+            build/server/*/logs/
+            build/server/*/config/
+          if-no-files-found: ignore
+          retention-days: 7
+
   release-check:
     # Runs on every build, so a broken release is found before the tag is pushed.
     name: Check the release files
-    needs: [identical-files, build, build-1201-forge, merge-26x, merged-server-test, merge-121x, merged-server-test-121x, audit-121x-links, audit-121x-links-drift, server-test, migration, compat-test]
+    needs: [identical-files, build, build-1201-forge, server-test-1201-forge, merge-26x, merged-server-test, merge-121x, merged-server-test-121x, audit-121x-links, audit-121x-links-drift, server-test, migration, compat-test]
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -1094,7 +1174,7 @@ jobs:
           path: dist
 
       - name: Check the jars and write the release notes
-        run: .github/scripts/check-release.sh dist "${{ github.ref_type == 'tag' && github.ref_name || '' }}" build/release-notes.md
+        run: .github/scripts/check-release.sh dist "$TAG" build/release-notes.md
 
   release:
     name: Publish the GitHub Release

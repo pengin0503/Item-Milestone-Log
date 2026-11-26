@@ -9,8 +9,9 @@
 #
 # For each overlay, the compat subtrees compat/<suffix>/ and compat/client/<suffix>/
 # are copied in, plus the compiled classes of every file override under
-# versions/1.21.1/compat-variants/<suffix>/overrides/. Nothing is removed from the
-# base jar.
+# versions/1.21.1/compat-variants/<suffix>/overrides/. For an overridden source,
+# the base jar's outer and inner class files are removed first, so an old anonymous
+# class from the base profile cannot survive next to the override's classes.
 set -euo pipefail
 
 usage() {
@@ -110,6 +111,7 @@ required_compat_entries=(
 )
 
 required_client_compat_entries=(
+  'ListCompatImpl.class'
   'NetworkCompatImpl.class'
   'ScrollCompatImpl.class'
   'SoundCompatImpl.class'
@@ -174,6 +176,10 @@ overlay_profile() {
       status=1
       continue
     fi
+    # Remove the base outer/inner class files for this source before extracting the
+    # override: the overlay may have fewer or differently numbered anonymous classes
+    # (e.g. base Foo$2.class, override Foo$1.class), and old bytecode must not remain.
+    rm -f "$outdir/${class_path}.class" "$outdir/${class_path}"'$'*.class
     unzip -q -o "$overlay_jar" "${matches[@]}" -d "$outdir"
     echo "  PASS  overlaid override ${class_path} (${#matches[@]} class entries) from $display_jar"
   done

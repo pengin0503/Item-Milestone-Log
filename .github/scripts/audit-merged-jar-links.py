@@ -242,6 +242,22 @@ class ClassPool:
         self.jdk_dirs = jdk_dirs or []
         self.cache = {}
 
+    def close(self):
+        """Close every archive opened for class lookup."""
+        for z in self.zips:
+            try:
+                z.close()
+            except OSError:
+                pass
+        self.zips.clear()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+        return False
+
     def get(self, name):
         if name in self.mod:
             return self.mod[name]
@@ -306,10 +322,6 @@ def element_class(name):
     if stripped.startswith("L") and stripped.endswith(";"):
         return stripped[1:-1]
     return None  # primitive array
-
-
-def erase_params(desc):
-    return desc[:desc.index(")") + 1]
 
 
 class Target:
@@ -455,7 +467,11 @@ def report_drift(tables, allowed=()):
 
 def audit_target(t, mod_classes, jdk_dirs):
     """Prints the report of one target. Returns (failed, override table)."""
-    pool = ClassPool(mod_classes, t.game_jars + t.libs, jdk_dirs)
+    with ClassPool(mod_classes, t.game_jars + t.libs, jdk_dirs) as pool:
+        return audit_target_with_pool(t, mod_classes, pool)
+
+
+def audit_target_with_pool(t, mod_classes, pool):
     names = checked_classes(mod_classes, t.profile)
     problems = defaultdict(set)  # (category, detail) -> referencing classes
     unverified = defaultdict(set)
@@ -483,7 +499,10 @@ def audit_target(t, mod_classes, jdk_dirs):
             if pool.get(iface) is None:
                 (unverified if is_jdk(iface) else problems)[("lambda", "%s (functional interface missing)" % iface)].add(cname)
                 continue
-            found = any(n == mname and erase_params(d) == erase_params(sam)
+            # samMethodType includes the return type. Comparing only the parameter
+            # list missed descriptor changes such as int -> void (1.21.6), which
+            # fail at runtime with LambdaConversionException/AbstractMethodError.
+            found = any(n == mname and d == sam
                         for _, ti in pool.supertypes(iface) if ti for (n, d) in ti.methods)
             if not found:
                 problems[("lambda", "%s.%s%s" % (iface, mname, sam))].add(cname)
