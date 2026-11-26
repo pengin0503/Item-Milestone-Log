@@ -118,3 +118,29 @@
 - 組み込みと同名 id のファイルが無視されること
 
 完了条件: GitHub Actions で全4バージョンのビルドとサーバーテストが成功すること。既存テストと既存のプリセット適用動作を壊さないこと。
+
+## 付録: カスタムプリセット用 JSON Schema（v1.4.0 / N140）
+
+v1.4.0 以降、カスタムプリセット（`config/itemmilestonelog/presets/<id>.json` と
+`data/<namespace>/itemmilestonelog/presets/<id>.json`）の公式 JSON Schema を
+`docs/preset-schema.json` に同梱しています（JSON Schema draft 2020-12、外部 `$ref` なしの
+単一ファイル）。jar には含まれません。
+
+エディタの補完・検証を使うには、プリセット JSON のルートに `$schema` キーを追加します。
+値はスキーマファイルへの相対パスまたは URL です（例: スキーマをプリセットと同じフォルダに
+置いた場合は `"./preset-schema.json"`、リポジトリの `docs/` を参照する場合は
+`"../../docs/preset-schema.json"`）。
+
+```json
+{
+  "$schema": "./preset-schema.json",
+  "name": "My Pack Goals",
+  "items": ["minecraft:diamond"]
+}
+```
+
+`$schema` は mod のパーサーでは許可済みのキーとして扱われ、未知フィールドの警告対象には
+なりません（mod の動作には影響しません）。スキーマは全 G-B フィールドを網羅し、ルート・
+items のオブジェクト要素・groups の各要素で `additionalProperties: false` としているため、
+タイプミスしたフィールド名もエディタ上で検出できます。プリセット ID は JSON 内ではなく
+ファイル名で決まるため、スキーマにも ID フィールドはありません。

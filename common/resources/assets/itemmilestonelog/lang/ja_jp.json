@@ -144,6 +144,8 @@
   "itemmilestonelog.configuration.scoreboardWorldFirstObjective.tooltip": "各プレイヤーの世界初数を保存するスコアボード目標名（任意、空欄で無効）。^[A-Za-z0-9_.+-]{1,32}$ に一致し、scoreboardObjective と異なる必要があります。この設定を消しても既存の目標やスコアは削除されません。",
   "itemmilestonelog.configuration.showFirstJoinHint": "初参加時のヒント",
   "itemmilestonelog.configuration.showFirstJoinHint.tooltip": "プレイヤーが初めて参加したときに、1回だけチャットでヒントを表示します。",
+  "itemmilestonelog.configuration.strictPresetValidation": "プリセットの厳格検証",
+  "itemmilestonelog.configuration.strictPresetValidation.tooltip": "要素の検証に1件でも失敗したファイル／データパックのプリセットを、不正要素だけをスキップせずプリセットごと不採用にします。includes の解決失敗や不正な groups も不採用の理由になります（組み込みプリセットは対象外）。",
   "itemmilestonelog.configuration.title": "%s の設定",
   "itemmilestonelog.configuration.worldFirstEnabled": "世界初の記録",
   "itemmilestonelog.configuration.worldFirstEnabled.tooltip": "新しいサーバー全体の世界初マイルストーンを記録します。既存の世界初記録は保持され、引き続き閲覧できます。",

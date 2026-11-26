@@ -61,6 +61,10 @@ public final class Presets {
      * is always the final, includes-expanded list; {@link #includes()} keeps the referenced IDs
      * for round-tripping and diagnostics. {@code nextPresets} and {@code unlockAfterHours} are
      * parsed and carried only in this PR (their behavior arrives with G-C).
+     *
+     * <p>F-140-20: {@link #problems()} collects the element-level validation problems (invalid
+     * elements, includes failures, groups failures) instead of only logging them. Lenient mode
+     * ignores the list; strict mode uses it to reject the whole custom preset.
      */
     public record PresetDefinition(
             String id,
@@ -75,7 +79,8 @@ public final class Presets {
             List<String> requiredMods,
             List<PresetGroup> groups,
             List<String> nextPresets,
-            @Nullable Double unlockAfterHours) {
+            @Nullable Double unlockAfterHours,
+            List<String> problems) {
 
         public PresetDefinition {
             items = items == null ? List.of() : List.copyOf(items);
@@ -84,6 +89,20 @@ public final class Presets {
             requiredMods = requiredMods == null ? List.of() : List.copyOf(requiredMods);
             groups = groups == null ? List.of() : List.copyOf(groups);
             nextPresets = nextPresets == null ? List.of() : List.copyOf(nextPresets);
+            problems = problems == null ? List.of() : List.copyOf(problems);
+        }
+
+        /**
+         * Historical full-field shape (F-140-5..11): no collected validation problems. Kept so
+         * the existing callers and tests do not need a 14th argument.
+         */
+        public PresetDefinition(String id, PresetName name, List<TargetKey> items, PresetKind kind,
+                                List<String> includes, PresetName description, @Nullable String category,
+                                int order, @Nullable Integer version, List<String> requiredMods,
+                                List<PresetGroup> groups, List<String> nextPresets,
+                                @Nullable Double unlockAfterHours) {
+            this(id, name, items, kind, includes, description, category, order, version, requiredMods,
+                    groups, nextPresets, unlockAfterHours, List.of());
         }
 
         /**
@@ -107,13 +126,20 @@ public final class Presets {
         /** Returns a copy of this definition with a different source kind (F21 priority handling). */
         public PresetDefinition withKind(PresetKind newKind) {
             return new PresetDefinition(id, name, items, newKind, includes, description, category, order,
-                    version, requiredMods, groups, nextPresets, unlockAfterHours);
+                    version, requiredMods, groups, nextPresets, unlockAfterHours, problems);
         }
 
         /** Returns a copy with the includes-expanded items and validated groups. */
         public PresetDefinition withResolvedItemsAndGroups(List<TargetKey> resolvedItems, List<PresetGroup> resolvedGroups) {
+            return withResolvedItemsAndGroups(resolvedItems, resolvedGroups, problems);
+        }
+
+        /** Returns a copy with the includes-expanded items, validated groups and collected problems. */
+        public PresetDefinition withResolvedItemsAndGroups(List<TargetKey> resolvedItems,
+                                                           List<PresetGroup> resolvedGroups,
+                                                           List<String> collectedProblems) {
             return new PresetDefinition(id, name, resolvedItems, kind, includes, description, category, order,
-                    version, requiredMods, resolvedGroups, nextPresets, unlockAfterHours);
+                    version, requiredMods, resolvedGroups, nextPresets, unlockAfterHours, collectedProblems);
         }
 
         /**
@@ -164,6 +190,25 @@ public final class Presets {
      */
     private static final Comparator<PresetDefinition> LIST_ORDER =
             Comparator.comparingInt(PresetDefinition::order).thenComparing(PresetDefinition::id);
+
+    /**
+     * F-140-20: collects the element-level problems of one preset while lenient parsing keeps
+     * logging and skipping them exactly as before. The same code path feeds both modes; strict
+     * mode only inspects the collected list, so there is no duplicate lenient/strict parser.
+     */
+    private static final class Problems {
+        private final List<String> collected = new ArrayList<>();
+
+        void warn(String message, Object... args) {
+            String text = args.length == 0 ? message : String.format(message, args);
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] {}", text);
+            collected.add(text);
+        }
+
+        List<String> list() {
+            return List.copyOf(collected);
+        }
+    }
 
     /** F21: datapack presets live in {@code data/<namespace>/itemmilestonelog/presets/<id>.json}. */
     public static final String DATAPACK_PRESETS_DIR = "itemmilestonelog/presets";
@@ -226,12 +271,21 @@ public final class Presets {
      * config folder is re-read here; datapack presets reload with the server's data packs.
      */
     public static synchronized int reloadFrom(Path dir) {
+        return reloadFrom(dir, Config.strictPresetValidation());
+    }
+
+    /**
+     * F-140-20: reload with an explicit strict flag. Production code uses
+     * {@link #reloadFrom(Path)} (the Config value); the overload exists so unit tests can
+     * exercise both modes without loading the Minecraft/NeoForge config.
+     */
+    static synchronized int reloadFrom(Path dir, boolean strict) {
         try {
             Files.createDirectories(dir);
         } catch (IOException e) {
             ItemMilestoneLog.LOGGER.error("[ItemMilestoneLog] Could not create presets directory {}: {}", dir, e.getMessage());
             filePresets = Map.of();
-            rebuildLoadedPresets();
+            rebuildLoadedPresets(strict);
             return 0;
         }
 
@@ -245,7 +299,7 @@ public final class Presets {
         } catch (IOException e) {
             ItemMilestoneLog.LOGGER.error("[ItemMilestoneLog] Could not list presets directory {}: {}", dir, e.getMessage());
             filePresets = Map.of();
-            rebuildLoadedPresets();
+            rebuildLoadedPresets(strict);
             return 0;
         }
 
@@ -267,7 +321,7 @@ public final class Presets {
         }
 
         filePresets = Collections.unmodifiableMap(new LinkedHashMap<>(next));
-        rebuildLoadedPresets();
+        rebuildLoadedPresets(strict);
         // F-140-6: a file whose includes expansion ends up empty is not adopted, so do not
         // count it (the warning is emitted by rebuildLoadedPresets).
         int customCount = 0;
@@ -409,8 +463,17 @@ public final class Presets {
      * list (B2-D6). A preset whose expansion is empty is dropped like the historical
      * "0 valid items" case. Finally the table is ordered by {@code order} then ID (F-140-7 /
      * B2-D5), which is the single supply point used by commands, suggestions and GUI sync.
+     *
+     * <p>F-140-20: when {@code strict} is true, any collected problem (element-level parse
+     * problem, includes failure, or groups failure) rejects the whole file/datapack preset; it
+     * is logged as an error and never reaches {@link #loadedPresets}, so listing, applying and
+     * auto-apply all treat it as unknown. Built-in presets are never rejected.
      */
     private static void rebuildLoadedPresets() {
+        rebuildLoadedPresets(Config.strictPresetValidation());
+    }
+
+    private static void rebuildLoadedPresets(boolean strict) {
         Map<String, PresetDefinition> raw = rawPresets(true);
 
         Map<String, List<TargetKey>> itemsById = new LinkedHashMap<>();
@@ -426,17 +489,29 @@ public final class Presets {
 
         List<PresetDefinition> resolved = new ArrayList<>();
         for (PresetDefinition preset : raw.values()) {
+            List<String> problems = new ArrayList<>(preset.problems());
+            problems.addAll(includeResult.problems(preset.id()));
+
             List<TargetKey> expanded = includeResult.items(preset.id());
             if (expanded.isEmpty()) {
-                ItemMilestoneLog.LOGGER.warn(
-                        "[ItemMilestoneLog] Skipping preset '{}': 0 valid items after includes expansion", preset.id());
+                if (strict && !preset.builtin() && !problems.isEmpty()) {
+                    logStrictRejection(preset.id(), problems);
+                } else {
+                    ItemMilestoneLog.LOGGER.warn(
+                            "[ItemMilestoneLog] Skipping preset '{}': 0 valid items after includes expansion", preset.id());
+                }
                 continue;
             }
             PresetGroupLogic.Result groupResult = PresetGroupLogic.validate(preset.groups(), expanded);
             for (String warning : groupResult.warnings()) {
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Preset '{}': {}", preset.id(), warning);
             }
-            resolved.add(preset.withResolvedItemsAndGroups(expanded, groupResult.groups()));
+            problems.addAll(groupResult.warnings());
+            if (strict && !preset.builtin() && !problems.isEmpty()) {
+                logStrictRejection(preset.id(), problems);
+                continue;
+            }
+            resolved.add(preset.withResolvedItemsAndGroups(expanded, groupResult.groups(), problems));
         }
 
         resolved.sort(LIST_ORDER);
@@ -445,6 +520,13 @@ public final class Presets {
             next.put(preset.id(), preset);
         }
         loadedPresets = Collections.unmodifiableMap(next);
+    }
+
+    /** F-140-20: one error line with the preset ID and the first collected problem's reason. */
+    private static void logStrictRejection(String id, List<String> problems) {
+        ItemMilestoneLog.LOGGER.error(
+                "[ItemMilestoneLog] Rejecting preset '{}' because strictPresetValidation is enabled: {}",
+                id, problems.get(0));
     }
 
     /**
@@ -499,7 +581,7 @@ public final class Presets {
      *                    {@code description}; the historical {@code name} stays silent)
      */
     private static PresetName extractName(
-            JsonObject root, String field, @Nullable String sourceLabel, boolean warnInvalid) {
+            JsonObject root, String field, @Nullable String sourceLabel, boolean warnInvalid, Problems problems) {
         if (!root.has(field)) {
             return PresetName.absent();
         }
@@ -518,15 +600,15 @@ public final class Presets {
             return PresetName.ofLocalized(values);
         }
         if (warnInvalid) {
-            ItemMilestoneLog.LOGGER.warn(
-                    "[ItemMilestoneLog] Preset file {} has an invalid '{}' (must be a string or an object of language -> string); ignoring it",
+            problems.warn(
+                    "Preset file {} has an invalid '{}' (must be a string or an object of language -> string); ignoring it",
                     sourceLabel, field);
         }
         return PresetName.absent();
     }
 
     private static PresetName extractName(JsonObject root) {
-        return extractName(root, "name", null, false);
+        return extractName(root, "name", null, false, new Problems());
     }
 
     /** G-B: the optional fields carried alongside a preset's items. */
@@ -561,27 +643,24 @@ public final class Presets {
      * F-140-6 / F-140-13: parses a string array of preset IDs. Invalid or reserved IDs and
      * non-string elements are warned about and skipped; duplicates keep the first occurrence.
      */
-    private static List<String> parseIdList(JsonObject root, String field, String sourceLabel) {
+    private static List<String> parseIdList(JsonObject root, String field, String sourceLabel, Problems problems) {
         if (!root.has(field)) {
             return List.of();
         }
         JsonElement element = root.get(field);
         if (!element.isJsonArray()) {
-            ItemMilestoneLog.LOGGER.warn(
-                    "[ItemMilestoneLog] Preset file {} has a non-array '{}'; ignoring it", sourceLabel, field);
+            problems.warn("Preset file {} has a non-array '{}'; ignoring it", sourceLabel, field);
             return List.of();
         }
         Set<String> ids = new LinkedHashSet<>();
         for (JsonElement elem : element.getAsJsonArray()) {
             if (!elem.isJsonPrimitive() || !elem.getAsJsonPrimitive().isString()) {
-                ItemMilestoneLog.LOGGER.warn(
-                        "[ItemMilestoneLog] Skipping non-string '{}' entry in preset {}", field, sourceLabel);
+                problems.warn("Skipping non-string '{}' entry in preset {}", field, sourceLabel);
                 continue;
             }
             String id = elem.getAsString().trim();
             if (!isValidId(id)) {
-                ItemMilestoneLog.LOGGER.warn(
-                        "[ItemMilestoneLog] Skipping invalid '{}' ID '{}' in preset {}", field, id, sourceLabel);
+                problems.warn("Skipping invalid '{}' ID '{}' in preset {}", field, id, sourceLabel);
                 continue;
             }
             ids.add(id);
@@ -590,27 +669,24 @@ public final class Presets {
     }
 
     /** F-140-9: parses {@code requiredMods}, warning about and skipping invalid elements. */
-    private static List<String> parseRequiredMods(JsonObject root, String sourceLabel) {
+    private static List<String> parseRequiredMods(JsonObject root, String sourceLabel, Problems problems) {
         if (!root.has("requiredMods")) {
             return List.of();
         }
         JsonElement element = root.get("requiredMods");
         if (!element.isJsonArray()) {
-            ItemMilestoneLog.LOGGER.warn(
-                    "[ItemMilestoneLog] Preset file {} has a non-array 'requiredMods'; ignoring it", sourceLabel);
+            problems.warn("Preset file {} has a non-array 'requiredMods'; ignoring it", sourceLabel);
             return List.of();
         }
         Set<String> mods = new LinkedHashSet<>();
         for (JsonElement elem : element.getAsJsonArray()) {
             if (!elem.isJsonPrimitive() || !elem.getAsJsonPrimitive().isString()) {
-                ItemMilestoneLog.LOGGER.warn(
-                        "[ItemMilestoneLog] Skipping non-string 'requiredMods' entry in preset {}", sourceLabel);
+                problems.warn("Skipping non-string 'requiredMods' entry in preset {}", sourceLabel);
                 continue;
             }
             String modId = elem.getAsString().trim();
             if (!PresetMetadataLogic.isValidModId(modId)) {
-                ItemMilestoneLog.LOGGER.warn(
-                        "[ItemMilestoneLog] Skipping invalid required mod ID '{}' in preset {}", modId, sourceLabel);
+                problems.warn("Skipping invalid required mod ID '{}' in preset {}", modId, sourceLabel);
                 continue;
             }
             mods.add(modId);
@@ -623,53 +699,48 @@ public final class Presets {
      * skipped. Validation against the expanded items (unknown keys, cross-group duplicates,
      * duplicate group IDs and emptied groups) happens later in {@link PresetGroupLogic}.
      */
-    private static List<PresetGroup> parseGroups(JsonObject root, String sourceLabel) {
+    private static List<PresetGroup> parseGroups(JsonObject root, String sourceLabel, Problems problems) {
         if (!root.has("groups")) {
             return List.of();
         }
         JsonElement element = root.get("groups");
         if (!element.isJsonArray()) {
-            ItemMilestoneLog.LOGGER.warn(
-                    "[ItemMilestoneLog] Preset file {} has a non-array 'groups'; ignoring it", sourceLabel);
+            problems.warn("Preset file {} has a non-array 'groups'; ignoring it", sourceLabel);
             return List.of();
         }
         List<PresetGroup> groups = new ArrayList<>();
         for (JsonElement elem : element.getAsJsonArray()) {
             if (!elem.isJsonObject()) {
-                ItemMilestoneLog.LOGGER.warn(
-                        "[ItemMilestoneLog] Skipping invalid group entry in preset {}", sourceLabel);
+                problems.warn("Skipping invalid group entry in preset {}", sourceLabel);
                 continue;
             }
             JsonObject group = elem.getAsJsonObject();
             if (!group.has("id") || !group.get("id").isJsonPrimitive()
                     || !group.get("id").getAsJsonPrimitive().isString()) {
-                ItemMilestoneLog.LOGGER.warn(
-                        "[ItemMilestoneLog] Skipping group without a string 'id' in preset {}", sourceLabel);
+                problems.warn("Skipping group without a string 'id' in preset {}", sourceLabel);
                 continue;
             }
             String groupId = group.get("id").getAsString().trim();
             if (!isValidId(groupId)) {
-                ItemMilestoneLog.LOGGER.warn(
-                        "[ItemMilestoneLog] Skipping group with invalid id '{}' in preset {}", groupId, sourceLabel);
+                problems.warn("Skipping group with invalid id '{}' in preset {}", groupId, sourceLabel);
                 continue;
             }
             if (!group.has("items") || !group.get("items").isJsonArray()) {
-                ItemMilestoneLog.LOGGER.warn(
-                        "[ItemMilestoneLog] Skipping group '{}' in preset {} (missing 'items' array)",
-                        groupId, sourceLabel);
+                problems.warn("Skipping group '{}' in preset {} (missing 'items' array)", groupId, sourceLabel);
                 continue;
             }
-            PresetName groupName = extractName(group, "name", sourceLabel + " group '" + groupId + "'", true);
-            List<TargetKey> groupItems = parseTargetItems(group.getAsJsonArray("items"), sourceLabel + " group '" + groupId + "'");
+            PresetName groupName = extractName(group, "name", sourceLabel + " group '" + groupId + "'", true, problems);
+            List<TargetKey> groupItems = parseTargetItems(
+                    group.getAsJsonArray("items"), sourceLabel + " group '" + groupId + "'", problems);
             groups.add(new PresetGroup(groupId, groupName, groupItems));
         }
         return List.copyOf(groups);
     }
 
     /** F-140-5: the new fields of one preset JSON document, parsed element-by-element. */
-    private static ExtraFields parseExtraFields(JsonObject root, String sourceLabel) {
-        List<String> includes = parseIdList(root, "includes", sourceLabel);
-        PresetName description = extractName(root, "description", sourceLabel, true);
+    private static ExtraFields parseExtraFields(JsonObject root, String sourceLabel, Problems problems) {
+        List<String> includes = parseIdList(root, "includes", sourceLabel, problems);
+        PresetName description = extractName(root, "description", sourceLabel, true, problems);
 
         String category = null;
         if (root.has("category")) {
@@ -677,8 +748,7 @@ public final class Presets {
             if (element.isJsonPrimitive() && element.getAsJsonPrimitive().isString()) {
                 category = PresetMetadataLogic.normalizeCategory(element.getAsString());
             } else {
-                ItemMilestoneLog.LOGGER.warn(
-                        "[ItemMilestoneLog] Preset file {} has a non-string 'category'; ignoring it", sourceLabel);
+                problems.warn("Preset file {} has a non-string 'category'; ignoring it", sourceLabel);
             }
         }
 
@@ -689,8 +759,7 @@ public final class Presets {
             if (parsed != null) {
                 order = parsed;
             } else {
-                ItemMilestoneLog.LOGGER.warn(
-                        "[ItemMilestoneLog] Preset file {} has an invalid 'order' (must be an integer); using 0", sourceLabel);
+                problems.warn("Preset file {} has an invalid 'order' (must be an integer); using 0", sourceLabel);
             }
         }
 
@@ -699,23 +768,23 @@ public final class Presets {
             String rawVersion = numberText(root.get("version"));
             version = rawVersion != null ? PresetMetadataLogic.parseVersion(rawVersion) : null;
             if (version == null) {
-                ItemMilestoneLog.LOGGER.warn(
-                        "[ItemMilestoneLog] Preset file {} has an invalid 'version' (must be an integer >= 1); treating it as unversioned",
+                problems.warn(
+                        "Preset file {} has an invalid 'version' (must be an integer >= 1); treating it as unversioned",
                         sourceLabel);
             }
         }
 
-        List<String> requiredMods = parseRequiredMods(root, sourceLabel);
-        List<PresetGroup> groups = parseGroups(root, sourceLabel);
-        List<String> nextPresets = parseIdList(root, "nextPresets", sourceLabel);
+        List<String> requiredMods = parseRequiredMods(root, sourceLabel, problems);
+        List<PresetGroup> groups = parseGroups(root, sourceLabel, problems);
+        List<String> nextPresets = parseIdList(root, "nextPresets", sourceLabel, problems);
 
         Double unlockAfterHours = null;
         if (root.has("unlockAfterHours")) {
             String rawHours = numberText(root.get("unlockAfterHours"));
             unlockAfterHours = rawHours != null ? PresetMetadataLogic.parseUnlockAfterHours(rawHours) : null;
             if (unlockAfterHours == null) {
-                ItemMilestoneLog.LOGGER.warn(
-                        "[ItemMilestoneLog] Preset file {} has an invalid 'unlockAfterHours' (must be a number >= 0); ignoring it",
+                problems.warn(
+                        "Preset file {} has an invalid 'unlockAfterHours' (must be a number >= 0); ignoring it",
                         sourceLabel);
             }
         }
@@ -734,7 +803,7 @@ public final class Presets {
             JsonElement el = JsonParser.parseReader(reader);
             if (el.isJsonObject()) {
                 JsonObject root = el.getAsJsonObject();
-                return new ExistingFields(extractName(root), parseExtraFields(root, file.getFileName().toString()));
+                return new ExistingFields(extractName(root), parseExtraFields(root, file.getFileName().toString(), new Problems()));
             }
         } catch (Exception ignored) {
             // Corrupt or unreadable existing file: fall back to defaults (ID name, no new fields).
@@ -763,6 +832,12 @@ public final class Presets {
      * JSON, missing/non-array {@code items} without includes, zero own+included items) remain.
      */
     static PresetDefinition parsePresetContent(String content, String sourceLabel, String id, PresetKind kind) {
+        return parsePresetContent(content, sourceLabel, id, kind, new Problems());
+    }
+
+    /** F-140-20: the shared parse path, collecting every element-level problem for the caller. */
+    private static PresetDefinition parsePresetContent(
+            String content, String sourceLabel, String id, PresetKind kind, Problems problems) {
         JsonObject root;
         try {
             JsonElement el = JsonParser.parseString(content);
@@ -776,7 +851,9 @@ public final class Presets {
             return null;
         }
 
-        ExtraFields extra = parseExtraFields(root, sourceLabel);
+        // F-140-21: "$schema" is a permitted editor-only key. Unknown fields are ignored
+        // silently by this parser, so the schema reference never produces a validation problem.
+        ExtraFields extra = parseExtraFields(root, sourceLabel, problems);
         PresetName name = extractName(root);
 
         List<TargetKey> ownItems;
@@ -785,7 +862,7 @@ public final class Presets {
                 ItemMilestoneLog.LOGGER.error("[ItemMilestoneLog] Preset file {} has a non-array 'items'", sourceLabel);
                 return null;
             }
-            ownItems = parseTargetItems(root.getAsJsonArray("items"), sourceLabel);
+            ownItems = parseTargetItems(root.getAsJsonArray("items"), sourceLabel, problems);
         } else if (!extra.includes().isEmpty()) {
             ownItems = List.of();
         } else {
@@ -800,41 +877,42 @@ public final class Presets {
 
         return new PresetDefinition(id, name, ownItems, kind, extra.includes(), extra.description(),
                 extra.category(), extra.order(), extra.version(), extra.requiredMods(), extra.groups(),
-                extra.nextPresets(), extra.unlockAfterHours());
+                extra.nextPresets(), extra.unlockAfterHours(), problems.list());
     }
 
     /** F-140-5: parses the standard item element format (shared by {@code items} and group items). */
-    private static List<TargetKey> parseTargetItems(JsonArray arr, String sourceLabel) {
+    private static List<TargetKey> parseTargetItems(JsonArray arr, String sourceLabel, Problems problems) {
         Set<TargetKey> deduped = new LinkedHashSet<>();
         for (JsonElement elem : arr) {
             if (elem.isJsonPrimitive() && elem.getAsJsonPrimitive().isString()) {
                 String rawItem = elem.getAsString().trim();
                 if (rawItem.isEmpty()) {
+                    problems.warn("Skipping blank item in preset {}", sourceLabel);
                     continue;
                 }
                 TargetKey normalized = TargetKey.tryParseNormalized(rawItem, false, true);
                 if (normalized != null) {
                     deduped.add(normalized);
                 } else {
-                    ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid item '{}' in preset {}", rawItem, sourceLabel);
+                    problems.warn("Skipping invalid item '{}' in preset {}", rawItem, sourceLabel);
                 }
             } else if (elem.isJsonObject()) {
                 JsonObject obj = elem.getAsJsonObject();
                 if (!obj.has("item") || !obj.get("item").isJsonPrimitive() || !obj.get("item").getAsJsonPrimitive().isString()) {
-                    ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid item object in preset {}", sourceLabel);
+                    problems.warn("Skipping invalid item object in preset {}", sourceLabel);
                     continue;
                 }
                 String rawItem = obj.get("item").getAsString().trim();
                 String normalizedId = TargetKey.normalizeItemId(rawItem, false);
                 if (normalizedId == null || "minecraft:air".equals(normalizedId)) {
-                    ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid item '{}' in preset {}", rawItem, sourceLabel);
+                    problems.warn("Skipping invalid item '{}' in preset {}", rawItem, sourceLabel);
                     continue;
                 }
                 int count = TargetKey.MIN_COUNT;
                 if (obj.has("count")) {
                     count = parseStrictJsonCount(obj.get("count"));
                     if (count < TargetKey.MIN_COUNT) {
-                        ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping item '{}' with invalid count in preset {}", rawItem, sourceLabel);
+                        problems.warn("Skipping item '{}' with invalid count in preset {}", rawItem, sourceLabel);
                         continue;
                     }
                 }
@@ -842,6 +920,8 @@ public final class Presets {
                 if (normalized != null) {
                     deduped.add(normalized);
                 }
+            } else {
+                problems.warn("Skipping invalid item entry in preset {}", sourceLabel);
             }
         }
         return List.copyOf(deduped);

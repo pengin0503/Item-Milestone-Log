@@ -1,0 +1,175 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/pengin0503/Item-Milestone-Log/blob/main/docs/preset-schema.json",
+  "title": "Item Milestone Log custom preset",
+  "description": "JSON Schema for Item Milestone Log custom presets (config/itemmilestonelog/presets/<id>.json and data/<namespace>/itemmilestonelog/presets/<id>.json). The preset ID comes from the file name, not from this document.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "format": "uri-reference",
+      "description": "Optional JSON Schema reference used by editors (for example \"./preset-schema.json\" or a URL). The mod accepts and ignores this key."
+    },
+    "name": {
+      "$ref": "#/$defs/displayName"
+    },
+    "items": {
+      "type": "array",
+      "description": "Target items in their final order. Entries are item IDs, tag keys, or {item, count} objects.",
+      "items": {
+        "$ref": "#/$defs/item"
+      }
+    },
+    "includes": {
+      "$ref": "#/$defs/presetIdList",
+      "description": "Preset IDs whose items are expanded before this preset's own items."
+    },
+    "description": {
+      "$ref": "#/$defs/displayName"
+    },
+    "category": {
+      "type": "string",
+      "maxLength": 64,
+      "description": "Free-form grouping label (stored up to 64 characters)."
+    },
+    "order": {
+      "type": "integer",
+      "description": "Sort order for the preset list (ascending, then preset ID)."
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Preset content version; used for the version-upgrade guidance flow."
+    },
+    "requiredMods": {
+      "type": "array",
+      "description": "Mod IDs that must all be loaded for this preset to be applied.",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9_.-]{1,64}$"
+      },
+      "uniqueItems": true
+    },
+    "groups": {
+      "type": "array",
+      "description": "Optional item groups, validated against the includes-expanded items.",
+      "items": {
+        "$ref": "#/$defs/group"
+      }
+    },
+    "nextPresets": {
+      "$ref": "#/$defs/presetIdList",
+      "description": "Preset IDs automatically applied after this preset is completed."
+    },
+    "unlockAfterHours": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Playtime in hours after which this preset becomes eligible for auto-apply."
+    }
+  },
+  "anyOf": [
+    {
+      "required": [
+        "items"
+      ],
+      "properties": {
+        "items": {
+          "minItems": 1
+        }
+      }
+    },
+    {
+      "required": [
+        "includes"
+      ],
+      "properties": {
+        "includes": {
+          "minItems": 1
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "displayName": {
+      "description": "Either one string used for every language, or an object mapping language codes to strings.",
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      ]
+    },
+    "presetId": {
+      "type": "string",
+      "pattern": "^[a-z0-9_-]{1,32}$"
+    },
+    "presetIdList": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/presetId"
+      },
+      "uniqueItems": true
+    },
+    "item": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "description": "An item ID (namespace:path), a tag key (#namespace:path), or either with a #<count> suffix."
+        },
+        {
+          "type": "object",
+          "required": [
+            "item"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "item": {
+              "type": "string",
+              "minLength": 1,
+              "description": "An item ID (namespace:path) or a tag key (#namespace:path)."
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000000
+            }
+          }
+        }
+      ]
+    },
+    "group": {
+      "type": "object",
+      "required": [
+        "id",
+        "items"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/presetId"
+        },
+        "name": {
+          "$ref": "#/$defs/displayName"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/item"
+          }
+        }
+      }
+    }
+  }
+}

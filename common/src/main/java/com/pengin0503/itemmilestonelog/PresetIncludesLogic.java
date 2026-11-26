@@ -28,10 +28,14 @@ public final class PresetIncludesLogic {
     /**
      * Result of one includes resolution.
      *
-     * @param expandedItems expanded items per preset ID, in the input ID order (may be empty)
-     * @param warnings      human-readable warnings for cycles and unknown IDs, in discovery order
+     * @param expandedItems    expanded items per preset ID, in the input ID order (may be empty)
+     * @param warnings         human-readable warnings for cycles and unknown IDs, in discovery order
+     * @param problemsByPreset problems encountered while expanding each root preset (missing IDs,
+     *                         cycles, blank IDs); F-140-20 uses this to reject the whole preset in
+     *                         strict mode.
      */
-    public record Result(Map<String, List<TargetKey>> expandedItems, List<String> warnings) {
+    public record Result(Map<String, List<TargetKey>> expandedItems, List<String> warnings,
+                         Map<String, List<String>> problemsByPreset) {
         public Result {
             Map<String, List<TargetKey>> copy = new LinkedHashMap<>();
             if (expandedItems != null) {
@@ -43,12 +47,27 @@ public final class PresetIncludesLogic {
             }
             expandedItems = Collections.unmodifiableMap(copy);
             warnings = warnings == null ? List.of() : List.copyOf(warnings);
+            Map<String, List<String>> problems = new LinkedHashMap<>();
+            if (problemsByPreset != null) {
+                for (Map.Entry<String, List<String>> entry : problemsByPreset.entrySet()) {
+                    if (entry.getKey() != null && entry.getValue() != null && !entry.getValue().isEmpty()) {
+                        problems.put(entry.getKey(), List.copyOf(entry.getValue()));
+                    }
+                }
+            }
+            problemsByPreset = Collections.unmodifiableMap(problems);
         }
 
         /** Expanded items for {@code id}, or an empty list when {@code id} was not an input. */
         public List<TargetKey> items(String id) {
             List<TargetKey> items = expandedItems.get(id);
             return items != null ? items : List.of();
+        }
+
+        /** Problems encountered while expanding {@code id} (empty when its expansion is clean). */
+        public List<String> problems(String id) {
+            List<String> problems = problemsByPreset.get(id);
+            return problems != null ? problems : List.of();
         }
     }
 
@@ -84,13 +103,19 @@ public final class PresetIncludesLogic {
         }
 
         List<String> warnings = new ArrayList<>();
+        Map<String, List<String>> problemsByPreset = new LinkedHashMap<>();
         Map<String, List<TargetKey>> expanded = new LinkedHashMap<>();
         for (String id : rawItems.keySet()) {
             // Each preset is expanded independently: a cycle branches differently depending
             // on which preset is the root, so results must not be memoized across roots.
-            expanded.put(id, expand(id, rawItems, includes, new LinkedHashSet<>(), warnings));
+            List<String> rootProblems = new ArrayList<>();
+            expanded.put(id, expand(id, rawItems, includes, new LinkedHashSet<>(), rootProblems));
+            if (!rootProblems.isEmpty()) {
+                problemsByPreset.put(id, rootProblems);
+                warnings.addAll(rootProblems);
+            }
         }
-        return new Result(expanded, warnings);
+        return new Result(expanded, warnings, problemsByPreset);
     }
 
     /**

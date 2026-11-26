@@ -979,4 +979,224 @@ class PresetsTest {
 
         Presets.reloadFrom(dir.resolve("clean"));
     }
+    // ------------------------------------------------------------------
+    // F-140-21: docs/preset-schema.json
+    // ------------------------------------------------------------------
+
+    private static Path presetSchemaPath() {
+        Path fromVersionDir = Path.of("..", "..", "docs", "preset-schema.json").normalize();
+        if (Files.isRegularFile(fromVersionDir)) {
+            return fromVersionDir;
+        }
+        Path fromRepoRoot = Path.of("docs", "preset-schema.json");
+        if (Files.isRegularFile(fromRepoRoot)) {
+            return fromRepoRoot;
+        }
+        throw new AssertionError("Could not locate docs/preset-schema.json");
+    }
+
+    @Test
+    void presetSchemaParsesAndCoversEveryGBFieldAtTheKeySetLevel() throws Exception {
+        JsonObject schema = JsonParser.parseString(Files.readString(presetSchemaPath())).getAsJsonObject();
+        assertEquals("https://json-schema.org/draft/2020-12/schema", schema.get("$schema").getAsString());
+        assertEquals("object", schema.get("type").getAsString());
+        assertFalse(schema.get("additionalProperties").getAsBoolean());
+        assertNull(schema.get("$ref"), "the schema must be a single file with no external references");
+
+        Set<String> documentedFields = Set.of(
+                "$schema", "name", "items", "includes", "description", "category", "order",
+                "version", "requiredMods", "groups", "nextPresets", "unlockAfterHours");
+        JsonObject properties = schema.getAsJsonObject("properties");
+        assertEquals(documentedFields, properties.keySet());
+        for (String field : documentedFields) {
+            assertTrue(properties.has(field), "schema is missing a property for " + field);
+        }
+
+        // A sample using every field must have exactly the schema's root key set.
+        String sample = """
+                {
+                  "$schema": "./preset-schema.json",
+                  "name": { "en_us": "Sample", "ja_jp": "サンプル" },
+                  "items": [
+                    "minecraft:diamond",
+                    "#c:ingots/iron#64",
+                    { "item": "minecraft:emerald", "count": 5 }
+                  ],
+                  "includes": ["vanilla_endgame"],
+                  "description": "Sample description",
+                  "category": "progression",
+                  "order": 1,
+                  "version": 2,
+                  "requiredMods": ["minecraft"],
+                  "groups": [
+                    { "id": "core", "name": "Core", "items": ["minecraft:diamond"] }
+                  ],
+                  "nextPresets": ["vanilla_endgame"],
+                  "unlockAfterHours": 24
+                }
+                """;
+        JsonObject sampleJson = JsonParser.parseString(sample).getAsJsonObject();
+        assertEquals(documentedFields, sampleJson.keySet());
+
+        // The item object form uses the parser's "item" key (not "id"), with count 1..1000000.
+        JsonObject itemDefinition = schema.getAsJsonObject("$defs").getAsJsonObject("item");
+        assertTrue(itemDefinition.has("oneOf"));
+        JsonObject itemObjectForm = itemDefinition.getAsJsonArray("oneOf").get(1).getAsJsonObject();
+        assertFalse(itemObjectForm.get("additionalProperties").getAsBoolean());
+        assertEquals(Set.of("item", "count"), itemObjectForm.getAsJsonObject("properties").keySet());
+        assertTrue(itemObjectForm.getAsJsonArray("required").toString().contains("\"item\""));
+
+        // groups use the same item definition and reject unknown keys.
+        JsonObject group = schema.getAsJsonObject("$defs").getAsJsonObject("group");
+        assertFalse(group.get("additionalProperties").getAsBoolean());
+        assertEquals(Set.of("id", "name", "items"), group.getAsJsonObject("properties").keySet());
+    }
+
+    @Test
+    void schemaKeyIsAcceptedWithoutValidationProblems(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("with_schema.json"), """
+                {
+                  "$schema": "../docs/preset-schema.json",
+                  "name": "Schema Key",
+                  "items": ["minecraft:diamond"]
+                }
+                """);
+
+        assertEquals(1, Presets.reloadFrom(dir));
+        Presets.PresetDefinition preset = Presets.get("with_schema");
+        assertNotNull(preset);
+        assertEquals(List.of(TargetKey.of("minecraft:diamond")), preset.items());
+        assertTrue(preset.problems().isEmpty(), () -> "unexpected problems: " + preset.problems());
+    }
+
+    // ------------------------------------------------------------------
+    // F-140-20: strictPresetValidation
+    // ------------------------------------------------------------------
+
+    @Test
+    void strictPresetValidationDefaultsToFalse() {
+        assertEquals(Boolean.FALSE, Config.STRICT_PRESET_VALIDATION.getDefault());
+        assertFalse(Config.strictPresetValidation());
+    }
+
+    @Test
+    void strictModeRejectsAPresetWithAnInvalidElementThatLenientModeLoads(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("bad_element.json"), """
+                {
+                  "name": "Bad Element",
+                  "items": [
+                    "minecraft:diamond",
+                    "not a valid id",
+                    { "item": "minecraft:emerald", "count": 0 }
+                  ]
+                }
+                """);
+
+        // Default lenient behavior: skip only the invalid elements and keep the preset.
+        assertEquals(1, Presets.reloadFrom(dir));
+        Presets.PresetDefinition lenient = Presets.get("bad_element");
+        assertNotNull(lenient);
+        assertEquals(List.of(TargetKey.of("minecraft:diamond")), lenient.items());
+        assertFalse(lenient.problems().isEmpty());
+
+        // Strict behavior: the whole preset is rejected and treated as unknown.
+        assertEquals(0, Presets.reloadFrom(dir, true));
+        assertNull(Presets.get("bad_element"));
+        assertFalse(Presets.names().contains("bad_element"));
+    }
+
+    @Test
+    void strictModeRejectsIncludesFailuresWhileLenientModeKeepsTheExpandablePart(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("missing_include.json"), """
+                {
+                  "items": ["minecraft:diamond"],
+                  "includes": ["ghost_preset"]
+                }
+                """);
+        Files.writeString(dir.resolve("cycle_a.json"), """
+                {
+                  "items": ["minecraft:diamond"],
+                  "includes": ["cycle_b"]
+                }
+                """);
+        Files.writeString(dir.resolve("cycle_b.json"), """
+                {
+                  "items": ["minecraft:emerald"],
+                  "includes": ["cycle_a"]
+                }
+                """);
+
+        // Lenient: the missing include is skipped and the cycle branch is cut; all three load.
+        assertEquals(3, Presets.reloadFrom(dir));
+        assertNotNull(Presets.get("missing_include"));
+        assertNotNull(Presets.get("cycle_a"));
+        assertNotNull(Presets.get("cycle_b"));
+        assertEquals(2, Presets.get("cycle_a").items().size());
+
+        // Strict: a missing include or a cycle rejects every preset whose expansion hit it.
+        assertEquals(0, Presets.reloadFrom(dir, true));
+        assertNull(Presets.get("missing_include"));
+        assertNull(Presets.get("cycle_a"));
+        assertNull(Presets.get("cycle_b"));
+    }
+
+    @Test
+    void strictModeRejectsGroupsFailuresWhileLenientModeDropsOnlyTheGroup(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("bad_groups.json"), """
+                {
+                  "items": ["minecraft:diamond"],
+                  "groups": [
+                    { "id": "valid", "items": ["minecraft:diamond"] },
+                    { "id": "unknown", "items": ["minecraft:emerald"] }
+                  ]
+                }
+                """);
+
+        // Lenient: the group pointing outside the items is dropped, the preset still loads.
+        assertEquals(1, Presets.reloadFrom(dir));
+        Presets.PresetDefinition lenient = Presets.get("bad_groups");
+        assertNotNull(lenient);
+        assertEquals(1, lenient.groups().size());
+        assertEquals("valid", lenient.groups().get(0).id());
+
+        // Strict: the groups failure rejects the whole preset.
+        assertEquals(0, Presets.reloadFrom(dir, true));
+        assertNull(Presets.get("bad_groups"));
+    }
+
+    @Test
+    void strictModeKeepsFullyValidPresets(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("strict_valid.json"), """
+                {
+                  "name": { "en_us": "Strict Valid", "ja_jp": "厳格検証OK" },
+                  "items": [
+                    "minecraft:diamond",
+                    { "item": "minecraft:emerald", "count": 5 }
+                  ],
+                  "includes": ["vanilla_endgame"],
+                  "description": "All fields are valid",
+                  "category": "progression",
+                  "order": 3,
+                  "version": 2,
+                  "requiredMods": ["minecraft"],
+                  "groups": [
+                    { "id": "core", "items": ["minecraft:diamond", "minecraft:emerald#5"] }
+                  ],
+                  "nextPresets": ["vanilla_endgame"],
+                  "unlockAfterHours": 12.5
+                }
+                """);
+
+        assertEquals(1, Presets.reloadFrom(dir, true));
+        Presets.PresetDefinition preset = Presets.get("strict_valid");
+        assertNotNull(preset);
+        assertTrue(preset.problems().isEmpty(), () -> "unexpected problems: " + preset.problems());
+        assertEquals(3, preset.order());
+        assertEquals(2, preset.version());
+        assertEquals(1, preset.groups().size());
+        assertEquals("core", preset.groups().get(0).id());
+        assertEquals(12.5d, preset.unlockAfterHours());
+        assertTrue(preset.items().contains(TargetKey.of("minecraft:emerald", 5)));
+    }
+
 }
