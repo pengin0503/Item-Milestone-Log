@@ -144,6 +144,34 @@ class LangFilesTest {
     }
 
     @Test
+    void rankingFeatureKeysExistInBothLanguages() throws Exception {
+        Map<String, String> en = read("en_us");
+        Map<String, String> ja = read("ja_jp");
+        for (String key : List.of(
+                "message.itemmilestonelog.presettop_header",
+                "message.itemmilestonelog.presettop_entry",
+                "message.itemmilestonelog.presettop_entry_done",
+                "message.itemmilestonelog.presettop_self",
+                "message.itemmilestonelog.presettop_self_none",
+                "message.itemmilestonelog.presettop_empty",
+                "message.itemmilestonelog.help.presettop",
+                "message.itemmilestonelog.firsts_top_header",
+                "message.itemmilestonelog.firsts_top_entry",
+                "message.itemmilestonelog.firsts_top_empty",
+                "message.itemmilestonelog.firsts_unclaimed_header",
+                "message.itemmilestonelog.firsts_unclaimed_entry",
+                "message.itemmilestonelog.firsts_unclaimed_entry_preset",
+                "message.itemmilestonelog.firsts_unclaimed_none",
+                "message.itemmilestonelog.firsts_unclaimed_more",
+                "message.itemmilestonelog.firsts_unclaimed_invalid_scope")) {
+            assertNotNull(en.get(key), "Missing en_us key: " + key);
+            assertFalse(en.get(key).isBlank(), "Blank en_us key: " + key);
+            assertNotNull(ja.get(key), "Missing ja_jp key: " + key);
+            assertFalse(ja.get(key).isBlank(), "Blank ja_jp key: " + key);
+        }
+    }
+
+    @Test
     void translationsKeepTheSameNumberOfPlaceholdersAndValidFormatSpecifiers() throws Exception {
         Map<String, String> en = read("en_us");
         for (Map.Entry<String, String> entry : en.entrySet()) {

@@ -353,6 +353,146 @@ class MilestoneCommandsHelpTest {
     }
 
     @Test
+    void presettopIsRegisteredWithAWordPresetAndOptionalIntegerPage() {
+        CommandDispatcher<CommandSourceStack> dispatcher = buildDispatcher(src -> true);
+        CommandNode<CommandSourceStack> root = dispatcher.getRoot().getChild("milestonelog");
+        assertNotNull(root);
+
+        CommandNode<CommandSourceStack> presettop = root.getChild("presettop");
+        assertNotNull(presettop, "presettop must be registered (F-150-4)");
+        assertNull(presettop.getCommand(), "bare presettop must not execute");
+        CommandNode<CommandSourceStack> preset = presettop.getChild("preset");
+        assertNotNull(preset, "presettop must take <preset>");
+        assertEquals(StringArgumentType.class,
+                ((ArgumentCommandNode<CommandSourceStack, ?>) preset).getType().getClass());
+        assertNotNull(preset.getCommand(), "presettop <preset> must execute");
+        CommandNode<CommandSourceStack> page = preset.getChild("page");
+        assertNotNull(page, "presettop <preset> [<page>] must be registered");
+        assertEquals(IntegerArgumentType.class,
+                ((ArgumentCommandNode<CommandSourceStack, ?>) page).getType().getClass());
+        assertNotNull(page.getCommand());
+
+        for (String line : List.of("milestonelog presettop demo", "milestonelog presettop demo 2")) {
+            ParseResults<CommandSourceStack> parse = dispatcher.parse(line, null);
+            assertFalse(parse.getReader().canRead(), "must fully parse: " + line);
+            assertTrue(parse.getExceptions().isEmpty(), line + ": " + parse.getExceptions());
+            assertNotNull(parse.getContext().getCommand(), line);
+        }
+
+        CommandHelp.Entry entry = entryByName("presettop");
+        assertFalse(entry.playerOnly(), "presettop must remain console-usable like top");
+        assertEquals(CommandHelp.Gate.LOOKUP, entry.gate());
+        assertEquals(List.of("/milestonelog presettop <preset> [<page>]"),
+                MilestoneCommands.helpUsages(dispatcher, null, entry));
+        // A page link must be a fully parseable command with the preset preserved.
+        for (String line : List.of("/milestonelog presettop demo 2")) {
+            ParseResults<CommandSourceStack> parse = dispatcher.parse(line.substring(1), null);
+            assertFalse(parse.getReader().canRead(), line);
+            assertNotNull(parse.getContext().getCommand(), line);
+        }
+    }
+
+    @Test
+    void firstsTopAndUnclaimedArePublicSiblingsOfTheUnchangedAdminResets() {
+        CommandDispatcher<CommandSourceStack> dispatcher = buildDispatcher(src -> true);
+        CommandDispatcher<CommandSourceStack> regular = buildDispatcher(src -> false);
+        CommandNode<CommandSourceStack> firsts = dispatcher.getRoot().getChild("milestonelog").getChild("firsts");
+        assertNotNull(firsts);
+        CommandNode<CommandSourceStack> regularFirsts = regular.getRoot().getChild("milestonelog").getChild("firsts");
+        assertNotNull(regularFirsts);
+
+        CommandNode<CommandSourceStack> top = firsts.getChild("top");
+        assertNotNull(top, "firsts top must be registered (F-150-5)");
+        assertNotNull(top.getCommand(), "firsts top must execute");
+        assertNotNull(top.getChild("page"), "firsts top [<page>] must be registered");
+        assertEquals(IntegerArgumentType.class,
+                ((ArgumentCommandNode<CommandSourceStack, ?>) top.getChild("page")).getType().getClass());
+        assertTrue(regularFirsts.getChild("top").canUse(null),
+                "firsts top must not inherit firstsResetRequirement");
+
+        CommandNode<CommandSourceStack> unclaimed = firsts.getChild("unclaimed");
+        assertNotNull(unclaimed, "firsts unclaimed must be registered (F-150-6)");
+        assertNotNull(unclaimed.getCommand(), "bare firsts unclaimed must execute");
+        assertNotNull(unclaimed.getChild("page"), "firsts unclaimed [<page>] must be registered");
+        CommandNode<CommandSourceStack> scopeLiteral = unclaimed.getChild("scope");
+        assertNotNull(scopeLiteral, "firsts unclaimed scope <scope> must be registered");
+        assertNull(scopeLiteral.getCommand(), "bare scope must not execute");
+        CommandNode<CommandSourceStack> scope = scopeLiteral.getChild("scope");
+        assertNotNull(scope);
+        assertEquals(StringArgumentType.class,
+                ((ArgumentCommandNode<CommandSourceStack, ?>) scope).getType().getClass());
+        assertNotNull(scope.getCommand());
+        assertNotNull(scope.getChild("page"));
+        assertTrue(regularFirsts.getChild("unclaimed").canUse(null),
+                "firsts unclaimed must not inherit firstsResetRequirement");
+
+        try {
+            List<String> offered = scope.listSuggestions(
+                    dispatcher.parse("milestonelog firsts unclaimed scope targets", null).getContext()
+                            .build("milestonelog firsts unclaimed scope targets"),
+                    new SuggestionsBuilder("", 0)).get().getList().stream()
+                    .map(Suggestion::getText).toList();
+            assertEquals(Set.of("targets", "presets", "all"), Set.copyOf(offered));
+        } catch (Exception e) {
+            throw new AssertionError("unclaimed scope suggestions failed", e);
+        }
+
+        // The legacy integer slot and the three admin literals are untouched.
+        for (String line : List.of(
+                "milestonelog firsts 2",
+                "milestonelog firsts top",
+                "milestonelog firsts top 2",
+                "milestonelog firsts unclaimed",
+                "milestonelog firsts unclaimed 3",
+                "milestonelog firsts unclaimed scope presets",
+                "milestonelog firsts unclaimed scope all 2")) {
+            ParseResults<CommandSourceStack> parse = dispatcher.parse(line, null);
+            assertFalse(parse.getReader().canRead(), "must fully parse: " + line);
+            assertTrue(parse.getExceptions().isEmpty(), line + ": " + parse.getExceptions());
+            assertNotNull(parse.getContext().getCommand(), line);
+        }
+        for (String name : List.of("reset", "resettag", "resetall")) {
+            assertNotNull(firsts.getChild(name), "firsts " + name + " must remain registered");
+            assertFalse(regularFirsts.getChild(name).canUse(null), "firsts " + name + " must stay admin-gated");
+        }
+        CommandNode<CommandSourceStack> preset = rootChild(dispatcher, "preset");
+        assertNotNull(preset.getChild("show"), "preset subtree must be unchanged");
+        // F-150-4: "preset 2" keeps its legacy <name> slot (no new page argument on preset).
+        for (String line : List.of("milestonelog preset 2", "milestonelog preset list")) {
+            ParseResults<CommandSourceStack> parse = dispatcher.parse(line, null);
+            assertFalse(parse.getReader().canRead(), "must fully parse: " + line);
+            assertNotNull(parse.getContext().getCommand(), line);
+        }
+        for (String line : List.of("/milestonelog firsts top 2",
+                "/milestonelog firsts unclaimed scope all 2")) {
+            ParseResults<CommandSourceStack> parse = dispatcher.parse(line.substring(1), null);
+            assertFalse(parse.getReader().canRead(), line);
+            assertNotNull(parse.getContext().getCommand(), line);
+        }
+    }
+
+    private static CommandNode<CommandSourceStack> rootChild(
+            CommandDispatcher<CommandSourceStack> dispatcher, String name) {
+        return dispatcher.getRoot().getChild("milestonelog").getChild(name);
+    }
+
+    @Test
+    void unclaimedPresetGateFailsForPresetsAndAllButSkipsTargets() {
+        assertEquals("fail", MilestoneCommands.unclaimedPresetMode(
+                RankingStatsModel.UnclaimedScope.PRESETS, false));
+        assertEquals("fail", MilestoneCommands.unclaimedPresetMode(
+                RankingStatsModel.UnclaimedScope.ALL, false));
+        assertEquals("skip", MilestoneCommands.unclaimedPresetMode(
+                RankingStatsModel.UnclaimedScope.TARGETS, false));
+        assertEquals("include", MilestoneCommands.unclaimedPresetMode(
+                RankingStatsModel.UnclaimedScope.PRESETS, true));
+        assertEquals("include", MilestoneCommands.unclaimedPresetMode(
+                RankingStatsModel.UnclaimedScope.ALL, true));
+        assertEquals("skip", MilestoneCommands.unclaimedPresetMode(
+                RankingStatsModel.UnclaimedScope.TARGETS, true));
+    }
+
+    @Test
     void everyArgumentTypeInTheTreeIsVanillaDecodable() {
         CommandDispatcher<CommandSourceStack> op = buildDispatcher(src -> true);
         List<String> custom = new ArrayList<>();
@@ -504,9 +644,18 @@ class MilestoneCommandsHelpTest {
         assertEquals(List.of("/milestonelog help [<subcommand>]"),
                 MilestoneCommands.helpUsages(regular, null, entryByName("help")));
 
-        // firsts hides admin reset/resetall branches from non-OP sources and shows them to OPs
+        // firsts hides admin reset/resetall branches from non-OP sources and shows them to OPs.
+        // F-150-5/6 add public sibling branches, so the exact legacy one-line usage grows; the
+        // admin reset subcommands themselves stay unchanged.
         List<String> regularFirstsUsages = MilestoneCommands.helpUsages(regular, null, entryByName("firsts"));
-        assertEquals(List.of("/milestonelog firsts [<page>]"), regularFirstsUsages);
+        assertTrue(regularFirstsUsages.stream().anyMatch(u -> u.contains("<page>")),
+                () -> "Expected page usage: " + regularFirstsUsages);
+        assertTrue(regularFirstsUsages.stream().anyMatch(u -> u.contains("top")),
+                () -> "Expected firsts top usage: " + regularFirstsUsages);
+        assertTrue(regularFirstsUsages.stream().anyMatch(u -> u.contains("unclaimed")),
+                () -> "Expected firsts unclaimed usage: " + regularFirstsUsages);
+        assertFalse(regularFirstsUsages.stream().anyMatch(u -> u.contains("reset")),
+                () -> "Resets must stay hidden: " + regularFirstsUsages);
 
         List<String> opFirstsUsages = MilestoneCommands.helpUsages(op, null, entryByName("firsts"));
         assertTrue(opFirstsUsages.stream().anyMatch(u -> u.contains("<page>")), () -> "Expected page usage: " + opFirstsUsages);

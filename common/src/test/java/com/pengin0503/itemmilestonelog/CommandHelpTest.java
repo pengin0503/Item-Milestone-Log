@@ -28,7 +28,7 @@ class CommandHelpTest {
                 "summary", "playtime", "add", "addhand", "addtag", "remove", "removetag", "removeall",
                 "targets", "list", "search",
                 "preset", "presetremove", "presetprogress", "reset", "resettag", "resetall", "undo",
-                "firsts", "info", "top", "toptag", "recent", "stats", "lookup",
+                "firsts", "info", "top", "presettop", "toptag", "recent", "stats", "lookup",
                 "privacy", "mutebroadcast", "muteprogress", "discordoptout",
                 "export", "exporthtml", "exportcsv", "import",
                 "exportall", "exporthtmlall", "exportcsvall", "importall",
@@ -58,7 +58,7 @@ class CommandHelpTest {
         List<String> visible = namesOf(CommandHelp.visibleEntries(console, e -> true));
 
         assertEquals(List.of(
-                "preset", "firsts", "top", "toptag", "recent", "stats", "lookup",
+                "preset", "firsts", "top", "presettop", "toptag", "recent", "stats", "lookup",
                 "exportall", "exporthtmlall", "exportcsvall", "importall",
                 "admin", "prunedata", "renameitem", "renametag", "discordtest", "help"
         ), visible);
@@ -104,12 +104,12 @@ class CommandHelpTest {
         // allowLookup = false hides lookup, top, recent, stats for non-privileged sources only
         CommandHelp.Context noLookupRegular = new CommandHelp.Context(true, false, true, true, false, true);
         List<String> noLookupRegularVisible = namesOf(CommandHelp.visibleEntries(noLookupRegular, e -> true));
-        for (String cmd : List.of("lookup", "top", "recent", "stats")) {
+        for (String cmd : List.of("lookup", "top", "presettop", "recent", "stats")) {
             assertFalse(noLookupRegularVisible.contains(cmd), cmd + " must be hidden for non-privileged when allowLookup=false");
         }
         CommandHelp.Context noLookupPrivileged = new CommandHelp.Context(true, true, true, true, false, true);
         List<String> noLookupPrivilegedVisible = namesOf(CommandHelp.visibleEntries(noLookupPrivileged, e -> true));
-        for (String cmd : List.of("lookup", "top", "recent", "stats")) {
+        for (String cmd : List.of("lookup", "top", "presettop", "recent", "stats")) {
             assertTrue(noLookupPrivilegedVisible.contains(cmd), cmd + " must remain visible for privileged when allowLookup=false");
         }
 

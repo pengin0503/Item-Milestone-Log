@@ -284,6 +284,9 @@ public final class MilestoneCommands {
         // F-150-3 (N100): vanilla suggestion provider for the four search scopes.
         SuggestionProvider<CommandSourceStack> scopeSuggestions = (ctx, builder) ->
                 SharedSuggestionProvider.suggest(List.of("all", "targets", "records", "presets"), builder);
+        // F-150-6 (N05): vanilla suggestion provider for the three unclaimed scopes (D-150-21).
+        SuggestionProvider<CommandSourceStack> unclaimedScopeSuggestions = (ctx, builder) ->
+                SharedSuggestionProvider.suggest(List.of("targets", "presets", "all"), builder);
         SuggestionProvider<CommandSourceStack> personalTargetCountSuggestions = (ctx, builder) -> {
             ServerPlayer sp = ctx.getSource().getPlayer();
             if (sp == null) {
@@ -720,6 +723,24 @@ public final class MilestoneCommands {
                         .executes(ctx -> firstsList(ctx, null))
                         .then(argument("page", IntegerArgumentType.integer(1))
                                 .executes(ctx -> firstsList(ctx, IntegerArgumentType.getInteger(ctx, "page"))))
+                        .then(literal("top")
+                                .executes(ctx -> firstsTop(ctx, null))
+                                .then(argument("page", IntegerArgumentType.integer(1))
+                                        .executes(ctx -> firstsTop(ctx, IntegerArgumentType.getInteger(ctx, "page")))))
+                        .then(literal("unclaimed")
+                                .executes(ctx -> firstsUnclaimed(ctx, null, null))
+                                .then(literal("scope")
+                                        .then(argument("scope", StringArgumentType.word())
+                                                .suggests(unclaimedScopeSuggestions)
+                                                .executes(ctx -> firstsUnclaimed(ctx,
+                                                        StringArgumentType.getString(ctx, "scope"), null))
+                                                .then(argument("page", IntegerArgumentType.integer(1))
+                                                        .executes(ctx -> firstsUnclaimed(ctx,
+                                                                StringArgumentType.getString(ctx, "scope"),
+                                                                IntegerArgumentType.getInteger(ctx, "page"))))))
+                                .then(argument("page", IntegerArgumentType.integer(1))
+                                        .executes(ctx -> firstsUnclaimed(ctx, null,
+                                                IntegerArgumentType.getInteger(ctx, "page")))))
                         .then(literal("reset")
                                 .requires(firstsResetRequirement)
                                 .then(argument("item", ResourceLocationArgument.id())
@@ -741,6 +762,13 @@ public final class MilestoneCommands {
                         .then(literal("resetall")
                                 .requires(firstsResetRequirement)
                                 .executes(MilestoneCommands::firstsResetAll)))
+                .then(literal("presettop")
+                        .then(argument("preset", StringArgumentType.word())
+                                .suggests(presetSuggestions)
+                                .executes(ctx -> presettop(ctx, StringArgumentType.getString(ctx, "preset"), null))
+                                .then(argument("page", IntegerArgumentType.integer(1))
+                                        .executes(ctx -> presettop(ctx, StringArgumentType.getString(ctx, "preset"),
+                                                IntegerArgumentType.getInteger(ctx, "page"))))))
                 .then(literal("info")
                         .then(argument("item", ResourceLocationArgument.id())
                                 .suggests(infoItemSuggestions)
@@ -1852,6 +1880,237 @@ public final class MilestoneCommands {
         }
         if (slice != null) {
             sendPageFooter(source, slice, Pagination.firstsCommandPrefix());
+        }
+        return displayed.size();
+    }
+
+    // --------------------------------------------------------- F-150-4..6 rankings
+
+    /** F-150-4 (N03): per-preset ranking. Same gate as {@code top} plus the presets feature switch. */
+    private static int presettop(CommandContext<CommandSourceStack> ctx, String presetId, @Nullable Integer page) {
+        CommandSourceStack source = ctx.getSource();
+        if (!Config.PRESETS_ENABLED.get() || !canUseRankings(source)) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.feature_disabled"));
+        }
+        Presets.PresetDefinition preset = Presets.get(presetId);
+        if (preset == null) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_unknown",
+                    presetId, String.join(", ", Presets.names())));
+        }
+        MilestoneData data = MilestoneData.get(source.getServer());
+        MilestoneRankings.Viewer viewer = rankingViewer(source);
+        List<RankingStatsModel.PresetPlayer> players = new ArrayList<>();
+        for (Map.Entry<UUID, MilestoneData.PlayerData> e : data.allPlayers().entrySet()) {
+            MilestoneData.PlayerData pd = e.getValue();
+            if (pd == null || !MilestoneRankings.isVisible(viewer, e.getKey(), pd)) {
+                continue;
+            }
+            List<RankingStatsModel.RecordValue> records = new ArrayList<>();
+            for (Map.Entry<TargetKey, MilestoneRecord> r : pd.records.entrySet()) {
+                records.add(new RankingStatsModel.RecordValue(r.getKey().itemId(), r.getKey().count(),
+                        r.getValue().playTicks(), r.getValue().epochMillis()));
+            }
+            players.add(new RankingStatsModel.PresetPlayer(e.getKey(),
+                    MilestoneRankings.displayName(e.getKey(), pd), records,
+                    pd.completedPresets.contains(presetId)));
+        }
+        List<RankingStatsModel.TargetRef> targets = new ArrayList<>();
+        for (TargetKey key : preset.items()) {
+            targets.add(new RankingStatsModel.TargetRef(key.itemId(), key.count()));
+        }
+        List<RankingStatsModel.PresetRankEntry> ranking =
+                RankingStatsModel.presetRanking(presetId, targets, players);
+        if (ranking.isEmpty()) {
+            return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.presettop_empty"));
+        }
+
+        Pagination.PageSlice<RankingStatsModel.PresetRankEntry> slice = null;
+        List<RankingStatsModel.PresetRankEntry> displayed;
+        if (page != null) {
+            slice = Pagination.slice(ranking, page);
+            if (slice.isOutOfRange()) {
+                return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.page_out_of_range",
+                        page, slice.totalPages()));
+            }
+            displayed = slice.items();
+        } else {
+            displayed = ranking.subList(0, Math.min(MilestoneRankings.TOP_LIMIT, ranking.size()));
+        }
+
+        // The single header slot for the preset carries both the display name and its ID, as in
+        // `preset list` (the other slot is the pre-slice player count; see progress report).
+        Component presetName = MilestoneService.presetDisplayNameForLang(
+                MilestoneService.clientLanguage(source.getPlayer()), preset)
+                .copy().append(" [").append(presetId).append("]");
+        source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.presettop_header",
+                presetName, ranking.size()), false);
+        for (RankingStatsModel.PresetRankEntry e : displayed) {
+            RankingStatsModel.PresetCandidate c = e.candidate();
+            String key = c.completed()
+                    ? "message.itemmilestonelog.presettop_entry_done"
+                    : "message.itemmilestonelog.presettop_entry";
+            source.sendSuccess(() -> ServerLang.tr(source, key,
+                    e.rank(), Component.literal(c.name()), c.recorded(), c.total()), false);
+        }
+        ServerPlayer viewerPlayer = source.getPlayer();
+        if (viewerPlayer != null) {
+            RankingStatsModel.PresetRankEntry self = null;
+            for (RankingStatsModel.PresetRankEntry e : ranking) {
+                if (viewerPlayer.getUUID().equals(e.candidate().uuid())) {
+                    self = e;
+                    break;
+                }
+            }
+            Component selfLine = self == null
+                    ? ServerLang.tr(source, "message.itemmilestonelog.presettop_self_none")
+                    : ServerLang.tr(source, "message.itemmilestonelog.presettop_self",
+                            self.rank(), self.candidate().recorded(), self.candidate().total());
+            source.sendSuccess(() -> selfLine, false);
+        }
+        if (slice != null) {
+            sendPageFooter(source, slice, Pagination.presettopCommandPrefix(presetId));
+        }
+        return displayed.size();
+    }
+
+    /** F-150-5 (N04): public world-first holder counts; no lookup gate and no hideFromLookup filter. */
+    private static int firstsTop(CommandContext<CommandSourceStack> ctx, @Nullable Integer page) {
+        CommandSourceStack source = ctx.getSource();
+        MilestoneData data = MilestoneData.get(source.getServer());
+        Map<UUID, Component> names = new HashMap<>();
+        List<RankingStatsModel.WorldFirstValue> values = new ArrayList<>();
+        for (WorldFirstRecord wf : data.worldFirsts().values()) {
+            MilestoneData.PlayerData holder = data.playerOrNull(wf.playerUuid());
+            WorldFirstNames.Choice choice = WorldFirstNames.choose(wf.playerUuid(), wf.playerName(),
+                    holder != null, holder != null ? holder.lastKnownName : null);
+            Component name = choice.renamed()
+                    ? ServerLang.tr(source, "message.itemmilestonelog.firsts_name_renamed",
+                            Component.literal(choice.name()), Component.literal(choice.recordedName()))
+                    : Component.literal(choice.name());
+            names.putIfAbsent(wf.playerUuid(), name);
+            values.add(new RankingStatsModel.WorldFirstValue(wf.playerUuid(), choice.name(),
+                    wf.playTicks(), wf.epochMillis()));
+        }
+        List<RankingStatsModel.FirstCountEntry> ranking = RankingStatsModel.firstsTopByCount(values);
+        if (ranking.isEmpty()) {
+            return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.firsts_top_empty"));
+        }
+
+        Pagination.PageSlice<RankingStatsModel.FirstCountEntry> slice = null;
+        List<RankingStatsModel.FirstCountEntry> displayed;
+        if (page != null) {
+            slice = Pagination.slice(ranking, page);
+            if (slice.isOutOfRange()) {
+                return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.page_out_of_range",
+                        page, slice.totalPages()));
+            }
+            displayed = slice.items();
+        } else {
+            displayed = ranking.subList(0, Math.min(MilestoneRankings.TOP_LIMIT, ranking.size()));
+        }
+
+        source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.firsts_top_header",
+                ranking.size()), false);
+        for (RankingStatsModel.FirstCountEntry e : displayed) {
+            Component name = names.getOrDefault(e.uuid(), Component.literal(e.name()));
+            source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.firsts_top_entry",
+                    e.rank(), name, e.count()), false);
+        }
+        if (slice != null) {
+            sendPageFooter(source, slice, Pagination.firstsTopCommandPrefix());
+        }
+        return displayed.size();
+    }
+
+    /** Pure gate seam for {@code firsts unclaimed}: presets/all fail while disabled, targets skip presets. */
+    static String unclaimedPresetMode(RankingStatsModel.UnclaimedScope scope, boolean presetsEnabled) {
+        if (scope == RankingStatsModel.UnclaimedScope.PRESETS
+                || scope == RankingStatsModel.UnclaimedScope.ALL) {
+            return presetsEnabled ? "include" : "fail";
+        }
+        return "skip";
+    }
+
+    /** F-150-6 (N05): only the caller's own targets/presets plus the public world-first key set. */
+    private static int firstsUnclaimed(CommandContext<CommandSourceStack> ctx,
+                                       @Nullable String rawScope, @Nullable Integer page)
+            throws CommandSyntaxException {
+        ServerPlayer player = player(ctx);
+        CommandSourceStack source = ctx.getSource();
+        RankingStatsModel.UnclaimedScope scope = rawScope == null
+                ? RankingStatsModel.UnclaimedScope.TARGETS
+                : RankingStatsModel.UnclaimedScope.parse(rawScope);
+        if (scope == null) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.firsts_unclaimed_invalid_scope",
+                    rawScope == null ? "" : rawScope));
+        }
+        boolean presetsEnabled = Config.PRESETS_ENABLED.get();
+        String presetMode = unclaimedPresetMode(scope, presetsEnabled);
+        if ("fail".equals(presetMode)) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.feature_disabled"));
+        }
+
+        MilestoneData data = MilestoneData.get(source.getServer());
+        MilestoneData.PlayerData pd = data.playerOrNull(player.getUUID());
+        List<RankingStatsModel.TargetRef> targets = new ArrayList<>();
+        if (scope == RankingStatsModel.UnclaimedScope.TARGETS
+                || scope == RankingStatsModel.UnclaimedScope.ALL) {
+            for (TargetKey key : Tracker.effectiveTargets(pd)) {
+                targets.add(new RankingStatsModel.TargetRef(key.itemId(), key.count()));
+            }
+        }
+        List<RankingStatsModel.PresetRef> presets = new ArrayList<>();
+        if ("include".equals(presetMode)) {
+            for (Presets.PresetDefinition preset : Presets.all()) {
+                List<RankingStatsModel.TargetRef> items = new ArrayList<>();
+                for (TargetKey key : preset.items()) {
+                    items.add(new RankingStatsModel.TargetRef(key.itemId(), key.count()));
+                }
+                presets.add(new RankingStatsModel.PresetRef(preset.id(), items));
+            }
+        }
+        List<RankingStatsModel.TargetRef> claimed = new ArrayList<>();
+        for (TargetKey key : data.worldFirsts().keySet()) {
+            claimed.add(new RankingStatsModel.TargetRef(key.itemId(), key.count()));
+        }
+        RankingStatsModel.UnclaimedResult result =
+                RankingStatsModel.unclaimed(scope, targets, presets, claimed);
+        if (result.entries().isEmpty()) {
+            return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.firsts_unclaimed_none"));
+        }
+
+        Pagination.PageSlice<RankingStatsModel.UnclaimedEntry> slice = null;
+        List<RankingStatsModel.UnclaimedEntry> displayed;
+        if (page != null) {
+            slice = Pagination.slice(result.entries(), page);
+            if (slice.isOutOfRange()) {
+                return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.page_out_of_range",
+                        page, slice.totalPages()));
+            }
+            displayed = slice.items();
+        } else {
+            displayed = result.entries();
+        }
+
+        source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.firsts_unclaimed_header",
+                result.entries().size() + result.moreCount()), false);
+        for (RankingStatsModel.UnclaimedEntry e : displayed) {
+            Component label = MilestoneService.targetDisplayName(new TargetKey(e.itemId(), e.count()));
+            if (e.fromPreset()) {
+                source.sendSuccess(() -> ServerLang.tr(source,
+                        "message.itemmilestonelog.firsts_unclaimed_entry_preset",
+                        label, e.presetId() == null ? "" : e.presetId()), false);
+            } else {
+                source.sendSuccess(() -> ServerLang.tr(source,
+                        "message.itemmilestonelog.firsts_unclaimed_entry", label), false);
+            }
+        }
+        if (page == null && result.moreCount() > 0) {
+            send(ctx, ServerLang.tr(source, "message.itemmilestonelog.firsts_unclaimed_more",
+                    result.moreCount()));
+        }
+        if (slice != null) {
+            sendPageFooter(source, slice, Pagination.firstsUnclaimedCommandPrefix(scope.commandValue()));
         }
         return displayed.size();
     }
