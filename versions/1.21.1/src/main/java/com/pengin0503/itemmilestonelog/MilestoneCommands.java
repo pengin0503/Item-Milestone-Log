@@ -281,6 +281,9 @@ public final class MilestoneCommands {
         // F-150-2 (N96): vanilla suggestion provider for the four target kinds (D-150-5).
         SuggestionProvider<CommandSourceStack> kindSuggestions = (ctx, builder) ->
                 SharedSuggestionProvider.suggest(List.of("tags", "items", "counts", "default"), builder);
+        // F-150-3 (N100): vanilla suggestion provider for the four search scopes.
+        SuggestionProvider<CommandSourceStack> scopeSuggestions = (ctx, builder) ->
+                SharedSuggestionProvider.suggest(List.of("all", "targets", "records", "presets"), builder);
         SuggestionProvider<CommandSourceStack> personalTargetCountSuggestions = (ctx, builder) -> {
             ServerPlayer sp = ctx.getSource().getPlayer();
             if (sp == null) {
@@ -659,6 +662,7 @@ public final class MilestoneCommands {
                                         .then(argument("page", IntegerArgumentType.integer(1))
                                                 .executes(ctx -> list(ctx, IntegerArgumentType.getInteger(ctx, "page"),
                                                         StringArgumentType.getString(ctx, "query")))))))
+                .then(searchBranch(scopeSuggestions))
                 .then(literal("preset")
                         .then(literal("list").executes(MilestoneCommands::presetList))
                         .then(literal("save")
@@ -1117,6 +1121,26 @@ public final class MilestoneCommands {
                                         null, StringArgumentType.getString(ctx, "kind")))));
     }
 
+    /** F-150-3: additive {@code search <query> [scope <scope>] [<page>]} branch. */
+    private static LiteralArgumentBuilder<CommandSourceStack> searchBranch(
+            SuggestionProvider<CommandSourceStack> scopeSuggestions) {
+        return literal("search")
+                .then(argument("query", StringArgumentType.string())
+                        .executes(ctx -> search(ctx, StringArgumentType.getString(ctx, "query"), null, null))
+                        .then(argument("page", IntegerArgumentType.integer(1))
+                                .executes(ctx -> search(ctx, StringArgumentType.getString(ctx, "query"), null,
+                                        IntegerArgumentType.getInteger(ctx, "page"))))
+                        .then(literal("scope")
+                                .then(argument("scope", StringArgumentType.word())
+                                        .suggests(scopeSuggestions)
+                                        .executes(ctx -> search(ctx, StringArgumentType.getString(ctx, "query"),
+                                                StringArgumentType.getString(ctx, "scope"), null))
+                                        .then(argument("page", IntegerArgumentType.integer(1))
+                                                .executes(ctx -> search(ctx, StringArgumentType.getString(ctx, "query"),
+                                                        StringArgumentType.getString(ctx, "scope"),
+                                                        IntegerArgumentType.getInteger(ctx, "page")))))));
+    }
+
     private static int targets(CommandContext<CommandSourceStack> ctx,
                                Pagination.TargetFilter filter,
                                @Nullable Integer page) throws CommandSyntaxException {
@@ -1283,6 +1307,143 @@ public final class MilestoneCommands {
         }
         if (slice != null) {
             sendPageFooter(ctx.getSource(), slice, Pagination.listCommandPrefix(criteria.listSuffix()));
+        }
+        return displayed.size();
+    }
+
+    // ------------------------------------------------------------- F-150-3 unified search
+
+    /**
+     * Testable gate for {@code presetsEnabled}: an explicit presets scope fails, scope all silently
+     * drops the preset section; targets/records are unaffected either way (D-150-11).
+     */
+    static String searchPresetMode(TargetFilterModel.SearchScope scope, boolean presetsEnabled) {
+        if (scope.failsWhenPresetsDisabled() && !presetsEnabled) {
+            return "fail";
+        }
+        return scope.includesPresets(presetsEnabled) ? "include" : "skip";
+    }
+
+    private static int search(CommandContext<CommandSourceStack> ctx, String rawQuery,
+                              @Nullable String rawScope, @Nullable Integer page) throws CommandSyntaxException {
+        ServerPlayer player = player(ctx);
+        // Same validation and error keys as targets/list filter (F-150-1).
+        FilterCriteria criteria = parseCriteria(ctx, player, rawQuery, null);
+        if (criteria == null) {
+            return 0;
+        }
+        TargetFilterModel.SearchScope scope = TargetFilterModel.SearchScope.parse(rawScope);
+        if (scope == null) {
+            return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.search_invalid_scope"));
+        }
+        if ("fail".equals(searchPresetMode(scope, Config.PRESETS_ENABLED.get()))) {
+            return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.feature_disabled"));
+        }
+
+        MilestoneData.PlayerData pd = dataOrNull(player);
+        Map<TargetKey, MilestoneRecord> records = pd != null ? pd.records : Map.of();
+        List<TargetFilterModel.SearchCandidate> targetCandidates = new ArrayList<>();
+        List<TargetFilterModel.SearchCandidate> recordCandidates = new ArrayList<>();
+        List<TargetFilterModel.SearchCandidate> presetCandidates = new ArrayList<>();
+
+        // Scope order and in-scope order match targets/list exactly (D-150-10).
+        if (scope == TargetFilterModel.SearchScope.ALL
+                || scope == TargetFilterModel.SearchScope.TARGETS) {
+            List<TargetKey> sortedTargets = new ArrayList<>(Tracker.effectiveTargets(pd));
+            sortedTargets.sort(TargetKey::compareTo);
+            for (TargetKey key : sortedTargets) {
+                targetCandidates.add(TargetFilterModel.searchTarget(key.itemId(), key.count()));
+            }
+        }
+        if (scope == TargetFilterModel.SearchScope.ALL
+                || scope == TargetFilterModel.SearchScope.RECORDS) {
+            List<Map.Entry<TargetKey, MilestoneRecord>> sortedRecords = new ArrayList<>(records.entrySet());
+            sortedRecords.sort(Comparator.comparingInt((Map.Entry<TargetKey, MilestoneRecord> e) -> e.getValue().playTicks())
+                    .thenComparing(Map.Entry::getKey));
+            for (Map.Entry<TargetKey, MilestoneRecord> e : sortedRecords) {
+                recordCandidates.add(TargetFilterModel.searchRecord(e.getKey().itemId(), e.getKey().count()));
+            }
+        }
+        String lang = MilestoneService.clientLanguage(player);
+        if (scope.includesPresets(Config.PRESETS_ENABLED.get())) {
+            for (Presets.PresetDefinition preset : Presets.all()) {
+                List<String> searchables = new ArrayList<>();
+                searchables.add(preset.id());
+                searchables.add(preset.resolveDisplayName(lang));
+                if (preset.builtin()) {
+                    // Built-in JSON names are plain IDs; the lang value is the actual display name.
+                    searchables.add(ServerLang.formatForLang(lang, "gui.itemmilestonelog.preset." + preset.id()));
+                }
+                presetCandidates.add(TargetFilterModel.searchPreset(preset.id(), searchables));
+            }
+        }
+
+        TargetFilterModel.SearchResult result = TargetFilterModel.searchWithOverflow(
+                targetCandidates, recordCandidates, presetCandidates, scope, criteria.tokens());
+        if (result.hits().isEmpty()) {
+            return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.search_none"));
+        }
+
+        Pagination.PageSlice<TargetFilterModel.SearchHit> slice = null;
+        List<TargetFilterModel.SearchHit> displayed;
+        if (page != null) {
+            slice = Pagination.slice(result.hits(), page);
+            if (slice.isOutOfRange()) {
+                return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.page_out_of_range",
+                        page, slice.totalPages()));
+            }
+            displayed = slice.items();
+        } else {
+            displayed = result.hits();
+        }
+
+        ZoneId zone = Config.displayTimeZone();
+        for (TargetFilterModel.SearchHit hit : displayed) {
+            Component label = switch (hit.source()) {
+                case TARGET -> ServerLang.tr(player, "message.itemmilestonelog.search_source_target");
+                case RECORD -> ServerLang.tr(player, "message.itemmilestonelog.search_source_record");
+                case PRESET -> ServerLang.tr(player, "message.itemmilestonelog.search_source_preset");
+            };
+            Component display = Component.literal(hit.presetId() == null ? hit.itemId() : hit.presetId());
+            switch (hit.source()) {
+                case TARGET -> display = MilestoneService.targetDisplayName(hit.itemId(), hit.count());
+                case RECORD -> {
+                    Component name = MilestoneService.targetDisplayName(hit.itemId(), hit.count());
+                    MilestoneRecord rec = records.get(TargetKey.of(hit.itemId(), hit.count()));
+                    display = rec == null ? name
+                            : ServerLang.tr(player, "message.itemmilestonelog.target_done",
+                                    name, Playtime.formatRecordComponent(player, rec, zone));
+                }
+                case PRESET -> {
+                    Presets.PresetDefinition preset = Presets.get(hit.presetId());
+                    if (preset == null) {
+                        display = Component.literal(hit.presetId());
+                    } else {
+                        // Same columns as preset list, so the ID is always shown (D-150-11).
+                        String name = preset.builtin()
+                                ? preset.id()
+                                : preset.resolveDisplayName(MilestoneService.clientLanguage(player));
+                        Component typeLabel = ServerLang.tr(player, switch (preset.kind()) {
+                            case BUILTIN -> "message.itemmilestonelog.preset_type_builtin";
+                            case FILE -> "message.itemmilestonelog.preset_type_file";
+                            case DATAPACK -> "message.itemmilestonelog.preset_type_datapack";
+                        });
+                        display = ServerLang.tr(player, "message.itemmilestonelog.presets_entry",
+                                name, preset.id(), preset.items().size(), typeLabel);
+                    }
+                }
+            }
+            Component line = ServerLang.tr(player, "message.itemmilestonelog.search_hit", label, display);
+            ctx.getSource().sendSuccess(() -> line, false);
+        }
+        if (result.moreCount() > 0) {
+            send(ctx, ServerLang.tr(player, "message.itemmilestonelog.search_more", result.moreCount()));
+        }
+        if (slice != null) {
+            // PR-1's helper does not add the 'scope' literal; supply it as part of the argument so
+            // the generated clickable command parses with the registered tree (see progress report).
+            sendPageFooter(ctx.getSource(), slice,
+                    Pagination.searchCommandPrefix(rawQuery, "scope " + scope.commandValue()));
         }
         return displayed.size();
     }

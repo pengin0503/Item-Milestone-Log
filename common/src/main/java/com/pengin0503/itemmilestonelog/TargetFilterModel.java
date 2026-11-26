@@ -23,6 +23,8 @@ public final class TargetFilterModel {
     public static final int MAX_QUERY_LENGTH = 128;
     /** Maximum number of whitespace-separated tokens in a query (D-150-9). */
     public static final int MAX_TOKENS = 8;
+    /** Hard cap on flat search hits across all scopes (D-150-12). */
+    public static final int SEARCH_RESULT_LIMIT = 200;
 
     private TargetFilterModel() {
     }
@@ -102,10 +104,20 @@ public final class TargetFilterModel {
     /** Returns true when every token matches the view (AND); an empty token list matches all. */
     public static boolean matchesKeyword(TargetView view, List<String> tokens) {
         Objects.requireNonNull(view, "view");
+        return matchesKeyword(view.itemId(), tokens);
+    }
+
+    /**
+     * Applies the exact F-150-1 token rules to an arbitrary searchable string. This lets the
+     * {@code search} command match preset IDs and resolved preset display names (D-150-11) with
+     * the very same rules as target IDs, without a second matching implementation.
+     */
+    public static boolean matchesKeyword(String searchable, List<String> tokens) {
+        Objects.requireNonNull(searchable, "searchable");
         if (tokens == null || tokens.isEmpty()) {
             return true;
         }
-        String full = view.itemId().toLowerCase(Locale.ROOT);
+        String full = searchable.toLowerCase(Locale.ROOT);
         String body = full.startsWith("#") ? full.substring(1) : full;
         int colon = body.indexOf(':');
         String namespace = colon >= 0 ? body.substring(0, colon) : body;
@@ -162,5 +174,161 @@ public final class TargetFilterModel {
             }
         }
         return result;
+    }
+
+    // ------------------------------------------------------------- F-150-3 unified search
+
+    /** Where a search hit came from; identical keys in targets and records stay separate hits. */
+    public enum SearchSource {
+        TARGET,
+        RECORD,
+        PRESET
+    }
+
+    /**
+     * One flat hit. For {@link SearchSource#TARGET} / {@link SearchSource#RECORD}, {@code itemId}
+     * and {@code count} identify the target key and {@code presetId} is null. For
+     * {@link SearchSource#PRESET}, {@code itemId} is null, {@code count} is 0 and {@code presetId}
+     * is the preset ID that every preset row must show alongside its display name (D-150-11).
+     */
+    public record SearchHit(SearchSource source, String itemId, int count, String presetId) {
+        public SearchHit {
+            Objects.requireNonNull(source, "source");
+            if (source == SearchSource.PRESET) {
+                Objects.requireNonNull(presetId, "presetId");
+            } else {
+                Objects.requireNonNull(itemId, "itemId");
+            }
+        }
+    }
+
+    /**
+     * One search candidate: the strings the F-150-1 token rules are applied to, plus the hit to
+     * emit when any of those strings matches. The version tree is the adapter that supplies both.
+     */
+    public record SearchCandidate(List<String> searchables, SearchHit hit) {
+        public SearchCandidate {
+            Objects.requireNonNull(searchables, "searchables");
+            Objects.requireNonNull(hit, "hit");
+            searchables = List.copyOf(searchables);
+        }
+    }
+
+    /** Searchable scopes in their fixed output order (D-150-10). */
+    public enum SearchScope {
+        ALL,
+        TARGETS,
+        RECORDS,
+        PRESETS;
+
+        /** Parses a typed scope word; null means the omitted default ({@code all}). */
+        public static SearchScope parse(String raw) {
+            if (raw == null) {
+                return ALL;
+            }
+            if (raw.isBlank()) {
+                return null;
+            }
+            for (SearchScope scope : values()) {
+                if (scope.name().equalsIgnoreCase(raw)) {
+                    return scope;
+                }
+            }
+            return null;
+        }
+
+        /** Lower-case spelling preserved in clickable page links. */
+        public String commandValue() {
+            return name().toLowerCase(Locale.ROOT);
+        }
+
+        /** Whether presets contribute hits for this scope under {@code presetsEnabled} (D-150-11). */
+        public boolean includesPresets(boolean presetsEnabled) {
+            return presetsEnabled && (this == ALL || this == PRESETS);
+        }
+
+        /** Whether an explicit {@code presets} scope fails when presets are disabled (D-150-11). */
+        public boolean failsWhenPresetsDisabled() {
+            return this == PRESETS;
+        }
+    }
+
+    /** Capped hits and the count of further matches omitted by the cap. */
+    public record SearchResult(List<SearchHit> hits, int moreCount) {
+        public SearchResult {
+            Objects.requireNonNull(hits, "hits");
+            hits = List.copyOf(hits);
+        }
+    }
+
+    public static SearchCandidate searchTarget(String itemId, int count) {
+        return new SearchCandidate(List.of(itemId),
+                new SearchHit(SearchSource.TARGET, itemId, count, null));
+    }
+
+    public static SearchCandidate searchRecord(String itemId, int count) {
+        return new SearchCandidate(List.of(itemId),
+                new SearchHit(SearchSource.RECORD, itemId, count, null));
+    }
+
+    public static SearchCandidate searchPreset(String presetId, List<String> searchables) {
+        return new SearchCandidate(searchables,
+                new SearchHit(SearchSource.PRESET, null, 0, presetId));
+    }
+
+    /** Returns the capped flat hit list; see {@link #searchWithOverflow} for the omitted count. */
+    public static List<SearchHit> search(List<SearchCandidate> targets,
+                                         List<SearchCandidate> records,
+                                         List<SearchCandidate> presets,
+                                         SearchScope scope,
+                                         List<String> tokens) {
+        return searchWithOverflow(targets, records, presets, scope, tokens).hits();
+    }
+
+    /**
+     * Pure search over adapter-supplied candidates. Scope order is fixed (targets, records,
+     * presets); all tokens of a query must match at least one searchable string of a candidate;
+     * every match past {@value #SEARCH_RESULT_LIMIT} is counted for {@code search_more} but never
+     * added to the hit list. Matching continues past the cap only to report an exact count.
+     */
+    public static SearchResult searchWithOverflow(List<SearchCandidate> targets,
+                                                  List<SearchCandidate> records,
+                                                  List<SearchCandidate> presets,
+                                                  SearchScope scope,
+                                                  List<String> tokens) {
+        Objects.requireNonNull(targets, "targets");
+        Objects.requireNonNull(records, "records");
+        Objects.requireNonNull(presets, "presets");
+        SearchScope effective = scope == null ? SearchScope.ALL : scope;
+        List<List<SearchCandidate>> groups = switch (effective) {
+            case ALL -> List.of(targets, records, presets);
+            case TARGETS -> List.of(targets);
+            case RECORDS -> List.of(records);
+            case PRESETS -> List.of(presets);
+        };
+        List<SearchHit> hits = new ArrayList<>();
+        int more = 0;
+        for (List<SearchCandidate> group : groups) {
+            for (SearchCandidate candidate : group) {
+                if (!matchesAny(candidate.searchables(), tokens)) {
+                    continue;
+                }
+                if (hits.size() < SEARCH_RESULT_LIMIT) {
+                    hits.add(candidate.hit());
+                } else {
+                    more++;
+                }
+            }
+        }
+        return new SearchResult(hits, more);
+    }
+
+    private static boolean matchesAny(List<String> searchables, List<String> tokens) {
+        for (String searchable : searchables) {
+            if (matchesKeyword(searchable, tokens)) {
+                return true;
+            }
+        }
+        return false;
     }
 }

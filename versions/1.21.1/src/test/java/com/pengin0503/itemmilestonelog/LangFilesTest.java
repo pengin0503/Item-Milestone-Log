@@ -124,6 +124,26 @@ class LangFilesTest {
     }
 
     @Test
+    void searchFeatureKeysExistInBothLanguages() throws Exception {
+        Map<String, String> en = read("en_us");
+        Map<String, String> ja = read("ja_jp");
+        for (String key : List.of(
+                "message.itemmilestonelog.help.search",
+                "message.itemmilestonelog.search_hit",
+                "message.itemmilestonelog.search_invalid_scope",
+                "message.itemmilestonelog.search_more",
+                "message.itemmilestonelog.search_none",
+                "message.itemmilestonelog.search_source_preset",
+                "message.itemmilestonelog.search_source_record",
+                "message.itemmilestonelog.search_source_target")) {
+            assertNotNull(en.get(key), "Missing en_us key: " + key);
+            assertFalse(en.get(key).isBlank(), "Blank en_us key: " + key);
+            assertNotNull(ja.get(key), "Missing ja_jp key: " + key);
+            assertFalse(ja.get(key).isBlank(), "Blank ja_jp key: " + key);
+        }
+    }
+
+    @Test
     void translationsKeepTheSameNumberOfPlaceholdersAndValidFormatSpecifiers() throws Exception {
         Map<String, String> en = read("en_us");
         for (Map.Entry<String, String> entry : en.entrySet()) {

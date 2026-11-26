@@ -278,6 +278,81 @@ class MilestoneCommandsHelpTest {
     }
 
     @Test
+    void searchBranchIsRegisteredWithScopeSuggestionsAndHelpEntry() {
+        CommandDispatcher<CommandSourceStack> dispatcher = buildDispatcher(src -> true);
+        CommandNode<CommandSourceStack> root = dispatcher.getRoot().getChild("milestonelog");
+        assertNotNull(root);
+
+        CommandNode<CommandSourceStack> search = root.getChild("search");
+        assertNotNull(search, "search must be registered (F-150-3)");
+        CommandNode<CommandSourceStack> query = search.getChild("query");
+        assertNotNull(query, "search must take <query>");
+        assertEquals(StringArgumentType.class,
+                ((ArgumentCommandNode<CommandSourceStack, ?>) query).getType().getClass());
+        assertNotNull(query.getCommand(), "search <query> must execute");
+
+        CommandNode<CommandSourceStack> page = query.getChild("page");
+        assertNotNull(page, "search <query> [<page>] must be registered");
+        assertEquals(IntegerArgumentType.class,
+                ((ArgumentCommandNode<CommandSourceStack, ?>) page).getType().getClass());
+        assertNotNull(page.getCommand());
+
+        CommandNode<CommandSourceStack> scopeLiteral = query.getChild("scope");
+        assertNotNull(scopeLiteral, "search <query> scope <scope> must be registered");
+        assertNull(scopeLiteral.getCommand(), "bare 'scope' must not execute");
+        CommandNode<CommandSourceStack> scopeArg = scopeLiteral.getChild("scope");
+        assertNotNull(scopeArg);
+        assertEquals(StringArgumentType.class,
+                ((ArgumentCommandNode<CommandSourceStack, ?>) scopeArg).getType().getClass());
+        assertNotNull(scopeArg.getCommand(), "search <query> scope <scope> must execute");
+        CommandNode<CommandSourceStack> scopedPage = scopeArg.getChild("page");
+        assertNotNull(scopedPage, "search <query> scope <scope> [<page>] must be registered");
+        assertNotNull(scopedPage.getCommand());
+
+        // Scope suggestions are four vanilla word values (D-150-10).
+        try {
+            List<String> offered = scopeArg.listSuggestions(
+                    dispatcher.parse("milestonelog search iron scope all", null).getContext()
+                            .build("milestonelog search iron scope all"),
+                    new SuggestionsBuilder("", 0)).get().getList().stream()
+                    .map(Suggestion::getText).toList();
+            assertEquals(Set.of("all", "targets", "records", "presets"), Set.copyOf(offered));
+        } catch (Exception e) {
+            throw new AssertionError("scope suggestions failed", e);
+        }
+
+        // Clickable page links keep the query and scope literal, and parse with the real tree.
+        for (String line : List.of(
+                "/milestonelog search \"iron block\" scope all 2",
+                "/milestonelog search \"iron block\" scope presets")) {
+            ParseResults<CommandSourceStack> parse = dispatcher.parse(line.substring(1), null);
+            assertFalse(parse.getReader().canRead(), "must fully parse: " + line);
+            assertTrue(parse.getExceptions().isEmpty(), line + ": " + parse.getExceptions());
+            assertNotNull(parse.getContext().getCommand(), line);
+        }
+
+        CommandHelp.Entry entry = entryByName("search");
+        assertTrue(entry.playerOnly(), "search is player-only like targets/list");
+        assertEquals(CommandHelp.Gate.NONE, entry.gate(), "search must not add an admin/config gate");
+    }
+
+    @Test
+    void searchPresetsEnabledGateOnlyFailsForExplicitPresetsScope() {
+        assertEquals("fail", MilestoneCommands.searchPresetMode(
+                com.pengin0503.itemmilestonelog.TargetFilterModel.SearchScope.PRESETS, false));
+        assertEquals("skip", MilestoneCommands.searchPresetMode(
+                com.pengin0503.itemmilestonelog.TargetFilterModel.SearchScope.ALL, false));
+        assertEquals("skip", MilestoneCommands.searchPresetMode(
+                com.pengin0503.itemmilestonelog.TargetFilterModel.SearchScope.TARGETS, false));
+        assertEquals("skip", MilestoneCommands.searchPresetMode(
+                com.pengin0503.itemmilestonelog.TargetFilterModel.SearchScope.RECORDS, true));
+        assertEquals("include", MilestoneCommands.searchPresetMode(
+                com.pengin0503.itemmilestonelog.TargetFilterModel.SearchScope.ALL, true));
+        assertEquals("include", MilestoneCommands.searchPresetMode(
+                com.pengin0503.itemmilestonelog.TargetFilterModel.SearchScope.PRESETS, true));
+    }
+
+    @Test
     void everyArgumentTypeInTheTreeIsVanillaDecodable() {
         CommandDispatcher<CommandSourceStack> op = buildDispatcher(src -> true);
         List<String> custom = new ArrayList<>();
