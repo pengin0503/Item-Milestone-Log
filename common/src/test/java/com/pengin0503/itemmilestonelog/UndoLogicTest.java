@@ -27,12 +27,26 @@ class UndoLogicTest {
                                                          Map<String, Rec> records,
                                                          Set<String> completed,
                                                          Map<String, Integer> progress) {
-        return UndoLogic.restore(snapshot, records, completed, progress, Set.of(), 1024, Rec::ticks);
+        return restore(snapshot, records, completed, progress, Map.of());
+    }
+
+    private static UndoLogic.Result<String, Rec> restore(UndoLogic.Snapshot<String, Rec> snapshot,
+                                                         Map<String, Rec> records,
+                                                         Set<String> completed,
+                                                         Map<String, Integer> progress,
+                                                         Map<String, PresetState> presetState) {
+        return UndoLogic.restore(snapshot, records, completed, progress, presetState, Set.of(), 1024, Rec::ticks);
     }
 
     private static UndoLogic.Snapshot<String, Rec> resetSnapshot(Map<String, Rec> records, Set<String> completed,
                                                                  Map<String, Integer> progress, long at) {
-        return UndoLogic.Snapshot.reset(records, completed, progress, at);
+        return resetSnapshot(records, completed, progress, Map.of(), at);
+    }
+
+    private static UndoLogic.Snapshot<String, Rec> resetSnapshot(Map<String, Rec> records, Set<String> completed,
+                                                                 Map<String, Integer> progress,
+                                                                 Map<String, PresetState> presetState, long at) {
+        return UndoLogic.Snapshot.reset(records, completed, progress, presetState, at);
     }
 
     @Test
@@ -93,6 +107,29 @@ class UndoLogicTest {
     }
 
     @Test
+    void presetStateIsMergedBackWithOrAndMaxSemantics() {
+        Map<String, PresetState> removed = new LinkedHashMap<>();
+        removed.put("old_only", new PresetState(true, 3));
+        removed.put("both", new PresetState(true, 2));
+        removed.put("newer_current", new PresetState(false, 1));
+        Map<String, PresetState> current = new LinkedHashMap<>();
+        current.put("both", new PresetState(false, 5));
+        current.put("newer_current", new PresetState(true, 4));
+        current.put("added_after", new PresetState(true, 1));
+
+        UndoLogic.Result<String, Rec> result = restore(
+                resetSnapshot(Map.of(), Set.of(), Map.of(), removed, 0L),
+                Map.of(), Set.of(), Map.of(), current);
+
+        assertEquals(Map.of(
+                "old_only", new PresetState(true, 3),
+                "both", new PresetState(true, 5),
+                "newer_current", new PresetState(true, 4),
+                "added_after", new PresetState(true, 1)
+        ), result.presetState());
+    }
+
+    @Test
     void progressNotifiedRestoredOnlyForStillUnrecordedKeysWithoutEntry() {
         Map<String, Integer> removedProgress = new LinkedHashMap<>();
         removedProgress.put("unrecorded-free", 50);
@@ -132,7 +169,7 @@ class UndoLogicTest {
                 List.of("t1", "t2", "t3", "t4"), Map.of("t1", 50, "t4", 25), 0L);
         Set<String> currentTargets = new LinkedHashSet<>(List.of("t2", "x"));
 
-        UndoLogic.Result<String, Rec> result = UndoLogic.restore(snapshot, Map.of(), Set.of(), Map.of(),
+        UndoLogic.Result<String, Rec> result = UndoLogic.restore(snapshot, Map.of(), Set.of(), Map.of(), Map.of(),
                 currentTargets, 4, Rec::ticks);
 
         assertEquals(List.of("t2", "x", "t1", "t3"), List.copyOf(result.targets()));
@@ -146,7 +183,10 @@ class UndoLogicTest {
     @Test
     void emptyOperationsAreEmptySnapshots() {
         assertTrue(resetSnapshot(Map.of(), Set.of("p1"), Map.of("a", 50), 0L).isEmpty());
+        assertTrue(resetSnapshot(Map.of(), Set.of(), Map.of(), 0L).isEmpty());
         assertFalse(resetSnapshot(Map.of("a", new Rec(1, "s")), Set.of(), Map.of(), 0L).isEmpty());
+        assertFalse(resetSnapshot(Map.of(), Set.of(), Map.of(),
+                Map.of("p", new PresetState(true, 1)), 0L).isEmpty());
         assertTrue(UndoLogic.Snapshot.<String, Rec>bulkRemoval(List.of(), Map.of(), 0L).isEmpty());
         assertFalse(UndoLogic.Snapshot.<String, Rec>bulkRemoval(List.of("t"), Map.of(), 0L).isEmpty());
     }

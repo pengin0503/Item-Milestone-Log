@@ -164,7 +164,8 @@
 
 | 操作 | presetState の扱い |
 |---|---|
-| `resetall` | completedPresets と一緒に全クリアする（自動追加も version 既読も最初からになる） |
+| `resetall`（本人／管理者） | completedPresets と一緒に全クリアする（自動追加も version 既読も最初からになる） |
+| `undo`（`resetall` の取り消し） | スナップショットから復元する。同一 ID では `autoApplied` は OR、`lastSeenVersion` は大きい方を取る（F-140-12 のマージ規則） |
 | プレイヤーデータの purge／削除 | PlayerData ごと消える（追加規則なし） |
 | restore（バックアップ復元） | completedPresets と同じくマージする。同一 ID が両方にある場合は `autoApplied` は OR、`lastSeenVersion` は大きい方を取る |
 | export／import（JSON） | 含めない（従来の export 形式を変更しない） |
