@@ -31,8 +31,6 @@ public final class PresetListScreen extends Screen {
 
     private PresetListWidget listWidget;
 
-    private boolean awaitingApplyFeedback = false;
-
     public PresetListScreen(MilestoneScreen parent) {
         super(Component.translatable("gui.itemmilestonelog.presets.title"));
         this.parent = parent;
@@ -41,8 +39,7 @@ public final class PresetListScreen extends Screen {
 
     public void updateData(SyncMilestonesPayload newData) {
         double prevScroll = listWidget != null ? McCompat.scroll().getScrollAmount(listWidget) : 0.0;
-        this.parent.updateData(newData, awaitingApplyFeedback);
-        this.awaitingApplyFeedback = false;
+        this.parent.updateData(newData, false);
         this.data = newData;
         if (newData.feedback() != null) {
             this.feedbackMessage = newData.feedback();
@@ -75,7 +72,10 @@ public final class PresetListScreen extends Screen {
         int listBottom = this.height - footerHeight;
         int listHeight = Math.max(40, listBottom - listTop);
 
-        listWidget = addRenderableWidget(new PresetListWidget(this.minecraft, this.width, listHeight, listTop, 28));
+        // 1.20.1's AbstractSelectionList takes the screen height (for the footer background)
+        // and the list's top/bottom separately.
+        listWidget = addRenderableWidget(new PresetListWidget(
+                this.minecraft, this.width, this.height, listTop, listHeight, 28));
         for (PresetEntry entry : data.presets()) {
             listWidget.addRow(new PresetRow(entry));
         }
@@ -136,12 +136,14 @@ public final class PresetListScreen extends Screen {
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
+        // 1.20.1's Screen.render() does not call renderBackground(); every 1.20.1 screen does it.
+        this.renderBackground(guiGraphics);
         super.render(guiGraphics, mouseX, mouseY, partialTick);
 
         guiGraphics.drawCenteredString(this.font, this.title, this.width / 2, 8, 0xFFFFFFFF);
 
         if (listWidget != null && listWidget.children().isEmpty()) {
-            int centerY = listWidget.getTop() + listWidget.getHeight() / 2 - 4;
+            int centerY = (listWidget.getTop() + listWidget.getBottom()) / 2 - 4;
             guiGraphics.drawCenteredString(this.font,
                     Component.translatable("gui.itemmilestonelog.presets.empty"),
                     this.width / 2, centerY, 0xFFA0A0A0);
@@ -160,10 +162,10 @@ public final class PresetListScreen extends Screen {
     }
 
     private final class PresetListWidget extends ContainerObjectSelectionList<PresetRow> {
-        public PresetListWidget(Minecraft mc, int width, int height, int y, int itemHeight) {
-            // 1.20.1 takes explicit top/bottom y coordinates; the 1.21.x overload derived
-            // the bottom from the height.
-            super(mc, width, height, y, y + height, itemHeight);
+        public PresetListWidget(Minecraft mc, int width, int screenHeight, int y, int listHeight, int itemHeight) {
+            // 1.20.1 takes the screen height (for the footer background) and explicit top/bottom
+            // y coordinates; the 1.21.x overload derived the bottom from the list height.
+            super(mc, width, screenHeight, y, y + listHeight, itemHeight);
         }
 
         public void addRow(PresetRow row) {
@@ -207,7 +209,6 @@ public final class PresetListScreen extends Screen {
             this.applyButton = Button.builder(
                             Component.translatable("gui.itemmilestonelog.presets.apply"),
                             btn -> {
-                                PresetListScreen.this.awaitingApplyFeedback = true;
                                 ClientMilestoneHandler.sendAction(MilestoneActionPayload.Action.APPLY_PRESET, entry.id());
                                 if (PresetListScreen.this.minecraft != null) {
                                     PresetListScreen.this.minecraft.setScreen(parent);

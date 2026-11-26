@@ -64,6 +64,19 @@ public final class ClientMilestoneHandler {
         tagTooltipNames = Map.of();
     }
 
+    /**
+     * F42: rebuilds the tooltip index from the latest sync after the client's item tags are
+     * rebound (login tag sync or a server {@code /reload}). The server-side Tracker's
+     * TagsUpdatedEvent listener runs first and refreshes {@link TagTargets}; this runs at
+     * {@code EventPriority.LOW} so tag expansion sees the new members.
+     */
+    public static void onTagsUpdated() {
+        SyncMilestonesPayload sync = latestSync;
+        if (sync != null) {
+            rebuildTooltipIndex(sync);
+        }
+    }
+
     public static SyncExtraPayload getExtraData() {
         return extraData;
     }

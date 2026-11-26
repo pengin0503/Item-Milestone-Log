@@ -2,6 +2,8 @@ package com.pengin0503.itemmilestonelog.compat;
 
 import net.minecraft.SharedConstants;
 
+import java.util.function.Supplier;
+
 /**
  * N252: detects the running Minecraft version of the 1.21.x line once, for compat
  * implementation selection (docs/DESIGN_1.3.0.md). Each constant is an API profile:
@@ -77,17 +79,32 @@ public enum McVersion {
     private static String versionName() {
         try {
             return (String) SharedConstants.class.getField("VERSION_STRING").get(null);
-        } catch (ReflectiveOperationException | LinkageError e) {
+        } catch (ReflectiveOperationException | LinkageError | RuntimeException e) {
             // 1.21.9+ removed the field; fall through to the WorldVersion accessor.
         }
+        return versionNameFrom(SharedConstants::getCurrentVersion);
+    }
+
+    /**
+     * Resolves the name of the {@code WorldVersion} returned by {@code currentVersion}, or
+     * {@code null} when the version is unavailable or its accessor cannot be read. Called
+     * through a {@link Supplier} so the fallback path is testable without the game bootstrap:
+     * 1.21.9+ must not let {@code SharedConstants#getCurrentVersion()}'s
+     * {@link IllegalStateException} ("Game version not set") escape as
+     * {@code ExceptionInInitializerError}.
+     */
+    static String versionNameFrom(Supplier<Object> currentVersion) {
         try {
-            Object version = SharedConstants.getCurrentVersion();
+            Object version = currentVersion.get();
+            if (version == null) {
+                return null;
+            }
             try {
                 return (String) version.getClass().getMethod("name").invoke(version);
             } catch (NoSuchMethodException e) {
                 return (String) version.getClass().getMethod("getName").invoke(version);
             }
-        } catch (ReflectiveOperationException | LinkageError e) {
+        } catch (ReflectiveOperationException | LinkageError | RuntimeException e) {
             return null;
         }
     }

@@ -24,6 +24,7 @@ import net.minecraft.world.item.Items;
 import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -40,6 +41,9 @@ public final class ItemPickerScreen extends Screen {
     private static final int ACTION_BTN_HEIGHT = 18;
     private static final int MAX_DISPLAYED_ROWS = 300;
     private static final int COUNT_BOX_WIDTH = 56;
+    // #116: immutable labels; render() runs for every visible row on every frame.
+    private static final Component TRACKED_LABEL = Component.translatable("gui.itemmilestonelog.picker.tracked");
+    private static final Component ADD_LABEL = Component.translatable("gui.itemmilestonelog.picker.add_item");
 
     @Nullable
     private static List<CatalogItem> cachedCatalog;
@@ -65,6 +69,8 @@ public final class ItemPickerScreen extends Screen {
     private int countBoxY = 0;
     private int matchedCount = 0;
     private int displayedCount = 0;
+    // #116: item IDs already tracked at the current count, rebuilt on count/data changes.
+    private Set<String> trackedItemIdsAtCount = Set.of();
     @Nullable
     private ItemStack hoveredIconStack = null;
 
@@ -97,6 +103,7 @@ public final class ItemPickerScreen extends Screen {
                     rl.getNamespace().toLowerCase(Locale.ROOT),
                     new ItemStack(item),
                     name,
+                    nameStr,
                     nameStr.toLowerCase(Locale.ROOT),
                     id.toLowerCase(Locale.ROOT)
             ));
@@ -112,6 +119,7 @@ public final class ItemPickerScreen extends Screen {
     public void updateData(SyncMilestonesPayload payload) {
         this.parent.updateData(payload, false);
         this.trackedTargets = this.parent.getTrackedTargets();
+        refreshTrackedAtCount();
         if (payload.feedback() != null) {
             this.feedbackMessage = payload.feedback();
         }
@@ -136,6 +144,8 @@ public final class ItemPickerScreen extends Screen {
 
     @Override
     protected void init() {
+        // #125: keep the scroll position across a resize.
+        double previousScroll = listWidget != null ? listWidget.scrollAmount() : 0.0;
         int searchWidth = Math.min(340, this.width - 40);
         int searchX = (this.width - searchWidth) / 2;
 
@@ -153,6 +163,7 @@ public final class ItemPickerScreen extends Screen {
 
         listWidget = addRenderableWidget(new ItemListWidget(this.minecraft, this.width, listHeight, listTop, 26));
         refreshList();
+        listWidget.setScrollAmount(previousScroll);
 
         int backWidth = 120;
         int backX = (this.width - backWidth) / 2;
@@ -188,9 +199,25 @@ public final class ItemPickerScreen extends Screen {
     private void onCountChanged(String text) {
         this.currentCountText = text;
         this.parsedCount = parseCountInput(text);
+        refreshTrackedAtCount();
         if (countBox != null) {
             countBox.setTextColor(this.parsedCount >= TargetKey.MIN_COUNT ? 0xFFE0E0E0 : 0xFFFF5555);
         }
+    }
+
+    /** #116: precomputes the (itemId, count) matches instead of allocating a TargetKey per row/frame. */
+    private void refreshTrackedAtCount() {
+        if (parsedCount < TargetKey.MIN_COUNT) {
+            this.trackedItemIdsAtCount = Set.of();
+            return;
+        }
+        Set<String> ids = new HashSet<>();
+        for (TargetKey key : trackedTargets) {
+            if (key.count() == parsedCount) {
+                ids.add(key.itemId());
+            }
+        }
+        this.trackedItemIdsAtCount = ids;
     }
 
     private void refreshList() {
@@ -291,6 +318,7 @@ public final class ItemPickerScreen extends Screen {
             String lowerNamespace,
             ItemStack stack,
             Component displayName,
+            String nameText,
             String lowerName,
             String lowerId
     ) {
@@ -316,10 +344,6 @@ public final class ItemPickerScreen extends Screen {
             return Math.min(440, ItemPickerScreen.this.width - 32);
         }
 
-        // No @Override: the supertype method was removed in MC 1.21.4; this still overrides it on 1.21-1.21.3.
-        protected int getScrollbarPosition() {
-            return this.getX() + this.width / 2 + getRowWidth() / 2 + 6;
-        }
     }
 
     private final class ItemRow extends ObjectSelectionList.Entry<ItemRow> {
@@ -337,7 +361,7 @@ public final class ItemPickerScreen extends Screen {
             int height = getContentHeight();
 
             boolean countValid = parsedCount >= TargetKey.MIN_COUNT;
-            boolean alreadyTracked = countValid && trackedTargets.contains(new TargetKey(item.id, parsedCount));
+            boolean alreadyTracked = countValid && trackedItemIdsAtCount.contains(item.id);
             boolean canAdd = countValid && !alreadyTracked;
 
             if (hovering && canAdd) {
@@ -366,9 +390,7 @@ public final class ItemPickerScreen extends Screen {
             guiGraphics.fill(btnX, btnY, btnX + ACTION_BTN_WIDTH, btnY + ACTION_BTN_HEIGHT, borderColor);
             guiGraphics.fill(btnX + 1, btnY + 1, btnX + ACTION_BTN_WIDTH - 1, btnY + ACTION_BTN_HEIGHT - 1, bgColor);
 
-            Component btnLabel = alreadyTracked
-                    ? Component.translatable("gui.itemmilestonelog.picker.tracked")
-                    : Component.translatable("gui.itemmilestonelog.picker.add_item");
+            Component btnLabel = alreadyTracked ? TRACKED_LABEL : ADD_LABEL;
             McCompat.text().drawCenteredString(guiGraphics, ItemPickerScreen.this.font, btnLabel,
                     btnX + ACTION_BTN_WIDTH / 2, btnY + 5, labelColor);
 
@@ -376,7 +398,7 @@ public final class ItemPickerScreen extends Screen {
             int textX = left + 26;
             int maxTextWidth = Math.max(40, btnX - textX - 6);
 
-            String trimmedName = ItemPickerScreen.this.font.plainSubstrByWidth(item.displayName.getString(), maxTextWidth);
+            String trimmedName = ItemPickerScreen.this.font.plainSubstrByWidth(item.nameText, maxTextWidth);
             McCompat.text().drawString(guiGraphics, ItemPickerScreen.this.font, trimmedName, textX, top + 1,
                     alreadyTracked ? 0xFFB0B0B0 : 0xFFFFFFFF, false);
 
@@ -387,7 +409,7 @@ public final class ItemPickerScreen extends Screen {
         @Override
         public boolean mouseClicked(MouseButtonEvent event, boolean isDoubleClick) {
             if (event.button() == 0 && parsedCount >= TargetKey.MIN_COUNT
-                    && !trackedTargets.contains(new TargetKey(item.id, parsedCount))) {
+                    && !trackedItemIdsAtCount.contains(item.id)) {
                 if (ItemPickerScreen.this.minecraft != null) {
                     McCompat.sound().play(ItemPickerScreen.this.minecraft.getSoundManager(),
                             SimpleSoundInstance.forUI(SoundEvents.UI_BUTTON_CLICK, 1.0F));

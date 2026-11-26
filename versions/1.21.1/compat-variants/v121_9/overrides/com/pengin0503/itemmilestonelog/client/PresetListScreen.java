@@ -31,8 +31,6 @@ public final class PresetListScreen extends Screen {
 
     private PresetListWidget listWidget;
 
-    private boolean awaitingApplyFeedback = false;
-
     public PresetListScreen(MilestoneScreen parent) {
         super(Component.translatable("gui.itemmilestonelog.presets.title"));
         this.parent = parent;
@@ -41,8 +39,7 @@ public final class PresetListScreen extends Screen {
 
     public void updateData(SyncMilestonesPayload newData) {
         double prevScroll = listWidget != null ? McCompat.scroll().getScrollAmount(listWidget) : 0.0;
-        this.parent.updateData(newData, awaitingApplyFeedback);
-        this.awaitingApplyFeedback = false;
+        this.parent.updateData(newData, false);
         this.data = newData;
         if (newData.feedback() != null) {
             this.feedbackMessage = newData.feedback();
@@ -173,10 +170,6 @@ public final class PresetListScreen extends Screen {
             return Math.min(460, PresetListScreen.this.width - 32);
         }
 
-        // No @Override: the supertype method was removed in MC 1.21.4; this still overrides it on 1.21-1.21.3.
-        protected int getScrollbarPosition() {
-            return this.getX() + this.width / 2 + getRowWidth() / 2 + 6;
-        }
     }
 
     private final class PresetRow extends ContainerObjectSelectionList.Entry<PresetRow> {
@@ -205,7 +198,6 @@ public final class PresetListScreen extends Screen {
             this.applyButton = Button.builder(
                             Component.translatable("gui.itemmilestonelog.presets.apply"),
                             btn -> {
-                                PresetListScreen.this.awaitingApplyFeedback = true;
                                 ClientMilestoneHandler.sendAction(MilestoneActionPayload.Action.APPLY_PRESET, entry.id());
                                 if (PresetListScreen.this.minecraft != null) {
                                     PresetListScreen.this.minecraft.setScreen(parent);

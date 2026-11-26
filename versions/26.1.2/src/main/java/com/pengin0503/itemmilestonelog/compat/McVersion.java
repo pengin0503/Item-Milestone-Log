@@ -2,6 +2,8 @@ package com.pengin0503.itemmilestonelog.compat;
 
 import net.minecraft.SharedConstants;
 
+import javax.annotation.Nullable;
+
 /**
  * N251: detects the running Minecraft version once, for compat implementation
  * selection (docs/DESIGN_1.3.0.md). Unknown future versions resolve to the closest
@@ -41,8 +43,22 @@ public enum McVersion {
         } catch (RuntimeException e) {
             return UNKNOWN;
         }
+        return detect(name);
+    }
+
+    /**
+     * Resolves a version name. Pre-release names use a hyphen ({@code "26.2-pre1"}), so the
+     * prefix is accepted with either {@code '.'} or {@code '-'} after it; otherwise a
+     * 26.2 pre-release would fall through to {@link #UNKNOWN} (v26_3).
+     */
+    static McVersion detect(@Nullable String name) {
+        if (name == null) {
+            return UNKNOWN;
+        }
         for (McVersion v : values()) {
-            if (v != UNKNOWN && (name.equals(v.prefix) || name.startsWith(v.prefix + "."))) {
+            if (v != UNKNOWN && (name.equals(v.prefix)
+                    || name.startsWith(v.prefix + ".")
+                    || name.startsWith(v.prefix + "-"))) {
                 return v;
             }
         }
