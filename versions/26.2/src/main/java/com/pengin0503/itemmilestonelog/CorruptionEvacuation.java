@@ -47,7 +47,11 @@ public final class CorruptionEvacuation {
             if (!rootUnreadable) {
                 Tag dataTag = root.get("data");
                 if (dataTag instanceof CompoundTag compound) {
-                    rawSchemaVersion = readSchemaVersion(compound);
+                    // #99: a buggy 1.21.5-1.21.11 build wrote {"data": {"data": payload}}. Vanilla
+                    // already removed the outer wrapper, so inspect through the inner one as well;
+                    // otherwise the schema check and malformed-root detection see no fields.
+                    CompoundTag payload = MilestoneData.unwrapDoubleWrappedData(compound);
+                    rawSchemaVersion = readSchemaVersion(payload);
                 } else {
                     rootInvalid = true;
                 }

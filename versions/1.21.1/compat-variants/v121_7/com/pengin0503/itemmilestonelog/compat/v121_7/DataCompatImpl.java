@@ -19,9 +19,9 @@ import javax.annotation.Nullable;
  * 1.21.5+ {@link DataCompat}: {@code SavedData.Factory} was removed in 1.21.5 in favour of
  * {@link SavedDataType}, whose codec here round-trips through the existing NBT
  * {@link MilestoneData#save} / {@link MilestoneData#load}. The codec preserves the legacy
- * {@code "data"} wrapper on disk (encoding writes {@code {"data": ...}}; decoding also
- * accepts an unwrapped root), so world files stay interchangeable across the whole 1.21.x
- * line in both directions.
+ * payload directly; vanilla supplies the outer {@code "data"} wrapper. Decoding accepts
+ * both the correct form and the historical double-wrapped form written by 1.21.5-1.21.11
+ * builds, so world files stay interchangeable across the whole 1.21.x line in both directions.
  */
 public final class DataCompatImpl implements DataCompat {
     private static final SavedDataType<MilestoneData> TYPE = new SavedDataType<MilestoneData>(
@@ -33,11 +33,12 @@ public final class DataCompatImpl implements DataCompat {
         Encoder<MilestoneData> encoder = new Encoder<>() {
             @Override
             public <T> DataResult<T> encode(MilestoneData data, DynamicOps<T> ops, T prefix) {
-                CompoundTag root = new CompoundTag();
-                root.put("data", data.save(new CompoundTag(), provider));
+                // Vanilla DimensionDataStorage wraps the codec output in {"data": ...}
+                // itself. Returning the payload directly avoids the double wrapper (#99);
+                // the decoder below still accepts the old double-wrapped form.
                 // DimensionDataStorage always drives this codec with NbtOps, so T is Tag.
                 @SuppressWarnings("unchecked")
-                T result = (T) root;
+                T result = (T) data.save(new CompoundTag(), provider);
                 return DataResult.success(result);
             }
         };

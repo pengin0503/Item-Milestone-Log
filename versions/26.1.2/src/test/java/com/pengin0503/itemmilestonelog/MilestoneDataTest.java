@@ -6,6 +6,7 @@ import com.pengin0503.itemmilestonelog.api.WorldFirstRecord;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.IntTag;
 import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.NbtAccounter;
 import net.minecraft.nbt.NbtIo;
 import net.minecraft.nbt.NbtOps;
 import net.minecraft.nbt.StringTag;
@@ -16,15 +17,19 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MilestoneDataTest {
@@ -1280,4 +1285,156 @@ class MilestoneDataTest {
         assertNotNull(loaded.loadReport());
         assertEquals(4, loaded.loadReport().elementSkipCount());
     }
+    @Test
+    void readsDoubleWrapped1215PayloadFromLegacyFileAndStillWritesTheCorrectForm(@TempDir Path dir)
+            throws IOException {
+        MilestoneData original = new MilestoneData();
+        MilestoneData.PlayerData pd = original.player(PLAYER_A);
+        TargetKey diamond = TargetKey.of("minecraft:diamond", 3);
+        pd.targets.add(diamond);
+        MilestoneRecord record = new MilestoneRecord(4567, 5L, 1795600000000L);
+        pd.records.put(diamond, record);
+        pd.carriedFromCreative.add("minecraft:emerald");
+        pd.lastKnownName = "Alice";
+        original.recordWorldFirstIfAbsent(diamond, PLAYER_A, "Alice", record);
+
+        // #99: the buggy 1.21.5-1.21.11 codec hand-wrapped its payload in "data", and vanilla
+        // wrapped the codec output again. On disk: {"data": {"data": payload}, "DataVersion": ...}.
+        CompoundTag payload = (CompoundTag) MilestoneData.CODEC.encodeStart(NbtOps.INSTANCE, original).getOrThrow();
+        CompoundTag inner = new CompoundTag();
+        inner.put("data", payload.copy());
+        CompoundTag diskRoot = new CompoundTag();
+        diskRoot.put("data", inner.copy());
+        diskRoot.putInt("DataVersion", 3955);
+        Path file = dir.resolve(MilestoneData.LEGACY_FILE);
+        Files.createDirectories(file.getParent());
+        NbtIo.writeCompressed(diskRoot, file);
+
+        MilestoneData migrated = MilestoneData.readLegacy(file);
+        assertNotNull(migrated);
+        MilestoneData.PlayerData loaded = migrated.playerOrNull(PLAYER_A);
+        assertNotNull(loaded);
+        assertEquals(List.of(diamond), List.copyOf(loaded.targets));
+        assertEquals(record, loaded.records.get(diamond));
+        assertEquals(Set.of("minecraft:emerald"), loaded.carriedFromCreative);
+        assertEquals("Alice", loaded.lastKnownName);
+        assertNotNull(migrated.worldFirstOrNull(diamond));
+        assertNotNull(migrated.loadReport());
+        assertEquals(0, migrated.loadReport().elementSkipCount());
+
+        // Vanilla strips only the outer wrapper before calling the codec; the inner recovery
+        // path must work there too (this is the direct new-format data storage path).
+        MilestoneData direct = MilestoneData.CODEC.parse(NbtOps.INSTANCE, inner.copy()).getOrThrow();
+        assertEquals(List.of(diamond), List.copyOf(direct.playerOrNull(PLAYER_A).targets));
+
+        // The fixed encoder emits the payload itself; vanilla adds the one wrapper on disk.
+        CompoundTag encoded = (CompoundTag) MilestoneData.CODEC.encodeStart(NbtOps.INSTANCE, original).getOrThrow();
+        assertFalse(encoded.contains("data"), encoded::toString);
+
+        // CorruptionEvacuation uses the same unwrap helper before reading schemaVersion.
+        CompoundTag unwrapped = MilestoneData.unwrapDoubleWrappedData(inner.copy());
+        assertEquals(SchemaVersionLogic.CURRENT_SCHEMA_VERSION, unwrapped.getIntOr("schemaVersion", -1));
+        CompoundTag correctPayload = payload.copy();
+        assertSame(correctPayload, MilestoneData.unwrapDoubleWrappedData(correctPayload));
+    }
+
+    @Test
+    void lenientOldPlayerFieldsKeepValidSiblingsAndRecordEverySkip() {
+        CompoundTag player = new CompoundTag();
+        ListTag targets = new ListTag();
+        targets.add(StringTag.valueOf("minecraft:diamond"));
+        targets.add(IntTag.valueOf(5)); // malformed list element, not a whole-field failure
+        player.put("targets", targets);
+        ListTag carried = new ListTag();
+        carried.add(StringTag.valueOf("minecraft:emerald"));
+        carried.add(IntTag.valueOf(7));
+        player.put("carriedFromCreative", carried);
+        player.putString("lastKnownName", "Alice");
+        player.putString("firstJoinHintShown", "yes");
+        player.putString("muteBroadcasts", "yes");
+        player.putString("lastSeen", "yesterday");
+        player.putString("progressNotified", "not-a-compound");
+        player.putString("completedPresets", "not-a-list");
+        player.putString("presetState", "not-a-compound");
+        CompoundTag records = new CompoundTag();
+        records.put("minecraft:coal", StringTag.valueOf("garbage"));
+        player.put("records", records);
+
+        CompoundTag players = new CompoundTag();
+        players.put(PLAYER_A.toString(), player);
+        CompoundTag worldFirsts = new CompoundTag();
+        worldFirsts.put("minecraft:emerald", StringTag.valueOf("garbage"));
+        CompoundTag root = new CompoundTag();
+        root.put("players", players);
+        root.put("worldFirsts", worldFirsts);
+        root.putInt("schemaVersion", 1);
+
+        // getOrThrow(): the whole decode succeeds; only the malformed elements are dropped.
+        MilestoneData loaded = MilestoneData.CODEC.parse(NbtOps.INSTANCE, root).getOrThrow();
+        MilestoneData.PlayerData pd = loaded.playerOrNull(PLAYER_A);
+        assertNotNull(pd);
+        assertEquals(List.of(TargetKey.of("minecraft:diamond")), List.copyOf(pd.targets));
+        assertEquals(Set.of("minecraft:emerald"), pd.carriedFromCreative);
+        assertEquals("Alice", pd.lastKnownName);
+        assertFalse(pd.firstJoinHintShown);
+        assertFalse(pd.muteBroadcasts);
+        assertEquals(0L, pd.lastSeen);
+        assertTrue(pd.progressNotified.isEmpty());
+        assertTrue(pd.completedPresets.isEmpty());
+        assertTrue(pd.presetState.isEmpty());
+        assertTrue(pd.records.isEmpty());
+        assertTrue(loaded.worldFirsts().isEmpty());
+
+        // targets element, carried element, three scalar fields, three container fallbacks,
+        // records item fallback and worldFirst item fallback = 10.
+        assertNotNull(loaded.loadReport());
+        assertEquals(10, loaded.loadReport().elementSkipCount());
+        assertFalse(loaded.loadReport().totalFailure());
+    }
+
+    @Test
+    void partialDecodeAttachesLoadReportAndEvacuationPreservesTheOriginal(@TempDir Path dir)
+            throws IOException {
+        MilestoneData original = new MilestoneData();
+        MilestoneData.PlayerData pd = original.player(PLAYER_A);
+        TargetKey diamond = TargetKey.of("minecraft:diamond");
+        pd.targets.add(diamond);
+        pd.lastKnownName = "Alice";
+
+        CompoundTag payload = (CompoundTag) MilestoneData.CODEC.encodeStart(NbtOps.INSTANCE, original).getOrThrow();
+        CompoundTag players = payload.getCompoundOrEmpty("players");
+        // #130: a wrong-typed player value makes the players map decode partially; vanilla keeps
+        // that partial result (resultOrPartial(...).orElse(null)), so the report must be attached.
+        players.put("22222222-2222-2222-2222-222222222222", StringTag.valueOf("garbage"));
+        payload.put("players", players);
+
+        CompoundTag diskRoot = new CompoundTag();
+        diskRoot.put("data", payload);
+        diskRoot.putInt("DataVersion", 3955);
+        Path file = dir.resolve("data/itemmilestonelog/milestones.dat");
+        Files.createDirectories(file.getParent());
+        NbtIo.writeCompressed(diskRoot, file);
+
+        CompoundTag readBack = NbtIo.readCompressed(file, NbtAccounter.unlimitedHeap());
+        MilestoneData loaded = MilestoneData.CODEC.parse(NbtOps.INSTANCE, readBack.getCompoundOrEmpty("data"))
+                .resultOrPartial(error -> {
+                })
+                .orElse(null);
+        assertNotNull(loaded, "vanilla adopts the partial result, so the game must not start empty");
+        assertEquals(1, loaded.allPlayers().size());
+        assertNotNull(loaded.playerOrNull(PLAYER_A));
+        assertNotNull(loaded.loadReport());
+        assertEquals(1, loaded.loadReport().elementSkipCount());
+        assertFalse(loaded.loadReport().totalFailure());
+
+        CorruptionEvacuationLogic.LoadOutcome outcome = loaded.loadReport().toOutcome();
+        assertTrue(outcome.requiresEvacuation(), "a partial decode must trigger F-140-2");
+        CorruptionEvacuationIO.Result result = CorruptionEvacuationIO.evacuate(
+                file, dir.resolve("itemmilestonelog/corrupt"), outcome,
+                Instant.parse("2026-11-26T12:00:00Z"), ZoneId.of("UTC"));
+        assertTrue(Files.isRegularFile(file), "the original file must never be deleted or renamed");
+        assertTrue(Files.isRegularFile(result.dataFile()));
+        assertArrayEquals(Files.readAllBytes(file), Files.readAllBytes(result.dataFile()));
+    }
+
 }

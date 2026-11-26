@@ -247,6 +247,22 @@ public class MilestoneData extends SavedData {
         out.put(key, new WorldFirstRecord(itemId, count, uuid, name, ticks, day, epoch));
     }
 
+    /**
+     * Accepts the buggy 1.21.5-1.21.11 payload that manually wrapped {@code save(...)} in a
+     * second {@code "data"} compound (#99). Vanilla already strips the outer SavedData wrapper,
+     * so an affected file reaches {@link #load} as {@code {"data": {players, worldFirsts, ...}}};
+     * a correctly written payload has the root fields directly and is returned unchanged.
+     */
+    static CompoundTag unwrapDoubleWrappedData(CompoundTag tag) {
+        CompoundTag current = tag;
+        while (McCompat.nbt().containsTyped(current, "data", Tag.TAG_COMPOUND)
+                && !McCompat.nbt().contains(current, "players")
+                && !McCompat.nbt().contains(current, "worldFirsts")) {
+            current = McCompat.nbt().getCompound(current, "data");
+        }
+        return current;
+    }
+
     public static MilestoneData load(CompoundTag tag) {
         MilestoneLoadReport report = MilestoneLoadReport.begin();
         try {
@@ -260,6 +276,10 @@ public class MilestoneData extends SavedData {
     }
 
     private static MilestoneData loadInternal(CompoundTag tag) {
+        // #99: a buggy 1.21.5-1.21.11 DataCompatImpl wrote {"data": {"data": payload}} on
+        // disk. Vanilla removes the outer wrapper before calling this method, so accept the
+        // leftover inner wrapper instead of silently loading an empty world.
+        tag = unwrapDoubleWrappedData(tag);
         MilestoneData data = new MilestoneData();
         CompoundTag all = McCompat.nbt().getCompound(tag, "players");
         for (String uuidKey : McCompat.nbt().keys(all)) {
