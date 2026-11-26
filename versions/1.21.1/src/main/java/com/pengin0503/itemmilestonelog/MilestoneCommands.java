@@ -645,7 +645,7 @@ public final class MilestoneCommands {
                                         .suggests(presetSuggestions)
                                         .executes(ctx -> presetShare(ctx, StringArgumentType.getString(ctx, "name")))))
                         .then(literal("importcode")
-                                .then(argument("code", StringArgumentType.word())
+                                .then(argument("code", StringArgumentType.greedyString())
                                         .executes(ctx -> presetImportCode(ctx, StringArgumentType.getString(ctx, "code")))))
                         .then(argument("name", StringArgumentType.word())
                                 .suggests(presetSuggestions)
@@ -778,9 +778,9 @@ public final class MilestoneCommands {
                                                         true))))))
                 .then(literal("renametag")
                         .requires(renameItemRequirement)
-                        .then(argument("oldTag", StringArgumentType.string())
+                        .then(argument("oldTag", TagIdArgument.tagId())
                                 .suggests(renameOldTagSuggestions)
-                                .then(argument("newTag", StringArgumentType.string())
+                                .then(argument("newTag", TagIdArgument.tagId())
                                         .suggests(renameNewTagSuggestions)
                                         .executes(ctx -> renameTag(ctx,
                                                 StringArgumentType.getString(ctx, "oldTag"),
@@ -1158,23 +1158,24 @@ public final class MilestoneCommands {
 
     // --------------------------------------------------------- F-140-16 preset show
 
-    private static int presetShow(CommandContext<CommandSourceStack> ctx, String name) throws CommandSyntaxException {
-        ServerPlayer player = player(ctx);
+    private static int presetShow(CommandContext<CommandSourceStack> ctx, String name) {
+        CommandSourceStack source = ctx.getSource();
         Presets.PresetDefinition preset = Presets.get(name);
         PresetShowLogic.Result result = PresetShowLogic.show(
-                preset != null ? showData(preset, MilestoneService.clientLanguage(player)) : null,
+                preset != null ? showData(preset, MilestoneService.clientLanguage(source.getPlayer())) : null,
                 Config.PRESETS_ENABLED.get(), Presets.PROGRESS_MAX_ROWS);
         return switch (result.status()) {
             case DISABLED -> fail(ctx,
-                    ServerLang.tr(player, "message.itemmilestonelog.feature_disabled"));
-            case UNKNOWN -> fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.preset_unknown",
+                    ServerLang.tr(source, "message.itemmilestonelog.feature_disabled"));
+            case UNKNOWN -> fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_unknown",
                     name, String.join(", ", Presets.names())));
             case OK -> {
-                send(ctx, ServerLang.tr(player, "message.itemmilestonelog.preset_show_header",
-                        MilestoneService.presetDisplayName(player, preset), preset.id(),
-                        presetKindLabel(player, preset)));
+                send(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_show_header",
+                        MilestoneService.presetDisplayNameForLang(
+                                MilestoneService.clientLanguage(source.getPlayer()), preset),
+                        preset.id(), presetKindLabel(source, preset)));
                 for (PresetShowLogic.Line line : result.lines()) {
-                    send(ctx, ServerLang.tr(player, presetShowLineKey(line.kind()), line.values().toArray()));
+                    send(ctx, ServerLang.tr(source, presetShowLineKey(line.kind()), line.values().toArray()));
                 }
                 yield 1;
             }
@@ -1195,8 +1196,8 @@ public final class MilestoneCommands {
     }
 
     /** Existing {@code preset_type_*} messages, reused by the show header. */
-    private static Component presetKindLabel(ServerPlayer player, Presets.PresetDefinition preset) {
-        return ServerLang.tr(player, switch (preset.kind()) {
+    private static Component presetKindLabel(CommandSourceStack source, Presets.PresetDefinition preset) {
+        return ServerLang.tr(source, switch (preset.kind()) {
             case BUILTIN -> "message.itemmilestonelog.preset_type_builtin";
             case FILE -> "message.itemmilestonelog.preset_type_file";
             case DATAPACK -> "message.itemmilestonelog.preset_type_datapack";
@@ -1220,8 +1221,8 @@ public final class MilestoneCommands {
 
     // --------------------------------------------------------- F-140-17 preset diff
 
-    private static int presetDiff(CommandContext<CommandSourceStack> ctx, String nameA, String nameB) throws CommandSyntaxException {
-        ServerPlayer player = player(ctx);
+    private static int presetDiff(CommandContext<CommandSourceStack> ctx, String nameA, String nameB) {
+        CommandSourceStack source = ctx.getSource();
         Presets.PresetDefinition a = Presets.get(nameA);
         Presets.PresetDefinition b = Presets.get(nameB);
         PresetDiffLogic.Result result = PresetDiffLogic.diff(
@@ -1230,43 +1231,45 @@ public final class MilestoneCommands {
                 Config.PRESETS_ENABLED.get(), Presets.PROGRESS_MAX_ROWS);
         return switch (result.status()) {
             case DISABLED -> fail(ctx,
-                    ServerLang.tr(player, "message.itemmilestonelog.feature_disabled"));
-            case UNKNOWN_A -> fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.preset_unknown",
+                    ServerLang.tr(source, "message.itemmilestonelog.feature_disabled"));
+            case UNKNOWN_A -> fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_unknown",
                     nameA, String.join(", ", Presets.names())));
-            case UNKNOWN_B -> fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.preset_unknown",
+            case UNKNOWN_B -> fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_unknown",
                     nameB, String.join(", ", Presets.names())));
             case OK -> {
-                Component nameAComponent = MilestoneService.presetDisplayName(player, a);
-                Component nameBComponent = MilestoneService.presetDisplayName(player, b);
-                send(ctx, ServerLang.tr(player, "message.itemmilestonelog.preset_diff_header",
+                Component nameAComponent = MilestoneService.presetDisplayNameForLang(
+                        MilestoneService.clientLanguage(source.getPlayer()), a);
+                Component nameBComponent = MilestoneService.presetDisplayNameForLang(
+                        MilestoneService.clientLanguage(source.getPlayer()), b);
+                send(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_diff_header",
                         nameAComponent, nameBComponent));
                 if (!result.hasDifferences()) {
-                    send(ctx, ServerLang.tr(player, "message.itemmilestonelog.preset_diff_no_differences"));
+                    send(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_diff_no_differences"));
                 } else {
                     if (!result.onlyA().isEmpty() || result.onlyAHidden() > 0) {
-                        send(ctx, ServerLang.tr(player, "message.itemmilestonelog.preset_diff_only",
+                        send(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_diff_only",
                                 nameAComponent));
                         for (PresetDiffLogic.ItemCount item : result.onlyA()) {
-                            sendPresetDiffItem(ctx, player, item);
+                            sendPresetDiffItem(ctx, source, item);
                         }
-                        sendOmittedDiffRows(ctx, player, result.onlyAHidden());
+                        sendOmittedDiffRows(ctx, source, result.onlyAHidden());
                     }
                     if (!result.onlyB().isEmpty() || result.onlyBHidden() > 0) {
-                        send(ctx, ServerLang.tr(player, "message.itemmilestonelog.preset_diff_only",
+                        send(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_diff_only",
                                 nameBComponent));
                         for (PresetDiffLogic.ItemCount item : result.onlyB()) {
-                            sendPresetDiffItem(ctx, player, item);
+                            sendPresetDiffItem(ctx, source, item);
                         }
-                        sendOmittedDiffRows(ctx, player, result.onlyBHidden());
+                        sendOmittedDiffRows(ctx, source, result.onlyBHidden());
                     }
                     if (!result.countDifferences().isEmpty() || result.countDifferencesHidden() > 0) {
-                        send(ctx, ServerLang.tr(player,
+                        send(ctx, ServerLang.tr(source,
                                 "message.itemmilestonelog.preset_diff_counts_header"));
                         for (PresetDiffLogic.CountDifference difference : result.countDifferences()) {
-                            send(ctx, ServerLang.tr(player, "message.itemmilestonelog.preset_diff_count",
+                            send(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_diff_count",
                                     difference.itemId(), difference.countA(), difference.countB()));
                         }
-                        sendOmittedDiffRows(ctx, player, result.countDifferencesHidden());
+                        sendOmittedDiffRows(ctx, source, result.countDifferencesHidden());
                     }
                 }
                 yield 1;
@@ -1274,34 +1277,36 @@ public final class MilestoneCommands {
         };
     }
 
-    private static void sendPresetDiffItem(CommandContext<CommandSourceStack> ctx, ServerPlayer player,
+    private static void sendPresetDiffItem(CommandContext<CommandSourceStack> ctx, CommandSourceStack source,
                                            PresetDiffLogic.ItemCount item) {
-        send(ctx, ServerLang.tr(player, "message.itemmilestonelog.preset_show_item",
+        send(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_show_item",
                 item.itemId(), item.count()));
     }
 
-    private static void sendOmittedDiffRows(CommandContext<CommandSourceStack> ctx, ServerPlayer player, int hidden) {
+    private static void sendOmittedDiffRows(CommandContext<CommandSourceStack> ctx, CommandSourceStack source, int hidden) {
         if (hidden > 0) {
-            send(ctx, ServerLang.tr(player, "message.itemmilestonelog.preset_show_more", hidden));
+            send(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_show_more", hidden));
         }
     }
 
     // --------------------------------------------------------- F-140-18 preset share / importcode
 
-    private static int presetShare(CommandContext<CommandSourceStack> ctx, String name) throws CommandSyntaxException {
-        ServerPlayer player = player(ctx);
+    private static int presetShare(CommandContext<CommandSourceStack> ctx, String name) {
+        CommandSourceStack source = ctx.getSource();
         if (!Config.PRESETS_ENABLED.get()) {
-            return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.feature_disabled"));
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.feature_disabled"));
         }
         Presets.PresetDefinition preset = Presets.get(name);
         if (preset == null) {
-            return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.preset_unknown",
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_unknown",
                     name, String.join(", ", Presets.names())));
         }
         String code = PresetShareLogic.encode(shareData(preset));
         // One message: the label plus the code, which is click-to-copy.
-        MutableComponent message = ServerLang.tr(player, "message.itemmilestonelog.preset_share_message",
-                MilestoneService.presetDisplayName(player, preset), preset.items().size());
+        MutableComponent message = ServerLang.tr(source, "message.itemmilestonelog.preset_share_message",
+                MilestoneService.presetDisplayNameForLang(
+                        MilestoneService.clientLanguage(source.getPlayer()), preset),
+                preset.items().size());
         message.append(Component.literal(" "));
         message.append(Component.literal(code).withStyle(style -> style
                 .withUnderlined(true)
@@ -1320,11 +1325,13 @@ public final class MilestoneCommands {
         return McCompat.chat().copyToClipboard(code);
     }
 
-    private static int presetImportCode(CommandContext<CommandSourceStack> ctx, String code) throws CommandSyntaxException {
-        ServerPlayer player = player(ctx);
-        MilestoneService.ActionResult result = MilestoneService.importPresetCode(player, code);
+    private static int presetImportCode(CommandContext<CommandSourceStack> ctx, String code) {
+        CommandSourceStack source = ctx.getSource();
+        // greedyString() keeps the whole IML1:... payload (issue #97); trim only surrounding space.
+        MilestoneService.ActionResult result = MilestoneService.importPresetCode(
+                source, code != null ? code.trim() : null);
         if (result.success()) {
-            MilestoneService.syncAllOnlineGuiPlayers(player.level().getServer(), null);
+            MilestoneService.syncAllOnlineGuiPlayers(source.getServer(), null);
             return send(ctx, result.message());
         }
         return fail(ctx, result.message());

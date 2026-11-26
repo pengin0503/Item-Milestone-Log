@@ -9,11 +9,13 @@ import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PresetShareLogicTest {
@@ -137,12 +139,99 @@ class PresetShareLogicTest {
 
     @Test
     void missingOrBlankIdIsRejected() {
-        assertEquals(PresetShareLogic.Status.INVALID_ID,
-                PresetShareLogic.decode("IML1:" + base64Url("{\"items\":[\"minecraft:dirt\"]}"), null).status());
-        assertEquals(PresetShareLogic.Status.INVALID_ID,
-                PresetShareLogic.decode("IML1:" + base64Url("{\"id\":\"  \",\"items\":[\"minecraft:dirt\"]}"), null).status());
-        assertEquals(PresetShareLogic.Status.INVALID_ID,
-                PresetShareLogic.decode("IML1:" + base64Url("{\"id\":5,\"items\":[\"minecraft:dirt\"]}"), null).status());
+        PresetShareLogic.Decoded missing = PresetShareLogic.decode(
+                "IML1:" + base64Url("{\"items\":[\"minecraft:dirt\"]}"), null);
+        assertEquals(PresetShareLogic.Status.INVALID_ID, missing.status());
+        assertNull(missing.id());
+
+        PresetShareLogic.Decoded blank = PresetShareLogic.decode(
+                "IML1:" + base64Url("{\"id\":\"  \",\"items\":[\"minecraft:dirt\"]}"), null);
+        assertEquals(PresetShareLogic.Status.INVALID_ID, blank.status());
+        assertEquals("", blank.id(), "The decoded (trimmed) ID is still reported");
+
+        PresetShareLogic.Decoded nonString = PresetShareLogic.decode(
+                "IML1:" + base64Url("{\"id\":5,\"items\":[\"minecraft:dirt\"]}"), null);
+        assertEquals(PresetShareLogic.Status.INVALID_ID, nonString.status());
+        assertNull(nonString.id());
+    }
+
+    @Test
+    void invalidIdFormatIsRejectedBeforeTheCollisionPredicateRuns() {
+        // Regression for #98: the collision predicate resolves the ID as a path segment, so it
+        // must never run for an invalid ID (traversal, separators, control characters, length).
+        for (String id : List.of(
+                "../../escape",
+                "a/b",
+                "Upper",
+                "has:colon",
+                "has space",
+                "a*b",
+                "x".repeat(33),
+                "",
+                "bad\u0000id")) {
+            String code = PresetShareLogic.encode(bareData(id, List.of(key("minecraft:dirt"))));
+            PresetShareLogic.Decoded decoded = PresetShareLogic.decode(code, invalid -> {
+                throw new AssertionError("idExists must not run for invalid id: " + invalid);
+            });
+            assertEquals(PresetShareLogic.Status.INVALID_ID, decoded.status(), id);
+            assertEquals(id, decoded.id(), "The rejected ID must be preserved: " + id);
+            assertNull(decoded.json());
+        }
+    }
+
+    @Test
+    void validIdStillRunsTheCollisionPredicateWithTheResolvedId() {
+        AtomicReference<String> seen = new AtomicReference<>();
+        PresetShareLogic.Decoded decoded = PresetShareLogic.decode(
+                PresetShareLogic.encode(bareData("valid_id-2", List.of(key("minecraft:dirt")))),
+                id -> {
+                    seen.set(id);
+                    return false;
+                });
+        assertEquals(PresetShareLogic.Status.OK, decoded.status());
+        assertEquals("valid_id-2", seen.get());
+    }
+
+    @Test
+    void deeplyNestedJsonIsRejectedAsInvalidJsonInsteadOfEscaping() throws Exception {
+        // Regression for #98: JsonParser.parseString can throw StackOverflowError. Run on a small
+        // stack so the nesting is guaranteed to overflow; the decoder must convert it to a status.
+        String json = "[".repeat(6_000) + "]".repeat(6_000);
+        String code = "IML1:" + base64Url(json);
+        assertTrue(code.length() < PresetShareLogic.MAX_CODE_CHARS, "fixture must fit the code cap");
+        AtomicReference<PresetShareLogic.Status> status = new AtomicReference<>();
+        AtomicReference<Throwable> escaped = new AtomicReference<>();
+        Thread thread = new Thread(null, () -> {
+            try {
+                status.set(PresetShareLogic.decode(code, null).status());
+            } catch (Throwable t) {
+                escaped.set(t);
+            }
+        }, "deep-json-decode", 128 * 1024);
+        thread.start();
+        thread.join();
+        assertNull(escaped.get(), () -> "decode leaked " + escaped.get());
+        assertEquals(PresetShareLogic.Status.INVALID_JSON, status.get());
+    }
+
+    @Test
+    void canonicalJsonOmitsNonFiniteOrNegativeUnlockAfterHoursAndRequiresAnId() {
+        for (Double value : List.of(Double.NaN, Double.POSITIVE_INFINITY,
+                Double.NEGATIVE_INFINITY, -1.0d, -0.5d)) {
+            PresetShareLogic.ShareData data = new PresetShareLogic.ShareData(
+                    "unlock_check", PresetName.absent(), List.of(key("minecraft:dirt")),
+                    PresetName.absent(), null, 0, null, List.of(), List.of(), List.of(), value);
+            assertFalse(PresetShareLogic.canonicalJson(data).contains("unlockAfterHours"),
+                    "Non-finite/negative unlockAfterHours must be omitted: " + value);
+        }
+        PresetShareLogic.ShareData zero = new PresetShareLogic.ShareData(
+                "unlock_check", PresetName.absent(), List.of(key("minecraft:dirt")),
+                PresetName.absent(), null, 0, null, List.of(), List.of(), List.of(), 0.0d);
+        assertTrue(PresetShareLogic.canonicalJson(zero).contains("\"unlockAfterHours\":0.0"));
+
+        assertThrows(NullPointerException.class, () -> new PresetShareLogic.ShareData(
+                null, PresetName.absent(), List.of(key("minecraft:dirt")),
+                PresetName.absent(), null, 0, null, List.of(), List.of(), List.of(), null));
     }
 
     @Test
@@ -184,13 +273,13 @@ class PresetShareLogicTest {
     }
 
     @Test
-    void idCollisionIsReportedWithoutChangingTheEnvelope() {
+    void idCollisionKeepsTheResolvedIdForTheErrorMessage() {
         String code = PresetShareLogic.encode(fullData());
 
         PresetShareLogic.Decoded decoded = PresetShareLogic.decode(code, "shared_set"::equals);
 
         assertEquals(PresetShareLogic.Status.ID_COLLISION, decoded.status());
-        assertNull(decoded.id());
+        assertEquals("shared_set", decoded.id(), "The collided ID is needed for the message (#98)");
         assertNull(decoded.json());
         assertEquals(0, decoded.itemCount());
     }

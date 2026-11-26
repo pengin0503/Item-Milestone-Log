@@ -329,9 +329,9 @@ B2-D4 の再確認の結果、6件すべてを 1.4.0 に含める（2026-11-26 p
 
 - 目的: MOD 更新でタグ ID が変わった場合に、タグ目標（`#namespace:path`）を一括で付け替える。F24 renameitem のタグ版で、安全規則と実装の大半を流用する（B3-D3）。
 - 追加コマンド: `/milestonelog renametag <oldTag> <newTag> [confirm]`（renameitem と同じ構造・同じ権限述語）。
-- 動作（renameitem と同一の流れ）: (1) confirm なし: プレビュー（対象プレイヤー数・付け替え件数）を表示して終了。(2) confirm あり: 適用前バックアップを作成（失敗したら中止）、全プレイヤーの targets の旧タグキーを新タグキーへ付け替える。新タグが既に目標にある場合は重複排除でマージ。(3) records/world-firsts はアイテム単位でタグを含まないため対象外（プレビューと完了メッセージで明示）。(4) プリセット定義・Config は書き換えない（renameitem と同じ注記メッセージ）。
+- 動作（renameitem と同一の流れ）: (1) confirm なし: プレビュー（対象プレイヤー数・付け替え件数）を表示して終了。(2) confirm あり: 適用前バックアップを作成（失敗したら中止）、全プレイヤーの targets の旧タグキーを新タグキーへ付け替える。タグ目標の達成記録はタグキーで records / progressNotified / worldFirsts に保存されるため、これらの旧タグキーも新タグキーへ移す（衝突規則は renameitem と同じ。記録は playTicks が小さい方、通知しきい値は大きい方、世界初は epochMillis が早い方）。(3) 付け替え後に新タグ目標が未達成へ戻ったり、世界初・Discord 通知・報酬・進捗トリガーが再発火したりしないこと（プレビューと完了メッセージで目標・記録・世界初の件数を明示）。(4) プリセット定義・Config は書き換えない（renameitem と同じ注記メッセージ）。
 - バリデーション: 旧・新ともに `#` で始まるタグ ID 形式。同値ならエラー。存在しないタグでも付け替えは許可し警告を出す（renameitem の未登録アイテム扱いに準ずる）。
-- renameItemInData のタグ版を MilestoneService に追加し件数集計を単体テスト（対象なし、重複マージ、複数プレイヤー）。lang キーは renameitem の構成を踏襲し en/ja 追加。
+- renameItemInData のタグ版を MilestoneService に追加し、targets / records / progressNotified / worldFirsts の付け替え件数を単体テスト（対象なし、重複マージ、複数プレイヤー、付け替え後に再記録されないこと）。lang キーは renameitem の構成を踏襲し en/ja 追加。
 
 ## F-140-20. プリセット厳格検証（N108、strictPresetValidation）
 
