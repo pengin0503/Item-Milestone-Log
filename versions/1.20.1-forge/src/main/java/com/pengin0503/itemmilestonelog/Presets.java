@@ -154,7 +154,7 @@ public final class Presets {
 
     private static final Pattern VALID_ID_PATTERN = Pattern.compile("^[a-z0-9_-]{1,32}$");
     /** Command literals under /milestone preset; IDs equal to these could never be applied from chat. */
-    private static final Set<String> RESERVED_IDS = Set.of("list", "save", "delete", "reload");
+    private static final Set<String> RESERVED_IDS = Set.of("list", "save", "delete", "reload", "show", "diff");
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
     /**

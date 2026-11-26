@@ -434,6 +434,8 @@ class PresetsTest {
         files.put("bad_mod", Map.of(
                 "Bad-ID", "{ \"items\": [\"minecraft:dirt\"] }",
                 "list", "{ \"items\": [\"minecraft:dirt\"] }",
+                "show", "{ \"items\": [\"minecraft:dirt\"] }",
+                "diff", "{ \"items\": [\"minecraft:dirt\"] }",
                 "way_too_long_preset_id_name_over_32_chars", "{ \"items\": [\"minecraft:dirt\"] }"));
         // Built-in IDs never lose to a datapack file
         files.put("builtin_mod", Map.of("atm_star", "{ \"items\": [\"minecraft:dirt\"] }"));
