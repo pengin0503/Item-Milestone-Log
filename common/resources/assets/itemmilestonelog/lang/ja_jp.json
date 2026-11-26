@@ -380,6 +380,7 @@
   "message.itemmilestonelog.renameitem_done": "%s を %s に付け替えました: %s 人分（目標 %s 件、記録 %s 件、世界初 %s 件）。",
   "message.itemmilestonelog.renameitem_preview": "%s を %s に付け替えると、%s 人分（目標 %s 件、記録 %s 件、世界初 %s 件）が変わります。実行するには末尾に confirm を付けてください（先にバックアップを書きます）。",
   "message.itemmilestonelog.renameitem_same": "付け替え前と後の ID が同じです。",
+  "message.itemmilestonelog.renametag_bad_arguments": "renametag にはタグ ID を2つ（<oldTag> <newTag>）指定してください。末尾に confirm を付けることもできます。",
   "message.itemmilestonelog.renametag_backup_failed": "バックアップを書けなかったため、何も変更していません。",
   "message.itemmilestonelog.renametag_config_note": "defaultTargets かプリセットに %s が残っています。手で直してください。",
   "message.itemmilestonelog.renametag_done": "タグ %s を %s に付け替えました: %s 人分（目標 %s 件、記録 %s 件、世界初 %s 件）。",

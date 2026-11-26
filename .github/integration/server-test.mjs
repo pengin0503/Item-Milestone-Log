@@ -166,6 +166,11 @@ async function joinBot(username = BOT_NAME) {
     auth: 'offline',
   });
   const messages = [];
+  const state = { bot, messages, lastChat: 0, username, ended: false };
+  bot.on('end', (reason) => {
+    state.ended = true;
+    console.log(`        [end:${username}] ${reason ?? 'disconnected'}`);
+  });
   bot.on('message', (msg, position) => {
     const text = msg.toString();
     messages.push({ msg, text, position });
@@ -186,7 +191,7 @@ async function joinBot(username = BOT_NAME) {
     });
   });
   await sleep(1500);
-  return { bot, messages, lastChat: 0, username };
+  return state;
 }
 
 const CHAT_SPACING_MS = 1000;
@@ -409,6 +414,7 @@ async function freshBotFlow(rcon) {
   await quantityTargetsFlow(session, rcon);
   await creativeModeFlow(session, rcon);
   await multiPlayerAndPresetManagementFlow(session, rcon);
+  await renametagTreeSyncFlow(session, rcon);
 
   session.bot.quit();
   await sleep(1000);
@@ -700,6 +706,37 @@ async function migrateAfterFlow() {
   });
   session.bot.quit();
   await sleep(1000);
+}
+
+async function renametagTreeSyncFlow(session, rcon) {
+  await check('G10a: OP re-syncs the full command tree and /milestonelog renametag parses for a live player', async () => {
+    const from = session.messages.length;
+    const opOut = await rcon.command(`op ${BOT_NAME}`);
+    if (!/operator|already op/i.test(opOut)) {
+      throw new Error(`RCON could not OP ${BOT_NAME}: ${opOut || '(no output)'}`);
+    }
+    // OP makes the server send the full tree (including the permission-gated renametag
+    // node) to this already-connected vanilla-protocol client. A custom ArgumentType
+    // would throw in ArgumentTypeInfos.unpack here and break the connection (#146).
+    await sleep(2000);
+    if (session.ended) {
+      throw new Error(`${BOT_NAME} disconnected while the server re-synced the command tree after op`);
+    }
+
+    await say(session, '/milestonelog renametag #c:ingots/iron #c:ingots/steel');
+    const hit = await waitFor(session, from,
+      /^Renaming tag #c:ingots\/iron to #c:ingots\/steel would change \d+ player\(s\): \d+ target\(s\)/, 10000);
+    const parseError = session.messages.slice(from).find((m) =>
+      /unknown or incomplete command|incorrect syntax|expected .* at position|parse error/i.test(m.text));
+    if (parseError) {
+      throw new Error(`renametag produced a parse/unknown-command error instead of feedback: ${parseError.text}`);
+    }
+    await sleep(1000);
+    if (session.ended) {
+      throw new Error(`${BOT_NAME} disconnected after /milestonelog renametag was dispatched`);
+    }
+    assertFallback(hit, 'message.itemmilestonelog.renametag_preview');
+  });
 }
 
 // ------------------------------------------------------------------ main

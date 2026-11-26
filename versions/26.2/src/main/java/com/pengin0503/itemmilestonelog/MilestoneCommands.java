@@ -9,6 +9,7 @@ import com.mojang.brigadier.builder.RequiredArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
+import com.mojang.brigadier.suggestion.SuggestionsBuilder;
 import com.mojang.brigadier.tree.CommandNode;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
@@ -504,18 +505,28 @@ public final class MilestoneCommands {
                     .toList();
             return SharedSuggestionProvider.suggest(items, builder);
         };
-        SuggestionProvider<CommandSourceStack> renameOldTagSuggestions = (ctx, builder) -> {
+        // G10a: one greedy string carries both tag IDs. Complete whichever token the caret
+        // is in; a quoted token keeps its quotes around the suggested tag ID.
+        SuggestionProvider<CommandSourceStack> renameTagSuggestions = (ctx, builder) -> {
             MinecraftServer server = ctx.getSource().getServer();
             if (server == null) {
                 return builder.buildFuture();
             }
-            return SharedSuggestionProvider.suggest(allStoredTagIds(MilestoneData.get(server)), builder);
-        };
-        SuggestionProvider<CommandSourceStack> renameNewTagSuggestions = (ctx, builder) -> {
-            List<String> tags = TagTargets.suggestableTagIds().stream()
-                    .map(id -> "#" + id)
-                    .toList();
-            return SharedSuggestionProvider.suggest(tags, builder);
+            Set<String> knownTags = new LinkedHashSet<>(allStoredTagIds(MilestoneData.get(server)));
+            TagTargets.suggestableTagIds().forEach(id -> knownTags.add("#" + id));
+            String raw = builder.getInput().substring(builder.getStart());
+            RenameTagArguments.Cursor cursor = RenameTagArguments.cursorForSuggestions(raw);
+            Set<String> tags = knownTags;
+            if (cursor.quote() != 0) {
+                Set<String> quoted = new LinkedHashSet<>();
+                for (String tag : tags) {
+                    quoted.add(cursor.quote() + tag + cursor.quote());
+                }
+                tags = quoted;
+            }
+            SuggestionsBuilder tokenBuilder = new SuggestionsBuilder(
+                    builder.getInput(), builder.getStart() + cursor.tokenStart());
+            return SharedSuggestionProvider.suggest(tags, tokenBuilder);
         };
         // F51: own effective targets + own records + items recorded by anyone the F6 gate allows.
         SuggestionProvider<CommandSourceStack> infoItemSuggestions = (ctx, builder) -> {
@@ -777,19 +788,9 @@ public final class MilestoneCommands {
                                                         true))))))
                 .then(literal("renametag")
                         .requires(renameItemRequirement)
-                        .then(argument("oldTag", TagIdArgument.tagId())
-                                .suggests(renameOldTagSuggestions)
-                                .then(argument("newTag", TagIdArgument.tagId())
-                                        .suggests(renameNewTagSuggestions)
-                                        .executes(ctx -> renameTag(ctx,
-                                                StringArgumentType.getString(ctx, "oldTag"),
-                                                StringArgumentType.getString(ctx, "newTag"),
-                                                false))
-                                        .then(literal("confirm")
-                                                .executes(ctx -> renameTag(ctx,
-                                                        StringArgumentType.getString(ctx, "oldTag"),
-                                                        StringArgumentType.getString(ctx, "newTag"),
-                                                        true))))))
+                        .then(argument("tags", StringArgumentType.greedyString())
+                                .suggests(renameTagSuggestions)
+                                .executes(MilestoneCommands::renameTag)))
                 .then(literal("admin")
                         .requires(adminRequirementWithNode)
                         .then(literal("players")
@@ -2474,9 +2475,14 @@ public final class MilestoneCommands {
 
     // --------------------------------------------------------- F-140-19 renametag
 
-    private static int renameTag(CommandContext<CommandSourceStack> ctx, String oldTag, String newTag, boolean confirm) {
+    private static int renameTag(CommandContext<CommandSourceStack> ctx) {
         CommandSourceStack source = ctx.getSource();
-        return respond(ctx, MilestoneService.renameTag(source.getServer(), source, oldTag, newTag, confirm));
+        RenameTagArguments.Parsed args = RenameTagArguments.parse(StringArgumentType.getString(ctx, "tags"));
+        if (args == null) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.renametag_bad_arguments"));
+        }
+        return respond(ctx, MilestoneService.renameTag(source.getServer(), source,
+                args.oldTag(), args.newTag(), args.confirm()));
     }
 
     // --------------------------------------------------------- F29 help
@@ -2519,6 +2525,11 @@ public final class MilestoneCommands {
             CommandHelp.Entry entry) {
         if (entry.isRoot()) {
             return CommandHelp.formatUsageLines(entry, List.of());
+        }
+        // G10a: one vanilla greedy string node replaces <oldTag>/<newTag>/confirm, but the
+        // syntax players type and the help line are unchanged.
+        if ("renametag".equals(entry.name())) {
+            return CommandHelp.formatUsageLines(entry, List.of("<oldTag> <newTag> [confirm]"));
         }
         CommandNode<CommandSourceStack> rootNode = dispatcher.getRoot().getChild("milestonelog");
         CommandNode<CommandSourceStack> target = rootNode != null ? rootNode.getChild(entry.name()) : null;
