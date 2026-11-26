@@ -1210,4 +1210,39 @@ class PresetsTest {
         assertTrue(preset.items().contains(TargetKey.of("minecraft:emerald", 5)));
     }
 
+    @Test
+    void collectedProblemMessagesSubstitutePlaceholderArguments(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("bad_includes.json"), """
+                {
+                  "items": ["minecraft:dirt"],
+                  "includes": "not-an-array"
+                }
+                """);
+
+        assertEquals(1, Presets.reloadFrom(dir));
+        Presets.PresetDefinition preset = Presets.get("bad_includes");
+        assertNotNull(preset);
+        String expected = "Preset file bad_includes.json has a non-array 'includes'; ignoring it";
+        assertTrue(preset.problems().contains(expected),
+                () -> "expected a fully substituted problem, got: " + preset.problems());
+        assertFalse(preset.problems().stream().anyMatch(problem -> problem.contains("{}")),
+                () -> "placeholder left unsubstituted: " + preset.problems());
+    }
+
+    @Test
+    void collectedProblemSubstitutionDoesNotRescanArgumentText(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("brace_id.json"), """
+                {
+                  "items": ["minecraft:dirt"],
+                  "includes": ["{}"]
+                }
+                """);
+
+        assertEquals(1, Presets.reloadFrom(dir));
+        Presets.PresetDefinition preset = Presets.get("brace_id");
+        assertNotNull(preset);
+        assertTrue(preset.problems().contains("Skipping invalid 'includes' ID '{}' in preset brace_id.json"),
+                () -> "argument text must not be re-scanned for placeholders: " + preset.problems());
+    }
+
 }

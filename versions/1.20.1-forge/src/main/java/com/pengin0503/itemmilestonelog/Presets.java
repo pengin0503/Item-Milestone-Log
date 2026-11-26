@@ -200,9 +200,36 @@ public final class Presets {
         private final List<String> collected = new ArrayList<>();
 
         void warn(String message, Object... args) {
-            String text = args.length == 0 ? message : String.format(message, args);
+            String text = args.length == 0 ? message : substitutePlaceholders(message, args);
             ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] {}", text);
             collected.add(text);
+        }
+
+        /**
+         * Substitutes SLF4J-style {@code {}} placeholders with {@code args} in a single pass.
+         * Replacement text is appended as-is and never re-scanned, so an argument that itself
+         * contains {@code {}} cannot consume a later argument. Extra arguments are ignored and
+         * missing arguments leave their placeholders untouched.
+         */
+        private static String substitutePlaceholders(String message, Object[] args) {
+            StringBuilder text = null;
+            int argIndex = 0;
+            int from = 0;
+            while (argIndex < args.length) {
+                int placeholder = message.indexOf("{}", from);
+                if (placeholder < 0) {
+                    break;
+                }
+                if (text == null) {
+                    text = new StringBuilder(message.length() + 16);
+                }
+                text.append(message, from, placeholder).append(args[argIndex++]);
+                from = placeholder + 2;
+            }
+            if (text == null) {
+                return message;
+            }
+            return text.append(message, from, message.length()).toString();
         }
 
         List<String> list() {
