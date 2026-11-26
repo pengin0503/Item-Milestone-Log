@@ -271,6 +271,62 @@ class MilestoneServiceTest {
     }
 
     @Test
+    void applyPresetSkipsEntirelyWhenRequiredModsAreMissing(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("modded.json"), """
+                {
+                  "requiredMods": ["create", "jei"],
+                  "items": ["minecraft:diamond", "minecraft:emerald"]
+                }
+                """);
+        assertEquals(1, Presets.reloadFrom(dir));
+        Set<String> knownItems = Set.of("minecraft:diamond", "minecraft:emerald");
+
+        // All required mods loaded: normal application.
+        MilestoneData loaded = new MilestoneData();
+        MilestoneService.ActionResult applied = MilestoneService.applyPreset(
+                loaded, PLAYER_A, null, "modded", knownItems::contains, true, id -> true);
+        assertTrue(applied.success());
+        assertEquals(Set.of(TargetKey.of("minecraft:diamond"), TargetKey.of("minecraft:emerald")),
+                loaded.player(PLAYER_A).targets);
+
+        // One mod missing: nothing is applied and the missing ID is reported.
+        MilestoneData partial = new MilestoneData();
+        MilestoneService.ActionResult partialResult = MilestoneService.applyPreset(
+                partial, PLAYER_A, null, "modded", knownItems::contains, true, id -> "create".equals(id));
+        assertFalse(partialResult.success());
+        assertTrue(partialResult.message().getString().contains("jei"),
+                () -> "unexpected message: " + partialResult.message().getString());
+        assertFalse(partialResult.message().getString().contains("create"),
+                () -> "loaded mod should not be reported: " + partialResult.message().getString());
+        assertNull(partial.playerOrNull(PLAYER_A));
+
+        // No mod loaded: both IDs are reported.
+        MilestoneData none = new MilestoneData();
+        MilestoneService.ActionResult noneResult = MilestoneService.applyPreset(
+                none, PLAYER_A, null, "modded", knownItems::contains, true, id -> false);
+        assertFalse(noneResult.success());
+        assertTrue(noneResult.message().getString().contains("create"));
+        assertTrue(noneResult.message().getString().contains("jei"));
+
+        // Admin apply follows the same rule.
+        MilestoneData adminData = new MilestoneData();
+        MilestoneService.ActionResult adminResult = MilestoneService.adminApplyPreset(
+                adminData, PLAYER_A, "PlayerA", null, "modded", knownItems::contains, true, id -> false);
+        assertFalse(adminResult.success());
+        assertTrue(adminResult.message().getString().contains("create"));
+        assertNull(adminData.playerOrNull(PLAYER_A));
+
+        // First join skips silently (no chat feedback) and does not create player data.
+        MilestoneData firstJoin = new MilestoneData();
+        assertEquals(0, MilestoneService.applyFirstJoinPresets(
+                firstJoin, PLAYER_A, List.of("modded"), knownItems::contains, true, id -> false));
+        assertNull(firstJoin.playerOrNull(PLAYER_A));
+        // With the mods present it applies normally.
+        assertEquals(2, MilestoneService.applyFirstJoinPresets(
+                new MilestoneData(), PLAYER_A, List.of("modded"), knownItems::contains, true, id -> true));
+    }
+
+    @Test
     void saveAndDeletePresetEnforcePermissionsIdsBuiltinsAndTargets(@TempDir Path dir) {
         Presets.reloadFrom(dir);
         MilestoneData data = new MilestoneData();

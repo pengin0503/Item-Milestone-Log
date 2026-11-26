@@ -524,14 +524,34 @@ public final class MilestoneService {
         }
     }
 
-    private record PresetApplyCounts(int added, int addedWithCount, int skippedMissing, int skippedLimit) {
+    private record PresetApplyCounts(int added, int addedWithCount, int skippedMissing, int skippedLimit,
+                                     List<String> missingMods) {
+        private boolean hasMissingMods() {
+            return !missingMods.isEmpty();
+        }
+    }
+
+    /**
+     * F-140-9: whether the loader reports {@code modId} as loaded. The mod-presence API is
+     * version-specific, so this tiny hook lives in the version tree; the pure missing-set
+     * computation lives in {@link PresetRequiredModsLogic}.
+     */
+    private static boolean isModLoaded(String modId) {
+        return net.neoforged.fml.ModList.get().isLoaded(modId);
     }
 
     private static PresetApplyCounts applyPresetTargets(
             MilestoneData data,
             UUID playerId,
             Presets.PresetDefinition preset,
-            Predicate<String> isKnownNonAirItem) {
+            Predicate<String> isKnownNonAirItem,
+            Predicate<String> modLoaded) {
+        // F-140-9: requiredMods is checked once per application; when anything is missing the
+        // preset is skipped entirely (no partial application) and the caller reports the IDs.
+        List<String> missingMods = PresetRequiredModsLogic.missingMods(preset.requiredMods(), modLoaded);
+        if (!missingMods.isEmpty()) {
+            return new PresetApplyCounts(0, 0, 0, 0, missingMods);
+        }
         MilestoneData.PlayerData pd = data.player(playerId);
         int added = 0;
         int addedWithCount = 0;
@@ -560,21 +580,27 @@ public final class MilestoneService {
         if (added > 0) {
             data.setDirty();
         }
-        return new PresetApplyCounts(added, addedWithCount, skippedMissing, skippedLimit);
+        return new PresetApplyCounts(added, addedWithCount, skippedMissing, skippedLimit, List.of());
     }
 
     public static ActionResult applyPreset(ServerPlayer player, String name) {
         return applyPreset(MilestoneData.get(player.level().getServer()), player.getUUID(), player, name,
-                MilestoneService::isKnownNonAirItem, Config.PRESETS_ENABLED.get());
+                MilestoneService::isKnownNonAirItem, Config.PRESETS_ENABLED.get(), MilestoneService::isModLoaded);
     }
 
     static ActionResult applyPreset(MilestoneData data, UUID playerId, @Nullable ServerPlayer player,
                                     String name, Predicate<String> isKnownNonAirItem) {
-        return applyPreset(data, playerId, player, name, isKnownNonAirItem, true);
+        return applyPreset(data, playerId, player, name, isKnownNonAirItem, true, MilestoneService::isModLoaded);
     }
 
     static ActionResult applyPreset(MilestoneData data, UUID playerId, @Nullable ServerPlayer player,
                                     String name, Predicate<String> isKnownNonAirItem, boolean presetsEnabled) {
+        return applyPreset(data, playerId, player, name, isKnownNonAirItem, presetsEnabled, MilestoneService::isModLoaded);
+    }
+
+    static ActionResult applyPreset(MilestoneData data, UUID playerId, @Nullable ServerPlayer player,
+                                    String name, Predicate<String> isKnownNonAirItem, boolean presetsEnabled,
+                                    Predicate<String> modLoaded) {
         if (!presetsEnabled) {
             return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.feature_disabled"));
         }
@@ -583,7 +609,11 @@ public final class MilestoneService {
             return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.preset_unknown", name,
                     String.join(", ", Presets.names())));
         }
-        PresetApplyCounts counts = applyPresetTargets(data, playerId, preset, isKnownNonAirItem);
+        PresetApplyCounts counts = applyPresetTargets(data, playerId, preset, isKnownNonAirItem, modLoaded);
+        if (counts.hasMissingMods()) {
+            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.preset_missing_mods",
+                    name, String.join(", ", counts.missingMods())));
+        }
         Component result;
         if (counts.addedWithCount() > 0) {
             result = ServerLang.tr(player, "message.itemmilestonelog.preset_applied_with_counts",
@@ -608,7 +638,7 @@ public final class MilestoneService {
                                                 UUID targetId, String targetName, String name) {
         MilestoneData data = MilestoneData.get(server);
         ActionResult result = adminApplyPreset(data, targetId, targetName, source.getPlayer(), name,
-                MilestoneService::isKnownNonAirItem, Config.PRESETS_ENABLED.get());
+                MilestoneService::isKnownNonAirItem, Config.PRESETS_ENABLED.get(), MilestoneService::isModLoaded);
         if (result.success()) {
             ServerPlayer online = server.getPlayerList().getPlayer(targetId);
             if (online != null) {
@@ -622,6 +652,14 @@ public final class MilestoneService {
     static ActionResult adminApplyPreset(MilestoneData data, UUID targetId, String targetName,
                                          @Nullable ServerPlayer executor, String name,
                                          Predicate<String> isKnownNonAirItem, boolean presetsEnabled) {
+        return adminApplyPreset(data, targetId, targetName, executor, name, isKnownNonAirItem, presetsEnabled,
+                MilestoneService::isModLoaded);
+    }
+
+    static ActionResult adminApplyPreset(MilestoneData data, UUID targetId, String targetName,
+                                         @Nullable ServerPlayer executor, String name,
+                                         Predicate<String> isKnownNonAirItem, boolean presetsEnabled,
+                                         Predicate<String> modLoaded) {
         if (!presetsEnabled) {
             return new ActionResult(false, ServerLang.tr(executor, "message.itemmilestonelog.feature_disabled"));
         }
@@ -630,7 +668,11 @@ public final class MilestoneService {
             return new ActionResult(false, ServerLang.tr(executor, "message.itemmilestonelog.preset_unknown", name,
                     String.join(", ", Presets.names())));
         }
-        PresetApplyCounts counts = applyPresetTargets(data, targetId, preset, isKnownNonAirItem);
+        PresetApplyCounts counts = applyPresetTargets(data, targetId, preset, isKnownNonAirItem, modLoaded);
+        if (counts.hasMissingMods()) {
+            return new ActionResult(false, ServerLang.tr(executor, "message.itemmilestonelog.preset_missing_mods",
+                    preset.id(), String.join(", ", counts.missingMods())));
+        }
         Component result = ServerLang.tr(executor, "message.itemmilestonelog.admin_preset_applied",
                 preset.id(), Component.literal(targetName), counts.added(), counts.skippedMissing());
         if (counts.skippedLimit() > 0) {
@@ -646,6 +688,9 @@ public final class MilestoneService {
      * {@link #applyPreset}. Unknown preset IDs are skipped silently (warned once at server startup
      * via {@link #warnUnknownFirstJoinPresets()}). Not an F23 undo target.
      *
+     * <p>F-140-9: a preset whose {@code requiredMods} are not all loaded is skipped and logged;
+     * there is deliberately no chat feedback here (it would repeat on every first join).
+     *
      * @return total number of personal targets added across all listed presets
      */
     public static int applyFirstJoinPresets(MilestoneData data, UUID playerId) {
@@ -654,7 +699,8 @@ public final class MilestoneService {
                 playerId,
                 Config.FIRST_JOIN_PRESETS.get(),
                 MilestoneService::isKnownNonAirItem,
-                Config.PRESETS_ENABLED.get());
+                Config.PRESETS_ENABLED.get(),
+                MilestoneService::isModLoaded);
     }
 
     static int applyFirstJoinPresets(
@@ -663,6 +709,16 @@ public final class MilestoneService {
             @Nullable List<? extends String> presetIds,
             Predicate<String> isKnownNonAirItem,
             boolean presetsEnabled) {
+        return applyFirstJoinPresets(data, playerId, presetIds, isKnownNonAirItem, presetsEnabled, MilestoneService::isModLoaded);
+    }
+
+    static int applyFirstJoinPresets(
+            MilestoneData data,
+            UUID playerId,
+            @Nullable List<? extends String> presetIds,
+            Predicate<String> isKnownNonAirItem,
+            boolean presetsEnabled,
+            Predicate<String> modLoaded) {
         if (!presetsEnabled || presetIds == null || presetIds.isEmpty()) {
             return 0;
         }
@@ -678,7 +734,13 @@ public final class MilestoneService {
             if (preset == null) {
                 continue;
             }
-            PresetApplyCounts counts = applyPresetTargets(data, playerId, preset, isKnownNonAirItem);
+            PresetApplyCounts counts = applyPresetTargets(data, playerId, preset, isKnownNonAirItem, modLoaded);
+            if (counts.hasMissingMods()) {
+                ItemMilestoneLog.LOGGER.warn(
+                        "[ItemMilestoneLog] Skipping first-join preset '{}' for player {}: missing required mod(s): {}",
+                        id, playerId, String.join(", ", counts.missingMods()));
+                continue;
+            }
             totalAdded += counts.added();
         }
         return totalAdded;

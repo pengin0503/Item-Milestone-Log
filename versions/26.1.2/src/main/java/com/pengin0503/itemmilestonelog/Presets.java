@@ -22,6 +22,7 @@ import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -55,8 +56,45 @@ public final class Presets {
     /**
      * One resolved preset. F54: the display name is a {@link PresetName} — either a single plain
      * string (the same for every language) or an insertion-ordered language code to name map.
+     *
+     * <p>G-B (F-140-5): the definition also carries the optional format fields. {@link #items()}
+     * is always the final, includes-expanded list; {@link #includes()} keeps the referenced IDs
+     * for round-tripping and diagnostics. {@code nextPresets} and {@code unlockAfterHours} are
+     * parsed and carried only in this PR (their behavior arrives with G-C).
      */
-    public record PresetDefinition(String id, PresetName name, List<TargetKey> items, PresetKind kind) {
+    public record PresetDefinition(
+            String id,
+            PresetName name,
+            List<TargetKey> items,
+            PresetKind kind,
+            List<String> includes,
+            PresetName description,
+            @Nullable String category,
+            int order,
+            @Nullable Integer version,
+            List<String> requiredMods,
+            List<PresetGroup> groups,
+            List<String> nextPresets,
+            @Nullable Double unlockAfterHours) {
+
+        public PresetDefinition {
+            items = items == null ? List.of() : List.copyOf(items);
+            includes = includes == null ? List.of() : List.copyOf(includes);
+            description = description == null ? PresetName.absent() : description;
+            requiredMods = requiredMods == null ? List.of() : List.copyOf(requiredMods);
+            groups = groups == null ? List.of() : List.copyOf(groups);
+            nextPresets = nextPresets == null ? List.of() : List.copyOf(nextPresets);
+        }
+
+        /**
+         * Historical 4-argument shape (F-140-5): fills every new field with its documented
+         * default so existing callers and tests keep compiling unchanged.
+         */
+        public PresetDefinition(String id, PresetName name, List<TargetKey> items, PresetKind kind) {
+            this(id, name, items, kind, List.of(), PresetName.absent(), null, 0, null,
+                    List.of(), List.of(), List.of(), null);
+        }
+
         /** Historical constructor shape: the boolean is the old "builtin" flag, the name a plain string. */
         public PresetDefinition(String id, String displayName, List<TargetKey> items, boolean builtin) {
             this(id, PresetName.ofPlain(displayName), items, builtin ? PresetKind.BUILTIN : PresetKind.FILE);
@@ -64,6 +102,18 @@ public final class Presets {
 
         public boolean builtin() {
             return kind == PresetKind.BUILTIN;
+        }
+
+        /** Returns a copy of this definition with a different source kind (F21 priority handling). */
+        public PresetDefinition withKind(PresetKind newKind) {
+            return new PresetDefinition(id, name, items, newKind, includes, description, category, order,
+                    version, requiredMods, groups, nextPresets, unlockAfterHours);
+        }
+
+        /** Returns a copy with the includes-expanded items and validated groups. */
+        public PresetDefinition withResolvedItemsAndGroups(List<TargetKey> resolvedItems, List<PresetGroup> resolvedGroups) {
+            return new PresetDefinition(id, name, resolvedItems, kind, includes, description, category, order,
+                    version, requiredMods, resolvedGroups, nextPresets, unlockAfterHours);
         }
 
         /**
@@ -107,10 +157,17 @@ public final class Presets {
     private static final Set<String> RESERVED_IDS = Set.of("list", "save", "delete", "reload");
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
+    /**
+     * F-140-7 / B2-D5: preset list order is {@code order} ascending, then ID. With every
+     * {@code order} at its default 0 this is exactly the historical ID order.
+     */
+    private static final Comparator<PresetDefinition> LIST_ORDER =
+            Comparator.comparingInt(PresetDefinition::order).thenComparing(PresetDefinition::id);
+
     /** F21: datapack presets live in {@code data/<namespace>/itemmilestonelog/presets/<id>.json}. */
     public static final String DATAPACK_PRESETS_DIR = "itemmilestonelog/presets";
 
-    /** Resolved presets (built-in &gt; config folder &gt; datapack), always sorted by ID. */
+    /** Resolved presets (built-in &gt; config folder &gt; datapack), ordered by {@link #LIST_ORDER}. */
     private static volatile Map<String, PresetDefinition> loadedPresets = builtinMap();
     /** Custom presets loaded from the config folder (FILE kind); kept apart so either reload can rebuild. */
     private static volatile Map<String, PresetDefinition> filePresets = Map.of();
@@ -178,7 +235,6 @@ public final class Presets {
         }
 
         Map<String, PresetDefinition> next = new TreeMap<>();
-        int customCount = 0;
         List<Path> jsonFiles = new ArrayList<>();
         try (Stream<Path> stream = Files.list(dir)) {
             stream.filter(Files::isRegularFile)
@@ -206,12 +262,19 @@ public final class Presets {
             PresetDefinition parsed = parsePresetFile(file, fileName, id);
             if (parsed != null) {
                 next.put(id, parsed);
-                customCount++;
             }
         }
 
         filePresets = Collections.unmodifiableMap(new LinkedHashMap<>(next));
         rebuildLoadedPresets();
+        // F-140-6: a file whose includes expansion ends up empty is not adopted, so do not
+        // count it (the warning is emitted by rebuildLoadedPresets).
+        int customCount = 0;
+        for (String id : filePresets.keySet()) {
+            if (loadedPresets.containsKey(id)) {
+                customCount++;
+            }
+        }
         return customCount;
     }
 
@@ -307,7 +370,7 @@ public final class Presets {
                 }
                 next.put(id, preset.kind() == PresetKind.DATAPACK
                         ? preset
-                        : new PresetDefinition(id, preset.name(), preset.items(), PresetKind.DATAPACK));
+                        : preset.withKind(PresetKind.DATAPACK));
             }
         }
         datapackPresets = Collections.unmodifiableMap(new LinkedHashMap<>(next));
@@ -338,9 +401,58 @@ public final class Presets {
      * Rebuilds {@link #loadedPresets} from the three sources by F21 priority
      * (built-in &gt; config-folder file &gt; datapack), warning about unused losers.
      * Only called with the class monitor held.
+     *
+     * <p>F-140-6: after the raw sources are merged, every preset's {@code includes} is resolved
+     * against the complete raw set (all sources, regardless of kind) and its {@code items} is
+     * replaced with the expanded list. F-140-10: groups are then validated against that expanded
+     * list (B2-D6). A preset whose expansion is empty is dropped like the historical
+     * "0 valid items" case. Finally the table is ordered by {@code order} then ID (F-140-7 /
+     * B2-D5), which is the single supply point used by commands, suggestions and GUI sync.
      */
     private static void rebuildLoadedPresets() {
-        Map<String, PresetDefinition> next = new TreeMap<>();
+        Map<String, PresetDefinition> raw = rawPresets(true);
+
+        Map<String, List<TargetKey>> itemsById = new LinkedHashMap<>();
+        Map<String, List<String>> includesById = new LinkedHashMap<>();
+        for (PresetDefinition preset : raw.values()) {
+            itemsById.put(preset.id(), preset.items());
+            includesById.put(preset.id(), preset.includes());
+        }
+        PresetIncludesLogic.Result includeResult = PresetIncludesLogic.resolve(itemsById, includesById);
+        for (String warning : includeResult.warnings()) {
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Preset includes: {}", warning);
+        }
+
+        List<PresetDefinition> resolved = new ArrayList<>();
+        for (PresetDefinition preset : raw.values()) {
+            List<TargetKey> expanded = includeResult.items(preset.id());
+            if (expanded.isEmpty()) {
+                ItemMilestoneLog.LOGGER.warn(
+                        "[ItemMilestoneLog] Skipping preset '{}': 0 valid items after includes expansion", preset.id());
+                continue;
+            }
+            PresetGroupLogic.Result groupResult = PresetGroupLogic.validate(preset.groups(), expanded);
+            for (String warning : groupResult.warnings()) {
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Preset '{}': {}", preset.id(), warning);
+            }
+            resolved.add(preset.withResolvedItemsAndGroups(expanded, groupResult.groups()));
+        }
+
+        resolved.sort(LIST_ORDER);
+        Map<String, PresetDefinition> next = new LinkedHashMap<>();
+        for (PresetDefinition preset : resolved) {
+            next.put(preset.id(), preset);
+        }
+        loadedPresets = Collections.unmodifiableMap(next);
+    }
+
+    /**
+     * Merges the raw (not includes-expanded) definitions of all three sources by F21 priority.
+     * {@code warnConflicts} is false for auxiliary callers such as {@code saveCustomTo} that only
+     * need the map for one expansion and must not repeat the startup/reload warnings.
+     */
+    private static Map<String, PresetDefinition> rawPresets(boolean warnConflicts) {
+        Map<String, PresetDefinition> next = new LinkedHashMap<>();
         for (Map.Entry<String, PresetDefinition> entry : builtinMap().entrySet()) {
             next.put(entry.getKey(), entry.getValue());
         }
@@ -351,14 +463,16 @@ public final class Presets {
             String id = entry.getKey();
             PresetDefinition existing = next.get(id);
             if (existing != null) {
-                ItemMilestoneLog.LOGGER.warn(
-                        "[ItemMilestoneLog] Ignoring datapack preset '{}' because '{}' is already provided by a {} preset",
-                        id, id, existing.kind() == PresetKind.BUILTIN ? "built-in" : "config-folder file");
+                if (warnConflicts) {
+                    ItemMilestoneLog.LOGGER.warn(
+                            "[ItemMilestoneLog] Ignoring datapack preset '{}' because '{}' is already provided by a {} preset",
+                            id, id, existing.kind() == PresetKind.BUILTIN ? "built-in" : "config-folder file");
+                }
                 continue;
             }
             next.put(id, entry.getValue());
         }
-        loadedPresets = Collections.unmodifiableMap(new LinkedHashMap<>(next));
+        return next;
     }
 
     private static int parseStrictJsonCount(JsonElement countEl) {
@@ -374,47 +488,257 @@ public final class Presets {
     }
 
     /**
-     * F54: parses the optional {@code name} field of a preset JSON document. It is either the
-     * historical single string (used for every language) or an object mapping a language code
-     * to a display name. Entries whose value is not a string are ignored here; {@link PresetName}
-     * normalizes keys/values and drops unusable entries. A missing or invalid form — including
-     * an object with no valid value — is absent, so the preset ID becomes the display name.
+     * F54/F-140-7: parses an optional display-name field. It is either the historical single
+     * string (used for every language) or an object mapping a language code to a display name.
+     * Entries whose value is not a string are ignored here; {@link PresetName} normalizes
+     * keys/values and drops unusable entries. A missing or invalid form — including an object
+     * with no valid value — is absent, so the caller falls back to the preset ID.
+     *
+     * @param warnInvalid whether a present-but-wrong-typed field emits a warning (used for
+     *                    {@code description}; the historical {@code name} stays silent)
      */
-    private static PresetName extractName(JsonObject root) {
-        if (root.has("name")) {
-            JsonElement nameEl = root.get("name");
-            if (nameEl.isJsonPrimitive() && nameEl.getAsJsonPrimitive().isString()) {
-                return PresetName.ofPlain(nameEl.getAsString());
-            }
-            if (nameEl.isJsonObject()) {
-                Map<String, String> values = new LinkedHashMap<>();
-                for (Map.Entry<String, JsonElement> entry : nameEl.getAsJsonObject().entrySet()) {
-                    JsonElement value = entry.getValue();
-                    if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isString()) {
-                        values.put(entry.getKey(), value.getAsString());
-                    }
+    private static PresetName extractName(
+            JsonObject root, String field, @Nullable String sourceLabel, boolean warnInvalid) {
+        if (!root.has(field)) {
+            return PresetName.absent();
+        }
+        JsonElement nameEl = root.get(field);
+        if (nameEl.isJsonPrimitive() && nameEl.getAsJsonPrimitive().isString()) {
+            return PresetName.ofPlain(nameEl.getAsString());
+        }
+        if (nameEl.isJsonObject()) {
+            Map<String, String> values = new LinkedHashMap<>();
+            for (Map.Entry<String, JsonElement> entry : nameEl.getAsJsonObject().entrySet()) {
+                JsonElement value = entry.getValue();
+                if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isString()) {
+                    values.put(entry.getKey(), value.getAsString());
                 }
-                return PresetName.ofLocalized(values);
             }
+            return PresetName.ofLocalized(values);
+        }
+        if (warnInvalid) {
+            ItemMilestoneLog.LOGGER.warn(
+                    "[ItemMilestoneLog] Preset file {} has an invalid '{}' (must be a string or an object of language -> string); ignoring it",
+                    sourceLabel, field);
         }
         return PresetName.absent();
     }
 
+    private static PresetName extractName(JsonObject root) {
+        return extractName(root, "name", null, false);
+    }
+
+    /** G-B: the optional fields carried alongside a preset's items. */
+    private record ExtraFields(
+            List<String> includes,
+            PresetName description,
+            @Nullable String category,
+            int order,
+            @Nullable Integer version,
+            List<String> requiredMods,
+            List<PresetGroup> groups,
+            List<String> nextPresets,
+            @Nullable Double unlockAfterHours) {
+        private static final ExtraFields EMPTY = new ExtraFields(
+                List.of(), PresetName.absent(), null, 0, null, List.of(), List.of(), List.of(), null);
+    }
+
+    /** G2/F54 + F-140-11: everything a rewrite carries over from an existing preset file. */
+    private record ExistingFields(PresetName name, ExtraFields extra) {
+    }
+
+    /** A JSON primitive number's textual form, or {@code null} when it is not a number. */
+    @Nullable
+    private static String numberText(@Nullable JsonElement element) {
+        if (element == null || !element.isJsonPrimitive() || !element.getAsJsonPrimitive().isNumber()) {
+            return null;
+        }
+        return element.getAsString();
+    }
+
     /**
-     * G2/F54: the existing file's {@code name} to carry over when overwriting it — a plain
-     * string or an object form, whichever the file validly has. Corrupt or unreadable files
-     * yield an absent name (the preset ID).
+     * F-140-6 / F-140-13: parses a string array of preset IDs. Invalid or reserved IDs and
+     * non-string elements are warned about and skipped; duplicates keep the first occurrence.
      */
-    private static PresetName readExistingName(Path file) {
+    private static List<String> parseIdList(JsonObject root, String field, String sourceLabel) {
+        if (!root.has(field)) {
+            return List.of();
+        }
+        JsonElement element = root.get(field);
+        if (!element.isJsonArray()) {
+            ItemMilestoneLog.LOGGER.warn(
+                    "[ItemMilestoneLog] Preset file {} has a non-array '{}'; ignoring it", sourceLabel, field);
+            return List.of();
+        }
+        Set<String> ids = new LinkedHashSet<>();
+        for (JsonElement elem : element.getAsJsonArray()) {
+            if (!elem.isJsonPrimitive() || !elem.getAsJsonPrimitive().isString()) {
+                ItemMilestoneLog.LOGGER.warn(
+                        "[ItemMilestoneLog] Skipping non-string '{}' entry in preset {}", field, sourceLabel);
+                continue;
+            }
+            String id = elem.getAsString().trim();
+            if (!isValidId(id)) {
+                ItemMilestoneLog.LOGGER.warn(
+                        "[ItemMilestoneLog] Skipping invalid '{}' ID '{}' in preset {}", field, id, sourceLabel);
+                continue;
+            }
+            ids.add(id);
+        }
+        return List.copyOf(ids);
+    }
+
+    /** F-140-9: parses {@code requiredMods}, warning about and skipping invalid elements. */
+    private static List<String> parseRequiredMods(JsonObject root, String sourceLabel) {
+        if (!root.has("requiredMods")) {
+            return List.of();
+        }
+        JsonElement element = root.get("requiredMods");
+        if (!element.isJsonArray()) {
+            ItemMilestoneLog.LOGGER.warn(
+                    "[ItemMilestoneLog] Preset file {} has a non-array 'requiredMods'; ignoring it", sourceLabel);
+            return List.of();
+        }
+        Set<String> mods = new LinkedHashSet<>();
+        for (JsonElement elem : element.getAsJsonArray()) {
+            if (!elem.isJsonPrimitive() || !elem.getAsJsonPrimitive().isString()) {
+                ItemMilestoneLog.LOGGER.warn(
+                        "[ItemMilestoneLog] Skipping non-string 'requiredMods' entry in preset {}", sourceLabel);
+                continue;
+            }
+            String modId = elem.getAsString().trim();
+            if (!PresetMetadataLogic.isValidModId(modId)) {
+                ItemMilestoneLog.LOGGER.warn(
+                        "[ItemMilestoneLog] Skipping invalid required mod ID '{}' in preset {}", modId, sourceLabel);
+                continue;
+            }
+            mods.add(modId);
+        }
+        return List.copyOf(mods);
+    }
+
+    /**
+     * F-140-10: parses the optional {@code groups} array. Invalid elements are warned about and
+     * skipped. Validation against the expanded items (unknown keys, cross-group duplicates,
+     * duplicate group IDs and emptied groups) happens later in {@link PresetGroupLogic}.
+     */
+    private static List<PresetGroup> parseGroups(JsonObject root, String sourceLabel) {
+        if (!root.has("groups")) {
+            return List.of();
+        }
+        JsonElement element = root.get("groups");
+        if (!element.isJsonArray()) {
+            ItemMilestoneLog.LOGGER.warn(
+                    "[ItemMilestoneLog] Preset file {} has a non-array 'groups'; ignoring it", sourceLabel);
+            return List.of();
+        }
+        List<PresetGroup> groups = new ArrayList<>();
+        for (JsonElement elem : element.getAsJsonArray()) {
+            if (!elem.isJsonObject()) {
+                ItemMilestoneLog.LOGGER.warn(
+                        "[ItemMilestoneLog] Skipping invalid group entry in preset {}", sourceLabel);
+                continue;
+            }
+            JsonObject group = elem.getAsJsonObject();
+            if (!group.has("id") || !group.get("id").isJsonPrimitive()
+                    || !group.get("id").getAsJsonPrimitive().isString()) {
+                ItemMilestoneLog.LOGGER.warn(
+                        "[ItemMilestoneLog] Skipping group without a string 'id' in preset {}", sourceLabel);
+                continue;
+            }
+            String groupId = group.get("id").getAsString().trim();
+            if (!isValidId(groupId)) {
+                ItemMilestoneLog.LOGGER.warn(
+                        "[ItemMilestoneLog] Skipping group with invalid id '{}' in preset {}", groupId, sourceLabel);
+                continue;
+            }
+            if (!group.has("items") || !group.get("items").isJsonArray()) {
+                ItemMilestoneLog.LOGGER.warn(
+                        "[ItemMilestoneLog] Skipping group '{}' in preset {} (missing 'items' array)",
+                        groupId, sourceLabel);
+                continue;
+            }
+            PresetName groupName = extractName(group, "name", sourceLabel + " group '" + groupId + "'", true);
+            List<TargetKey> groupItems = parseTargetItems(group.getAsJsonArray("items"), sourceLabel + " group '" + groupId + "'");
+            groups.add(new PresetGroup(groupId, groupName, groupItems));
+        }
+        return List.copyOf(groups);
+    }
+
+    /** F-140-5: the new fields of one preset JSON document, parsed element-by-element. */
+    private static ExtraFields parseExtraFields(JsonObject root, String sourceLabel) {
+        List<String> includes = parseIdList(root, "includes", sourceLabel);
+        PresetName description = extractName(root, "description", sourceLabel, true);
+
+        String category = null;
+        if (root.has("category")) {
+            JsonElement element = root.get("category");
+            if (element.isJsonPrimitive() && element.getAsJsonPrimitive().isString()) {
+                category = PresetMetadataLogic.normalizeCategory(element.getAsString());
+            } else {
+                ItemMilestoneLog.LOGGER.warn(
+                        "[ItemMilestoneLog] Preset file {} has a non-string 'category'; ignoring it", sourceLabel);
+            }
+        }
+
+        int order = 0;
+        if (root.has("order")) {
+            String rawOrder = numberText(root.get("order"));
+            Integer parsed = rawOrder != null ? PresetMetadataLogic.parseOrder(rawOrder) : null;
+            if (parsed != null) {
+                order = parsed;
+            } else {
+                ItemMilestoneLog.LOGGER.warn(
+                        "[ItemMilestoneLog] Preset file {} has an invalid 'order' (must be an integer); using 0", sourceLabel);
+            }
+        }
+
+        Integer version = null;
+        if (root.has("version")) {
+            String rawVersion = numberText(root.get("version"));
+            version = rawVersion != null ? PresetMetadataLogic.parseVersion(rawVersion) : null;
+            if (version == null) {
+                ItemMilestoneLog.LOGGER.warn(
+                        "[ItemMilestoneLog] Preset file {} has an invalid 'version' (must be an integer >= 1); treating it as unversioned",
+                        sourceLabel);
+            }
+        }
+
+        List<String> requiredMods = parseRequiredMods(root, sourceLabel);
+        List<PresetGroup> groups = parseGroups(root, sourceLabel);
+        List<String> nextPresets = parseIdList(root, "nextPresets", sourceLabel);
+
+        Double unlockAfterHours = null;
+        if (root.has("unlockAfterHours")) {
+            String rawHours = numberText(root.get("unlockAfterHours"));
+            unlockAfterHours = rawHours != null ? PresetMetadataLogic.parseUnlockAfterHours(rawHours) : null;
+            if (unlockAfterHours == null) {
+                ItemMilestoneLog.LOGGER.warn(
+                        "[ItemMilestoneLog] Preset file {} has an invalid 'unlockAfterHours' (must be a number >= 0); ignoring it",
+                        sourceLabel);
+            }
+        }
+
+        return new ExtraFields(includes, description, category, order, version, requiredMods, groups,
+                nextPresets, unlockAfterHours);
+    }
+
+    /**
+     * G2/F54 + F-140-11: reads an existing file's carried-over fields. Only the fields are
+     * parsed (the items are replaced by the GUI save), and a corrupt/unreadable file yields
+     * defaults exactly like the historical name-only carry-over.
+     */
+    private static ExistingFields readExistingFields(Path file) {
         try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
             JsonElement el = JsonParser.parseReader(reader);
             if (el.isJsonObject()) {
-                return extractName(el.getAsJsonObject());
+                JsonObject root = el.getAsJsonObject();
+                return new ExistingFields(extractName(root), parseExtraFields(root, file.getFileName().toString()));
             }
         } catch (Exception ignored) {
-            // Corrupt or unreadable existing file: fall back to the preset ID.
+            // Corrupt or unreadable existing file: fall back to defaults (ID name, no new fields).
         }
-        return PresetName.absent();
+        return new ExistingFields(PresetName.absent(), ExtraFields.EMPTY);
     }
 
     private static PresetDefinition parsePresetFile(Path file, String fileName, String id) {
@@ -430,10 +754,14 @@ public final class Presets {
 
     /**
      * Parses one preset JSON document. Shared by config-folder files (F33) and datapack files
-     * (F21), so both sources accept the same format: optional {@code name}, required
-     * non-empty {@code items} (strings or {@code {"item": ..., "count": ...}} objects).
+     * (F21), so both sources accept the same format: optional {@code name}, {@code items}
+     * (strings or {@code {"item": ..., "count": ...}} objects), and the G-B optional fields.
+     *
+     * <p>F-140-6: {@code items} may be absent or empty when {@code includes} is present; the
+     * expansion then supplies the items. The historical rejections (non-object root, invalid
+     * JSON, missing/non-array {@code items} without includes, zero own+included items) remain.
      */
-    private static PresetDefinition parsePresetContent(String content, String sourceLabel, String id, PresetKind kind) {
+    static PresetDefinition parsePresetContent(String content, String sourceLabel, String id, PresetKind kind) {
         JsonObject root;
         try {
             JsonElement el = JsonParser.parseString(content);
@@ -447,15 +775,36 @@ public final class Presets {
             return null;
         }
 
-        if (!root.has("items") || !root.get("items").isJsonArray()) {
+        ExtraFields extra = parseExtraFields(root, sourceLabel);
+        PresetName name = extractName(root);
+
+        List<TargetKey> ownItems;
+        if (root.has("items")) {
+            if (!root.get("items").isJsonArray()) {
+                ItemMilestoneLog.LOGGER.error("[ItemMilestoneLog] Preset file {} has a non-array 'items'", sourceLabel);
+                return null;
+            }
+            ownItems = parseTargetItems(root.getAsJsonArray("items"), sourceLabel);
+        } else if (!extra.includes().isEmpty()) {
+            ownItems = List.of();
+        } else {
             ItemMilestoneLog.LOGGER.error("[ItemMilestoneLog] Preset file {} is missing required 'items' array", sourceLabel);
             return null;
         }
 
-        PresetName name = extractName(root);
+        if (ownItems.isEmpty() && extra.includes().isEmpty()) {
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping preset file {}: 0 valid item IDs", sourceLabel);
+            return null;
+        }
 
+        return new PresetDefinition(id, name, ownItems, kind, extra.includes(), extra.description(),
+                extra.category(), extra.order(), extra.version(), extra.requiredMods(), extra.groups(),
+                extra.nextPresets(), extra.unlockAfterHours());
+    }
+
+    /** F-140-5: parses the standard item element format (shared by {@code items} and group items). */
+    private static List<TargetKey> parseTargetItems(JsonArray arr, String sourceLabel) {
         Set<TargetKey> deduped = new LinkedHashSet<>();
-        JsonArray arr = root.getAsJsonArray("items");
         for (JsonElement elem : arr) {
             if (elem.isJsonPrimitive() && elem.getAsJsonPrimitive().isString()) {
                 String rawItem = elem.getAsString().trim();
@@ -494,13 +843,7 @@ public final class Presets {
                 }
             }
         }
-
-        if (deduped.isEmpty()) {
-            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping preset file {}: 0 valid item IDs", sourceLabel);
-            return null;
-        }
-
-        return new PresetDefinition(id, name, List.copyOf(deduped), kind);
+        return List.copyOf(deduped);
     }
 
     /** Saves a custom preset file to the default config directory and updates the in-memory table. */
@@ -526,12 +869,16 @@ public final class Presets {
         Files.createDirectories(dir);
         Path target = dir.resolve(id + ".json");
         boolean existed = Files.exists(target);
-        // G2/F54: an existing file's name — plain string or object form — is carried over
-        // unchanged; a new preset or an existing file without a valid name falls back to the ID.
-        PresetName name = existed ? readExistingName(target) : PresetName.absent();
+        // G2/F54 + F-140-11: carry over the existing file's name and all valid new fields.
+        // A new preset or an unreadable/corrupt existing file gets the documented defaults.
+        ExistingFields existing = existed
+                ? readExistingFields(target)
+                : new ExistingFields(PresetName.absent(), ExtraFields.EMPTY);
+        PresetName name = existing.name();
         if (!name.present()) {
             name = PresetName.ofPlain(id);
         }
+        ExtraFields extra = existing.extra();
 
         Set<TargetKey> deduped = new LinkedHashSet<>();
         for (TargetKey key : items) {
@@ -547,29 +894,19 @@ public final class Presets {
             throw new IllegalArgumentException("No valid items to save");
         }
 
+        // F-140-11: groups are re-validated against the (includes-expanded) items that will
+        // result from this save, so the written JSON matches the next reload exactly.
+        List<TargetKey> finalItems = expandItemsForSave(id, List.copyOf(deduped), extra.includes());
+        PresetGroupLogic.Result groupResult = PresetGroupLogic.validate(extra.groups(), finalItems);
+        for (String warning : groupResult.warnings()) {
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Preset '{}': {}", id, warning);
+        }
+        List<PresetGroup> groups = groupResult.groups();
+
         JsonObject json = new JsonObject();
-        if (name.localizedForm()) {
-            // G2/F54: write the carried-over object-form name back unchanged (like the string form).
-            JsonObject localizedNames = new JsonObject();
-            for (Map.Entry<String, String> entry : name.localizedValues().entrySet()) {
-                localizedNames.addProperty(entry.getKey(), entry.getValue());
-            }
-            json.add("name", localizedNames);
-        } else {
-            json.addProperty("name", name.plainValue() != null ? name.plainValue() : id);
-        }
-        JsonArray arr = new JsonArray();
-        for (TargetKey key : deduped) {
-            if (key.count() > TargetKey.MIN_COUNT) {
-                JsonObject obj = new JsonObject();
-                obj.addProperty("item", key.itemId());
-                obj.addProperty("count", key.count());
-                arr.add(obj);
-            } else {
-                arr.add(key.itemId());
-            }
-        }
-        json.add("items", arr);
+        writePresetName(json, "name", name);
+        writeExtraFields(json, extra, groups);
+        json.add("items", targetItemsJson(deduped));
 
         Path temp = Files.createTempFile(dir, "preset-" + id + ".", ".tmp");
         try {
@@ -590,10 +927,112 @@ public final class Presets {
         }
 
         Map<String, PresetDefinition> next = new TreeMap<>(filePresets);
-        next.put(id, new PresetDefinition(id, name, List.copyOf(deduped), PresetKind.FILE));
+        // Store the raw (not yet expanded) definition; rebuildLoadedPresets resolves includes
+        // and groups again for the in-memory table.
+        next.put(id, new PresetDefinition(id, name, List.copyOf(deduped), PresetKind.FILE,
+                extra.includes(), extra.description(), extra.category(), extra.order(), extra.version(),
+                extra.requiredMods(), groups, extra.nextPresets(), extra.unlockAfterHours()));
         filePresets = Collections.unmodifiableMap(new LinkedHashMap<>(next));
         rebuildLoadedPresets();
         return existed;
+    }
+
+    /**
+     * F-140-11: expands the includes of the preset being saved against the current raw sources,
+     * with the GUI's new items substituted for that preset. Used only to re-validate groups (the
+     * in-memory table is rebuilt by {@link #rebuildLoadedPresets()}).
+     */
+    private static List<TargetKey> expandItemsForSave(String id, List<TargetKey> ownItems, List<String> includes) {
+        Map<String, PresetDefinition> raw = rawPresets(false);
+        Map<String, List<TargetKey>> itemsById = new LinkedHashMap<>();
+        Map<String, List<String>> includesById = new LinkedHashMap<>();
+        for (PresetDefinition preset : raw.values()) {
+            itemsById.put(preset.id(), preset.items());
+            includesById.put(preset.id(), preset.includes());
+        }
+        itemsById.put(id, ownItems);
+        includesById.put(id, includes);
+        PresetIncludesLogic.Result result = PresetIncludesLogic.resolve(itemsById, includesById);
+        for (String warning : result.warnings()) {
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Preset includes: {}", warning);
+        }
+        return result.items(id);
+    }
+
+    /** Writes a plain or per-language preset name field when a name is present. */
+    private static void writePresetName(JsonObject json, String field, PresetName name) {
+        if (name == null || !name.present()) {
+            return;
+        }
+        if (name.localizedForm()) {
+            JsonObject localizedNames = new JsonObject();
+            for (Map.Entry<String, String> entry : name.localizedValues().entrySet()) {
+                localizedNames.addProperty(entry.getKey(), entry.getValue());
+            }
+            json.add(field, localizedNames);
+        } else {
+            json.addProperty(field, name.plainValue());
+        }
+    }
+
+    /** F-140-11: writes the carried-over G-B fields (non-default values only). */
+    private static void writeExtraFields(JsonObject json, ExtraFields extra, List<PresetGroup> groups) {
+        if (!extra.includes().isEmpty()) {
+            json.add("includes", stringArray(extra.includes()));
+        }
+        writePresetName(json, "description", extra.description());
+        if (extra.category() != null) {
+            json.addProperty("category", extra.category());
+        }
+        if (extra.order() != 0) {
+            json.addProperty("order", extra.order());
+        }
+        if (extra.version() != null) {
+            json.addProperty("version", extra.version());
+        }
+        if (!extra.requiredMods().isEmpty()) {
+            json.add("requiredMods", stringArray(extra.requiredMods()));
+        }
+        if (!groups.isEmpty()) {
+            JsonArray groupArray = new JsonArray();
+            for (PresetGroup group : groups) {
+                JsonObject groupJson = new JsonObject();
+                groupJson.addProperty("id", group.id());
+                writePresetName(groupJson, "name", group.name());
+                groupJson.add("items", targetItemsJson(group.items()));
+                groupArray.add(groupJson);
+            }
+            json.add("groups", groupArray);
+        }
+        if (!extra.nextPresets().isEmpty()) {
+            json.add("nextPresets", stringArray(extra.nextPresets()));
+        }
+        if (extra.unlockAfterHours() != null) {
+            json.addProperty("unlockAfterHours", extra.unlockAfterHours());
+        }
+    }
+
+    private static JsonArray stringArray(List<String> values) {
+        JsonArray array = new JsonArray();
+        for (String value : values) {
+            array.add(value);
+        }
+        return array;
+    }
+
+    private static JsonArray targetItemsJson(Collection<TargetKey> keys) {
+        JsonArray arr = new JsonArray();
+        for (TargetKey key : keys) {
+            if (key.count() > TargetKey.MIN_COUNT) {
+                JsonObject obj = new JsonObject();
+                obj.addProperty("item", key.itemId());
+                obj.addProperty("count", key.count());
+                arr.add(obj);
+            } else {
+                arr.add(key.itemId());
+            }
+        }
+        return arr;
     }
 
     /** Deletes a custom preset file from the default config directory and updates the in-memory table. */
@@ -630,7 +1069,7 @@ public final class Presets {
         return List.copyOf(loadedPresets.values());
     }
 
-    /** Preset IDs in a stable (alphabetical) order for suggestions, messages and the GUI. */
+    /** Preset IDs in the F-140-7 list order ({@code order} ascending, then ID). */
     public static List<String> names() {
         return List.copyOf(loadedPresets.keySet());
     }
