@@ -163,7 +163,23 @@ class LangFilesTest {
                 "message.itemmilestonelog.firsts_unclaimed_entry_preset",
                 "message.itemmilestonelog.firsts_unclaimed_none",
                 "message.itemmilestonelog.firsts_unclaimed_more",
-                "message.itemmilestonelog.firsts_unclaimed_invalid_scope")) {
+                "message.itemmilestonelog.firsts_unclaimed_invalid_scope",
+                // F-150-7 / F-150-8 / F-150-9 (PR-2)
+                "message.itemmilestonelog.stats_item_header",
+                "message.itemmilestonelog.stats_item_values",
+                "message.itemmilestonelog.stats_item_empty",
+                "message.itemmilestonelog.help.statstag",
+                "message.itemmilestonelog.top_item_entry_gaps",
+                "message.itemmilestonelog.top_item_self_gaps",
+                "message.itemmilestonelog.top_item_gaps_note",
+                "message.itemmilestonelog.gap_none",
+                "message.itemmilestonelog.whohas_header",
+                "message.itemmilestonelog.whohas_recorded_entry",
+                "message.itemmilestonelog.whohas_targeting_entry",
+                "message.itemmilestonelog.whohas_empty",
+                "message.itemmilestonelog.whohas_more",
+                "message.itemmilestonelog.help.whohas",
+                "message.itemmilestonelog.help.whohastag")) {
             assertNotNull(en.get(key), "Missing en_us key: " + key);
             assertFalse(en.get(key).isBlank(), "Blank en_us key: " + key);
             assertNotNull(ja.get(key), "Missing ja_jp key: " + key);

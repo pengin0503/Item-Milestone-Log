@@ -471,6 +471,143 @@ class MilestoneCommandsHelpTest {
         }
     }
 
+    @Test
+    void statsItemAndStatstagAreAdditiveBranchesWithLookupGate() {
+        CommandDispatcher<CommandSourceStack> dispatcher = buildDispatcher(src -> true);
+        CommandNode<CommandSourceStack> stats = rootChild(dispatcher, "stats");
+        assertNotNull(stats.getCommand(), "bare stats must still execute server statistics");
+        assertNull(stats.getChild("page"), "stats must not gain a page argument");
+        CommandNode<CommandSourceStack> item = stats.getChild("item");
+        assertNotNull(item, "stats <item> must be registered (F-150-7)");
+        assertTrue(item instanceof ArgumentCommandNode<CommandSourceStack, ?>);
+        assertNotNull(item.getCommand(), "stats <item> must execute");
+        CommandNode<CommandSourceStack> count = item.getChild("count");
+        assertNotNull(count, "stats <item> [<count>] must be registered");
+        assertNotNull(count.getCommand());
+
+        CommandNode<CommandSourceStack> statstag = rootChild(dispatcher, "statstag");
+        assertNotNull(statstag, "statstag must be registered (F-150-7)");
+        assertNull(statstag.getCommand(), "bare statstag must not execute");
+        CommandNode<CommandSourceStack> tag = statstag.getChild("tag");
+        assertNotNull(tag, "statstag must take <tag>");
+        assertTrue(tag instanceof ArgumentCommandNode<CommandSourceStack, ?>);
+        assertNotNull(tag.getCommand(), "statstag <tag> must execute");
+        assertNotNull(tag.getChild("count"), "statstag <tag> [<count>] must be registered");
+
+        for (String line : List.of("milestonelog stats", "milestonelog stats minecraft:diamond",
+                "milestonelog stats minecraft:diamond 3", "milestonelog statstag c:ingots/iron",
+                "milestonelog statstag c:ingots/iron 3")) {
+            ParseResults<CommandSourceStack> parse = dispatcher.parse(line, null);
+            assertFalse(parse.getReader().canRead(), "must fully parse: " + line);
+            assertTrue(parse.getExceptions().isEmpty(), line + ": " + parse.getExceptions());
+            assertNotNull(parse.getContext().getCommand(), line);
+        }
+        CommandHelp.Entry entry = entryByName("statstag");
+        assertFalse(entry.playerOnly(), "statstag must remain console-usable like stats");
+        assertEquals(CommandHelp.Gate.LOOKUP, entry.gate());
+        assertTrue(MilestoneCommands.helpUsages(dispatcher, null, entry).stream()
+                .anyMatch(u -> u.contains("<tag>")));
+        CommandHelp.Context noLookup = new CommandHelp.Context(true, false, true, true, false, true);
+        CommandHelp.Context privileged = new CommandHelp.Context(true, true, true, true, false, true);
+        assertNull(CommandHelp.findVisible("statstag", noLookup, e -> true));
+        assertNotNull(CommandHelp.findVisible("statstag", privileged, e -> true));
+    }
+
+    @Test
+    void gapsBranchesAreOptInAndLegacyTopFormsStillParse() {
+        CommandDispatcher<CommandSourceStack> dispatcher = buildDispatcher(src -> true);
+        CommandNode<CommandSourceStack> top = rootChild(dispatcher, "top");
+        CommandNode<CommandSourceStack> item = top.getChild("item");
+        assertNotNull(item, "top <item> must keep its legacy slot");
+        assertNull(top.getChild("gaps"), "there is no bare top gaps branch");
+        CommandNode<CommandSourceStack> itemGaps = item.getChild("gaps");
+        assertNotNull(itemGaps, "top <item> gaps must be registered (F-150-8)");
+        assertNotNull(itemGaps.getCommand());
+        CommandNode<CommandSourceStack> count = item.getChild("count");
+        assertNotNull(count, "top <item> [<count>] must keep its legacy slot");
+        CommandNode<CommandSourceStack> countGaps = count.getChild("gaps");
+        assertNotNull(countGaps, "top <item> [<count>] gaps must be registered");
+        assertNotNull(countGaps.getCommand());
+
+        CommandNode<CommandSourceStack> toptag = rootChild(dispatcher, "toptag");
+        CommandNode<CommandSourceStack> tag = toptag.getChild("tag");
+        assertNotNull(tag);
+        assertNull(toptag.getChild("gaps"), "there is no bare toptag gaps branch");
+        assertNotNull(tag.getChild("gaps"), "toptag <tag> gaps must be registered");
+        CommandNode<CommandSourceStack> tagCount = tag.getChild("count");
+        assertNotNull(tagCount);
+        assertNotNull(tagCount.getChild("gaps"), "toptag <tag> [<count>] gaps must be registered");
+
+        for (String line : List.of("milestonelog top", "milestonelog top minecraft:diamond",
+                "milestonelog top minecraft:diamond 3", "milestonelog top minecraft:diamond gaps",
+                "milestonelog top minecraft:diamond 3 gaps", "milestonelog toptag c:ingots/iron",
+                "milestonelog toptag c:ingots/iron 3", "milestonelog toptag c:ingots/iron gaps",
+                "milestonelog toptag c:ingots/iron 3 gaps")) {
+            ParseResults<CommandSourceStack> parse = dispatcher.parse(line, null);
+            assertFalse(parse.getReader().canRead(), "must fully parse: " + line);
+            assertTrue(parse.getExceptions().isEmpty(), line + ": " + parse.getExceptions());
+            assertNotNull(parse.getContext().getCommand(), line);
+        }
+        // The extra literal does change getSmartUsage text; no legacy usage string is pinned.
+        assertTrue(MilestoneCommands.helpUsages(dispatcher, null, entryByName("top")).stream()
+                .anyMatch(u -> u.contains("gaps")));
+        assertTrue(MilestoneCommands.helpUsages(dispatcher, null, entryByName("toptag")).stream()
+                .anyMatch(u -> u.contains("gaps")));
+    }
+
+    @Test
+    void whohasAndWhohastagAreConsoleUsableLookupGatedCommands() {
+        CommandDispatcher<CommandSourceStack> dispatcher = buildDispatcher(src -> true);
+        CommandNode<CommandSourceStack> whohas = rootChild(dispatcher, "whohas");
+        assertNotNull(whohas, "whohas must be registered (F-150-9)");
+        assertNull(whohas.getCommand(), "bare whohas must not execute");
+        CommandNode<CommandSourceStack> item = whohas.getChild("item");
+        assertNotNull(item);
+        assertNotNull(item.getCommand(), "whohas <item> must execute");
+        CommandNode<CommandSourceStack> count = item.getChild("count");
+        assertNotNull(count);
+        assertNotNull(count.getCommand());
+        assertNotNull(count.getChild("page"), "whohas <item> [<count>] [<page>] must be registered");
+
+        CommandNode<CommandSourceStack> whohastag = rootChild(dispatcher, "whohastag");
+        assertNotNull(whohastag, "whohastag must be registered (F-150-9)");
+        CommandNode<CommandSourceStack> tag = whohastag.getChild("tag");
+        assertNotNull(tag);
+        assertNotNull(tag.getChild("count"));
+        assertNotNull(tag.getChild("count").getChild("page"));
+
+        for (String line : List.of("milestonelog whohas minecraft:diamond",
+                "milestonelog whohas minecraft:diamond 3",
+                "milestonelog whohas minecraft:diamond 3 2",
+                "milestonelog whohastag c:ingots/iron",
+                "milestonelog whohastag c:ingots/iron 3",
+                "milestonelog whohastag c:ingots/iron 3 2",
+                com.pengin0503.itemmilestonelog.Pagination.pageCommand(
+                        com.pengin0503.itemmilestonelog.Pagination.whohasCommandPrefix("minecraft:diamond", 3), 2)
+                        .substring(1),
+                com.pengin0503.itemmilestonelog.Pagination.pageCommand(
+                        com.pengin0503.itemmilestonelog.Pagination.whohastagCommandPrefix("#c:ingots/iron", 3), 2)
+                        .substring(1))) {
+            ParseResults<CommandSourceStack> parse = dispatcher.parse(line, null);
+            assertFalse(parse.getReader().canRead(), "must fully parse: " + line);
+            assertTrue(parse.getExceptions().isEmpty(), line + ": " + parse.getExceptions());
+            assertNotNull(parse.getContext().getCommand(), line);
+        }
+        for (String name : List.of("whohas", "whohastag")) {
+            CommandHelp.Entry entry = entryByName(name);
+            assertFalse(entry.playerOnly(), name + " must remain console-usable like top");
+            assertEquals(CommandHelp.Gate.LOOKUP, entry.gate());
+            assertTrue(MilestoneCommands.helpUsages(dispatcher, null, entry).stream()
+                    .anyMatch(u -> u.contains("<item>") || u.contains("<tag>")));
+        }
+        CommandHelp.Context noLookup = new CommandHelp.Context(true, false, true, true, false, true);
+        CommandHelp.Context privileged = new CommandHelp.Context(true, true, true, true, false, true);
+        assertNull(CommandHelp.findVisible("whohas", noLookup, e -> true));
+        assertNull(CommandHelp.findVisible("whohastag", noLookup, e -> true));
+        assertNotNull(CommandHelp.findVisible("whohas", privileged, e -> true));
+        assertNotNull(CommandHelp.findVisible("whohastag", privileged, e -> true));
+    }
+
     private static CommandNode<CommandSourceStack> rootChild(
             CommandDispatcher<CommandSourceStack> dispatcher, String name) {
         return dispatcher.getRoot().getChild("milestonelog").getChild(name);

@@ -178,4 +178,16 @@ class PaginationTest {
         }
         assertThrows(IllegalArgumentException.class, () -> Pagination.firstsUnclaimedCommandPrefix(""));
     }
+
+    @Test
+    void whohasPageLinksKeepItemCountAndBareTag() {
+        assertEquals("/milestonelog whohas minecraft:iron_ingot 3 2",
+                Pagination.pageCommand(Pagination.whohasCommandPrefix("minecraft:iron_ingot", 3), 2));
+        assertEquals("/milestonelog whohastag c:ingots/iron 4 3",
+                Pagination.pageCommand(Pagination.whohastagCommandPrefix("c:ingots/iron", 4), 3));
+        // tagArg supplies '#'-prefixed stored IDs; the clickable link must use the bare identifier.
+        assertEquals("/milestonelog whohastag c:ingots/iron 1 2",
+                Pagination.pageCommand(Pagination.whohastagCommandPrefix("#c:ingots/iron", 1), 2));
+        assertThrows(IllegalArgumentException.class, () -> Pagination.whohastagCommandPrefix("#", 1));
+    }
 }

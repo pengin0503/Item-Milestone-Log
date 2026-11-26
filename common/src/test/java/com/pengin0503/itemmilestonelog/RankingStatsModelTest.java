@@ -18,6 +18,7 @@ class RankingStatsModelTest {
     private static final UUID U3 = UUID.fromString("00000000-0000-0000-0000-000000000003");
     private static final UUID U4 = UUID.fromString("00000000-0000-0000-0000-000000000004");
     private static final UUID U5 = UUID.fromString("00000000-0000-0000-0000-000000000005");
+    private static final UUID U6 = UUID.fromString("00000000-0000-0000-0000-000000000006");
 
     private static RankingStatsModel.TargetRef key(int n) {
         return new RankingStatsModel.TargetRef("minecraft:item_" + n, 1);
@@ -205,5 +206,127 @@ class RankingStatsModelTest {
         assertTrue(RankingStatsModel.compareNames("Bob", U1, "Bob", U2) < 0);
         assertEquals(0, RankingStatsModel.compareNames("Bob", U1, "Bob", U1));
         assertTrue(RankingStatsModel.compareTargets(key(1), key(2)) < 0);
+    }
+
+    @Test
+    void itemTimesCoversSingleOddEvenEmptyAndLongSafeValues() {
+        RankingStatsModel.ItemTimeStats empty = RankingStatsModel.itemTimes(List.of());
+        assertEquals(new RankingStatsModel.ItemTimeStats(0, 0L, 0L, 0L, 0L), empty);
+
+        assertEquals(new RankingStatsModel.ItemTimeStats(1, 42L, 42L, 42L, 42L),
+                RankingStatsModel.itemTimes(List.of(42)));
+        assertEquals(new RankingStatsModel.ItemTimeStats(3, 20L, 20L, 10L, 30L),
+                RankingStatsModel.itemTimes(List.of(30, 10, 20)));
+        assertEquals(new RankingStatsModel.ItemTimeStats(4, 25L, 25L, 10L, 40L),
+                RankingStatsModel.itemTimes(List.of(40, 10, 30, 20)));
+        // Even count: floor-average of the two middle values (D-150-24).
+        assertEquals(1L, RankingStatsModel.itemTimes(List.of(2, 1)).medianTicks());
+        assertEquals(2L, RankingStatsModel.itemTimes(List.of(1, 3)).medianTicks());
+
+        // Two ints near MAX_VALUE must not overflow the long sum or the long median average.
+        int max = Integer.MAX_VALUE;
+        assertEquals(new RankingStatsModel.ItemTimeStats(2, max - 1L, max - 1L, max - 1L, max),
+                RankingStatsModel.itemTimes(List.of(max, max - 1)));
+        assertEquals(RankingStatsModel.itemTimes(List.of(5, 1, 3)),
+                RankingStatsModel.itemTimes(List.of(3, 5, 1)));
+    }
+
+    @Test
+    void gapsAreRelativeToVisibleRowsWithTiesAndUnrankedSelf() {
+        List<RankingStatsModel.GapRow> rows = List.of(
+                new RankingStatsModel.GapRow(1, U1, "Alice", 100),
+                new RankingStatsModel.GapRow(1, U2, "Bob", 100),
+                new RankingStatsModel.GapRow(3, U3, "Carol", 250));
+        RankingStatsModel.GapResult result = RankingStatsModel.gapsFor(rows, 2);
+
+        assertEquals(new RankingStatsModel.TimeGap(-1L, -1L), result.rows().get(0));
+        assertFalse(result.rows().get(0).hasAbove());
+        assertEquals(new RankingStatsModel.TimeGap(0L, 0L), result.rows().get(1));
+        assertEquals(new RankingStatsModel.TimeGap(150L, 150L), result.rows().get(2));
+        assertEquals(new RankingStatsModel.TimeGap(150L, 150L), result.self());
+        assertEquals(new RankingStatsModel.TimeGap(-1L, -1L), RankingStatsModel.gapsFor(rows, -1).self());
+        // The first row's -1 is "unavailable", not a negative gap; every real gap is non-negative.
+        assertTrue(result.rows().stream().skip(1).allMatch(g -> g.aboveTicks() >= 0L && g.firstTicks() >= 0L));
+
+        // A viewer ranked outside the displayed top 10 still gets their real predecessor's gap.
+        List<RankingStatsModel.GapRow> twelve = new ArrayList<>();
+        for (int i = 0; i < 12; i++) {
+            twelve.add(new RankingStatsModel.GapRow(i + 1, new UUID(0, i + 1), "P" + i, 100 + i * 10));
+        }
+        RankingStatsModel.GapResult outer = RankingStatsModel.gapsFor(twelve, 11);
+        assertEquals(10L, outer.self().aboveTicks());
+        assertEquals(110L, outer.self().firstTicks());
+        assertEquals(new RankingStatsModel.TimeGap(10L, 90L), outer.rows().get(9));
+
+        // A hidden player in between must never become a gap baseline: the tree passes only the
+        // visibility-filtered ranking, so the second visible row's "above" is 150, not 100.
+        List<RankingStatsModel.GapRow> visible = List.of(
+                new RankingStatsModel.GapRow(1, U1, "Alice", 100),
+                new RankingStatsModel.GapRow(2, U3, "Carol", 250));
+        assertEquals(new RankingStatsModel.TimeGap(150L, 150L),
+                RankingStatsModel.gapsFor(visible, 1).self());
+
+        // Defensive clamp keeps gaps non-negative even for out-of-order input.
+        RankingStatsModel.GapResult descending = RankingStatsModel.gapsFor(List.of(
+                new RankingStatsModel.GapRow(1, U1, "Alice", 300),
+                new RankingStatsModel.GapRow(2, U2, "Bob", 100)), 1);
+        assertEquals(0L, descending.self().aboveTicks());
+    }
+
+    @Test
+    void whoHasOrdersRecordedThenTargetingWithCompetitionRanks() {
+        RankingStatsModel.TargetRef target = key(1);
+        List<RankingStatsModel.WhoHasPlayer> players = List.of(
+                new RankingStatsModel.WhoHasPlayer(U1, "Alice", List.of(rec(1, 100, 1_000)), List.of()),
+                new RankingStatsModel.WhoHasPlayer(U2, "Bob", List.of(rec(1, 100, 500)), List.of()),
+                new RankingStatsModel.WhoHasPlayer(U3, "Carol", List.of(rec(1, 250, 0)), List.of()),
+                // Recorded wins when the key is both recorded and targeted.
+                new RankingStatsModel.WhoHasPlayer(U5, "Eve", List.of(rec(1, 30, 30)), List.of(target)),
+                new RankingStatsModel.WhoHasPlayer(U4, "Dave", List.of(rec(2, 5, 5)), List.of(target)),
+                new RankingStatsModel.WhoHasPlayer(U6, "Aaron", List.of(), List.of(target)));
+
+        RankingStatsModel.WhoHasResult result = RankingStatsModel.whoHas(players, target);
+        assertEquals(List.of(U5, U2, U1, U3, U6, U4), result.entries().stream()
+                .map(RankingStatsModel.WhoHasEntry::uuid).toList());
+        assertEquals(List.of(1, 2, 2, 4, 0, 0), result.entries().stream()
+                .map(RankingStatsModel.WhoHasEntry::rank).toList());
+        assertEquals(List.of(true, true, true, true, false, false), result.entries().stream()
+                .map(RankingStatsModel.WhoHasEntry::recorded).toList());
+        assertEquals(30, result.entries().get(0).playTicks());
+        assertEquals(0, result.entries().get(4).playTicks());
+        assertEquals(4, result.recordedCount());
+        assertEquals(2, result.targetingCount());
+        assertEquals(0, result.moreCount());
+
+        // Visibility is applied by the caller (as in PR-1): a player not handed to the model —
+        // e.g. one with hideFromLookup — appears in neither section.
+        assertTrue(RankingStatsModel.whoHas(players, key(9)).entries().isEmpty());
+        assertEquals(0, RankingStatsModel.whoHas(List.of(), target).moreCount());
+    }
+
+    @Test
+    void whoHasCapsFlatListAt200AndKeepsRanksBeyondTheDisplayedTop() {
+        List<RankingStatsModel.WhoHasPlayer> players = new ArrayList<>();
+        players.add(new RankingStatsModel.WhoHasPlayer(U1, "Ace", List.of(rec(1, 10, 10)), List.of()));
+        for (int i = 0; i < 201; i++) {
+            players.add(new RankingStatsModel.WhoHasPlayer(new UUID(0, i + 100), "Z" + i,
+                    List.of(), List.of(key(1))));
+        }
+        RankingStatsModel.WhoHasResult result = RankingStatsModel.whoHas(players, key(1));
+        assertEquals(RankingStatsModel.UNCLAIMED_RESULT_LIMIT, result.entries().size());
+        assertEquals(2, result.moreCount());
+        assertEquals(1, result.recordedCount());
+        assertEquals(201, result.targetingCount());
+        assertTrue(result.entries().get(0).recorded());
+        assertTrue(result.entries().stream().skip(1).noneMatch(RankingStatsModel.WhoHasEntry::recorded));
+
+        List<RankingStatsModel.WhoHasPlayer> twelve = new ArrayList<>();
+        for (int i = 0; i < 12; i++) {
+            twelve.add(new RankingStatsModel.WhoHasPlayer(new UUID(0, i + 1), "P" + i,
+                    List.of(rec(1, 100 + i, 100 + i)), List.of()));
+        }
+        List<RankingStatsModel.WhoHasEntry> ranked = RankingStatsModel.whoHas(twelve, key(1)).entries();
+        assertEquals(12, ranked.get(11).rank());
+        assertTrue(ranked.subList(0, 10).stream().noneMatch(e -> e.uuid().equals(ranked.get(11).uuid())));
     }
 }
