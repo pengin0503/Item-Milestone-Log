@@ -15,7 +15,8 @@ import java.util.UUID;
 /**
  * Pure-Java aggregation for the 1.5.0 ranking queries (D-150-34): per-preset rankings (N03),
  * world-first holder counts (N04), reachable unclaimed world firsts (N05), item completion-time
- * statistics (N49), visible-ranking gaps (N91) and recorded/targeting player lists (N92).
+ * statistics (N49), visible-ranking gaps (N91), recorded/targeting player lists (N92) and
+ * closest world-first runner-ups (N95).
  *
  * <p>Minecraft-free and Java 17 compatible, like {@link TargetFilterModel}: the version trees
  * convert their own {@code TargetKey} / {@code MilestoneRecord} / {@code WorldFirstRecord}
@@ -27,6 +28,9 @@ import java.util.UUID;
 public final class RankingStatsModel {
     /** Maximum number of unclaimed rows returned before {@link UnclaimedResult#moreCount()} takes over. */
     public static final int UNCLAIMED_RESULT_LIMIT = 200;
+
+    /** Rows shown by {@code firsts close} when no page is requested (D-150-29). */
+    public static final int CLOSE_LIMIT = 10;
 
     private static final Comparator<TargetRef> TARGET_ORDER = Comparator
             .comparing(TargetRef::itemId)
@@ -315,6 +319,102 @@ public final class RankingStatsModel {
         int kept = Math.min(all.size(), UNCLAIMED_RESULT_LIMIT);
         return new WhoHasResult(all.subList(0, kept), recordedCount,
                 all.size() - recordedCount, all.size() - kept);
+    }
+
+    // ------------------------------------------------------------- N95 closest world-first races
+
+    /** One public world-first key with the holder values needed for a close-race row. */
+    public record CloseWorldFirst(TargetRef key, UUID holderUuid, String winnerName, int playTicks) {
+        public CloseWorldFirst {
+            Objects.requireNonNull(key, "key");
+            Objects.requireNonNull(holderUuid, "holderUuid");
+            Objects.requireNonNull(winnerName, "winnerName");
+        }
+    }
+
+    /** One world-first key and its single best runner-up, with a non-negative tick gap. */
+    public record CloseEntry(String itemId, int count, String winnerName, String runnerName, long gapTicks) {
+        public CloseEntry {
+            Objects.requireNonNull(itemId, "itemId");
+            Objects.requireNonNull(winnerName, "winnerName");
+            Objects.requireNonNull(runnerName, "runnerName");
+        }
+
+        /** The target key of this race, for display and stable ordering. */
+        public TargetRef key() {
+            return new TargetRef(itemId, count);
+        }
+    }
+
+    /** All close races, gap ascending; the caller applies {@link #CLOSE_LIMIT} for the default view. */
+    public static List<CloseEntry> firstsClose(Collection<CloseWorldFirst> worldFirsts,
+                                               Collection<WhoHasPlayer> players) {
+        return firstsClose(worldFirsts, players, -1);
+    }
+
+    /**
+     * Derives one best runner-up per world-first key (D-150-29). {@code players} must already be
+     * visibility-filtered by the caller: a hidden player's record is never a candidate, so no
+     * hidden time can leak through a gap. A negative gap (inconsistent saved data) drops the row.
+     * {@code limit < 0} keeps every row; otherwise only the first {@code limit} rows are returned.
+     */
+    public static List<CloseEntry> firstsClose(Collection<CloseWorldFirst> worldFirsts,
+                                               Collection<WhoHasPlayer> players, int limit) {
+        Objects.requireNonNull(worldFirsts, "worldFirsts");
+        Objects.requireNonNull(players, "players");
+        record Runner(UUID uuid, String name, int playTicks, long epoch) {
+        }
+        Comparator<Runner> runnerOrder = Comparator
+                .comparingInt(Runner::playTicks)
+                .thenComparing((a, b) -> compareEpochUnknownLast(a.epoch(), b.epoch()))
+                .thenComparing((a, b) -> compareNames(a.name(), a.uuid(), b.name(), b.uuid()));
+        List<CloseEntry> all = new ArrayList<>();
+        for (CloseWorldFirst first : worldFirsts) {
+            if (first == null) {
+                continue;
+            }
+            Runner best = null;
+            for (WhoHasPlayer player : players) {
+                // The holder's own record is not a runner-up, even if it is the fastest visible one.
+                if (player == null || first.holderUuid().equals(player.uuid())) {
+                    continue;
+                }
+                for (RecordValue record : player.records()) {
+                    if (!record.itemId().equals(first.key().itemId())
+                            || record.count() != first.key().count()) {
+                        continue;
+                    }
+                    Runner candidate = new Runner(player.uuid(), player.name(),
+                            record.playTicks(), record.epochMillis());
+                    if (best == null || runnerOrder.compare(candidate, best) < 0) {
+                        best = candidate;
+                    }
+                }
+            }
+            if (best == null) {
+                continue;
+            }
+            long gap = (long) best.playTicks() - (long) first.playTicks();
+            if (gap < 0L) {
+                continue;
+            }
+            all.add(new CloseEntry(first.key().itemId(), first.key().count(),
+                    first.winnerName(), best.name(), gap));
+        }
+        all.sort((a, b) -> {
+            int c = Long.compare(a.gapTicks(), b.gapTicks());
+            if (c != 0) {
+                return c;
+            }
+            c = compareTargets(a.key(), b.key());
+            if (c != 0) {
+                return c;
+            }
+            c = String.CASE_INSENSITIVE_ORDER.compare(a.runnerName(), b.runnerName());
+            return c != 0 ? c : a.runnerName().compareTo(b.runnerName());
+        });
+        int kept = limit < 0 ? all.size() : Math.min(limit, all.size());
+        return List.copyOf(all.subList(0, Math.max(kept, 0)));
     }
 
     // ------------------------------------------------------------- shared ordering

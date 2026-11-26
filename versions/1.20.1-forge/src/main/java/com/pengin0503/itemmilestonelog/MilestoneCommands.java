@@ -733,6 +733,11 @@ public final class MilestoneCommands {
                                 .executes(ctx -> firstsTop(ctx, null))
                                 .then(argument("page", IntegerArgumentType.integer(1))
                                         .executes(ctx -> firstsTop(ctx, IntegerArgumentType.getInteger(ctx, "page")))))
+                        .then(literal("close")
+                                .requires(MilestoneCommands::canUseRankingsForTree)
+                                .executes(ctx -> firstsClose(ctx, null))
+                                .then(argument("page", IntegerArgumentType.integer(1))
+                                        .executes(ctx -> firstsClose(ctx, IntegerArgumentType.getInteger(ctx, "page")))))
                         .then(literal("unclaimed")
                                 .executes(ctx -> firstsUnclaimed(ctx, null, null))
                                 .then(literal("scope")
@@ -2074,6 +2079,87 @@ public final class MilestoneCommands {
         return displayed.size();
     }
 
+    /**
+     * F-150-10 (N95): one best runner-up per world-first key, ordered by ascending gap.
+     * The runner-up is an ordinary personal record, so the lookup gate applies both here and
+     * on the Brigadier branch; hidden players are filtered out before the model sees them.
+     */
+    private static int firstsClose(CommandContext<CommandSourceStack> ctx, @Nullable Integer page) {
+        CommandSourceStack source = ctx.getSource();
+        if (!canUseRankings(source)) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.feature_disabled"));
+        }
+        MilestoneData data = MilestoneData.get(source.getServer());
+        MilestoneRankings.Viewer viewer = rankingViewer(source);
+        Map<String, Component> winnerNames = new HashMap<>();
+        List<RankingStatsModel.CloseWorldFirst> worldFirsts = new ArrayList<>();
+        for (Map.Entry<TargetKey, WorldFirstRecord> e : data.worldFirsts().entrySet()) {
+            TargetKey key = e.getKey();
+            WorldFirstRecord wf = e.getValue();
+            MilestoneData.PlayerData holder = data.playerOrNull(wf.playerUuid());
+            WorldFirstNames.Choice choice = WorldFirstNames.choose(wf.playerUuid(), wf.playerName(),
+                    holder != null, holder != null ? holder.lastKnownName : null);
+            Component name = choice.renamed()
+                    ? ServerLang.tr(source, "message.itemmilestonelog.firsts_name_renamed",
+                            Component.literal(choice.name()), Component.literal(choice.recordedName()))
+                    : Component.literal(choice.name());
+            winnerNames.putIfAbsent(choice.name(), name);
+            worldFirsts.add(new RankingStatsModel.CloseWorldFirst(
+                    new RankingStatsModel.TargetRef(key.itemId(), key.count()),
+                    wf.playerUuid(), choice.name(), wf.playTicks()));
+        }
+
+        List<RankingStatsModel.WhoHasPlayer> players = new ArrayList<>();
+        Map<String, Component> runnerNames = new HashMap<>();
+        for (Map.Entry<UUID, MilestoneData.PlayerData> e : data.allPlayers().entrySet()) {
+            MilestoneData.PlayerData pd = e.getValue();
+            if (pd == null || !MilestoneRankings.isVisible(viewer, e.getKey(), pd)) {
+                continue;
+            }
+            List<RankingStatsModel.RecordValue> records = new ArrayList<>();
+            for (Map.Entry<TargetKey, MilestoneRecord> r : pd.records.entrySet()) {
+                records.add(new RankingStatsModel.RecordValue(r.getKey().itemId(), r.getKey().count(),
+                        r.getValue().playTicks(), r.getValue().epochMillis()));
+            }
+            String displayName = MilestoneRankings.displayName(e.getKey(), pd);
+            runnerNames.putIfAbsent(displayName, Component.literal(displayName));
+            players.add(new RankingStatsModel.WhoHasPlayer(e.getKey(), displayName, records, List.of()));
+        }
+
+        List<RankingStatsModel.CloseEntry> all = RankingStatsModel.firstsClose(worldFirsts, players);
+        if (all.isEmpty()) {
+            return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.firsts_close_none"));
+        }
+
+        Pagination.PageSlice<RankingStatsModel.CloseEntry> slice = null;
+        List<RankingStatsModel.CloseEntry> displayed;
+        if (page != null) {
+            slice = Pagination.slice(all, page);
+            if (slice.isOutOfRange()) {
+                return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.page_out_of_range",
+                        page, slice.totalPages()));
+            }
+            displayed = slice.items();
+        } else {
+            displayed = all.subList(0, Math.min(RankingStatsModel.CLOSE_LIMIT, all.size()));
+        }
+
+        source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.firsts_close_header",
+                all.size()), false);
+        for (RankingStatsModel.CloseEntry e : displayed) {
+            RankingStatsModel.TargetRef target = e.key();
+            Component winner = winnerNames.getOrDefault(e.winnerName(), Component.literal(e.winnerName()));
+            Component runner = runnerNames.getOrDefault(e.runnerName(), Component.literal(e.runnerName()));
+            source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.firsts_close_entry",
+                    MilestoneService.targetDisplayName(new TargetKey(target.itemId(), target.count())),
+                    winner, runner, Playtime.format((int) e.gapTicks())), false);
+        }
+        if (slice != null) {
+            sendPageFooter(source, slice, Pagination.firstsCloseCommandPrefix());
+        }
+        return displayed.size();
+    }
+
     /** Pure gate seam for {@code firsts unclaimed}: presets/all fail while disabled, targets skip presets. */
     static String unclaimedPresetMode(RankingStatsModel.UnclaimedScope scope, boolean presetsEnabled) {
         if (scope == RankingStatsModel.UnclaimedScope.PRESETS
@@ -2626,9 +2712,25 @@ public final class MilestoneCommands {
                 MilestoneService.isPrivileged(source));
     }
 
+    /** Pure gate seam for tests: ranking queries need {@code allowLookup} or the viewhidden privilege. */
+    static boolean canUseRankings(boolean allowLookup, boolean privileged) {
+        return LookupPolicy.canLookUpOthers(allowLookup, privileged);
+    }
+
+    /**
+     * Brigadier requirement for {@code firsts close}. Unit tests build the tree with a null
+     * source (no server or permission nodes), so that case uses the shipped config default;
+     * every real command source uses the live {@code allowLookup} / viewhidden gate.
+     */
+    private static boolean canUseRankingsForTree(CommandSourceStack source) {
+        return source == null
+                ? canUseRankings(Config.ALLOW_LOOKUP.getDefault(), false)
+                : canUseRankings(source);
+    }
+
     /** Same gate as F6 lookup of other players: {@code allowLookup}, or the viewhidden privilege when it is off. */
     private static boolean canUseRankings(CommandSourceStack source) {
-        return LookupPolicy.canLookUpOthers(Config.ALLOW_LOOKUP.get(), canViewHidden(source));
+        return canUseRankings(Config.ALLOW_LOOKUP.get(), canViewHidden(source));
     }
 
     private static MilestoneRankings.Viewer rankingViewer(CommandSourceStack source) {
