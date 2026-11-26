@@ -1252,6 +1252,49 @@ class MilestoneDataTest {
     }
 
     @Test
+    void readLegacyMigratesPresetStateFromA121File(@TempDir Path dir) throws IOException {
+        // #122: the file-based 1.21.1 -> 26.x migration path must carry presetState, not just
+        // the Codec round trip above.
+        CompoundTag stateA = new CompoundTag();
+        stateA.putBoolean("autoApplied", true);
+        stateA.putInt("lastSeenVersion", 3);
+        CompoundTag stateB = new CompoundTag();
+        stateB.putBoolean("autoApplied", false);
+        stateB.putInt("lastSeenVersion", 1);
+        CompoundTag presetState = new CompoundTag();
+        presetState.put("vanilla_endgame", stateA);
+        presetState.put("my_custom_pack", stateB);
+        CompoundTag player = new CompoundTag();
+        player.put("presetState", presetState);
+        player.putString("lastKnownName", "Alice");
+        CompoundTag players = new CompoundTag();
+        players.put(PLAYER_A.toString(), player);
+        CompoundTag dataTag = new CompoundTag();
+        dataTag.put("players", players);
+        CompoundTag root = new CompoundTag();
+        root.put("data", dataTag);
+        root.putInt("DataVersion", 3955);
+        Path legacyFile = dir.resolve(MilestoneData.LEGACY_FILE);
+        Files.createDirectories(legacyFile.getParent());
+        NbtIo.writeCompressed(root, legacyFile);
+
+        MilestoneData migrated = MilestoneData.readLegacy(legacyFile);
+        assertNotNull(migrated);
+        MilestoneData.PlayerData loadedA = migrated.playerOrNull(PLAYER_A);
+        assertNotNull(loadedA);
+        Map<String, PresetState> expected = Map.of(
+                "vanilla_endgame", new PresetState(true, 3),
+                "my_custom_pack", new PresetState(false, 1));
+        assertEquals(expected, loadedA.presetState);
+        assertEquals("Alice", loadedA.lastKnownName);
+
+        // And the migrated field survives re-encoding into the 26.x save format.
+        CompoundTag saved = (CompoundTag) MilestoneData.CODEC.encodeStart(NbtOps.INSTANCE, migrated).getOrThrow();
+        MilestoneData roundTripped = MilestoneData.CODEC.parse(NbtOps.INSTANCE, saved).getOrThrow();
+        assertEquals(expected, roundTripped.playerOrNull(PLAYER_A).presetState);
+    }
+
+    @Test
     void presetStateLoaderSkipsInvalidElementsAndCountsThemInTheLoadReport() {
         MilestoneData original = new MilestoneData();
         original.player(PLAYER_A);

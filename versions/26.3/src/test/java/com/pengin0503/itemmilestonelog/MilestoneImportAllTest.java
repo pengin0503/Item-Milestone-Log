@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 import java.io.IOException;
+import java.util.concurrent.CountDownLatch;
 import java.nio.file.Path;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -152,6 +153,204 @@ class MilestoneImportAllTest {
         assertEquals(1, source.successCount.get());
         MilestoneImportAll.sendFailure(job, new IOException("parse failed"));
         assertEquals(1, source.failureCount.get());
+    }
+
+    @Test
+    void asyncApplyIsHandedToTheSchedulerAndRunsOnlyOnce() throws Exception {
+        // A real MergePlan needs a live MinecraftServer, which the harness cannot construct.
+        // This pins the hand-off and the once-only apply release with a plan-less parse.
+        MilestoneIo.start(message -> {
+        });
+        assertTrue(MilestoneIo.tryBeginImport());
+        FakeSource source = new FakeSource();
+        MilestoneImportAll.Job job = MilestoneImportAll.newJobForTest(
+                Path.of("irrelevant.json"), "irrelevant.json", source);
+        AtomicReference<Runnable> scheduled = new AtomicReference<>();
+        AtomicReference<String> schedulerThread = new AtomicReference<>();
+        assertTrue(MilestoneImportAll.submitForTest(
+                job,
+                j -> {
+                },
+                runnable -> {
+                    schedulerThread.set(Thread.currentThread().getName());
+                    scheduled.set(runnable);
+                }));
+        awaitParseDone(job);
+        assertTrue(scheduled.get() != null, "the apply step must be handed to the server scheduler");
+        assertEquals(MilestoneIoQueue.THREAD_NAME, schedulerThread.get(),
+                "hand-off must happen on the I/O thread, not the caller");
+        assertTrue(MilestoneImportAll.activeForTest() == job,
+                "state stays in flight until the scheduled apply runs");
+
+        scheduled.get().run();
+        assertTrue(job.applied.get());
+        assertNull(MilestoneImportAll.activeForTest());
+        assertFalse(MilestoneIo.isImportInFlight());
+        int failuresAfterFirst = source.failureCount.get();
+        scheduled.get().run();
+        assertEquals(failuresAfterFirst, source.failureCount.get(), "apply must be idempotent");
+    }
+
+    @Test
+    void secondSubmitIsRejectedWhileOneJobIsActive() throws Exception {
+        MilestoneIo.start(message -> {
+        });
+        assertTrue(MilestoneIo.tryBeginImport());
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        FakeSource firstSource = new FakeSource();
+        FakeSource secondSource = new FakeSource();
+        MilestoneImportAll.Job first = MilestoneImportAll.newJobForTest(
+                Path.of("irrelevant.json"), "irrelevant.json", firstSource);
+        assertTrue(MilestoneImportAll.submitForTest(first, j -> {
+            entered.countDown();
+            assertTrue(release.await(5, TimeUnit.SECONDS));
+        }, runnable -> {
+        }));
+        assertTrue(entered.await(5, TimeUnit.SECONDS));
+        try {
+            MilestoneImportAll.Job second = MilestoneImportAll.newJobForTest(
+                    Path.of("irrelevant.json"), "irrelevant.json", secondSource);
+            assertFalse(MilestoneImportAll.submitForTest(second, j -> {
+            }, runnable -> {
+            }), "ACTIVE.compareAndSet must reject a second importall");
+            assertTrue(MilestoneImportAll.activeForTest() == first, "the first job must stay active");
+            assertEquals(0, secondSource.successCount.get());
+            assertEquals(0, secondSource.failureCount.get());
+        } finally {
+            release.countDown();
+        }
+        awaitParseDone(first);
+        MilestoneImportAll.applyPendingOnStop(null);
+        awaitReleased();
+        assertNull(MilestoneImportAll.activeForTest());
+    }
+
+    @Test
+    void applyPendingOnStopAppliesACompletedParseExactlyOnce() throws Exception {
+        MilestoneIo.start(message -> {
+        });
+        assertTrue(MilestoneIo.tryBeginImport());
+        FakeSource source = new FakeSource();
+        MilestoneImportAll.Job job = MilestoneImportAll.newJobForTest(
+                Path.of("irrelevant.json"), "irrelevant.json", source);
+        AtomicReference<Runnable> scheduled = new AtomicReference<>();
+        assertTrue(MilestoneImportAll.submitForTest(job, j -> {
+            throw new IOException("parse failed during stop");
+        }, scheduled::set));
+        awaitParseDone(job);
+
+        MilestoneImportAll.applyPendingOnStop(null);
+        assertEquals(1, source.failureCount.get(), "the parsed failure must be delivered on stop");
+        assertNull(MilestoneImportAll.activeForTest());
+        assertFalse(MilestoneIo.isImportInFlight());
+
+        MilestoneImportAll.applyPendingOnStop(null);
+        if (scheduled.get() != null) {
+            scheduled.get().run();
+        }
+        assertEquals(1, source.failureCount.get(), "both deliveries must be no-ops after the first apply");
+    }
+
+    @Test
+    void applyPendingOnStopLeavesAnUnfinishedParseAlone() throws Exception {
+        MilestoneIo.start(message -> {
+        });
+        assertTrue(MilestoneIo.tryBeginImport());
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        FakeSource source = new FakeSource();
+        MilestoneImportAll.Job job = MilestoneImportAll.newJobForTest(
+                Path.of("irrelevant.json"), "irrelevant.json", source);
+        assertTrue(MilestoneImportAll.submitForTest(job, j -> {
+            entered.countDown();
+            assertTrue(release.await(5, TimeUnit.SECONDS));
+            throw new IOException("late parse failure");
+        }, runnable -> {
+        }));
+        assertTrue(entered.await(5, TimeUnit.SECONDS));
+        try {
+            MilestoneImportAll.applyPendingOnStop(null);
+            assertTrue(MilestoneImportAll.activeForTest() == job,
+                    "an unfinished parse must stay active for the normal drain");
+            assertEquals(0, source.failureCount.get());
+            assertTrue(MilestoneIo.isImportInFlight());
+        } finally {
+            release.countDown();
+        }
+        awaitParseDone(job);
+        MilestoneImportAll.applyPendingOnStop(null);
+        assertEquals(1, source.failureCount.get(), "the finished parse is then applied once");
+        assertNull(MilestoneImportAll.activeForTest());
+    }
+
+    @Test
+    void cancelPendingAbandonsAnUnfinishedJobWithoutApplyingIt() throws Exception {
+        MilestoneIo.start(message -> {
+        });
+        assertTrue(MilestoneIo.tryBeginImport());
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        FakeSource source = new FakeSource();
+        MilestoneImportAll.Job job = MilestoneImportAll.newJobForTest(
+                Path.of("irrelevant.json"), "irrelevant.json", source);
+        AtomicReference<Runnable> scheduled = new AtomicReference<>();
+        assertTrue(MilestoneImportAll.submitForTest(job, j -> {
+            entered.countDown();
+            assertTrue(release.await(5, TimeUnit.SECONDS));
+            throw new IOException("abandoned parse");
+        }, scheduled::set));
+        assertTrue(entered.await(5, TimeUnit.SECONDS));
+
+        MilestoneImportAll.cancelPending("test stop timeout");
+        assertNull(MilestoneImportAll.activeForTest());
+        assertFalse(MilestoneIo.isImportInFlight(), "cancelPending must release the import slot");
+        assertTrue(job.applied.get());
+        release.countDown();
+        awaitParseDone(job);
+        if (scheduled.get() != null) {
+            scheduled.get().run();
+        }
+        MilestoneImportAll.applyPendingOnStop(null);
+        MilestoneImportAll.cancelPending("again");
+        assertEquals(0, source.successCount.get(), "an abandoned job must never be applied");
+        assertEquals(0, source.failureCount.get());
+    }
+
+    @Test
+    void resetStateClearsActiveAndInFlightStateAndIsIdempotent() throws Exception {
+        MilestoneIo.start(message -> {
+        });
+        assertTrue(MilestoneIo.tryBeginImport());
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        FakeSource source = new FakeSource();
+        MilestoneImportAll.Job job = MilestoneImportAll.newJobForTest(
+                Path.of("irrelevant.json"), "irrelevant.json", source);
+        assertTrue(MilestoneImportAll.submitForTest(job, j -> {
+            entered.countDown();
+            assertTrue(release.await(5, TimeUnit.SECONDS));
+        }, runnable -> {
+        }));
+        assertTrue(entered.await(5, TimeUnit.SECONDS));
+
+        MilestoneImportAll.resetState();
+        assertNull(MilestoneImportAll.activeForTest());
+        assertFalse(MilestoneIo.isImportInFlight());
+        assertTrue(job.applied.get());
+        MilestoneImportAll.resetState();
+        release.countDown();
+        awaitParseDone(job);
+        assertEquals(0, source.successCount.get());
+        assertEquals(0, source.failureCount.get());
+    }
+
+    private static void awaitParseDone(MilestoneImportAll.Job job) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (!job.parseDone.get() && System.nanoTime() < deadline) {
+            Thread.sleep(10L);
+        }
+        assertTrue(job.parseDone.get(), "parse did not complete within 10 seconds");
     }
 
     private static void awaitReleased() throws InterruptedException {

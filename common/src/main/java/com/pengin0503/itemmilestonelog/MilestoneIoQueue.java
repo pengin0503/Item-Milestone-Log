@@ -185,6 +185,17 @@ public final class MilestoneIoQueue {
      * Never throws; an interrupt returns an incomplete result and restores the interrupt flag.
      */
     public MilestoneIoLogic.DrainResult awaitDrain(long timeoutMillis, Consumer<MilestoneIoLogic.DrainResult> progress) {
+        return awaitDrain(timeoutMillis, progress, MilestoneIoLogic.DRAIN_LOG_INTERVAL_MILLIS);
+    }
+
+    /**
+     * #123 test seam: identical drain logic with an injectable progress-log interval, so the
+     * callback can be exercised without waiting five real seconds. Production behaviour is
+     * unchanged: the public entry point passes {@link MilestoneIoLogic#DRAIN_LOG_INTERVAL_MILLIS}.
+     */
+    MilestoneIoLogic.DrainResult awaitDrain(long timeoutMillis,
+                                            Consumer<MilestoneIoLogic.DrainResult> progress,
+                                            long progressIntervalMillis) {
         long start = System.nanoTime();
         long lastLogged = 0L;
         long effectiveTimeout = Math.max(0L, timeoutMillis);
@@ -202,7 +213,7 @@ public final class MilestoneIoQueue {
                 }
                 if (progress != null
                         && MilestoneIoLogic.shouldLogDrainProgress(
-                                elapsed, lastLogged, MilestoneIoLogic.DRAIN_LOG_INTERVAL_MILLIS)) {
+                                elapsed, lastLogged, progressIntervalMillis)) {
                     progress.accept(snapshot);
                     lastLogged = elapsed;
                 }

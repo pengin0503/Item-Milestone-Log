@@ -57,7 +57,8 @@ class MilestoneIoQueueTest {
         for (int i = 0; i < 20; i++) {
             assertEquals(i, order.get(i));
         }
-        assertEquals(List.of(MilestoneIoQueue.THREAD_NAME), List.copyOf(threadNames).subList(0, 1));
+        // #123: check every task, not just the first one.
+        assertEquals(Collections.nCopies(20, MilestoneIoQueue.THREAD_NAME), List.copyOf(threadNames));
         assertTrue(daemonFlags.stream().allMatch(Boolean::booleanValue));
     }
 
@@ -147,7 +148,7 @@ class MilestoneIoQueueTest {
     }
 
     @Test
-    void drainCompletesWhenTaskFinishesInTime() {
+    void drainCompletesWhenTaskFinishesInTime() throws Exception {
         queue = new MilestoneIoQueue(message -> {
         });
         CountDownLatch release = new CountDownLatch(1);
@@ -167,14 +168,22 @@ class MilestoneIoQueueTest {
                 Thread.sleep(100L);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
+            } finally {
+                release.countDown();
             }
-            release.countDown();
-        });
+        }, "test-io-releaser");
+        // #123: never leave a non-daemon helper behind if the drain assertion fails.
+        releaser.setDaemon(true);
         releaser.start();
-
-        MilestoneIoLogic.DrainResult result = queue.awaitDrain(10_000L, null);
-        assertTrue(result.completed());
-        assertTrue(finished.get());
+        try {
+            MilestoneIoLogic.DrainResult result = queue.awaitDrain(10_000L, null);
+            assertTrue(result.completed());
+            assertTrue(finished.get());
+        } finally {
+            release.countDown();
+            releaser.interrupt();
+            releaser.join(1_000L);
+        }
     }
 
     @Test
@@ -196,12 +205,45 @@ class MilestoneIoQueueTest {
         assertFalse(result.completed());
         assertEquals(1, result.remainingTasks());
         assertEquals(1, result.remainingByKind().get(MilestoneIoLogic.TaskKind.IMPORT_ALL));
+        // #123: 100 ms is well inside the production 5 s progress interval.
+        assertNull(progress.get(), "the default progress interval must not fire inside a 100 ms drain");
 
         release.countDown();
         queue.shutdownNow();
         assertTrue(queue.isShutdown());
         assertFalse(queue.submit(MilestoneIoLogic.TaskKind.BACKUP, () -> {
         }));
+    }
+
+    @Test
+    void progressCallbackReportsPendingWorkWithAnInjectedInterval() throws Exception {
+        queue = new MilestoneIoQueue(message -> {
+        });
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicReference<MilestoneIoLogic.DrainResult> progress = new AtomicReference<>();
+        assertTrue(queue.submit(MilestoneIoLogic.TaskKind.IMPORT_ALL, () -> {
+            try {
+                release.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }));
+        queue.beginDrain();
+        try {
+            // #123: a 10 ms interval makes the callback fire within a short virtual-free drain.
+            // Longer than DRAIN_POLL_MILLIS (250) so at least one CONTINUE poll sees the interval.
+            MilestoneIoLogic.DrainResult result = queue.awaitDrain(600L, progress::set, 10L);
+            assertFalse(result.completed());
+            assertEquals(1, result.remainingTasks());
+            MilestoneIoLogic.DrainResult snapshot = progress.get();
+            assertNotNull(snapshot, "progress callback must be invoked with the injected interval");
+            assertFalse(snapshot.completed());
+            assertEquals(1, snapshot.remainingTasks());
+            assertEquals(1, snapshot.remainingByKind().get(MilestoneIoLogic.TaskKind.IMPORT_ALL));
+        } finally {
+            release.countDown();
+            queue.shutdownNow();
+        }
     }
 
     @Test

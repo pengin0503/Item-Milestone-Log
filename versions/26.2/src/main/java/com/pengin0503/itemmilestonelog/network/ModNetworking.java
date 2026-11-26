@@ -29,8 +29,12 @@ public final class ModNetworking {
     private static volatile long lastCleanupNanos = System.nanoTime();
 
     private static final class RateLimitState {
-        long lastNanos = System.nanoTime();
+        long lastNanos;
         int tokens = MAX_BURST_TOKENS;
+
+        RateLimitState(long now) {
+            this.lastNanos = now;
+        }
     }
 
     /** Drops a player's rate-limit state, e.g. when they log out, so the map stays bounded by online players. */
@@ -44,7 +48,15 @@ public final class ModNetworking {
 
     // Package-private for tests (a ServerPlayer cannot be constructed without a live server).
     static boolean tryAcquireRateLimit(UUID playerId) {
-        long now = System.nanoTime();
+        return tryAcquireRateLimit(playerId, System.nanoTime());
+    }
+
+    /**
+     * #123 test seam: the same rate-limit decision with an injectable clock so refill and cleanup
+     * boundaries can be tested with virtual time. Production behaviour is unchanged: the real
+     * entry point delegates with {@link System#nanoTime()}.
+     */
+    static boolean tryAcquireRateLimit(UUID playerId, long now) {
         if (RATE_LIMITS.size() > MAX_RATE_LIMIT_ENTRIES && now - lastCleanupNanos > CLEANUP_COOLDOWN_NANOS) {
             lastCleanupNanos = now;
             // Evict only idle entries instead of clearing every player's limits.
@@ -55,7 +67,7 @@ public final class ModNetworking {
                 }
             });
         }
-        RateLimitState state = RATE_LIMITS.computeIfAbsent(playerId, u -> new RateLimitState());
+        RateLimitState state = RATE_LIMITS.computeIfAbsent(playerId, u -> new RateLimitState(now));
         synchronized (state) {
             long elapsed = now - state.lastNanos;
             if (elapsed >= REFILL_INTERVAL_NANOS) {
