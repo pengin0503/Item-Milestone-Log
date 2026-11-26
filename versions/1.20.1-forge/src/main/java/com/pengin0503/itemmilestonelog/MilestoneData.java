@@ -354,19 +354,51 @@ public class MilestoneData extends SavedData {
                         ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping legacy record for '{}' with negative ticks {} in SavedData",
                                 itemId, ticks);
                     }
+                } else {
+                    // #148: a records[itemId] value that is neither a compound nor a number is
+                    // one skipped element in the 26.x codec; keep the player and count the skip.
+                    MilestoneLoadReport.recordElementSkip();
+                    ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping record item '{}' with invalid value type in SavedData",
+                            itemId);
                 }
             }
-            for (Tag t : McCompat.nbt().getStringList(entry, "carriedFromCreative")) {
-                pd.carriedFromCreative.add(McCompat.nbt().tagAsString(t));
+            // #148: parity with the 26.x lenient codec: wrong container types and invalid
+            // item ids are element skips (F-140-2), while valid siblings keep loading.
+            if (McCompat.nbt().containsTyped(entry, "carriedFromCreative", Tag.TAG_LIST)) {
+                Tag rawCarried = entry.get("carriedFromCreative");
+                if (rawCarried instanceof ListTag carriedList) {
+                    for (Tag t : carriedList) {
+                        String rawId = McCompat.nbt().tagAsString(t);
+                        if (TargetKey.isValidItemId(rawId)) {
+                            pd.carriedFromCreative.add(rawId);
+                        } else {
+                            MilestoneLoadReport.recordElementSkip();
+                            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid carriedFromCreative entry '{}' in SavedData",
+                                    rawId);
+                        }
+                    }
+                }
+            } else if (McCompat.nbt().contains(entry, "carriedFromCreative")) {
+                MilestoneLoadReport.recordElementSkip();
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed carriedFromCreative tag in SavedData");
             }
             if (McCompat.nbt().containsTyped(entry, "lastKnownName", Tag.TAG_STRING)) {
                 pd.lastKnownName = McCompat.nbt().getString(entry, "lastKnownName");
+            } else if (McCompat.nbt().contains(entry, "lastKnownName")) {
+                MilestoneLoadReport.recordElementSkip();
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed lastKnownName tag in SavedData");
             }
-            if (McCompat.nbt().contains(entry, "firstJoinHintShown")) {
+            if (McCompat.nbt().containsTyped(entry, "firstJoinHintShown", NbtCompat.ANY_NUMERIC)) {
                 pd.firstJoinHintShown = McCompat.nbt().getBoolean(entry, "firstJoinHintShown");
+            } else if (McCompat.nbt().contains(entry, "firstJoinHintShown")) {
+                MilestoneLoadReport.recordElementSkip();
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed firstJoinHintShown tag in SavedData");
             }
-            if (McCompat.nbt().contains(entry, "muteBroadcasts")) {
+            if (McCompat.nbt().containsTyped(entry, "muteBroadcasts", NbtCompat.ANY_NUMERIC)) {
                 pd.muteBroadcasts = McCompat.nbt().getBoolean(entry, "muteBroadcasts");
+            } else if (McCompat.nbt().contains(entry, "muteBroadcasts")) {
+                MilestoneLoadReport.recordElementSkip();
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed muteBroadcasts tag in SavedData");
             }
             if (McCompat.nbt().containsTyped(entry, "muteProgressAlerts", NbtCompat.ANY_NUMERIC)) {
                 pd.muteProgressAlerts = McCompat.nbt().getBoolean(entry, "muteProgressAlerts");

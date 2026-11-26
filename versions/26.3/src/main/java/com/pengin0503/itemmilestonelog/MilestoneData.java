@@ -228,7 +228,8 @@ public class MilestoneData extends SavedData {
             lenient("targets", Codec.list(LENIENT_STRING_CODEC), List.of())
                     .optionalFieldOf("targets", List.of())
                     .forGetter(MilestoneData::encodeTargets),
-            Codec.unboundedMap(Codec.STRING, ITEM_RECORDS_CODEC).optionalFieldOf("records", Map.of())
+            lenient("records", Codec.unboundedMap(Codec.STRING, ITEM_RECORDS_CODEC), Map.of())
+                    .optionalFieldOf("records", Map.of())
                     .forGetter(MilestoneData::encodeRecords),
             lenient("carriedFromCreative", Codec.list(LENIENT_STRING_CODEC), List.of())
                     .optionalFieldOf("carriedFromCreative", List.of())

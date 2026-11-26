@@ -1437,4 +1437,43 @@ class MilestoneDataTest {
         assertArrayEquals(Files.readAllBytes(file), Files.readAllBytes(result.dataFile()));
     }
 
+    @Test
+    void wrongTypedRecordsContainerKeepsValidSiblingsAndTriggersEvacuation() {
+        CompoundTag player = new CompoundTag();
+        ListTag targets = new ListTag();
+        targets.add(StringTag.valueOf("minecraft:diamond"));
+        player.put("targets", targets);
+        ListTag carried = new ListTag();
+        carried.add(StringTag.valueOf("minecraft:emerald"));
+        player.put("carriedFromCreative", carried);
+        player.putString("lastKnownName", "Alice");
+        player.putBoolean("firstJoinHintShown", true);
+        player.putBoolean("muteBroadcasts", true);
+        player.putLong("lastSeen", 42L);
+        // #147: corrupt the records CONTAINER, not an item value inside it. The per-item
+        // lenient wrapper cannot help here; the field itself must be lenient as well.
+        player.put("records", StringTag.valueOf("not-a-compound"));
+
+        CompoundTag players = new CompoundTag();
+        players.put(PLAYER_A.toString(), player);
+        CompoundTag root = new CompoundTag();
+        root.put("players", players);
+        root.putInt("schemaVersion", 1);
+
+        MilestoneData loaded = MilestoneData.CODEC.parse(NbtOps.INSTANCE, root).getOrThrow();
+        MilestoneData.PlayerData pd = loaded.playerOrNull(PLAYER_A);
+        assertNotNull(pd);
+        assertEquals(List.of(TargetKey.of("minecraft:diamond")), List.copyOf(pd.targets));
+        assertEquals(Set.of("minecraft:emerald"), pd.carriedFromCreative);
+        assertEquals("Alice", pd.lastKnownName);
+        assertTrue(pd.firstJoinHintShown);
+        assertTrue(pd.muteBroadcasts);
+        assertEquals(42L, pd.lastSeen);
+        assertTrue(pd.records.isEmpty());
+
+        assertNotNull(loaded.loadReport());
+        assertEquals(1, loaded.loadReport().elementSkipCount());
+        assertTrue(loaded.loadReport().toOutcome().requiresEvacuation());
+    }
+
 }

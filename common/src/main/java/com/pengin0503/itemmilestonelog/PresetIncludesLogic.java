@@ -2,13 +2,19 @@ package com.pengin0503.itemmilestonelog;
 
 import com.pengin0503.itemmilestonelog.api.TargetKey;
 
+import java.util.AbstractList;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Deque;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Set;
 
 /**
@@ -47,12 +53,16 @@ public final class PresetIncludesLogic {
                 }
             }
             expandedItems = Collections.unmodifiableMap(copy);
-            warnings = warnings == null ? List.of() : List.copyOf(warnings);
+            // LazyMessages renders path-specific cycle warnings only when read. Keeping the
+            // instance preserves the immutable-list contract (it is an unmodifiable List).
+            warnings = warnings == null ? List.of()
+                    : warnings instanceof LazyMessages ? warnings : List.copyOf(warnings);
             Map<String, List<String>> problems = new LinkedHashMap<>();
             if (problemsByPreset != null) {
                 for (Map.Entry<String, List<String>> entry : problemsByPreset.entrySet()) {
                     if (entry.getKey() != null && entry.getValue() != null && !entry.getValue().isEmpty()) {
-                        problems.put(entry.getKey(), List.copyOf(entry.getValue()));
+                        problems.put(entry.getKey(),
+                                entry.getValue() instanceof LazyMessages ? entry.getValue() : List.copyOf(entry.getValue()));
                     }
                 }
             }
@@ -103,111 +113,354 @@ public final class PresetIncludesLogic {
             }
         }
 
-        List<String> warnings = new ArrayList<>();
-        Map<String, List<String>> problemsByPreset = new LinkedHashMap<>();
+        // #149: a node's expansion only depends on the ancestors it can actually reach. Precompute
+        // that reachability once so a node whose subtree contains a cycle can still be memoized
+        // under the (usually empty) relevant-ancestor key instead of disabling memoization for
+        // every ancestor of a diamond with a cycle at the bottom.
+        Map<String, Set<String>> reachable = computeReachability(rawItems, includes);
+
         Map<String, List<TargetKey>> expanded = new LinkedHashMap<>();
+        List<DiagnosticRoot> allRoots = new ArrayList<>();
+        Map<String, List<String>> problemsByPreset = new LinkedHashMap<>();
         for (String id : rawItems.keySet()) {
-            // #102: memoize clean expansions per root and skip duplicate include IDs. An
-            // expansion that never hit a cycle cannot depend on the include stack, so reusing
-            // it inside the same root is exact. Cyclic expansions stay uncached because their
-            // cut point (and therefore their result) depends on which IDs are on the stack.
-            Map<String, List<TargetKey>> cleanMemo = new HashMap<>();
-            // Emit each distinct diagnostic once per root. Diamond graphs would otherwise
-            // repeat the same warning once per path (exponentially many times) while strict
-            // validation only needs to know that the problem exists.
-            Set<String> emittedDiagnostics = new LinkedHashSet<>();
-            List<String> rootProblems = new ArrayList<>();
-            expanded.put(id, expand(id, rawItems, includes, new LinkedHashSet<>(),
-                    rootProblems, emittedDiagnostics, cleanMemo));
-            if (!rootProblems.isEmpty()) {
-                problemsByPreset.put(id, rootProblems);
-                warnings.addAll(rootProblems);
+            Map<MemoKey, Expansion> memo = new HashMap<>();
+            Expansion root = expandNode(id, rawItems, includes, new LinkedHashSet<>(), memo, reachable);
+            expanded.put(id, root.items());
+            DiagnosticRoot diagnosticRoot = new DiagnosticRoot(root, List.of());
+            allRoots.add(diagnosticRoot);
+            if (root.hasDiagnostics()) {
+                problemsByPreset.put(id, new LazyMessages(List.of(diagnosticRoot)));
             }
         }
-        return new Result(expanded, warnings, problemsByPreset);
+        return new Result(expanded, new LazyMessages(allRoots), problemsByPreset);
     }
 
-    /** Items of one node plus whether any cycle was cut anywhere in its subtree. */
-    private record Expansion(List<TargetKey> items, boolean cyclic) {
+    /** Transitive include reachability for every ID mentioned in the graph. */
+    private static Map<String, Set<String>> computeReachability(
+            Map<String, List<TargetKey>> rawItems, Map<String, List<String>> includes) {
+        Set<String> allIds = new LinkedHashSet<>(rawItems.keySet());
+        allIds.addAll(includes.keySet());
+        for (List<String> children : includes.values()) {
+            for (String child : children) {
+                if (child != null && !child.isBlank()) {
+                    allIds.add(child.trim());
+                }
+            }
+        }
+        Map<String, Set<String>> result = new HashMap<>();
+        for (String id : allIds) {
+            Set<String> seen = new HashSet<>();
+            Deque<String> work = new ArrayDeque<>();
+            addChildren(includes.getOrDefault(id, List.of()), work);
+            while (!work.isEmpty()) {
+                String current = work.removeFirst();
+                if (!seen.add(current)) {
+                    continue;
+                }
+                addChildren(includes.getOrDefault(current, List.of()), work);
+            }
+            result.put(id, Set.copyOf(seen));
+        }
+        return result;
+    }
+
+    private static void addChildren(List<String> children, Deque<String> out) {
+        for (String child : children) {
+            if (child != null && !child.isBlank()) {
+                out.addLast(child.trim());
+            }
+        }
+    }
+
+    /** Items of one node plus the stack-relative diagnostics of its subtree. */
+    private record Expansion(List<TargetKey> items, List<DiagNode> diagnostics, boolean hasDiagnostics) {
+        static Expansion of(List<TargetKey> items, List<DiagNode> diagnostics) {
+            boolean present = false;
+            for (DiagNode node : diagnostics) {
+                if (node instanceof MessageNode || ((ChildNode) node).child().hasDiagnostics()) {
+                    present = true;
+                    break;
+                }
+            }
+            return new Expansion(items, diagnostics, present);
+        }
+    }
+
+    /** Memo key: a node plus the ordered ancestors that are reachable from it. */
+    private record MemoKey(String id, List<String> relevantAncestors) {
+    }
+
+    /**
+     * A diagnostic in stack-relative form. Cycle messages include the whole DFS path, so the
+     * path prefix is supplied when the diagnostic is finally rendered; that makes an identical
+     * subtree reusable under a different ancestor stack without changing any message.
+     */
+    private record Diagnostic(String fixedText, List<String> relativePath, String repeatedId) {
+        static Diagnostic fixed(String text) {
+            return new Diagnostic(text, List.of(), null);
+        }
+
+        static Diagnostic cycle(String id) {
+            return new Diagnostic(null, List.of(), id);
+        }
+
+        String render(List<String> callerStack) {
+            if (fixedText != null) {
+                return fixedText;
+            }
+            List<String> path = new ArrayList<>(callerStack);
+            path.addAll(relativePath);
+            path.add(repeatedId);
+            return "preset include cycle detected: " + String.join(" -> ", path) + " (branch cut)";
+        }
+
+        /** Rebase this diagnostic from a child's stack onto its parent's stack. */
+        Diagnostic prepend(String id) {
+            if (fixedText != null) {
+                return this;
+            }
+            List<String> path = new ArrayList<>();
+            path.add(id);
+            path.addAll(relativePath);
+            return new Diagnostic(null, List.copyOf(path), repeatedId);
+        }
+    }
+
+    /** One emitted diagnostic; {@code message} is rendered on demand. */
+    private record Pending(List<String> callerStack, Diagnostic diagnostic) {
+        String render() {
+            return diagnostic.render(callerStack);
+        }
+    }
+
+    /** Diagnostic tree node: a message or a (shared) child expansion with its stack prefix. */
+    private sealed interface DiagNode permits MessageNode, ChildNode {
+    }
+
+    private record MessageNode(Diagnostic diagnostic) implements DiagNode {
+    }
+
+    private record ChildNode(Expansion child, String prefix) implements DiagNode {
+    }
+
+    private record DiagnosticRoot(Expansion expansion, List<String> callerStack) {
     }
 
     /**
      * Depth-first expansion of one preset. {@code stack} holds the currently expanding IDs so a
      * repeated ID is a cycle and its branch is cut.
      */
-    private static List<TargetKey> expand(
-            String id,
-            Map<String, List<TargetKey>> rawItems,
-            Map<String, List<String>> includes,
-            Set<String> stack,
-            List<String> warnings,
-            Set<String> emittedDiagnostics,
-            Map<String, List<TargetKey>> cleanMemo) {
-        return expandNode(id, rawItems, includes, stack, warnings, emittedDiagnostics, cleanMemo).items();
-    }
-
     private static Expansion expandNode(
             String id,
             Map<String, List<TargetKey>> rawItems,
             Map<String, List<String>> includes,
             Set<String> stack,
-            List<String> warnings,
-            Set<String> emittedDiagnostics,
-            Map<String, List<TargetKey>> cleanMemo) {
-        List<TargetKey> cached = cleanMemo.get(id);
-        if (cached != null) {
-            return new Expansion(cached, false);
+            Map<MemoKey, Expansion> memo,
+            Map<String, Set<String>> reachable) {
+        List<String> ancestors = new ArrayList<>(stack);
+        List<String> relevant = new ArrayList<>();
+        Set<String> fromHere = reachable.getOrDefault(id, Set.of());
+        for (String ancestor : ancestors) {
+            if (fromHere.contains(ancestor)) {
+                relevant.add(ancestor);
+            }
         }
+        MemoKey key = new MemoKey(id, List.copyOf(relevant));
+        Expansion cached = memo.get(key);
+        if (cached != null) {
+            return cached;
+        }
+
         if (!rawItems.containsKey(id)) {
-            report(warnings, emittedDiagnostics,
-                    "unknown preset include '" + id + "' (skipped)");
-            return new Expansion(List.of(), false);
+            return Expansion.of(List.of(), List.of(new MessageNode(
+                    Diagnostic.fixed("unknown preset include '" + id + "' (skipped)"))));
         }
         if (stack.contains(id)) {
-            List<String> path = new ArrayList<>(stack);
-            path.add(id);
-            report(warnings, emittedDiagnostics,
-                    "preset include cycle detected: " + String.join(" -> ", path) + " (branch cut)");
-            return new Expansion(List.of(), true);
+            return Expansion.of(List.of(), List.of(new MessageNode(Diagnostic.cycle(id))));
         }
-        stack.add(id);
+
+        List<String> path = new ArrayList<>(ancestors);
+        path.add(id);
         Set<TargetKey> resolved = new LinkedHashSet<>();
-        boolean cyclic = false;
+        List<DiagNode> diagnostics = new ArrayList<>();
         // #102: a repeated include ID adds nothing to the ordered set; expanding it once keeps
         // item order/dedup identical while making duplicated include lists linear.
         Set<String> seenIncludes = new LinkedHashSet<>();
         for (String rawIncludeId : includes.getOrDefault(id, List.of())) {
             if (rawIncludeId == null || rawIncludeId.isBlank()) {
-                report(warnings, emittedDiagnostics,
-                        "blank preset include id in '" + id + "' (skipped)");
+                diagnostics.add(new MessageNode(
+                        Diagnostic.fixed("blank preset include id in '" + id + "' (skipped)")));
                 continue;
             }
             String includeId = rawIncludeId.trim();
             if (!seenIncludes.add(includeId)) {
                 continue;
             }
-            Expansion child = expandNode(includeId, rawItems, includes, stack,
-                    warnings, emittedDiagnostics, cleanMemo);
-            cyclic |= child.cyclic();
+            Expansion child = expandNode(includeId, rawItems, includes, stackAsSet(path), memo, reachable);
             resolved.addAll(child.items());
+            diagnostics.add(new ChildNode(child, id));
         }
-        for (TargetKey key : rawItems.get(id)) {
-            if (key != null) {
-                resolved.add(key);
+        for (TargetKey keyItem : rawItems.get(id)) {
+            if (keyItem != null) {
+                resolved.add(keyItem);
             }
         }
-        stack.remove(id);
-
-        List<TargetKey> result = List.copyOf(resolved);
-        if (!cyclic) {
-            cleanMemo.put(id, result);
-        }
-        return new Expansion(result, cyclic);
+        Expansion result = Expansion.of(List.copyOf(resolved), List.copyOf(diagnostics));
+        memo.put(key, result);
+        return result;
     }
 
-    private static void report(List<String> warnings, Set<String> emittedDiagnostics, String message) {
-        if (emittedDiagnostics.add(message)) {
-            warnings.add(message);
+    /** The DFS path is kept as a LinkedHashSet for O(1) cycle membership checks. */
+    private static Set<String> stackAsSet(List<String> path) {
+        return new LinkedHashSet<>(path);
+    }
+
+    /** Lazily walks a diagnostic tree, yielding messages in discovery order. */
+    private static final class DiagnosticIterator implements Iterator<String> {
+        private record Frame(Expansion expansion, List<String> callerStack, int index) {
+        }
+
+        private final Deque<Frame> frames = new ArrayDeque<>();
+        private String next;
+
+        DiagnosticIterator(DiagnosticRoot root) {
+            frames.push(new Frame(root.expansion(), root.callerStack(), 0));
+        }
+
+        @Override
+        public boolean hasNext() {
+            if (next != null) {
+                return true;
+            }
+            while (!frames.isEmpty()) {
+                Frame frame = frames.pop();
+                List<DiagNode> nodes = frame.expansion().diagnostics();
+                if (frame.index() >= nodes.size()) {
+                    continue;
+                }
+                frames.push(new Frame(frame.expansion(), frame.callerStack(), frame.index() + 1));
+                DiagNode node = nodes.get(frame.index());
+                if (node instanceof MessageNode message) {
+                    next = message.diagnostic().render(frame.callerStack());
+                    return true;
+                }
+                ChildNode child = (ChildNode) node;
+                List<String> childStack = new ArrayList<>(frame.callerStack());
+                childStack.add(child.prefix());
+                frames.push(new Frame(child.child(), List.copyOf(childStack), 0));
+            }
+            return false;
+        }
+
+        @Override
+        public String next() {
+            if (!hasNext()) {
+                throw new NoSuchElementException();
+            }
+            String message = next;
+            next = null;
+            return message;
+        }
+    }
+
+    /**
+     * An immutable view of the diagnostics, deduplicated per root by message text in discovery
+     * order exactly as {@code report(...)} did before. Rendering is deferred so the exponential
+     * number of path-specific cycle messages in a deep diamond does not have to be materialized
+     * just to expand items.
+     */
+    private static final class LazyMessages extends AbstractList<String> {
+        private final List<DiagnosticRoot> roots;
+        private final boolean empty;
+        private final List<String> rendered = new ArrayList<>();
+        private final Iterator<String> materializer;
+
+        LazyMessages(List<DiagnosticRoot> roots) {
+            this.roots = List.copyOf(roots);
+            boolean any = false;
+            for (DiagnosticRoot root : roots) {
+                any |= root.expansion().hasDiagnostics();
+            }
+            this.empty = !any;
+            this.materializer = newIterator();
+        }
+
+        private Iterator<String> newIterator() {
+            if (empty) {
+                return Collections.emptyIterator();
+            }
+            return new Iterator<>() {
+                private int rootIndex;
+                private Iterator<String> current = Collections.emptyIterator();
+                private Set<String> seen = new HashSet<>();
+                private String next;
+                private boolean done;
+
+                private void advance() {
+                    while (next == null && !done) {
+                        if (current.hasNext()) {
+                            String message = current.next();
+                            if (seen.add(message)) {
+                                next = message;
+                            }
+                        } else if (rootIndex < roots.size()) {
+                            seen = new HashSet<>();
+                            current = new DiagnosticIterator(roots.get(rootIndex++));
+                        } else {
+                            done = true;
+                        }
+                    }
+                }
+
+                @Override
+                public boolean hasNext() {
+                    advance();
+                    return next != null;
+                }
+
+                @Override
+                public String next() {
+                    advance();
+                    if (next == null) {
+                        throw new NoSuchElementException();
+                    }
+                    String message = next;
+                    next = null;
+                    return message;
+                }
+            };
+        }
+
+        @Override
+        public String get(int index) {
+            while (rendered.size() <= index) {
+                if (!materializer.hasNext()) {
+                    throw new IndexOutOfBoundsException(index);
+                }
+                rendered.add(materializer.next());
+            }
+            return rendered.get(index);
+        }
+
+        @Override
+        public int size() {
+            if (empty) {
+                return 0;
+            }
+            while (materializer.hasNext()) {
+                rendered.add(materializer.next());
+            }
+            return rendered.size();
+        }
+
+        @Override
+        public boolean isEmpty() {
+            return empty;
+        }
+
+        @Override
+        public Iterator<String> iterator() {
+            return newIterator();
         }
     }
 }
