@@ -21,6 +21,12 @@ public final class MilestoneIoLogic {
     public static final long DRAIN_LOG_INTERVAL_MILLIS = 5_000L;
     /** Maximum time the drain waiter sleeps before re-checking the queue. */
     public static final long DRAIN_POLL_MILLIS = 250L;
+    /**
+     * Minimum remaining drain budget needed to submit the stop-time final backup to the executor.
+     * Below this, the wait would be certain to time out, so the synchronous fallback is used
+     * directly instead of submitting a task and immediately interrupting it (F-140-4).
+     */
+    public static final long FINAL_BACKUP_MIN_BUDGET_MILLIS = 1_000L;
 
     /** Kinds of work that may run on the {@code itemmilestonelog-io} executor. */
     public enum TaskKind {
@@ -110,6 +116,16 @@ public final class MilestoneIoLogic {
     public static FinalBackupMode finalBackupMode(DrainDecision firstDrainDecision) {
         Objects.requireNonNull(firstDrainDecision, "firstDrainDecision");
         return firstDrainDecision == DrainDecision.TIMEOUT ? FinalBackupMode.SYNC : FinalBackupMode.ASYNC;
+    }
+
+    /**
+     * Returns whether the final backup must run synchronously because the drain budget is
+     * exhausted (or too small to be worth submitting). Submitting with a zero/near-zero budget
+     * would guarantee a spurious timeout, {@code shutdownNow} and a double serialization, so the
+     * synchronous fallback is started directly instead (F-140-4).
+     */
+    public static boolean needsSynchronousFinalBackup(long remainingMillis) {
+        return remainingMillis <= FINAL_BACKUP_MIN_BUDGET_MILLIS;
     }
 
     /** Formats a kind/count map for a warning log, e.g. {@code importall=1, backup=2}. */

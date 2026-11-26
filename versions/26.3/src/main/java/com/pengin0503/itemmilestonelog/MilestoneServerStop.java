@@ -55,30 +55,56 @@ public final class MilestoneServerStop {
             if (queue != null) {
                 queue.shutdownNow();
             }
+            // F-140-4 / review 2-2: a parse that already completed during the first drain must
+            // still be applied before the final backup, even on the timeout path. Only work that
+            // did not finish parsing is abandoned.
+            MilestoneImportAll.applyPendingOnStop(server);
             MilestoneImportAll.cancelPending("server stopping (I/O drain timeout)");
             MilestoneBackup.writeFinalBackupNow(server);
         } else {
             // A parsed importall may still have its server.execute application queued behind this
             // event; apply it before the final backup snapshot so its data is included.
             MilestoneImportAll.applyPendingOnStop(server);
-            Runnable finalBackup = MilestoneBackup.prepareFinalBackup(server);
-            if (finalBackup != null) {
-                boolean submitted = queue != null && MilestoneIo.submitFinal(finalBackup);
-                if (!submitted) {
-                    if (queue != null) {
-                        ItemMilestoneLog.LOGGER.warn(
-                                "[ItemMilestoneLog] I/O executor unavailable for the final backup; writing synchronously");
-                    }
-                    finalBackup.run();
-                } else {
-                    MilestoneIoLogic.DrainResult finalDrain = queue.awaitDrain(remainingMillis(startNanos),
-                            snapshot -> logWaiting("final backup", snapshot));
-                    if (!finalDrain.completed()) {
-                        timedOut = true;
-                        unfinishedTasks += finalDrain.remainingTasks();
-                        unfinishedKinds = mergeKinds(unfinishedKinds, finalDrain.remainingByKind());
-                        queue.shutdownNow();
-                        MilestoneBackup.writeFinalBackupNow(server);
+            long remaining = remainingMillis(startNanos);
+            if (queue == null || MilestoneIoLogic.needsSynchronousFinalBackup(remaining)) {
+                // F-140-4 / review 2-3: submitting with an exhausted (or near-exhausted) budget
+                // would guarantee a spurious timeout + shutdownNow + double serialization. Skip
+                // the preparation/submission entirely and serialize once in the sync fallback.
+                if (queue != null) {
+                    ItemMilestoneLog.LOGGER.info(
+                            "[ItemMilestoneLog] Only {} ms of the I/O drain budget remains; writing the final backup synchronously",
+                            remaining);
+                }
+                MilestoneBackup.writeFinalBackupNow(server);
+            } else {
+                Runnable finalBackup = MilestoneBackup.prepareFinalBackup(server);
+                if (finalBackup != null) {
+                    // Re-check after preparing the snapshot (serialization itself takes time) so
+                    // the final drain cannot exceed the overall stop budget.
+                    long finalBudget = remainingMillis(startNanos);
+                    if (MilestoneIoLogic.needsSynchronousFinalBackup(finalBudget)
+                            || !MilestoneIo.submitFinal(finalBackup)) {
+                        if (finalBudget > MilestoneIoLogic.FINAL_BACKUP_MIN_BUDGET_MILLIS) {
+                            ItemMilestoneLog.LOGGER.warn(
+                                    "[ItemMilestoneLog] I/O executor unavailable for the final backup; writing synchronously");
+                        } else {
+                            ItemMilestoneLog.LOGGER.info(
+                                    "[ItemMilestoneLog] Only {} ms of the I/O drain budget remains after preparing the final backup; writing it synchronously",
+                                    finalBudget);
+                        }
+                        // The prepared snapshot is written with the bounded claim/lock path, so
+                        // it is serialized only once and cannot block the stop indefinitely.
+                        MilestoneBackup.writePreparedFinalBackupNow(finalBackup);
+                    } else {
+                        MilestoneIoLogic.DrainResult finalDrain = queue.awaitDrain(finalBudget,
+                                snapshot -> logWaiting("final backup", snapshot));
+                        if (!finalDrain.completed()) {
+                            timedOut = true;
+                            unfinishedTasks += finalDrain.remainingTasks();
+                            unfinishedKinds = mergeKinds(unfinishedKinds, finalDrain.remainingByKind());
+                            queue.shutdownNow();
+                            MilestoneBackup.writeFinalBackupNow(server);
+                        }
                     }
                 }
             }

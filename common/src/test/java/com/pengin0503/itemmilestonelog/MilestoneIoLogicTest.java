@@ -68,6 +68,17 @@ class MilestoneIoLogicTest {
     }
 
     @Test
+    void finalBackupRunsSynchronouslyWhenBudgetIsExhaustedOrTooSmall() {
+        // Zero/near-zero remaining budget always means a spurious timeout if submitted (review 2-3).
+        assertTrue(MilestoneIoLogic.needsSynchronousFinalBackup(0L));
+        assertTrue(MilestoneIoLogic.needsSynchronousFinalBackup(-1L));
+        assertTrue(MilestoneIoLogic.needsSynchronousFinalBackup(MilestoneIoLogic.FINAL_BACKUP_MIN_BUDGET_MILLIS));
+        assertFalse(MilestoneIoLogic.needsSynchronousFinalBackup(
+                MilestoneIoLogic.FINAL_BACKUP_MIN_BUDGET_MILLIS + 1L));
+        assertFalse(MilestoneIoLogic.needsSynchronousFinalBackup(30_000L));
+    }
+
+    @Test
     void describesTaskKindsForTimeoutWarnings() {
         assertEquals("none", MilestoneIoLogic.describeKinds(Map.of()));
         Map<MilestoneIoLogic.TaskKind, Integer> counts = new LinkedHashMap<>();

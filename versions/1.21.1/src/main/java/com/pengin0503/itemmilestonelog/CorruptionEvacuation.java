@@ -66,7 +66,11 @@ public final class CorruptionEvacuation {
                 data = McCompat.data().getOrCreate(storage);
             }
             MilestoneLoadReport report = data.loadReport();
-            boolean totalFailure = rootInvalid || loadFailed;
+            // Review 4-1: an existing-but-unreadable file is a total failure by definition,
+            // even when another listener already populated a cached empty MilestoneData
+            // (loadFailed=false, report=null) and the file would otherwise never be evacuated.
+            boolean totalFailure = CorruptionEvacuationLogic.isTotalLoadFailure(
+                    rootUnreadable, rootInvalid, loadFailed);
             int elementSkips = report != null ? report.elementSkipCount() : 0;
             if (report != null) {
                 totalFailure |= report.totalFailure();

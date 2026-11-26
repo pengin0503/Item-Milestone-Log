@@ -115,9 +115,12 @@ public final class MilestoneIoQueue {
         if (!allowAfterDrain && !accepting) {
             return false;
         }
-        pendingTasks.incrementAndGet();
-        AtomicInteger kindCounter = pendingByKind.get(kind);
-        kindCounter.incrementAndGet();
+        // Increment both counters under the monitor so a drain snapshot can never observe a
+        // total that has been decremented while its per-kind counter has not (review cosmetic).
+        synchronized (monitor) {
+            pendingTasks.incrementAndGet();
+            pendingByKind.get(kind).incrementAndGet();
+        }
         try {
             executor.execute(() -> runTask(kind, task));
             return true;
@@ -138,9 +141,11 @@ public final class MilestoneIoQueue {
     }
 
     private void finishTask(MilestoneIoLogic.TaskKind kind) {
-        pendingByKind.get(kind).decrementAndGet();
-        pendingTasks.decrementAndGet();
+        // Keep the per-kind and total counters consistent for drain progress snapshots: both are
+        // updated under the monitor that awaitDrain also holds while reading them.
         synchronized (monitor) {
+            pendingByKind.get(kind).decrementAndGet();
+            pendingTasks.decrementAndGet();
             monitor.notifyAll();
         }
     }

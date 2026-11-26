@@ -5,6 +5,7 @@ import com.pengin0503.itemmilestonelog.compat.McCompat;
 import com.pengin0503.itemmilestonelog.gametest.MilestoneGameTestRegistration;
 import com.pengin0503.itemmilestonelog.network.ModNetworking;
 import net.minecraft.resources.Identifier;
+import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
@@ -37,7 +38,9 @@ public class ItemMilestoneLog {
         NeoForge.EVENT_BUS.addListener(MilestonePermissions::register);
         NeoForge.EVENT_BUS.register(Tracker.class);
         NeoForge.EVENT_BUS.register(MilestoneCommands.class);
-        NeoForge.EVENT_BUS.addListener(ItemMilestoneLog::onServerStarting);
+        // F-140-2 / review 4-1 defense in depth: run our corruption-evacuation hook before
+        // other mods' ServerStarting listeners so the on-disk SavedData is preserved first.
+        NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, ItemMilestoneLog::onServerStarting);
         NeoForge.EVENT_BUS.addListener(ItemMilestoneLog::onAddServerReloadListeners);
         NeoForge.EVENT_BUS.addListener(ItemMilestoneLog::onServerStarted);
         NeoForge.EVENT_BUS.addListener(ItemMilestoneLog::onServerTick);

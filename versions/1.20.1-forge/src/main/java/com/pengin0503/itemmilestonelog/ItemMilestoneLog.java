@@ -11,6 +11,7 @@ import net.minecraftforge.event.server.ServerStartedEvent;
 import net.minecraftforge.event.server.ServerStartingEvent;
 import net.minecraftforge.event.server.ServerStoppedEvent;
 import net.minecraftforge.event.server.ServerStoppingEvent;
+import net.minecraftforge.eventbus.api.EventPriority;
 import net.minecraftforge.eventbus.api.IEventBus;
 import net.minecraftforge.fml.DistExecutor;
 import net.minecraftforge.fml.ModLoadingContext;
@@ -51,7 +52,9 @@ public class ItemMilestoneLog {
         MinecraftForge.EVENT_BUS.addListener(MilestonePermissions::register);
         MinecraftForge.EVENT_BUS.register(Tracker.class);
         MinecraftForge.EVENT_BUS.register(MilestoneCommands.class);
-        MinecraftForge.EVENT_BUS.addListener(ItemMilestoneLog::onServerStarting);
+        // F-140-2 / review 4-1 defense in depth: run our corruption-evacuation hook before
+        // other mods' ServerStarting listeners so the on-disk SavedData is preserved first.
+        MinecraftForge.EVENT_BUS.addListener(EventPriority.HIGHEST, ItemMilestoneLog::onServerStarting);
         // F21: datapack preset reload listener (AddReloadListenerEvent, Forge game bus).
         McCompat.reload().register();
         MinecraftForge.EVENT_BUS.addListener(ItemMilestoneLog::onServerStarted);
