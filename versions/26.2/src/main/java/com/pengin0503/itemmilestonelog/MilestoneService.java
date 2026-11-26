@@ -1407,7 +1407,7 @@ public final class MilestoneService {
                 }
                 data.setDirty();
                 boolean undoable = undoStore != null && undoStore.offer(playerId,
-                        UndoLogic.Snapshot.reset(removedRecords, Set.of(), removedProgress, nowNanos));
+                        UndoLogic.Snapshot.reset(removedRecords, Set.of(), removedProgress, Map.of(), nowNanos));
                 return new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.reset_done", displayName.apply(key)),
                         undoable);
             }
@@ -1416,6 +1416,53 @@ public final class MilestoneService {
             return new ActionResult(false, invalidTargetMessage(player, itemId));
         }
         return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.not_recorded", displayName.apply(key)));
+    }
+
+    /** Result of an admin {@code resetall}: the removed record count and whether anything changed. */
+    record AdminResetAllResult(int recordCount, boolean changed) {
+    }
+
+    /**
+     * #132: clears every per-player collection a {@code resetall} resets — records,
+     * {@code progressNotified}, {@code completedPresets} and the F-140-9 {@code presetState} — so the
+     * player's own reset and the admin variant leave identical state. Admin operations do not create
+     * an F23 undo snapshot.
+     *
+     * @return whether anything was cleared
+     */
+    static boolean clearAllPlayerState(MilestoneData.PlayerData pd) {
+        boolean changed = false;
+        if (!pd.records.isEmpty()) {
+            pd.records.clear();
+            changed = true;
+        }
+        if (!pd.progressNotified.isEmpty()) {
+            pd.progressNotified.clear();
+            changed = true;
+        }
+        if (!pd.completedPresets.isEmpty()) {
+            pd.completedPresets.clear();
+            changed = true;
+        }
+        if (!pd.presetState.isEmpty()) {
+            pd.presetState.clear();
+            changed = true;
+        }
+        return changed;
+    }
+
+    /**
+     * #132 {@code /milestonelog admin <player> resetall}: applies the same cleanup as the player's own
+     * resetall, without snapshotting for undo (F23 excludes admin resets).
+     */
+    static AdminResetAllResult adminResetAll(MilestoneData data, UUID playerId) {
+        MilestoneData.PlayerData pd = data.playerOrNull(playerId);
+        int count = pd != null ? pd.records.size() : 0;
+        boolean changed = pd != null && clearAllPlayerState(pd);
+        if (changed) {
+            data.setDirty();
+        }
+        return new AdminResetAllResult(count, changed);
     }
 
     public static ActionResult resetAllRecords(ServerPlayer player) {
@@ -1447,24 +1494,9 @@ public final class MilestoneService {
         if (pd != null) {
             if (undoStore != null) {
                 undoable = undoStore.offer(playerId, UndoLogic.Snapshot.reset(
-                        pd.records, pd.completedPresets, pd.progressNotified, nowNanos));
+                        pd.records, pd.completedPresets, pd.progressNotified, pd.presetState, nowNanos));
             }
-            if (count > 0) {
-                pd.records.clear();
-                changed = true;
-            }
-            if (!pd.progressNotified.isEmpty()) {
-                pd.progressNotified.clear();
-                changed = true;
-            }
-            if (!pd.completedPresets.isEmpty()) {
-                pd.completedPresets.clear();
-                changed = true;
-            }
-            if (!pd.presetState.isEmpty()) {
-                pd.presetState.clear();
-                changed = true;
-            }
+            changed = clearAllPlayerState(pd);
         }
         if (changed) {
             data.setDirty();
@@ -1496,7 +1528,7 @@ public final class MilestoneService {
         }
         MilestoneData.PlayerData pd = data.player(playerId);
         UndoLogic.Result<TargetKey, MilestoneRecord> restored = UndoLogic.restore(snapshot,
-                pd.records, pd.completedPresets, pd.progressNotified, pd.targets,
+                pd.records, pd.completedPresets, pd.progressNotified, pd.presetState, pd.targets,
                 MAX_PERSONAL_TARGETS, MilestoneRecord::playTicks);
         pd.records.clear();
         pd.records.putAll(restored.records());
@@ -1504,6 +1536,8 @@ public final class MilestoneService {
         pd.completedPresets.addAll(restored.completedPresets());
         pd.progressNotified.clear();
         pd.progressNotified.putAll(restored.progressNotified());
+        pd.presetState.clear();
+        pd.presetState.putAll(restored.presetState());
         pd.targets.clear();
         pd.targets.addAll(restored.targets());
         data.setDirty();

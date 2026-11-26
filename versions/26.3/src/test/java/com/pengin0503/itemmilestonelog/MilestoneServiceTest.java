@@ -938,6 +938,48 @@ class MilestoneServiceTest {
     }
 
     @Test
+    void undoRestoresPresetStateClearedByResetAll() {
+        MilestoneData data = new MilestoneData();
+        UndoLogic.Store<TargetKey, MilestoneRecord> store = new UndoLogic.Store<>();
+        TargetKey diamond = TargetKey.of("minecraft:diamond");
+        MilestoneData.PlayerData pd = data.player(PLAYER_A);
+        pd.records.put(diamond, new MilestoneRecord(100, 1L, 1_000L));
+        pd.completedPresets.add("vanilla_endgame");
+        pd.presetState.put("unlock_after", new PresetState(true, 3));
+        pd.presetState.put("versioned_pack", new PresetState(false, 2));
+
+        long t0 = 7_000L;
+        MilestoneService.ActionResult resetAll = MilestoneService.resetAllRecords(data, PLAYER_A, null, store, t0);
+        assertTrue(resetAll.success());
+        assertTrue(resetAll.undoable());
+        assertTrue(pd.presetState.isEmpty());
+
+        MilestoneService.ActionResult undone = MilestoneService.undo(data, PLAYER_A, null, store, t0 + 100L);
+        assertTrue(undone.success());
+        assertEquals(Map.of(
+                "unlock_after", new PresetState(true, 3),
+                "versioned_pack", new PresetState(false, 2)
+        ), pd.presetState);
+        assertEquals(Set.of("vanilla_endgame"), pd.completedPresets);
+    }
+
+    @Test
+    void undoRestoresPresetStateWhenResetAllRemovedNoRecords() {
+        MilestoneData data = new MilestoneData();
+        UndoLogic.Store<TargetKey, MilestoneRecord> store = new UndoLogic.Store<>();
+        MilestoneData.PlayerData pd = data.player(PLAYER_A);
+        pd.presetState.put("unlock_after", new PresetState(true, 1));
+
+        MilestoneService.ActionResult resetAll = MilestoneService.resetAllRecords(data, PLAYER_A, null, store, 1_000L);
+        assertTrue(resetAll.success());
+        assertTrue(resetAll.undoable());
+        assertTrue(pd.presetState.isEmpty());
+
+        assertTrue(MilestoneService.undo(data, PLAYER_A, null, store, 1_100L).success());
+        assertEquals(Map.of("unlock_after", new PresetState(true, 1)), pd.presetState);
+    }
+
+    @Test
     void undoPreservesSnapshotOnEmptyOrFailedResetOverwritesOnNextResetAndRespectsExpiryAndClear() {
         MilestoneData data = new MilestoneData();
         UndoLogic.Store<TargetKey, MilestoneRecord> store = new UndoLogic.Store<>();
@@ -2557,5 +2599,47 @@ class MilestoneServiceTest {
                 "b_pack", new PresetState(true, 5),
                 "c_pack", new PresetState(false, 1)
         ), pd.presetState);
+    }
+
+    @Test
+    void adminResetAllClearsPresetStateAndMatchesThePlayersOwnResetAll() {
+        MilestoneData selfData = new MilestoneData();
+        MilestoneData adminData = new MilestoneData();
+        MilestoneData.PlayerData selfPd = selfData.player(PLAYER_A);
+        MilestoneData.PlayerData adminPd = adminData.player(PLAYER_A);
+        TargetKey diamond = TargetKey.of("minecraft:diamond");
+        for (MilestoneData.PlayerData pd : List.of(selfPd, adminPd)) {
+            pd.records.put(diamond, new MilestoneRecord(100, 1L, 1_000L));
+            pd.progressNotified.put(TargetKey.of("minecraft:emerald", 10), 50);
+            pd.completedPresets.add("vanilla_endgame");
+            pd.presetState.put("unlock_after", new PresetState(true, 3));
+        }
+
+        assertTrue(MilestoneService.resetAllRecords(selfData, PLAYER_A, null).success());
+        MilestoneService.AdminResetAllResult admin = MilestoneService.adminResetAll(adminData, PLAYER_A);
+        assertEquals(1, admin.recordCount());
+        assertTrue(admin.changed());
+
+        assertTrue(selfPd.records.isEmpty());
+        assertTrue(selfPd.progressNotified.isEmpty());
+        assertTrue(selfPd.completedPresets.isEmpty());
+        assertTrue(selfPd.presetState.isEmpty());
+        assertEquals(selfPd.records, adminPd.records);
+        assertEquals(selfPd.progressNotified, adminPd.progressNotified);
+        assertEquals(selfPd.completedPresets, adminPd.completedPresets);
+        assertEquals(selfPd.presetState, adminPd.presetState);
+    }
+
+    @Test
+    void adminResetAllReportsAChangeWhenOnlyPresetStateWasPresent() {
+        MilestoneData data = new MilestoneData();
+        MilestoneData.PlayerData pd = data.player(PLAYER_A);
+        pd.presetState.put("unlock_after", new PresetState(true, 2));
+
+        MilestoneService.AdminResetAllResult result = MilestoneService.adminResetAll(data, PLAYER_A);
+
+        assertEquals(0, result.recordCount());
+        assertTrue(result.changed());
+        assertTrue(pd.presetState.isEmpty());
     }
 }

@@ -2406,27 +2406,15 @@ public final class MilestoneCommands {
         }
         String name = displayNameFor(target.getKey(), target.getValue());
         MilestoneData data = MilestoneData.get(source.getServer());
-        MilestoneData.PlayerData pd = target.getValue();
-        int count = pd.records.size();
-        boolean clearedProgress = !pd.progressNotified.isEmpty();
-        boolean clearedCompletedPresets = !pd.completedPresets.isEmpty();
-        if (count > 0) {
-            pd.records.clear();
-        }
-        if (clearedProgress) {
-            pd.progressNotified.clear();
-        }
-        if (clearedCompletedPresets) {
-            pd.completedPresets.clear();
-        }
-        if (count > 0 || clearedProgress || clearedCompletedPresets) {
-            data.setDirty();
+        MilestoneService.AdminResetAllResult result = MilestoneService.adminResetAll(data, target.getKey());
+        int count = result.recordCount();
+        if (result.changed()) {
             if (count > 0) {
                 ScoreboardSync.refreshScores(source.getServer(), target.getKey());
-                ServerPlayer online = source.getServer().getPlayerList().getPlayer(target.getKey());
-                if (online != null) {
-                    MilestoneService.syncPlayerIfOpen(online);
-                }
+            }
+            ServerPlayer online = source.getServer().getPlayerList().getPlayer(target.getKey());
+            if (online != null) {
+                MilestoneService.syncPlayerIfOpen(online);
             }
         }
         return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.admin_resetall_done", count, name));
