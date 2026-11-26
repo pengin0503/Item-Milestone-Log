@@ -19,6 +19,9 @@ public interface ChatCompat {
     /** A click event that suggests {@code command} in the chat input. */
     ClickEvent suggestCommand(String command);
 
+    /** A click event that copies {@code value} to the clipboard. */
+    ClickEvent copyToClipboard(String value);
+
     /** The command of a suggest-command click event, or {@code null} for any other event. */
     @Nullable
     String suggestCommandValue(@Nullable ClickEvent event);

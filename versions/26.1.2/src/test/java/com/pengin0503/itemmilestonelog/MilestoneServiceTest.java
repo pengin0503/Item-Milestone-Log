@@ -369,6 +369,59 @@ class MilestoneServiceTest {
     }
 
     @Test
+    void importcodeSavesSharedPresetWithMetadataAndRejectsBadCodesAndCollisions(@TempDir Path dir) throws Exception {
+        Presets.reloadFrom(dir);
+        PresetShareLogic.ShareData share = new PresetShareLogic.ShareData(
+                "shared_set",
+                PresetName.ofPlain("Shared Set"),
+                List.of(TargetKey.of("minecraft:diamond"), TargetKey.of("minecraft:iron_ingot", 32)),
+                PresetName.ofPlain("From chat"),
+                "Endgame",
+                5,
+                2,
+                List.of("minecraft"),
+                List.of(new PresetGroup("ores", PresetName.ofPlain("Ores"),
+                        List.of(TargetKey.of("minecraft:diamond")))),
+                List.of("next_set"),
+                12.0d);
+        String code = PresetShareLogic.encode(share);
+
+        // The normal parse + save path preserves every metadata field and the expanded items.
+        MilestoneService.ActionResult imported = MilestoneService.importPresetCode(null, true, code, () -> dir, true);
+        assertTrue(imported.success(), imported.message().getString());
+        assertTrue(Files.isRegularFile(dir.resolve("shared_set.json")));
+        Presets.PresetDefinition saved = Presets.get("shared_set");
+        assertNotNull(saved);
+        assertEquals("Shared Set", saved.name().plainValue());
+        assertEquals("From chat", saved.description().plainValue());
+        assertEquals("Endgame", saved.category());
+        assertEquals(5, saved.order());
+        assertEquals(2, saved.version().intValue());
+        assertEquals(List.of("minecraft"), saved.requiredMods());
+        assertEquals(List.of("next_set"), saved.nextPresets());
+        assertEquals(12.0d, saved.unlockAfterHours().doubleValue(), 0.0d);
+        assertEquals(2, saved.items().size());
+        assertEquals(1, saved.groups().size());
+        assertEquals("ores", saved.groups().get(0).id());
+        assertTrue(Files.readString(dir.resolve("shared_set.json")).contains("From chat"));
+
+        // A second import of the same ID is rejected (no overwrite / no auto-rename).
+        MilestoneService.ActionResult collision = MilestoneService.importPresetCode(null, true, code, () -> dir, true);
+        assertFalse(collision.success());
+        assertTrue(collision.message().getString().contains("already exists"),
+                collision.message().getString());
+
+        // Broken codes write nothing and use the dedicated messages.
+        assertFalse(MilestoneService.importPresetCode(null, true, "NOPE", () -> dir, true).success());
+        assertFalse(MilestoneService.importPresetCode(null, true, "IML1:!!!!", () -> dir, true).success());
+        assertFalse(MilestoneService.importPresetCode(null, true, "IML1:", () -> dir, true).success());
+
+        // Disabled and permission-denied are checked before any decoding.
+        assertFalse(MilestoneService.importPresetCode(null, false, code, () -> dir, true).success());
+        assertFalse(MilestoneService.importPresetCode(null, true, code, () -> dir, false).success());
+    }
+
+    @Test
     void saveAndDeletePresetRejectDatapackOnlyIdsWhileApplyStillWorks(@TempDir Path dir) {
         Presets.reloadFrom(dir);
         Presets.setDatapackPresets(Presets.resolveDatapackPresets(Map.of(
