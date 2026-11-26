@@ -26,6 +26,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -103,6 +104,23 @@ class LangFilesTest {
         Map<String, String> en = read("en_us");
         Map<String, String> ja = read("ja_jp");
         assertEquals(en.keySet(), ja.keySet());
+    }
+
+    @Test
+    void filterFeatureKeysExistInBothLanguages() throws Exception {
+        Map<String, String> en = read("en_us");
+        Map<String, String> ja = read("ja_jp");
+        for (String key : List.of(
+                "message.itemmilestonelog.filter_empty_query",
+                "message.itemmilestonelog.filter_query_too_long",
+                "message.itemmilestonelog.filter_invalid_kind",
+                "message.itemmilestonelog.targets_filter_none",
+                "message.itemmilestonelog.list_filter_none")) {
+            assertNotNull(en.get(key), "Missing en_us key: " + key);
+            assertFalse(en.get(key).isBlank(), "Blank en_us key: " + key);
+            assertNotNull(ja.get(key), "Missing ja_jp key: " + key);
+            assertFalse(ja.get(key).isBlank(), "Blank ja_jp key: " + key);
+        }
     }
 
     @Test

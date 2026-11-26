@@ -111,16 +111,45 @@ public final class Pagination {
     }
 
     public static String listCommandPrefix() {
-        return ROOT_COMMAND + " list";
+        return listCommandPrefix("");
+    }
+
+    /**
+     * Adds active filter arguments to the {@code list} page-link prefix. An empty/blank suffix
+     * yields exactly the legacy {@link #listCommandPrefix()} string.
+     */
+    public static String listCommandPrefix(String filterSuffix) {
+        return withSuffix(ROOT_COMMAND + " list", filterSuffix);
     }
 
     public static String targetsCommandPrefix(TargetFilter filter) {
+        return targetsCommandPrefix(filter, "");
+    }
+
+    /**
+     * Adds active filter arguments to the {@code targets} page-link prefix. An empty/blank suffix
+     * yields exactly the legacy {@link #targetsCommandPrefix(TargetFilter)} string.
+     */
+    public static String targetsCommandPrefix(TargetFilter filter, String filterSuffix) {
         Objects.requireNonNull(filter, "filter");
-        return switch (filter) {
+        String base = switch (filter) {
             case ALL -> ROOT_COMMAND + " targets";
             case PENDING -> ROOT_COMMAND + " targets pending";
             case DONE -> ROOT_COMMAND + " targets done";
         };
+        return withSuffix(base, filterSuffix);
+    }
+
+    /** Page-link prefix for the (PR-2) cross-command search, quoted so phrases stay one argument. */
+    public static String searchCommandPrefix(String query, String scope) {
+        Objects.requireNonNull(query, "query");
+        Objects.requireNonNull(scope, "scope");
+        return ROOT_COMMAND + " search \"" + query + "\" " + scope;
+    }
+
+    private static String withSuffix(String base, String suffix) {
+        Objects.requireNonNull(suffix, "filterSuffix");
+        return suffix.isBlank() ? base : base + " " + suffix;
     }
 
     public static String firstsCommandPrefix() {

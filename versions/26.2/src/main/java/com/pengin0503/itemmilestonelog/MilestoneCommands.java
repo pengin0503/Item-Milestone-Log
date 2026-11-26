@@ -279,6 +279,9 @@ public final class MilestoneCommands {
             MilestoneData.PlayerData pd = MilestoneData.get(sp.level().getServer()).playerOrNull(sp.getUUID());
             return SharedSuggestionProvider.suggest(pd != null ? itemIdsOf(pd.targets) : Set.of(), builder);
         };
+        // F-150-2 (N96): vanilla suggestion provider for the four target kinds (D-150-5).
+        SuggestionProvider<CommandSourceStack> kindSuggestions = (ctx, builder) ->
+                SharedSuggestionProvider.suggest(List.of("tags", "items", "counts", "default"), builder);
         SuggestionProvider<CommandSourceStack> personalTargetCountSuggestions = (ctx, builder) -> {
             ServerPlayer sp = ctx.getSource().getPlayer();
             if (sp == null) {
@@ -632,19 +635,31 @@ public final class MilestoneCommands {
                                 .executes(ctx -> targets(ctx, Pagination.TargetFilter.PENDING, null))
                                 .then(argument("page", IntegerArgumentType.integer(1))
                                         .executes(ctx -> targets(ctx, Pagination.TargetFilter.PENDING,
-                                                IntegerArgumentType.getInteger(ctx, "page")))))
+                                                IntegerArgumentType.getInteger(ctx, "page"))))
+                                .then(filterBranch(Pagination.TargetFilter.PENDING, kindSuggestions))
+                                .then(kindBranch(Pagination.TargetFilter.PENDING, kindSuggestions)))
                         .then(literal("done")
                                 .executes(ctx -> targets(ctx, Pagination.TargetFilter.DONE, null))
                                 .then(argument("page", IntegerArgumentType.integer(1))
                                         .executes(ctx -> targets(ctx, Pagination.TargetFilter.DONE,
-                                                IntegerArgumentType.getInteger(ctx, "page")))))
+                                                IntegerArgumentType.getInteger(ctx, "page"))))
+                                .then(filterBranch(Pagination.TargetFilter.DONE, kindSuggestions))
+                                .then(kindBranch(Pagination.TargetFilter.DONE, kindSuggestions)))
                         .then(argument("page", IntegerArgumentType.integer(1))
                                 .executes(ctx -> targets(ctx, Pagination.TargetFilter.ALL,
-                                        IntegerArgumentType.getInteger(ctx, "page")))))
+                                        IntegerArgumentType.getInteger(ctx, "page"))))
+                        .then(filterBranch(Pagination.TargetFilter.ALL, kindSuggestions))
+                        .then(kindBranch(Pagination.TargetFilter.ALL, kindSuggestions)))
                 .then(literal("list")
                         .executes(ctx -> list(ctx, null))
                         .then(argument("page", IntegerArgumentType.integer(1))
-                                .executes(ctx -> list(ctx, IntegerArgumentType.getInteger(ctx, "page")))))
+                                .executes(ctx -> list(ctx, IntegerArgumentType.getInteger(ctx, "page"))))
+                        .then(literal("filter")
+                                .then(argument("query", StringArgumentType.string())
+                                        .executes(ctx -> list(ctx, null, StringArgumentType.getString(ctx, "query")))
+                                        .then(argument("page", IntegerArgumentType.integer(1))
+                                                .executes(ctx -> list(ctx, IntegerArgumentType.getInteger(ctx, "page"),
+                                                        StringArgumentType.getString(ctx, "query")))))))
                 .then(literal("preset")
                         .then(literal("list").executes(MilestoneCommands::presetList))
                         .then(literal("save")
@@ -992,14 +1007,139 @@ public final class MilestoneCommands {
         return respondWithUndoHint(ctx, MilestoneService.removeAllTargets(player(ctx)));
     }
 
+    // ------------------------------------------------- F-150-1 / F-150-2 filtering foundation
+
+    /** Parsed (and validated) filter criteria shared by the targets/list handlers. */
+    private record FilterCriteria(List<String> tokens,
+                                  @Nullable TargetFilterModel.Kind kind,
+                                  @Nullable String rawQuery,
+                                  @Nullable String kindArg) {
+        boolean active() {
+            return rawQuery != null || kindArg != null;
+        }
+
+        Set<TargetFilterModel.TargetView> defaults() {
+            Set<TargetFilterModel.TargetView> views = new LinkedHashSet<>();
+            for (TargetKey key : Tracker.defaultTargets()) {
+                views.add(new TargetFilterModel.TargetView(key.itemId(), key.count()));
+            }
+            return views;
+        }
+
+        String targetSuffix() {
+            if (!active()) {
+                return "";
+            }
+            StringBuilder suffix = new StringBuilder();
+            if (rawQuery != null) {
+                suffix.append("filter \"").append(rawQuery).append('"');
+            }
+            if (kindArg != null) {
+                if (suffix.length() > 0) {
+                    suffix.append(' ');
+                }
+                suffix.append("kind ").append(kindArg);
+            }
+            return suffix.toString();
+        }
+
+        String listSuffix() {
+            return rawQuery == null ? "" : "filter \"" + rawQuery + '"';
+        }
+    }
+
+    /** Returns null after sending the appropriate failure message when the query/kind is invalid. */
+    @Nullable
+    private static FilterCriteria parseCriteria(CommandContext<CommandSourceStack> ctx,
+                                                ServerPlayer player,
+                                                @Nullable String rawQuery,
+                                                @Nullable String kindArg) {
+        List<String> tokens = List.of();
+        if (rawQuery != null) {
+            try {
+                TargetFilterModel.validateQuery(rawQuery);
+                tokens = TargetFilterModel.tokens(rawQuery);
+            } catch (TargetFilterModel.QueryValidationException e) {
+                String key = e.issue() == TargetFilterModel.QueryIssue.EMPTY
+                        ? "message.itemmilestonelog.filter_empty_query"
+                        : "message.itemmilestonelog.filter_query_too_long";
+                fail(ctx, ServerLang.tr(player, key));
+                return null;
+            }
+        }
+        TargetFilterModel.Kind kind = null;
+        if (kindArg != null) {
+            kind = switch (kindArg) {
+                case "tags" -> TargetFilterModel.Kind.TAGS;
+                case "items" -> TargetFilterModel.Kind.ITEMS;
+                case "counts" -> TargetFilterModel.Kind.COUNTS;
+                case "default" -> TargetFilterModel.Kind.DEFAULT;
+                default -> null;
+            };
+            if (kind == null) {
+                fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.filter_invalid_kind"));
+                return null;
+            }
+        }
+        return new FilterCriteria(tokens, kind, rawQuery, kindArg);
+    }
+
+    /** Fresh {@code filter <query> [kind <kind>] [<page>]} branch for one record-state filter. */
+    private static LiteralArgumentBuilder<CommandSourceStack> filterBranch(
+            Pagination.TargetFilter filter, SuggestionProvider<CommandSourceStack> kindSuggestions) {
+        return literal("filter")
+                .then(argument("query", StringArgumentType.string())
+                        .executes(ctx -> targets(ctx, filter, null, StringArgumentType.getString(ctx, "query"), null))
+                        .then(argument("page", IntegerArgumentType.integer(1))
+                                .executes(ctx -> targets(ctx, filter, IntegerArgumentType.getInteger(ctx, "page"),
+                                        StringArgumentType.getString(ctx, "query"), null)))
+                        .then(literal("kind")
+                                .then(argument("kind", StringArgumentType.word())
+                                        .suggests(kindSuggestions)
+                                        .executes(ctx -> targets(ctx, filter, null,
+                                                StringArgumentType.getString(ctx, "query"),
+                                                StringArgumentType.getString(ctx, "kind")))
+                                        .then(argument("page", IntegerArgumentType.integer(1))
+                                                .executes(ctx -> targets(ctx, filter,
+                                                        IntegerArgumentType.getInteger(ctx, "page"),
+                                                        StringArgumentType.getString(ctx, "query"),
+                                                        StringArgumentType.getString(ctx, "kind")))))));
+    }
+
+    /** Fresh standalone {@code kind <kind> [<page>]} branch for one record-state filter. */
+    private static LiteralArgumentBuilder<CommandSourceStack> kindBranch(
+            Pagination.TargetFilter filter, SuggestionProvider<CommandSourceStack> kindSuggestions) {
+        return literal("kind")
+                .then(argument("kind", StringArgumentType.word())
+                        .suggests(kindSuggestions)
+                        .executes(ctx -> targets(ctx, filter, null, null, StringArgumentType.getString(ctx, "kind")))
+                        .then(argument("page", IntegerArgumentType.integer(1))
+                                .executes(ctx -> targets(ctx, filter, IntegerArgumentType.getInteger(ctx, "page"),
+                                        null, StringArgumentType.getString(ctx, "kind")))));
+    }
+
     private static int targets(CommandContext<CommandSourceStack> ctx,
                                Pagination.TargetFilter filter,
                                @Nullable Integer page) throws CommandSyntaxException {
+        return targets(ctx, filter, page, null, null);
+    }
+
+    private static int targets(CommandContext<CommandSourceStack> ctx,
+                               Pagination.TargetFilter filter,
+                               @Nullable Integer page,
+                               @Nullable String rawQuery,
+                               @Nullable String kindArg) throws CommandSyntaxException {
         ServerPlayer player = player(ctx);
+        FilterCriteria criteria = parseCriteria(ctx, player, rawQuery, kindArg);
+        if (criteria == null) {
+            return 0;
+        }
         MilestoneData.PlayerData pd = dataOrNull(player);
         Set<TargetKey> targets = Tracker.effectiveTargets(pd);
         if (targets.isEmpty()) {
-            return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.no_targets"));
+            return send(ctx, ServerLang.tr(player, criteria.active()
+                    ? "message.itemmilestonelog.targets_filter_none"
+                    : "message.itemmilestonelog.no_targets"));
         }
         Map<TargetKey, MilestoneRecord> records = pd != null ? pd.records : Map.of();
         List<TargetKey> sorted = new ArrayList<>();
@@ -1011,7 +1151,16 @@ public final class MilestoneCommands {
                 sorted.add(key);
             }
         }
+        // F-150-1 / F-150-2: shared keyword + kind filtering before sorting and slicing.
+        if (criteria.active()) {
+            sorted = new ArrayList<>(TargetFilterModel.apply(sorted,
+                    key -> new TargetFilterModel.TargetView(key.itemId(), key.count()),
+                    criteria.tokens(), criteria.kind(), criteria.defaults()));
+        }
         if (sorted.isEmpty()) {
+            if (criteria.active()) {
+                return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.targets_filter_none"));
+            }
             String emptyKey = filter == Pagination.TargetFilter.PENDING
                     ? "message.itemmilestonelog.targets_pending_none"
                     : "message.itemmilestonelog.targets_done_none";
@@ -1051,7 +1200,8 @@ public final class MilestoneCommands {
             case PENDING -> "message.itemmilestonelog.targets_pending_header";
             case DONE -> "message.itemmilestonelog.targets_done_header";
         };
-        ctx.getSource().sendSuccess(() -> ServerLang.tr(player, headerKey, sorted.size()), false);
+        int headerCount = sorted.size();
+        ctx.getSource().sendSuccess(() -> ServerLang.tr(player, headerKey, headerCount), false);
         for (TargetKey key : displayed) {
             MilestoneRecord rec = records.get(key);
             Component line;
@@ -1075,20 +1225,41 @@ public final class MilestoneCommands {
             ctx.getSource().sendSuccess(() -> line, false);
         }
         if (slice != null) {
-            sendPageFooter(ctx.getSource(), slice, Pagination.targetsCommandPrefix(filter));
+            sendPageFooter(ctx.getSource(), slice, Pagination.targetsCommandPrefix(filter, criteria.targetSuffix()));
         }
         return displayed.size();
     }
 
     private static int list(CommandContext<CommandSourceStack> ctx, @Nullable Integer page) throws CommandSyntaxException {
+        return list(ctx, page, null);
+    }
+
+    private static int list(CommandContext<CommandSourceStack> ctx, @Nullable Integer page,
+                            @Nullable String rawQuery) throws CommandSyntaxException {
         ServerPlayer player = player(ctx);
+        FilterCriteria criteria = parseCriteria(ctx, player, rawQuery, null);
+        if (criteria == null) {
+            return 0;
+        }
         MilestoneData.PlayerData pd = dataOrNull(player);
         if (pd == null || pd.records.isEmpty()) {
-            return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.no_records"));
+            return send(ctx, ServerLang.tr(player, criteria.active()
+                    ? "message.itemmilestonelog.list_filter_none"
+                    : "message.itemmilestonelog.no_records"));
         }
         List<Map.Entry<TargetKey, MilestoneRecord>> entries = new ArrayList<>(pd.records.entrySet());
         entries.sort(Comparator.comparingInt((Map.Entry<TargetKey, MilestoneRecord> e) -> e.getValue().playTicks())
                 .thenComparing(Map.Entry::getKey));
+
+        // F-150-1: shared keyword filtering of record keys before slicing (records have no kind filter).
+        if (criteria.active()) {
+            entries = new ArrayList<>(TargetFilterModel.apply(entries,
+                    e -> new TargetFilterModel.TargetView(e.getKey().itemId(), e.getKey().count()),
+                    criteria.tokens(), null, Set.of()));
+        }
+        if (entries.isEmpty()) {
+            return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.list_filter_none"));
+        }
 
         Pagination.PageSlice<Map.Entry<TargetKey, MilestoneRecord>> slice = null;
         List<Map.Entry<TargetKey, MilestoneRecord>> displayed;
@@ -1103,7 +1274,8 @@ public final class MilestoneCommands {
             displayed = entries;
         }
 
-        ctx.getSource().sendSuccess(() -> ServerLang.tr(player, "message.itemmilestonelog.records_header", entries.size()), false);
+        int headerCount = entries.size();
+        ctx.getSource().sendSuccess(() -> ServerLang.tr(player, "message.itemmilestonelog.records_header", headerCount), false);
         ZoneId zone = Config.displayTimeZone();
         for (var e : displayed) {
             Component line = ServerLang.tr(player, "message.itemmilestonelog.target_done",
@@ -1111,7 +1283,7 @@ public final class MilestoneCommands {
             ctx.getSource().sendSuccess(() -> line, false);
         }
         if (slice != null) {
-            sendPageFooter(ctx.getSource(), slice, Pagination.listCommandPrefix());
+            sendPageFooter(ctx.getSource(), slice, Pagination.listCommandPrefix(criteria.listSuffix()));
         }
         return displayed.size();
     }

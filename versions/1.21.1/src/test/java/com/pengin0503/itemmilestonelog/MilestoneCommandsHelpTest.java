@@ -5,7 +5,10 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.ParseResults;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.suggestion.Suggestion;
+import com.mojang.brigadier.suggestion.SuggestionsBuilder;
 import com.mojang.brigadier.tree.ArgumentCommandNode;
 import com.mojang.brigadier.tree.CommandNode;
 import net.minecraft.commands.CommandSourceStack;
@@ -183,6 +186,94 @@ class MilestoneCommandsHelpTest {
             assertTrue(parse.getExceptions().isEmpty(), line + ": " + parse.getExceptions());
             assertNotNull(parse.getContext().getCommand(), line);
             assertEquals(line.substring("milestonelog renametag ".length()), parsedArgument(parse, "tags"), line);
+        }
+    }
+
+    @Test
+    void filterAndKindBranchesAreRegisteredAndLegacyPageParsingIsUnchanged() {
+        CommandDispatcher<CommandSourceStack> dispatcher = buildDispatcher(src -> true);
+        CommandNode<CommandSourceStack> root = dispatcher.getRoot().getChild("milestonelog");
+        assertNotNull(root);
+        CommandNode<CommandSourceStack> targets = root.getChild("targets");
+        assertNotNull(targets);
+        CommandNode<CommandSourceStack> list = root.getChild("list");
+        assertNotNull(list);
+
+        // Existing page slots stay integer arguments with execute handlers (D-150-4).
+        for (CommandNode<CommandSourceStack> pageNode : List.of(
+                targets.getChild("page"), targets.getChild("pending").getChild("page"),
+                targets.getChild("done").getChild("page"), list.getChild("page"))) {
+            assertNotNull(pageNode, "page argument must still be registered");
+            assertTrue(pageNode instanceof ArgumentCommandNode<?, ?>);
+            assertEquals(IntegerArgumentType.class,
+                    ((ArgumentCommandNode<CommandSourceStack, ?>) pageNode).getType().getClass());
+            assertNotNull(pageNode.getCommand(), "page argument must still execute");
+        }
+
+        // New filter/kind branches are additive siblings on targets, pending and done.
+        for (CommandNode<CommandSourceStack> branch : List.of(
+                targets, targets.getChild("pending"), targets.getChild("done"))) {
+            CommandNode<CommandSourceStack> filter = branch.getChild("filter");
+            assertNotNull(filter, "filter branch must be registered");
+            assertNull(filter.getCommand(), "bare filter must not execute");
+            CommandNode<CommandSourceStack> query = filter.getChild("query");
+            assertNotNull(query);
+            assertEquals(StringArgumentType.class,
+                    ((ArgumentCommandNode<CommandSourceStack, ?>) query).getType().getClass());
+            assertNotNull(query.getCommand(), "filter <query> must execute");
+            assertNotNull(query.getChild("page"));
+            assertNotNull(query.getChild("page").getCommand());
+
+            CommandNode<CommandSourceStack> filterKind = query.getChild("kind").getChild("kind");
+            assertNotNull(filterKind, "filter <query> kind <kind> must be registered");
+            assertEquals(StringArgumentType.class,
+                    ((ArgumentCommandNode<CommandSourceStack, ?>) filterKind).getType().getClass());
+            assertNotNull(filterKind.getCommand());
+            assertNotNull(filterKind.getChild("page"));
+            assertNotNull(filterKind.getChild("page").getCommand());
+
+            CommandNode<CommandSourceStack> standaloneKind = branch.getChild("kind").getChild("kind");
+            assertNotNull(standaloneKind, "kind <kind> must be registered");
+            assertEquals(StringArgumentType.class,
+                    ((ArgumentCommandNode<CommandSourceStack, ?>) standaloneKind).getType().getClass());
+            assertNotNull(standaloneKind.getCommand());
+            assertNotNull(standaloneKind.getChild("page"));
+            assertNotNull(standaloneKind.getChild("page").getCommand());
+
+            // Four suggested values, in the documented order (D-150-5).
+            try {
+                List<String> offered = standaloneKind.listSuggestions(
+                        dispatcher.parse("milestonelog targets kind tags", null).getContext()
+                                .build("milestonelog targets kind tags"),
+                        new SuggestionsBuilder("", 0)).get().getList().stream()
+                        .map(Suggestion::getText).toList();
+                assertEquals(Set.of("tags", "items", "counts", "default"), Set.copyOf(offered));
+            } catch (Exception e) {
+                throw new AssertionError("kind suggestions failed", e);
+            }
+        }
+
+        CommandNode<CommandSourceStack> listQuery = list.getChild("filter").getChild("query");
+        assertNotNull(listQuery, "list filter <query> must be registered");
+        assertNotNull(listQuery.getCommand());
+        assertNull(listQuery.getChild("kind"), "list must not take a kind filter");
+        assertNotNull(listQuery.getChild("page"));
+        assertNotNull(listQuery.getChild("page").getCommand());
+
+        // Legacy forms and new filtered forms all parse completely.
+        for (String line : List.of(
+                "milestonelog targets 2",
+                "milestonelog targets pending 2",
+                "milestonelog targets done",
+                "milestonelog list 2",
+                "milestonelog targets filter \"iron block\"",
+                "milestonelog targets pending filter iron kind tags 2",
+                "milestonelog targets done kind counts",
+                "milestonelog list filter \"iron block\" 2")) {
+            ParseResults<CommandSourceStack> parse = dispatcher.parse(line, null);
+            assertFalse(parse.getReader().canRead(), "must fully parse: " + line);
+            assertTrue(parse.getExceptions().isEmpty(), line + ": " + parse.getExceptions());
+            assertNotNull(parse.getContext().getCommand(), line);
         }
     }
 
