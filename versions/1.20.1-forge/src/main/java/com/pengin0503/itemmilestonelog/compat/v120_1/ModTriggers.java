@@ -5,6 +5,7 @@ import net.minecraft.advancements.CriteriaTriggers;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.common.util.FakePlayer;
 import net.minecraftforge.eventbus.api.IEventBus;
+import net.minecraftforge.fml.event.lifecycle.FMLCommonSetupEvent;
 
 import javax.annotation.Nullable;
 
@@ -13,7 +14,11 @@ import javax.annotation.Nullable;
  *
  * <p>1.20.1 registers triggers globally via the public {@code CriteriaTriggers.register(...)}
  * (there is no {@code Registries.TRIGGER_TYPE}); no access transformer is needed. The
- * {@link IEventBus} parameter is kept only to match the shared {@code TriggerCompat} signature.
+ * registration happens on the main thread from {@link FMLCommonSetupEvent#enqueueWork}:
+ * {@code @Mod} constructors run in parallel and vanilla's {@code CriteriaTriggers.CRITERIA}
+ * is a plain {@code HashMap}, so registering directly from the constructor races with other
+ * mods. The {@link IEventBus} parameter is kept to match the shared {@code TriggerCompat}
+ * signature.
  */
 public final class ModTriggers {
     public static final String MILESTONE_RECORDED_PATH = "milestone_recorded";
@@ -30,7 +35,16 @@ public final class ModTriggers {
             return;
         }
         registered = true;
-        CriteriaTriggers.register(MILESTONE_RECORDED);
+        modEventBus.addListener(ModTriggers::onCommonSetup);
+    }
+
+    /**
+     * 1.20.1 runs {@code @Mod} constructors in parallel. {@link FMLCommonSetupEvent} is still a
+     * parallel dispatch event, but {@code enqueueWork} runs the registration on the main thread
+     * after every mod constructor and after parallel dispatch has finished.
+     */
+    private static void onCommonSetup(FMLCommonSetupEvent event) {
+        event.enqueueWork(() -> CriteriaTriggers.register(MILESTONE_RECORDED));
     }
 
     /**

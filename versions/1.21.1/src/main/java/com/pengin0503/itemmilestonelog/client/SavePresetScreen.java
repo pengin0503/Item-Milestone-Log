@@ -11,6 +11,7 @@ import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
+import org.lwjgl.glfw.GLFW;
 
 import javax.annotation.Nullable;
 
@@ -22,6 +23,8 @@ public final class SavePresetScreen extends Screen {
     private EditBox nameBox;
     private Button saveButton;
     private String currentName = "";
+    // #116: the overwrite notice depends only on currentName/presets, not on the frame.
+    private Component cachedNoticeLabel = Component.translatable("gui.itemmilestonelog.save_preset.name_label");
 
     public SavePresetScreen(PresetListScreen parent) {
         super(Component.translatable("gui.itemmilestonelog.save_preset.title"));
@@ -110,6 +113,20 @@ public final class SavePresetScreen extends Screen {
         boolean overwrite = valid && matched != null && !matched.builtin();
         saveButton.setMessage(Component.translatable(
                 overwrite ? "gui.itemmilestonelog.save_preset.overwrite" : "gui.itemmilestonelog.save_preset.save"));
+        this.cachedNoticeLabel = noticeLabel(trimmed, matched);
+    }
+
+    /** The line above the name box: an overwrite notice for an existing custom preset, else the label. */
+    private static Component noticeLabel(String trimmed, @Nullable PresetEntry matched) {
+        if (Presets.isValidId(trimmed) && matched != null && !matched.builtin()
+                && !ClientMilestoneHandler.isReadOnlyPreset(trimmed)) {
+            String rawName = matched.displayName();
+            String existingDisplayName = (rawName == null || rawName.isEmpty()) ? matched.id() : rawName;
+            return Component.translatable(
+                    "gui.itemmilestonelog.save_preset.overwrite_notice",
+                    Component.literal(existingDisplayName));
+        }
+        return Component.translatable("gui.itemmilestonelog.save_preset.name_label");
     }
 
     private void submit() {
@@ -120,6 +137,15 @@ public final class SavePresetScreen extends Screen {
         }
         ClientMilestoneHandler.sendAction(MilestoneActionPayload.Action.SAVE_PRESET, trimmed);
         onClose();
+    }
+
+    @Override
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER) {
+            submit();
+            return true;
+        }
+        return super.keyPressed(keyCode, scanCode, modifiers);
     }
 
     @Override
@@ -135,19 +161,7 @@ public final class SavePresetScreen extends Screen {
 
         McCompat.text().drawCenteredString(guiGraphics, this.font, this.title, this.width / 2, this.height / 2 - 44, 0xFFFFFFFF);
 
-        String trimmed = currentName.trim();
-        PresetEntry matched = findMatchingPreset(trimmed);
-        Component label;
-        if (Presets.isValidId(trimmed) && matched != null && !matched.builtin()
-                && !ClientMilestoneHandler.isReadOnlyPreset(trimmed)) {
-            String rawName = matched.displayName();
-            String existingDisplayName = (rawName == null || rawName.isEmpty()) ? matched.id() : rawName;
-            label = Component.translatable(
-                    "gui.itemmilestonelog.save_preset.overwrite_notice",
-                    Component.literal(existingDisplayName));
-        } else {
-            label = Component.translatable("gui.itemmilestonelog.save_preset.name_label");
-        }
+        Component label = cachedNoticeLabel;
         int maxWidth = Math.max(40, this.width - 20);
         if (this.font.width(label) > maxWidth) {
             String trimmedLabel = this.font.plainSubstrByWidth(label.getString(), maxWidth);

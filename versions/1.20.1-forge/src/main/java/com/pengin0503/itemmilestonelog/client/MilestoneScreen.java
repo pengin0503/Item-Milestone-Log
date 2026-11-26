@@ -120,6 +120,8 @@ public final class MilestoneScreen extends Screen {
 
     @Override
     protected void init() {
+        // #125: keep the scroll position across a resize or a return from a child screen.
+        double previousScroll = listWidget != null ? McCompat.scroll().getScrollAmount(listWidget) : 0.0;
         int gap = 4;
         int maxRowWidth = Math.min(500, this.width - 16);
 
@@ -190,9 +192,12 @@ public final class MilestoneScreen extends Screen {
                 .build());
         recordedTabButton.active = (viewMode != ViewMode.RECORDED);
 
-        // Scrollable list
-        listWidget = addRenderableWidget(new MilestoneListWidget(this.minecraft, this.width, listHeight, listTop, 28));
+        // Scrollable list. 1.20.1's AbstractSelectionList takes the screen height as its third
+        // argument (it paints the footer from y1 to height) and the list's top/bottom separately.
+        listWidget = addRenderableWidget(new MilestoneListWidget(
+                this.minecraft, this.width, this.height, listTop, listHeight, 28));
         populateList();
+        listWidget.setScrollAmount(previousScroll);
 
         // Bottom action buttons
         int bottomRowY = this.height - 24;
@@ -247,6 +252,10 @@ public final class MilestoneScreen extends Screen {
             this.viewMode = mode;
             this.feedbackMessage = null;
             rebuildWidgets();
+            // #125 preserved the position for resize/child returns; a view switch starts at the top.
+            if (listWidget != null) {
+                listWidget.setScrollAmount(0.0);
+            }
         }
     }
 
@@ -315,6 +324,8 @@ public final class MilestoneScreen extends Screen {
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
+        // 1.20.1's Screen.render() does not call renderBackground(); every 1.20.1 screen does it.
+        this.renderBackground(guiGraphics);
         super.render(guiGraphics, mouseX, mouseY, partialTick);
 
         // Title
@@ -334,7 +345,7 @@ public final class MilestoneScreen extends Screen {
             Component emptyText = (viewMode == ViewMode.TARGETS)
                     ? Component.translatable("gui.itemmilestonelog.empty_targets")
                     : Component.translatable("gui.itemmilestonelog.empty_records");
-            int centerY = listWidget.getTop() + listWidget.getHeight() / 2 - 4;
+            int centerY = (listWidget.getTop() + listWidget.getBottom()) / 2 - 4;
             guiGraphics.drawCenteredString(this.font, emptyText, this.width / 2, centerY, 0xFFA0A0A0);
         }
 
@@ -357,10 +368,10 @@ public final class MilestoneScreen extends Screen {
     // --------------------------------------------------------- list widget
 
     private final class MilestoneListWidget extends ContainerObjectSelectionList<MilestoneRow> {
-        public MilestoneListWidget(Minecraft mc, int width, int height, int y, int itemHeight) {
-            // 1.20.1 takes explicit top/bottom y coordinates; the 1.21.x overload derived
-            // the bottom from the height.
-            super(mc, width, height, y, y + height, itemHeight);
+        public MilestoneListWidget(Minecraft mc, int width, int screenHeight, int y, int listHeight, int itemHeight) {
+            // 1.20.1 takes the screen height (for the footer background) and explicit top/bottom
+            // y coordinates; the 1.21.x overload derived the bottom from the list height.
+            super(mc, width, screenHeight, y, y + listHeight, itemHeight);
         }
 
         public void clearAllEntries() {
@@ -391,6 +402,11 @@ public final class MilestoneScreen extends Screen {
         private final MilestoneRecord recordedRecord;
         @Nullable
         private final Integer currentProgress;
+        // #116: these are immutable for the lifetime of a row (rows are rebuilt by updateData()).
+        // Formatting the date/status and translating the name in render() allocated on every frame.
+        private final String nameText;
+        private final String statusText;
+        private final int statusColor;
         private final List<Button> rowButtons = new ArrayList<>();
         @Nullable
         private final Button resetButton;
@@ -462,6 +478,27 @@ public final class MilestoneScreen extends Screen {
             } else {
                 this.removeOrDefaultButton = null;
             }
+
+            Component nameComponent = currentProgress != null
+                    ? Component.translatable("message.itemmilestonelog.target_progress", displayName, currentProgress)
+                    : displayName;
+            String nameStr = nameComponent.getString();
+            if (defaultTarget && removeOrDefaultButton != null && removeOrDefaultButton.active) {
+                nameStr = nameStr + " [" + Component.translatable("gui.itemmilestonelog.badge.default").getString() + "]";
+            }
+            this.nameText = nameStr;
+
+            if (recordedRecord != null) {
+                String statusKey = ClientMilestoneHandler.isWorldFirst(targetKey)
+                        ? "gui.itemmilestonelog.status.recorded_world_first"
+                        : "gui.itemmilestonelog.status.recorded";
+                this.statusText = Component.translatable(statusKey,
+                        Playtime.formatRecordComponent(recordedRecord, java.time.ZoneId.systemDefault(), Playtime.CLIENT)).getString();
+                this.statusColor = 0xFF55FF55;
+            } else {
+                this.statusText = Component.translatable("gui.itemmilestonelog.status.pending").getString();
+                this.statusColor = 0xFFA0A0A0;
+            }
         }
 
         @Override
@@ -490,30 +527,10 @@ public final class MilestoneScreen extends Screen {
             int textX = left + 26;
             int maxTextWidth = Math.max(40, rightEdge - textX - 4);
 
-            Component nameComponent = currentProgress != null
-                    ? Component.translatable("message.itemmilestonelog.target_progress", displayName, currentProgress)
-                    : displayName;
-            String nameStr = nameComponent.getString();
-            if (defaultTarget && removeOrDefaultButton != null && removeOrDefaultButton.active) {
-                nameStr = nameStr + " [" + Component.translatable("gui.itemmilestonelog.badge.default").getString() + "]";
-            }
-            String trimmedName = MilestoneScreen.this.font.plainSubstrByWidth(nameStr, maxTextWidth);
+            String trimmedName = MilestoneScreen.this.font.plainSubstrByWidth(nameText, maxTextWidth);
             guiGraphics.drawString(MilestoneScreen.this.font, trimmedName, textX, top + 4, 0xFFFFFFFF, false);
 
-            Component statusComponent;
-            int statusColor;
-            if (recordedRecord != null) {
-                String statusKey = ClientMilestoneHandler.isWorldFirst(targetKey)
-                        ? "gui.itemmilestonelog.status.recorded_world_first"
-                        : "gui.itemmilestonelog.status.recorded";
-                statusComponent = Component.translatable(statusKey,
-                        Playtime.formatRecordComponent(recordedRecord, java.time.ZoneId.systemDefault(), Playtime.CLIENT));
-                statusColor = 0xFF55FF55;
-            } else {
-                statusComponent = Component.translatable("gui.itemmilestonelog.status.pending");
-                statusColor = 0xFFA0A0A0;
-            }
-            String trimmedStatus = MilestoneScreen.this.font.plainSubstrByWidth(statusComponent.getString(), maxTextWidth);
+            String trimmedStatus = MilestoneScreen.this.font.plainSubstrByWidth(statusText, maxTextWidth);
             guiGraphics.drawString(MilestoneScreen.this.font, trimmedStatus, textX, top + 15, statusColor, false);
         }
 

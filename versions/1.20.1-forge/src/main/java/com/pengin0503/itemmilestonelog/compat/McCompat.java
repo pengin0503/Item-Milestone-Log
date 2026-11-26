@@ -14,7 +14,6 @@ public final class McCompat {
     private static final TriggerCompat TRIGGERS = load(TriggerCompat.class, "TriggerCompatImpl");
     private static final RegistryCompat REGISTRIES = load(RegistryCompat.class, "RegistryCompatImpl");
     private static final NbtCompat NBT = load(NbtCompat.class, "NbtCompatImpl");
-    private static final GameTestCompat GAME_TEST = load(GameTestCompat.class, "GameTestCompatImpl");
     private static final ReloadCompat RELOAD = load(ReloadCompat.class, "ReloadCompatImpl");
     private static final DataCompat DATA = load(DataCompat.class, "DataCompatImpl");
     private static final ChatCompat CHAT = load(ChatCompat.class, "ChatCompatImpl");
@@ -34,10 +33,6 @@ public final class McCompat {
 
     public static NbtCompat nbt() {
         return NBT;
-    }
-
-    public static GameTestCompat gameTest() {
-        return GAME_TEST;
     }
 
     public static ReloadCompat reload() {

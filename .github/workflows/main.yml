@@ -1030,6 +1030,12 @@ jobs:
         working-directory: versions/1.20.1-forge
         run: ./gradlew --no-daemon test build
 
+      # The mod declares forge_version_range=[47.3.0,), so also compile against the
+      # minimum declared Forge version. The normal build above uses 47.4.29.
+      - name: Compile against the minimum declared Forge 47.3.0
+        working-directory: versions/1.20.1-forge
+        run: ./gradlew --no-daemon compileJava -Pforge_version=47.3.0
+
       - name: Upload the release jar
         uses: actions/upload-artifact@v6
         with:

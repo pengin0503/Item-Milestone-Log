@@ -117,6 +117,8 @@ public final class MilestoneScreen extends Screen {
 
     @Override
     protected void init() {
+        // #125: keep the scroll position across a resize or a return from a child screen.
+        double previousScroll = listWidget != null ? listWidget.scrollAmount() : 0.0;
         int gap = 4;
         int maxRowWidth = Math.min(500, this.width - 16);
 
@@ -186,6 +188,7 @@ public final class MilestoneScreen extends Screen {
 
         listWidget = addRenderableWidget(new MilestoneListWidget(this.minecraft, this.width, listHeight, listTop, 28));
         populateList();
+        listWidget.setScrollAmount(previousScroll);
 
         int bottomRowY = this.height - 24;
         if (splitActionRows) {
@@ -238,6 +241,10 @@ public final class MilestoneScreen extends Screen {
             this.viewMode = mode;
             this.feedbackMessage = null;
             rebuildWidgets();
+            // #125 preserved the position for resize/child returns; a view switch starts at the top.
+            if (listWidget != null) {
+                listWidget.setScrollAmount(0.0);
+            }
         }
     }
 
@@ -374,6 +381,11 @@ public final class MilestoneScreen extends Screen {
         private final MilestoneRecord recordedRecord;
         @Nullable
         private final Integer currentProgress;
+        // #116: these are immutable for the lifetime of a row (rows are rebuilt by updateData()).
+        // Formatting the date/status and translating the name in render() allocated on every frame.
+        private final String nameText;
+        private final String statusText;
+        private final int statusColor;
         private final List<Button> rowButtons = new ArrayList<>();
         @Nullable
         private final Button resetButton;
@@ -445,6 +457,27 @@ public final class MilestoneScreen extends Screen {
             } else {
                 this.removeOrDefaultButton = null;
             }
+
+            Component nameComponent = currentProgress != null
+                    ? Component.translatable("message.itemmilestonelog.target_progress", displayName, currentProgress)
+                    : displayName;
+            String nameStr = nameComponent.getString();
+            if (defaultTarget && removeOrDefaultButton != null && removeOrDefaultButton.active) {
+                nameStr = nameStr + " [" + Component.translatable("gui.itemmilestonelog.badge.default").getString() + "]";
+            }
+            this.nameText = nameStr;
+
+            if (recordedRecord != null) {
+                String statusKey = ClientMilestoneHandler.isWorldFirst(targetKey)
+                        ? "gui.itemmilestonelog.status.recorded_world_first"
+                        : "gui.itemmilestonelog.status.recorded";
+                this.statusText = Component.translatable(statusKey,
+                        Playtime.formatRecordComponent(recordedRecord, java.time.ZoneId.systemDefault(), Playtime.CLIENT)).getString();
+                this.statusColor = 0xFF55FF55;
+            } else {
+                this.statusText = Component.translatable("gui.itemmilestonelog.status.pending").getString();
+                this.statusColor = 0xFFA0A0A0;
+            }
         }
 
         @Override
@@ -476,30 +509,10 @@ public final class MilestoneScreen extends Screen {
             int textX = left + 26;
             int maxTextWidth = Math.max(40, rightEdge - textX - 4);
 
-            Component nameComponent = currentProgress != null
-                    ? Component.translatable("message.itemmilestonelog.target_progress", displayName, currentProgress)
-                    : displayName;
-            String nameStr = nameComponent.getString();
-            if (defaultTarget && removeOrDefaultButton != null && removeOrDefaultButton.active) {
-                nameStr = nameStr + " [" + Component.translatable("gui.itemmilestonelog.badge.default").getString() + "]";
-            }
-            String trimmedName = MilestoneScreen.this.font.plainSubstrByWidth(nameStr, maxTextWidth);
+            String trimmedName = MilestoneScreen.this.font.plainSubstrByWidth(nameText, maxTextWidth);
             graphics.text(MilestoneScreen.this.font, trimmedName, textX, top + 2, 0xFFFFFFFF, false);
 
-            Component statusComponent;
-            int statusColor;
-            if (recordedRecord != null) {
-                String statusKey = ClientMilestoneHandler.isWorldFirst(targetKey)
-                        ? "gui.itemmilestonelog.status.recorded_world_first"
-                        : "gui.itemmilestonelog.status.recorded";
-                statusComponent = Component.translatable(statusKey,
-                        Playtime.formatRecordComponent(recordedRecord, java.time.ZoneId.systemDefault(), Playtime.CLIENT));
-                statusColor = 0xFF55FF55;
-            } else {
-                statusComponent = Component.translatable("gui.itemmilestonelog.status.pending");
-                statusColor = 0xFFA0A0A0;
-            }
-            String trimmedStatus = MilestoneScreen.this.font.plainSubstrByWidth(statusComponent.getString(), maxTextWidth);
+            String trimmedStatus = MilestoneScreen.this.font.plainSubstrByWidth(statusText, maxTextWidth);
             graphics.text(MilestoneScreen.this.font, trimmedStatus, textX, top + 13, statusColor, false);
         }
 

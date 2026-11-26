@@ -6,6 +6,7 @@ import com.pengin0503.itemmilestonelog.ItemMilestoneLog;
 import com.pengin0503.itemmilestonelog.network.ModNetworking;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
@@ -16,7 +17,9 @@ import net.minecraftforge.client.event.RegisterKeyMappingsEvent;
 import net.minecraftforge.client.event.ScreenEvent;
 import net.minecraftforge.client.settings.KeyConflictContext;
 import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.event.TagsUpdatedEvent;
 import net.minecraftforge.event.TickEvent;
+import net.minecraftforge.eventbus.api.EventPriority;
 import net.minecraftforge.event.entity.player.ItemTooltipEvent;
 import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
 
@@ -70,6 +73,9 @@ public final class ItemMilestoneLogClient {
                 .addListener(ItemMilestoneLogClient::onRegisterKeyMappings);
         MinecraftForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onClientTick);
         MinecraftForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onScreenKeyPressed);
+        MinecraftForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onScreenMousePressed);
+        // F42: run after Tracker's NORMAL-priority listener has rebuilt the tag cache.
+        MinecraftForge.EVENT_BUS.addListener(EventPriority.LOW, ItemMilestoneLogClient::onTagsUpdated);
         MinecraftForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onItemTooltip);
         MinecraftForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onClientLoggingOut);
     }
@@ -125,13 +131,35 @@ public final class ItemMilestoneLogClient {
                 InputConstants.getKey(event.getKeyCode(), event.getScanCode()))) {
             return;
         }
-        if (!(event.getScreen() instanceof AbstractContainerScreen<?> screen)) {
+        addHoveredFromScreen(event.getScreen());
+    }
+
+    /**
+     * F41: the same hovered-slot action for a mouse button assigned to {@code ADD_HOVERED_MAPPING}.
+     * A KeyMapping can be bound to a mouse button, but mouse presses only produce
+     * {@link ScreenEvent.MouseButtonPressed.Post}, not {@link ScreenEvent.KeyPressed.Post}.
+     */
+    private static void onScreenMousePressed(ScreenEvent.MouseButtonPressed.Post event) {
+        if (!ADD_HOVERED_MAPPING.isActiveAndMatches(
+                InputConstants.Type.MOUSE.getOrCreate(event.getButton()))) {
             return;
         }
-        Slot slot = screen.getSlotUnderMouse();
+        addHoveredFromScreen(event.getScreen());
+    }
+
+    private static void addHoveredFromScreen(Screen screen) {
+        if (!(screen instanceof AbstractContainerScreen<?> container)) {
+            return;
+        }
+        Slot slot = container.getSlotUnderMouse();
         if (slot == null || !slot.hasItem()) {
             return;
         }
         ClientMilestoneHandler.addHoveredTarget(slot.getItem());
+    }
+
+    /** F42: rebuild the tooltip index after the client's tag bindings change. */
+    private static void onTagsUpdated(TagsUpdatedEvent event) {
+        ClientMilestoneHandler.onTagsUpdated();
     }
 }

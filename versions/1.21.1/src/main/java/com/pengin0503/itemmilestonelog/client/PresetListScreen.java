@@ -31,8 +31,6 @@ public final class PresetListScreen extends Screen {
     // Created by McCompat.lists(): the list subclass that positions the scrollbar is per profile.
     private ContainerObjectSelectionList<PresetRow> listWidget;
 
-    private boolean awaitingApplyFeedback = false;
-
     public PresetListScreen(MilestoneScreen parent) {
         super(Component.translatable("gui.itemmilestonelog.presets.title"));
         this.parent = parent;
@@ -41,8 +39,7 @@ public final class PresetListScreen extends Screen {
 
     public void updateData(SyncMilestonesPayload newData) {
         double prevScroll = listWidget != null ? McCompat.scroll().getScrollAmount(listWidget) : 0.0;
-        this.parent.updateData(newData, awaitingApplyFeedback);
-        this.awaitingApplyFeedback = false;
+        this.parent.updateData(newData, false);
         this.data = newData;
         if (newData.feedback() != null) {
             this.feedbackMessage = newData.feedback();
@@ -186,7 +183,6 @@ public final class PresetListScreen extends Screen {
             this.applyButton = Button.builder(
                             Component.translatable("gui.itemmilestonelog.presets.apply"),
                             btn -> {
-                                PresetListScreen.this.awaitingApplyFeedback = true;
                                 ClientMilestoneHandler.sendAction(MilestoneActionPayload.Action.APPLY_PRESET, entry.id());
                                 if (PresetListScreen.this.minecraft != null) {
                                     PresetListScreen.this.minecraft.setScreen(parent);
