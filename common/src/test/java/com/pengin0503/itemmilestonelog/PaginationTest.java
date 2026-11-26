@@ -115,6 +115,10 @@ class PaginationTest {
                 Pagination.pageCommand(Pagination.targetsCommandPrefix(Pagination.TargetFilter.DONE), 4));
         assertEquals("/milestonelog firsts 1",
                 Pagination.pageCommand(Pagination.firstsCommandPrefix(), 1));
+        assertEquals("/milestonelog presettop demo 2",
+                Pagination.pageCommand(Pagination.presettopCommandPrefix("demo"), 2));
+        assertEquals("/milestonelog firsts top 3",
+                Pagination.pageCommand(Pagination.firstsTopCommandPrefix(), 3));
         assertEquals("/milestonelog lookup aLeX 2",
                 Pagination.pageCommand(Pagination.lookupCommandPrefix("aLeX"), 2));
         assertEquals("/milestonelog lookup 12345678-1234-1234-1234-123456789abc 5",
@@ -162,5 +166,16 @@ class PaginationTest {
             assertEquals("/milestonelog search \"iron block\" scope " + scope + " 3",
                     Pagination.pageCommand(Pagination.searchCommandPrefix("iron block", "scope " + scope), 3));
         }
+    }
+
+    @Test
+    void rankingPageLinksKeepPresetAndUnclaimedScope() {
+        assertEquals("/milestonelog presettop my_preset", Pagination.presettopCommandPrefix("my_preset"));
+        assertEquals("/milestonelog firsts top", Pagination.firstsTopCommandPrefix());
+        for (String scope : List.of("targets", "presets", "all")) {
+            assertEquals("/milestonelog firsts unclaimed scope " + scope + " 2",
+                    Pagination.pageCommand(Pagination.firstsUnclaimedCommandPrefix(scope), 2));
+        }
+        assertThrows(IllegalArgumentException.class, () -> Pagination.firstsUnclaimedCommandPrefix(""));
     }
 }

@@ -156,6 +156,29 @@ public final class Pagination {
         return ROOT_COMMAND + " firsts";
     }
 
+    /** Page-link prefix for {@code /milestonelog presettop <preset>} (F-150-4). */
+    public static String presettopCommandPrefix(String presetId) {
+        Objects.requireNonNull(presetId, "presetId");
+        return ROOT_COMMAND + " presettop " + presetId;
+    }
+
+    /** Page-link prefix for {@code /milestonelog firsts top} (F-150-5). */
+    public static String firstsTopCommandPrefix() {
+        return ROOT_COMMAND + " firsts top";
+    }
+
+    /**
+     * Page-link prefix for {@code /milestonelog firsts unclaimed scope <scope>} (F-150-6).
+     * The scope literal is always written so paged links keep the caller's choice.
+     */
+    public static String firstsUnclaimedCommandPrefix(String scope) {
+        Objects.requireNonNull(scope, "scope");
+        if (scope.isBlank()) {
+            throw new IllegalArgumentException("scope must not be blank");
+        }
+        return ROOT_COMMAND + " firsts unclaimed scope " + scope;
+    }
+
     /** Preserves {@code playerQuery} spelled exactly as typed by the caller. */
     public static String lookupCommandPrefix(String playerQuery) {
         Objects.requireNonNull(playerQuery, "playerQuery");

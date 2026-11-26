@@ -115,6 +115,7 @@ public final class CommandHelp {
             new Entry("firsts", false, Gate.NONE),
             new Entry("info", true, Gate.NONE),
             new Entry("top", false, Gate.LOOKUP),
+            new Entry("presettop", false, Gate.LOOKUP),
             new Entry("toptag", false, Gate.LOOKUP),
             new Entry("recent", false, Gate.LOOKUP),
             new Entry("stats", false, Gate.LOOKUP),
