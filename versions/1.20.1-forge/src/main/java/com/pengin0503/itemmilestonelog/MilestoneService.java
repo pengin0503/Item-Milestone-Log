@@ -536,7 +536,7 @@ public final class MilestoneService {
      * version-specific, so this tiny hook lives in the version tree; the pure missing-set
      * computation lives in {@link PresetRequiredModsLogic}.
      */
-    private static boolean isModLoaded(String modId) {
+    static boolean isModLoaded(String modId) {
         return net.minecraftforge.fml.ModList.get().isLoaded(modId);
     }
 
@@ -581,6 +581,228 @@ public final class MilestoneService {
             data.setDirty();
         }
         return new PresetApplyCounts(added, addedWithCount, skippedMissing, skippedLimit, List.of());
+    }
+
+    /**
+     * F-140-13: one next-preset auto-add result, used by the completion notification to report
+     * the destination preset name and the number of targets added.
+     */
+    record NextPresetAddition(Presets.PresetDefinition preset, int added) {
+    }
+
+    /**
+     * F-140-13: result of one completion evaluation. {@code completed} is the historical list of
+     * newly completed presets; {@code nextAdditions} are the targets auto-added from their
+     * {@code nextPresets} in the same evaluation.
+     */
+    record PresetEvaluation(List<Presets.PresetDefinition> completed, List<NextPresetAddition> nextAdditions) {
+        static PresetEvaluation empty() {
+            return new PresetEvaluation(List.of(), List.of());
+        }
+    }
+
+    /** F-140-12: current state for a preset, or {@link PresetState#EMPTY} when absent. */
+    static PresetState presetState(MilestoneData.PlayerData pd, String presetId) {
+        if (pd == null || presetId == null) {
+            return PresetState.EMPTY;
+        }
+        return pd.presetState.getOrDefault(presetId, PresetState.EMPTY);
+    }
+
+    /** F-140-12: records that {@code unlockAfterHours} auto-added this preset's targets (F-140-14). */
+    static void recordPresetAutoApplied(MilestoneData data, MilestoneData.PlayerData pd, String presetId) {
+        if (pd == null || presetId == null) {
+            return;
+        }
+        PresetState current = presetState(pd, presetId);
+        if (!current.autoApplied()) {
+            pd.presetState.put(presetId, current.withAutoApplied(true));
+            data.setDirty();
+        }
+    }
+
+    /** F-140-12: records the preset version the player has been notified about (F-140-15). */
+    static void recordPresetVersionSeen(MilestoneData data, MilestoneData.PlayerData pd,
+                                        String presetId, int version) {
+        if (pd == null || presetId == null || version < 0) {
+            return;
+        }
+        PresetState current = presetState(pd, presetId);
+        if (current.lastSeenVersion() != version) {
+            pd.presetState.put(presetId, current.withLastSeenVersion(version));
+            data.setDirty();
+        }
+    }
+
+    /**
+     * F-140-12 restore rule: merges {@code incoming}'s presetState into {@code target}
+     * ({@code autoApplied} OR, {@code lastSeenVersion} max). The in-game backup restore is a manual
+     * file replacement with no merge hook in this codebase, so this helper codifies the rule for
+     * that path and for tests.
+     */
+    static void mergePresetState(MilestoneData.PlayerData target, MilestoneData.PlayerData incoming) {
+        if (target == null || incoming == null) {
+            return;
+        }
+        PresetStateLogic.mergeInto(target.presetState, incoming.presetState);
+    }
+
+    /**
+     * F-140-13: applies the {@code nextPresets} of a newly completed preset through the normal
+     * {@link #applyPresetTargets} path (requiredMods and target caps enforced). Unknown IDs are
+     * skipped silently here; they are warned about once at startup by
+     * {@link #warnUnknownNextPresets()}. Missing required mods skip quietly (F-140-9).
+     */
+    static List<NextPresetAddition> applyNextPresets(
+            MilestoneData data,
+            UUID playerId,
+            Presets.PresetDefinition completed,
+            Predicate<String> isKnownNonAirItem,
+            Predicate<String> modLoaded) {
+        if (data == null || playerId == null || completed == null || completed.nextPresets().isEmpty()) {
+            return List.of();
+        }
+        MilestoneData.PlayerData pd = data.playerOrNull(playerId);
+        List<NextPresetAddition> additions = new ArrayList<>();
+        Set<String> seen = new LinkedHashSet<>();
+        for (String nextId : completed.nextPresets()) {
+            if (nextId == null || !seen.add(nextId)) {
+                continue;
+            }
+            // F-140-13: an already completed destination does not fire again, which is what
+            // stops A <-> B cycles without any explicit cycle detection.
+            if (pd != null && pd.completedPresets.contains(nextId)) {
+                continue;
+            }
+            Presets.PresetDefinition next = Presets.get(nextId);
+            if (next == null) {
+                continue;
+            }
+            PresetApplyCounts counts = applyPresetTargets(data, playerId, next, isKnownNonAirItem, modLoaded);
+            if (counts.hasMissingMods()) {
+                continue;
+            }
+            if (counts.added() > 0) {
+                additions.add(new NextPresetAddition(next, counts.added()));
+            }
+        }
+        return additions.isEmpty() ? List.of() : List.copyOf(additions);
+    }
+
+    /**
+     * F-140-14: auto-applies presets whose {@code unlockAfterHours} has been reached and that have
+     * not been auto-applied before. Missing required mods skip the preset without recording
+     * {@code autoApplied}, so a later login re-evaluates it. Returns the presets that actually
+     * added targets, for chat feedback.
+     */
+    public static List<NextPresetAddition> applyUnlockAfterHours(MilestoneData data, UUID playerId, int playTicks) {
+        return applyUnlockAfterHours(data, playerId, playTicks,
+                MilestoneService::isKnownNonAirItem, Config.PRESETS_ENABLED.get(), MilestoneService::isModLoaded);
+    }
+
+    static List<NextPresetAddition> applyUnlockAfterHours(
+            MilestoneData data,
+            UUID playerId,
+            int playTicks,
+            Predicate<String> isKnownNonAirItem,
+            boolean presetsEnabled,
+            Predicate<String> modLoaded) {
+        if (!presetsEnabled || data == null || playerId == null) {
+            return List.of();
+        }
+        MilestoneData.PlayerData pd = data.playerOrNull(playerId);
+        if (pd == null) {
+            return List.of();
+        }
+        List<NextPresetAddition> additions = new ArrayList<>();
+        for (Presets.PresetDefinition preset : Presets.all()) {
+            if (preset.unlockAfterHours() == null) {
+                continue;
+            }
+            PresetState state = presetState(pd, preset.id());
+            if (state.autoApplied()) {
+                continue;
+            }
+            if (!PresetStateLogic.isUnlockDue(preset.unlockAfterHours(), playTicks)) {
+                continue;
+            }
+            PresetApplyCounts counts = applyPresetTargets(data, playerId, preset, isKnownNonAirItem, modLoaded);
+            if (counts.hasMissingMods()) {
+                continue;
+            }
+            recordPresetAutoApplied(data, pd, preset.id());
+            if (counts.added() > 0) {
+                additions.add(new NextPresetAddition(preset, counts.added()));
+            }
+        }
+        return additions.isEmpty() ? List.of() : List.copyOf(additions);
+    }
+
+    /**
+     * F-140-15: one-time version-change notices at login. A preset is "involved" when the player
+     * has a presetState record or their current personal targets overlap its items. The first
+     * involvement only initializes {@code lastSeenVersion}; later increases notify once with the
+     * number of current items not in the player's targets and the current total. Unversioned
+     * presets are out of scope. No targets are auto-applied.
+     */
+    static List<Component> notifyPresetVersionUpdates(
+            MilestoneData data,
+            UUID playerId,
+            @Nullable ServerPlayer player,
+            boolean presetsEnabled) {
+        if (!presetsEnabled || data == null || playerId == null) {
+            return List.of();
+        }
+        MilestoneData.PlayerData pd = data.playerOrNull(playerId);
+        if (pd == null) {
+            return List.of();
+        }
+        List<Component> messages = new ArrayList<>();
+        for (Presets.PresetDefinition preset : Presets.all()) {
+            Integer version = preset.version();
+            if (version == null) {
+                continue;
+            }
+            PresetState existing = pd.presetState.get(preset.id());
+            PresetState state = presetState(pd, preset.id());
+            boolean involved = existing != null || overlapsTargets(pd.targets, preset.items());
+            if (!involved) {
+                continue;
+            }
+            if (state == null || state.lastSeenVersion() == 0) {
+                recordPresetVersionSeen(data, pd, preset.id(), version);
+                continue;
+            }
+            if (!PresetStateLogic.isVersionNoticeDue(version, state)) {
+                continue;
+            }
+            int total = preset.items().size();
+            int newCount = countTargetsNotIn(pd.targets, preset.items());
+            Component presetName = presetDisplayName(player, preset);
+            messages.add(ServerLang.tr(player, "message.itemmilestonelog.preset_version_updated",
+                    presetName, newCount, total));
+            recordPresetVersionSeen(data, pd, preset.id(), version);
+        }
+        return messages;
+    }
+
+    private static boolean overlapsTargets(Set<TargetKey> targets, List<TargetKey> items) {
+        for (TargetKey item : items) {
+            if (targets.contains(item)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static int countTargetsNotIn(Set<TargetKey> targets, List<TargetKey> items) {
+        int count = 0;
+        for (TargetKey item : items) {
+            if (!targets.contains(item)) {
+                count++;
+            }
+        }
+        return count;
     }
 
     public static ActionResult applyPreset(ServerPlayer player, String name) {
@@ -765,6 +987,34 @@ public final class MilestoneService {
 
     static List<String> findUnknownFirstJoinPresets(@Nullable List<? extends String> presetIds) {
         return findUnknownFirstJoinPresets(presetIds, id -> Presets.get(id) != null);
+    }
+
+    /**
+     * F-140-13: logs a single startup warning when any loaded preset's {@code nextPresets}
+     * references an ID that is not loaded (same style as {@link #warnUnknownFirstJoinPresets()}).
+     */
+    public static void warnUnknownNextPresets() {
+        if (!Config.PRESETS_ENABLED.get()) {
+            return;
+        }
+        List<String> unknown = findUnknownNextPresets();
+        if (!unknown.isEmpty()) {
+            ItemMilestoneLog.LOGGER.warn(
+                    "[ItemMilestoneLog] Unknown preset ID(s) in nextPresets will be skipped: {}",
+                    String.join(", ", unknown));
+        }
+    }
+
+    static List<String> findUnknownNextPresets() {
+        Set<String> unknown = new LinkedHashSet<>();
+        for (Presets.PresetDefinition preset : Presets.all()) {
+            for (String id : preset.nextPresets()) {
+                if (id != null && Presets.get(id) == null) {
+                    unknown.add(id);
+                }
+            }
+        }
+        return unknown.isEmpty() ? List.of() : List.copyOf(unknown);
     }
 
     static List<String> findUnknownFirstJoinPresets(
@@ -1115,6 +1365,10 @@ public final class MilestoneService {
             }
             if (!pd.completedPresets.isEmpty()) {
                 pd.completedPresets.clear();
+                changed = true;
+            }
+            if (!pd.presetState.isEmpty()) {
+                pd.presetState.clear();
                 changed = true;
             }
         }

@@ -846,4 +846,72 @@ class MilestoneDataTest {
         assertEquals(1, malformed.loadReport().elementSkipCount());
         assertEquals(0, malformed.loadReport().loadedSchemaVersion());
     }
+
+    @Test
+    void presetStateRoundTripsAndLegacyDataWithoutItLoadsEmpty() {
+        UUID player = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        MilestoneData original = new MilestoneData();
+        MilestoneData.PlayerData pd = original.player(player);
+        pd.presetState.put("vanilla_endgame", new PresetState(true, 3));
+        pd.presetState.put("my_custom_pack", new PresetState(false, 1));
+
+        CompoundTag saved = original.save(new CompoundTag());
+        CompoundTag savedPd = McCompat.nbt().getCompound(
+                McCompat.nbt().getCompound(saved, "players"), player.toString());
+        assertTrue(savedPd.contains("presetState"));
+
+        MilestoneData loaded = MilestoneData.load(saved);
+        MilestoneData.PlayerData loadedPd = loaded.playerOrNull(player);
+        assertNotNull(loadedPd);
+        assertEquals(Map.of(
+                "vanilla_endgame", new PresetState(true, 3),
+                "my_custom_pack", new PresetState(false, 1)
+        ), loadedPd.presetState);
+
+        // Legacy data (no presetState key) loads as an empty map.
+        CompoundTag legacy = new CompoundTag();
+        CompoundTag players = new CompoundTag();
+        players.put(player.toString(), new CompoundTag());
+        legacy.put("players", players);
+        MilestoneData legacyLoaded = MilestoneData.load(legacy);
+        assertNotNull(legacyLoaded.playerOrNull(player));
+        assertTrue(legacyLoaded.playerOrNull(player).presetState.isEmpty());
+    }
+
+    @Test
+    void presetStateLoaderSkipsInvalidElementsAndCountsThemInTheLoadReport() {
+        UUID player = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        MilestoneData original = new MilestoneData();
+        original.player(player);
+        CompoundTag saved = original.save(new CompoundTag());
+        CompoundTag savedPd = McCompat.nbt().getCompound(
+                McCompat.nbt().getCompound(saved, "players"), player.toString());
+
+        CompoundTag good = new CompoundTag();
+        good.putBoolean("autoApplied", true);
+        good.putInt("lastSeenVersion", 2);
+        CompoundTag invalidId = new CompoundTag();
+        invalidId.putBoolean("autoApplied", false);
+        invalidId.putInt("lastSeenVersion", 1);
+        CompoundTag negativeVersion = new CompoundTag();
+        negativeVersion.putBoolean("autoApplied", true);
+        negativeVersion.putInt("lastSeenVersion", -1);
+        CompoundTag malformedAuto = new CompoundTag();
+        malformedAuto.putString("autoApplied", "yes");
+        malformedAuto.putInt("lastSeenVersion", 2);
+        CompoundTag states = new CompoundTag();
+        states.put("good_pack", good);
+        states.put("Bad ID", invalidId);
+        states.put("scalar_value", StringTag.valueOf("nope"));
+        states.put("negative_version", negativeVersion);
+        states.put("malformed_auto", malformedAuto);
+        savedPd.put("presetState", states);
+
+        MilestoneData loaded = MilestoneData.load(saved);
+        MilestoneData.PlayerData loadedPd = loaded.playerOrNull(player);
+        assertNotNull(loadedPd);
+        assertEquals(Map.of("good_pack", new PresetState(true, 2)), loadedPd.presetState);
+        assertNotNull(loaded.loadReport());
+        assertEquals(4, loaded.loadReport().elementSkipCount());
+    }
 }
