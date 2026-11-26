@@ -3,9 +3,9 @@
 #
 #   check-release.sh <jar_dir> <tag or ""> <notes_file>
 #
-# The release composition comes from publish-manifest.json (repo root): five merged
-# jars, the 26.x jar (26.1.2-26.3), the four 1.21.x jars (A 1.21-1.21.4,
-# B1 1.21.5-1.21.8, B2 1.21.9-1.21.10, C 1.21.11), and the Forge 1.20.1 jar
+# The release composition comes from publish-manifest.json (repo root): the five
+# NeoForge range jars (26.x for 26.1.2-26.3 and the four 1.21.x jars A 1.21-1.21.4,
+# B1 1.21.5-1.21.8, B2 1.21.9-1.21.10, C 1.21.11) plus the Forge 1.20.1 jar
 # (docs/DESIGN_1.3.0.md section 6, docs/DESIGN_1.20.1.md section 8.1). Each entry
 # has its game_versions, java and loader ("neoforge" when the field is absent, for
 # backward compatibility) with the matching neoforge_min / forge_min.
@@ -15,6 +15,9 @@
 #   file name substituted): each listed jar present, no other *.jar,
 # - the concrete manifest (placeholders substituted) is written to
 #   <jar_dir>/publish-manifest.json so the release ships it,
+# - every game version in that manifest has a docs/updates.json top-level section
+#   and both <mc>-latest / <mc>-recommended promos (the new version entry itself is
+#   added after the stores are published),
 # - the tag (if given) is v<mod_version>,
 # - CHANGELOG.md has a "## <mod_version>" section; it goes into the notes, followed
 #   by a table of the files built from the manifest.
@@ -69,6 +72,37 @@ fi
 CONCRETE="$(jq --arg v "$VERSION" '.files |= map(.file |= gsub("\\{version\\}"; $v))' "$MANIFEST")"
 mapfile -t expected < <(jq -r '.files[].file' <<< "$CONCRETE")
 pass "publish-manifest.json lists ${#expected[@]} jars"
+
+# docs/updates.json drives the in-game update checker, which looks up the
+# Minecraft version and then the mod version. Every game version in the release
+# must therefore have a top-level section and both promos entries (In-Game Version
+# Checker / Forge VersionChecker). The new version's entry itself is added after the
+# stores are published (docs/FEATURE_SPEC_1.1.0.md section 4.1), so it is not required
+# at tag time.
+UPDATES="$ROOT/docs/updates.json"
+if [ ! -f "$UPDATES" ]; then
+  fail "docs/updates.json is missing"
+elif ! jq -e . "$UPDATES" > /dev/null 2>&1; then
+  fail "docs/updates.json is not valid JSON"
+else
+  mapfile -t release_mcs < <(jq -r '.files[].game_versions[]' <<< "$CONCRETE" | sort -u)
+  for mc in "${release_mcs[@]}"; do
+    if ! jq -e --arg mc "$mc" 'has($mc)' "$UPDATES" > /dev/null 2>&1; then
+      fail "docs/updates.json has no top-level \"$mc\" section"
+      continue
+    fi
+    promos_ok=1
+    for channel in latest recommended; do
+      if ! jq -e --arg k "$mc-$channel" '.promos | has($k)' "$UPDATES" > /dev/null 2>&1; then
+        fail "docs/updates.json promos is missing \"$mc-$channel\""
+        promos_ok=0
+      fi
+    done
+    if [ "$promos_ok" -eq 1 ]; then
+      pass "docs/updates.json has $mc and both promos (latest, recommended)"
+    fi
+  done
+fi
 
 for f in "${expected[@]}"; do
   if [ -f "$DIR/$f" ]; then pass "$f"; else fail "missing $f"; fi

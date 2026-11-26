@@ -4,6 +4,7 @@ import com.pengin0503.itemmilestonelog.api.TargetKey;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Locale;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -162,11 +163,17 @@ class PresetShowLogicTest {
 
     @Test
     void fractionalUnlockHoursUseALocaleFreeDecimal() {
-        PresetShowLogic.Result result = PresetShowLogic.show(dataWith(
-                null, null, null, 0, List.of(), 0.25d, List.of(), List.of(), List.of()), true, 50);
+        Locale previous = Locale.getDefault();
+        try {
+            Locale.setDefault(Locale.GERMANY);
+            PresetShowLogic.Result result = PresetShowLogic.show(dataWith(
+                    null, null, null, 0, List.of(), 0.25d, List.of(), List.of(), List.of()), true, 50);
 
-        assertEquals(PresetShowLogic.Line.of(PresetShowLogic.LineKind.UNLOCK_AFTER_HOURS, "0.25"),
-                result.lines().get(1));
+            assertEquals(PresetShowLogic.Line.of(PresetShowLogic.LineKind.UNLOCK_AFTER_HOURS, "0.25"),
+                    result.lines().get(1));
+        } finally {
+            Locale.setDefault(previous);
+        }
     }
 
     @Test

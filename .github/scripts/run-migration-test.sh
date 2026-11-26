@@ -57,7 +57,7 @@ if grep -q 'Imported the records of 1 player(s)' "$LOG_DIR/migration-2.log"; the
   echo "  PASS  the 26.1.2 jar imported the 1.21.1 records"
 else
   echo "  FAIL  no 'Imported the records' line in the 26.1.2 server log; lines from the mod:"
-  grep -i 'itemmilestonelog' "$LOG_DIR/migration-2.log" | tail -n 20 | sed 's/^/    /'
+  grep -i 'itemmilestonelog' "$LOG_DIR/migration-2.log" | tail -n 20 | sed 's/^/    /' || true
   status=1
 fi
 check_data_file || status=1

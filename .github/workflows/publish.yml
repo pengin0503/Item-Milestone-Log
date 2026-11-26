@@ -49,14 +49,18 @@ jobs:
           gh release download "$TAG" --pattern 'publish-manifest.json' --dir dist
           ls -l dist
           version="${TAG#v}"
-          # Validate the jars against the manifest: as many jars as manifest
-          # entries ({version} substituted), and every manifest file present.
+          # Validate the jars against the concrete manifest attached to the
+          # release: as many jars as manifest entries, and every file present.
           manifest=dist/publish-manifest.json
           if ! jq -e '.files | type == "array" and length > 0' "$manifest" > /dev/null 2>&1; then
             echo "::error::$manifest from release $TAG is missing or invalid"
             exit 1
           fi
-          mapfile -t files < <(jq -r --arg v "$version" '.files[].file | gsub("\\{version\\}"; $v)' "$manifest")
+          if jq -e 'any(.files[].file; contains("{version}"))' "$manifest" > /dev/null; then
+            echo "::error::$manifest still contains {version} placeholders; expected the concrete manifest written by check-release.sh"
+            exit 1
+          fi
+          mapfile -t files < <(jq -r '.files[].file' "$manifest")
           shopt -s nullglob
           jars=(dist/*.jar)
           shopt -u nullglob
@@ -70,10 +74,6 @@ jobs:
               exit 1
             fi
           done
-          if jq -e 'any(.files[].file; contains("{version}"))' "$manifest" > /dev/null; then
-            echo "::error::$manifest still contains {version} placeholders; expected the concrete manifest written by check-release.sh"
-            exit 1
-          fi
           echo "MANIFEST=$manifest" >> "$GITHUB_ENV"
           # Extract the CHANGELOG.md section for this version (## <version> up to
           # the next ## heading) at the tagged ref.
@@ -100,15 +100,15 @@ jobs:
             exit 1
           fi
           changelog_json=$(jq -Rs . < changelog-section.md)
-          # Idempotency (DESIGN section 6, compare version sets): the game
-          # versions that already have this version_number on Modrinth are
-          # fetched once; each manifest entry uploads only its game versions
-          # that are still missing, and is skipped when none are, so re-running
-          # after a partial failure does not create duplicates.
-          existing=$(curl -sS "https://api.modrinth.com/v2/project/$MODRINTH_PROJECT_ID/version" \
+          # Idempotency (DESIGN section 6, compare version + loader + game version
+          # sets): a version_numbers entry is only skipped for the loader it was
+          # uploaded for. This keeps a future Forge and NeoForge release on the same
+          # Minecraft version from hiding each other, and makes a re-run after a
+          # partial failure upload only the remaining game versions.
+          existing=$(curl -fsS "https://api.modrinth.com/v2/project/$MODRINTH_PROJECT_ID/version" \
             -H "Authorization: $MODRINTH_TOKEN" \
             -H "User-Agent: pengin0503/Item-Milestone-Log publish workflow" \
-            | jq -c --arg v "$VERSION" '[.[] | select(.version_number == $v) | .game_versions[]] | unique')
+            | jq -c --arg v "$VERSION" '[.[] | select(.version_number == $v) | {loaders: (.loaders // []), game_versions: .game_versions}]')
           echo "Already on Modrinth for $VERSION: $existing"
           while IFS= read -r entry <&3; do
             jar="dist/$(jq -r '.file' <<< "$entry")"
@@ -119,9 +119,11 @@ jobs:
             label=$(jq -r 'if (.game_versions | length) > 1
                 then "\(.game_versions[0])–\(.game_versions[-1])"
                 else .game_versions[0] end' <<< "$entry")
-            missing=$(jq -c --argjson have "$existing" '.game_versions - $have' <<< "$entry")
+            missing=$(jq -c --arg loader "$loader" --argjson have "$existing" \
+              '.game_versions - ([$have[] | select((.loaders // []) | index($loader)) | .game_versions[]] | unique)' \
+              <<< "$entry")
             if [ "$(jq 'length' <<< "$missing")" -eq 0 ]; then
-              echo "Skipping $base: $VERSION for MC $label is already on Modrinth"
+              echo "Skipping $base: $VERSION for MC $label ($loader) is already on Modrinth"
               continue
             fi
             jq -n \
@@ -136,7 +138,7 @@ jobs:
                 featured: false, project_id: $project_id,
                 game_versions: $game_versions, file_parts: ["file"]}' > data.json
             jq -e . data.json > /dev/null
-            echo "Uploading $base to Modrinth (game versions $missing)..."
+            echo "Uploading $base to Modrinth (loader $loader, game versions $missing)..."
             code=$(curl -sS -X POST "https://api.modrinth.com/v2/version" \
               -H "Authorization: $MODRINTH_TOKEN" \
               -H "User-Agent: pengin0503/Item-Milestone-Log publish workflow" \
@@ -161,30 +163,118 @@ jobs:
           # Resolve the game version ids once: the Minecraft version entries and
           # the loader entries (NeoForge for 1.21.x/26.x, Forge for 1.20.1), via
           # the CurseForge versions API.
-          curl -sS -f "https://minecraft.curseforge.com/api/game/versions" \
+          curl -fsS "https://minecraft.curseforge.com/api/game/versions" \
             -H "X-Api-Token: $CURSEFORGE_TOKEN" > cf-versions.json
+          curl -fsS "https://minecraft.curseforge.com/api/game/version-types" \
+            -H "X-Api-Token: $CURSEFORGE_TOKEN" > cf-version-types.json
+          # The legacy endpoint returns a bare array; accept the public-API
+          # envelope ({data: [...]}) too so a host change does not break this.
+          if ! jq -e 'type == "array"' cf-version-types.json > /dev/null 2>&1; then
+            if jq -e '.data | type == "array"' cf-version-types.json > /dev/null 2>&1; then
+              jq '.data' cf-version-types.json > cf-version-types.json.tmp
+              mv cf-version-types.json.tmp cf-version-types.json
+            else
+              echo "::error::unexpected CurseForge version-types response"
+              exit 1
+            fi
+          fi
           echo "Version groups present in the CurseForge versions list:"
           jq -r 'group_by(.gameVersionTypeID)[] | "type \(.[0].gameVersionTypeID): \(length) entries, e.g. \(.[0].name), \(.[1].name // "-")"' cf-versions.json
           jq -r '.[] | select(.name == "Client" or .name == "Server" or .name == "NeoForge" or .name == "Forge") | "special: \(.id) \(.name) type \(.gameVersionTypeID)"' cf-versions.json
-          neoforge_id=$(jq -r '.[] | select(.name == "NeoForge") | .id' cf-versions.json | head -1)
-          forge_id=$(jq -r '.[] | select(.name == "Forge") | .id' cf-versions.json | head -1)
-          env_ids=$(jq -r '.[] | select(.name == "Client" or .name == "Server") | .id' cf-versions.json | paste -sd, -)
+
+          # The loader tags all live in CurseForge type 68441. Resolve a loader id
+          # only when exactly one entry of that type has the name; a duplicate is an
+          # error instead of silently taking the first match.
+          resolve_unique_id() { # <name> <label>
+            local name="$1" label="$2" ids count
+            ids=$(jq -c --arg n "$name" '[.[] | select(.name == $n and (.gameVersionTypeID | tostring) == "68441") | .id]' cf-versions.json)
+            count=$(jq 'length' <<< "$ids")
+            if [ "$count" -ne 1 ]; then
+              echo "::error::expected exactly one CurseForge $label game version named $name in type 68441, found $count"
+              return 1
+            fi
+            jq -r '.[0]' <<< "$ids"
+          }
+          env_ids=$(jq -r '[.[] | select(.name == "Client" or .name == "Server") | .id] | sort | unique | join(",")' cf-versions.json)
           # A loader id is only required when the manifest has an entry for that
           # loader, so a NeoForge-only (or Forge-only) release behaves as before.
           needs_neoforge=$(jq -r 'any(.files[]; (.loader // "neoforge") == "neoforge")' "$MANIFEST")
           needs_forge=$(jq -r 'any(.files[]; (.loader // "neoforge") == "forge")' "$MANIFEST")
-          if [ "$needs_neoforge" = "true" ] && [ -z "$neoforge_id" ]; then
-            echo "::error::NeoForge game version id not found in the CurseForge versions list"
-            exit 1
+          neoforge_id=""
+          forge_id=""
+          if [ "$needs_neoforge" = "true" ]; then
+            neoforge_id=$(resolve_unique_id "NeoForge" "NeoForge")
           fi
-          if [ "$needs_forge" = "true" ] && [ -z "$forge_id" ]; then
-            echo "::error::Forge game version id not found in the CurseForge versions list"
-            exit 1
+          if [ "$needs_forge" = "true" ]; then
+            forge_id=$(resolve_unique_id "Forge" "Forge")
           fi
+
+          # Idempotency: list the project's files once and skip a manifest jar whose
+          # file name is already uploaded, so a re-run after a partial failure does
+          # not create duplicates (or fail on a duplicate file name).
+          cf_files='[]'
+          cf_index=0
+          cf_list_available=1
+          while :; do
+            # The public API authenticates with x-api-key; the legacy upload
+            # endpoints use X-Api-Token. Send both so either kind of token works.
+            if ! page=$(curl -fsS "https://api.curseforge.com/v1/mods/$CURSEFORGE_PROJECT_ID/files?index=$cf_index&pageSize=50" \
+                -H "x-api-key: $CURSEFORGE_TOKEN" \
+                -H "x-api-token: $CURSEFORGE_TOKEN" \
+                -H "Accept: application/json"); then
+              # Not fatal: the upload token used by the legacy endpoints may not be
+              # accepted by the public API. Publishing still works, but the duplicate
+              # check cannot run (a warning makes that visible in the job log).
+              echo "::warning::Could not list CurseForge files; duplicate-upload check disabled for this run"
+              cf_files='[]'
+              cf_list_available=0
+              break
+            fi
+            if ! jq -e '.data | type == "array"' <<< "$page" > /dev/null 2>&1; then
+              echo "::warning::Unexpected CurseForge files response; duplicate-upload check disabled for this run"
+              cf_files='[]'
+              cf_list_available=0
+              break
+            fi
+            page_len=$(jq '.data | length' <<< "$page")
+            page_data=$(jq -c '.data' <<< "$page")
+            cf_files=$(jq -c --argjson a "$cf_files" --argjson b "$page_data" '$a + $b')
+            cf_index=$((cf_index + page_len))
+            total=$(jq '.pagination.totalCount // 0' <<< "$page")
+            if [ "$page_len" -lt 50 ]; then break; fi
+            if [ "$total" -gt 0 ] && [ "$cf_index" -ge "$total" ]; then break; fi
+          done
+          echo "Already on CurseForge: $(jq 'length' <<< "$cf_files") file(s)"
+
+          # Find the Minecraft game-version type whose name matches this version
+          # exactly, or (for a line type such as "Minecraft 1.21") by longest prefix.
+          # The old name-only query could silently pick an entry of another type.
+          mc_version_type() { # <mc> -> "<type id>\t<type name>", empty or AMBIGUOUS
+            jq -r --arg mc "$1" '
+              [ .[] | select(.name | startswith("Minecraft "))
+                | {id: .id, name: .name, v: (.name | ltrimstr("Minecraft ") | rtrimstr(" "))}
+                | . + {score: (if .v == $mc then 2
+                               elif (.v as $v | $mc | startswith($v + ".")) then 1
+                               else 0 end)}
+                | select(.score > 0)
+              ]
+              | sort_by(.score, (.v | length)) | reverse
+              | if length == 0 then empty
+                elif length > 1 and .[0].score == .[1].score
+                     and (.[0].v | length) == (.[1].v | length) then "AMBIGUOUS"
+                else "\(.[0].id)\t\(.[0].name)" end
+            ' cf-version-types.json
+          }
+
           changelog_text=$(cat changelog-section.md)
           while IFS= read -r entry <&3; do
             jar="dist/$(jq -r '.file' <<< "$entry")"
             base=$(basename "$jar")
+            if [ "$cf_list_available" -eq 1 ] \
+                && jq -e --arg f "$base" 'any(.[]; .fileName == $f)' <<< "$cf_files" > /dev/null; then
+              echo "Skipping $base: already uploaded to CurseForge"
+              continue
+            fi
             loader=$(jq -r '.loader // "neoforge"' <<< "$entry")
             if [ "$loader" = "forge" ]; then
               loader_id="$forge_id"
@@ -194,14 +284,29 @@ jobs:
             label=$(jq -r 'if (.game_versions | length) > 1
                 then "\(.game_versions[0])–\(.game_versions[-1])"
                 else .game_versions[0] end' <<< "$entry")
-            # Every game version of the entry must resolve to a CurseForge id.
+            # Every game version of the entry must resolve to one CurseForge id of
+            # the matching Minecraft version type.
             mc_ids=()
             while IFS= read -r mc; do
-              mc_id=$(jq -r --arg mc "$mc" '.[] | select(.name == $mc) | .id' cf-versions.json | head -1)
-              if [ -z "$mc_id" ]; then
-                echo "::error::CurseForge game version id not found for Minecraft $mc"
+              mc_type=$(mc_version_type "$mc")
+              if [ -z "$mc_type" ]; then
+                echo "::error::no CurseForge Minecraft game-version type for Minecraft $mc"
                 exit 1
               fi
+              if [ "$mc_type" = "AMBIGUOUS" ]; then
+                echo "::error::ambiguous CurseForge Minecraft game-version types for Minecraft $mc"
+                exit 1
+              fi
+              IFS=$'\t' read -r mc_type_id mc_type_name <<< "$mc_type"
+              mc_ids_json=$(jq -c --arg mc "$mc" --argjson type "$mc_type_id" \
+                '[.[] | select(.name == $mc and (.gameVersionTypeID | tostring) == ($type | tostring)) | .id]' cf-versions.json)
+              mc_count=$(jq 'length' <<< "$mc_ids_json")
+              if [ "$mc_count" -ne 1 ]; then
+                echo "::error::expected exactly one CurseForge game version named $mc in type $mc_type_id ($mc_type_name), found $mc_count"
+                exit 1
+              fi
+              mc_id=$(jq -r '.[0]' <<< "$mc_ids_json")
+              echo "CurseForge: Minecraft $mc -> id $mc_id (type $mc_type_id \"$mc_type_name\")"
               mc_ids+=("$mc_id")
             done < <(jq -r '.game_versions[]' <<< "$entry")
             mc_id_list=$(IFS=,; echo "${mc_ids[*]}")
@@ -212,7 +317,7 @@ jobs:
               '{changelog: $changelog, changelogType: "markdown",
                 displayName: $displayName, gameVersions: $gameVersions,
                 releaseType: "release"}')
-            echo "Uploading $base to CurseForge (MC $label)..."
+            echo "Uploading $base to CurseForge (MC $label, loader $loader)..."
             code=$(curl -sS -X POST \
               "https://minecraft.curseforge.com/api/projects/$CURSEFORGE_PROJECT_ID/upload-file" \
               -H "X-Api-Token: $CURSEFORGE_TOKEN" \
@@ -223,4 +328,5 @@ jobs:
               echo "::error::CurseForge upload failed with HTTP $code"
               exit 1
             fi
+            cf_files=$(jq -c --arg f "$base" '. + [{fileName: $f}]' <<< "$cf_files")
           done 3< <(jq -c '.files[]' "$MANIFEST")

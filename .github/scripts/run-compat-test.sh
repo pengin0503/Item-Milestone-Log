@@ -168,9 +168,12 @@ has_disconnect_error() {
 check_client_log_errors() {
   local log="$1"
   local ok=0
-  if grep -nE '^\s+at com\.pengin0503\.itemmilestonelog' "$log" > "$COMPAT_LOG_DIR/client-mod-stacktraces.txt"; then
+  # One file per scenario: writing every scenario's traces to the same name would
+  # erase the evidence of an earlier failing scenario when a later one passes.
+  local trace="$COMPAT_LOG_DIR/$(basename "$log" .log)-mod-stacktraces.txt"
+  if grep -nE '^\s+at com\.pengin0503\.itemmilestonelog' "$log" > "$trace"; then
     echo "  FAIL  stack traces through mod code in the client log:"
-    head -n 40 "$COMPAT_LOG_DIR/client-mod-stacktraces.txt"
+    head -n 40 "$trace"
     ok=1
   else
     echo "  PASS  no stack traces through mod code in client log"
@@ -300,7 +303,7 @@ run_scenario() {
 
   if has_disconnect_error "$server_snap"; then
     echo "  FAIL  disconnect / negotiation error in server log before shutdown:"
-    grep -inE 'NetworkComponentNegotiator|Failed to negotiate|Disconnected|Connection lost|DecoderException|EncoderException|incompatible.*channel' "$server_snap" | head -n 20 | sed 's/^/    /'
+    grep -inE 'NetworkComponentNegotiator|Failed to negotiate|Disconnected|Connection lost|DecoderException|EncoderException|incompatible.*channel' "$server_snap" | head -n 20 | sed 's/^/    /' || true
     failed=1
   else
     echo "  PASS  no disconnect / negotiation errors in server log before shutdown"
@@ -308,7 +311,7 @@ run_scenario() {
 
   if has_disconnect_error "$client_snap"; then
     echo "  FAIL  disconnect / negotiation error in client log before shutdown:"
-    grep -inE 'NetworkComponentNegotiator|Failed to negotiate|Disconnected|Connection lost|DecoderException|EncoderException|incompatible.*channel' "$client_snap" | head -n 20 | sed 's/^/    /'
+    grep -inE 'NetworkComponentNegotiator|Failed to negotiate|Disconnected|Connection lost|DecoderException|EncoderException|incompatible.*channel' "$client_snap" | head -n 20 | sed 's/^/    /' || true
     failed=1
   else
     echo "  PASS  no disconnect / negotiation errors in client log before shutdown"

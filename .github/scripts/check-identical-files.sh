@@ -19,14 +19,16 @@ VERSIONS_FORGE_1201=(1.21.1 1.20.1-forge)
 # Files that must be byte-identical across ALL four Minecraft versions
 # (1.21.1, 26.1.2, 26.2, 26.3).
 IDENTICAL_ALL_4=(
-  # src/main/java (19 files)
+  # src/main/java (20 files)
   "src/main/java/com/pengin0503/itemmilestonelog/DiscordNotifier.java"
   "src/main/java/com/pengin0503/itemmilestonelog/ItemInfoLogic.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestoneBackup.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestoneCommandRunner.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/MilestoneExport.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestoneImportAll.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestoneRankings.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestoneServerStop.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/Presets.java"
   "src/main/java/com/pengin0503/itemmilestonelog/ScoreboardSync.java"
   "src/main/java/com/pengin0503/itemmilestonelog/WorldFirstNames.java"
   "src/main/java/com/pengin0503/itemmilestonelog/api/ItemMilestoneLogApi.java"
@@ -39,7 +41,8 @@ IDENTICAL_ALL_4=(
   "src/main/java/com/pengin0503/itemmilestonelog/client/ActionRowLayout.java"
   "src/main/java/com/pengin0503/itemmilestonelog/network/TargetEntry.java"
 
-  # src/test/java (20 files)
+  # src/test/java (21 files)
+  "src/test/java/com/pengin0503/itemmilestonelog/ConfigurationScreenLangTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/DiscordNotifierTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/ItemInfoLogicTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/MilestoneCommandRunnerTest.java"
@@ -64,22 +67,20 @@ IDENTICAL_ALL_4=(
 
 # Files that differ in 1.21.1 (ResourceLocation, NBT SavedData, player.server,
 # mods.toml loaderVersion, etc.) but must be byte-identical across 26.1.2, 26.2,
-# and 26.3. Together with the 19 src/main/java files in IDENTICAL_ALL_4, this
+# and 26.3. Together with the 20 src/main/java files in IDENTICAL_ALL_4, this
 # covers all 52 src/main/java files that are identical across 26.x (of 60; the
 # remaining files are the two javadoc-only entry points and the per-version
 # compat classes under compat/v26_*).
 IDENTICAL_26_X=(
-  # src/main/java (33 files; +17 from IDENTICAL_ALL_4 = 50 src/main/java files)
+  # src/main/java (32 files; +20 from IDENTICAL_ALL_4 = 52 src/main/java files)
   "src/main/java/com/pengin0503/itemmilestonelog/Config.java"
   "src/main/java/com/pengin0503/itemmilestonelog/CorruptionEvacuation.java"
   "src/main/java/com/pengin0503/itemmilestonelog/DatapackPresetReloadListener.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestoneCommands.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestoneData.java"
-  "src/main/java/com/pengin0503/itemmilestonelog/MilestoneExport.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestonePermissions.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestoneService.java"
   "src/main/java/com/pengin0503/itemmilestonelog/Playtime.java"
-  "src/main/java/com/pengin0503/itemmilestonelog/Presets.java"
   "src/main/java/com/pengin0503/itemmilestonelog/ServerLang.java"
   "src/main/java/com/pengin0503/itemmilestonelog/TagTargets.java"
   "src/main/java/com/pengin0503/itemmilestonelog/Tracker.java"
@@ -97,6 +98,7 @@ IDENTICAL_26_X=(
   "src/main/java/com/pengin0503/itemmilestonelog/compat/client/ScreenCompat.java"
   "src/main/java/com/pengin0503/itemmilestonelog/compat/client/ClientCompat.java"
   "src/main/java/com/pengin0503/itemmilestonelog/gametest/MilestoneGameTestRegistration.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/gametest/MilestoneGameTests.java"
   "src/main/java/com/pengin0503/itemmilestonelog/network/MilestoneActionPayload.java"
   "src/main/java/com/pengin0503/itemmilestonelog/network/ModNetworking.java"
   "src/main/java/com/pengin0503/itemmilestonelog/network/PresetEntry.java"
@@ -104,10 +106,11 @@ IDENTICAL_26_X=(
   "src/main/java/com/pengin0503/itemmilestonelog/network/SyncExtraPayload.java"
   "src/main/java/com/pengin0503/itemmilestonelog/network/SyncMilestonesPayload.java"
 
-  # src/test/java (3 files)
+  # src/test/java (4 files)
   "src/test/java/com/pengin0503/itemmilestonelog/MilestoneBackupTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/MilestoneDataTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/PresetsTest.java"
+  "src/test/java/com/pengin0503/itemmilestonelog/compat/McVersionTest.java"
 
   # src/main/templates (1 file)
   "src/main/templates/META-INF/neoforge.mods.toml"
@@ -120,9 +123,13 @@ IDENTICAL_26_X=(
 # that must differ (Forge events, SavedData, Brigadier, scoreboard, Java 17 HTTP)
 # are noted in the exclusion block below.
 IDENTICAL_FORGE_1201=(
-  # src/main/java (10 files)
+  # src/main/java (23 files)
   "src/main/java/com/pengin0503/itemmilestonelog/ItemInfoLogic.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/MilestoneExport.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/MilestoneImportAll.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestoneRankings.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/MilestoneServerStop.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/Playtime.java"
   "src/main/java/com/pengin0503/itemmilestonelog/WorldFirstNames.java"
   "src/main/java/com/pengin0503/itemmilestonelog/api/ItemMilestoneLogApi.java"
   "src/main/java/com/pengin0503/itemmilestonelog/api/MilestoneRecord.java"
@@ -130,23 +137,42 @@ IDENTICAL_FORGE_1201=(
   "src/main/java/com/pengin0503/itemmilestonelog/api/TargetKey.java"
   "src/main/java/com/pengin0503/itemmilestonelog/api/WorldFirstRecord.java"
   "src/main/java/com/pengin0503/itemmilestonelog/client/ActionRowLayout.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/client/ConfirmResetScreen.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/compat/ChatCompat.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/compat/DataCompat.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/compat/NbtCompat.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/compat/PermissionCompat.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/compat/PlayerCompat.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/compat/client/ScrollCompat.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/compat/client/TooltipCompat.java"
+  "src/main/java/com/pengin0503/itemmilestonelog/network/PresetEntry.java"
   "src/main/java/com/pengin0503/itemmilestonelog/network/TargetEntry.java"
 
-  # src/test/java (6 files)
+  # src/test/java (16 files)
   "src/test/java/com/pengin0503/itemmilestonelog/ItemInfoLogicTest.java"
+  "src/test/java/com/pengin0503/itemmilestonelog/LangFilesTest.java"
+  "src/test/java/com/pengin0503/itemmilestonelog/MilestoneCommandRunnerTest.java"
+  "src/test/java/com/pengin0503/itemmilestonelog/MilestoneCommandsHelpTest.java"
+  "src/test/java/com/pengin0503/itemmilestonelog/MilestoneExportTest.java"
+  "src/test/java/com/pengin0503/itemmilestonelog/MilestoneImportAllTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/MilestoneRankingsTest.java"
+  "src/test/java/com/pengin0503/itemmilestonelog/MilestoneServiceTest.java"
+  "src/test/java/com/pengin0503/itemmilestonelog/PlaytimeTest.java"
+  "src/test/java/com/pengin0503/itemmilestonelog/PresetsTest.java"
+  "src/test/java/com/pengin0503/itemmilestonelog/ServerLangTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/WorldFirstNamesTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/TargetKeyTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/api/ItemMilestoneLogApiTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/client/ActionRowLayoutTest.java"
+  "src/test/java/com/pengin0503/itemmilestonelog/network/ModNetworkingRateLimitTest.java"
 )
 
 # Intentionally excluded files (differ across versions by design):
 # - src/main/java/.../gametest/MilestoneGameTests.java:
-#     Removed from IDENTICAL_ALL_4 in N252 stage 2a: the 1.21.1 copy routes
-#     GameTestHelper.assertTrue through GameTestCompat, because MC 1.21.5
-#     changed assertTrue to take a Component instead of a String. The 26.x
-#     copies keep the direct calls (their GameTestHelper still accepts String).
+#     Not in IDENTICAL_ALL_4: the 1.21.1 copy routes GameTestHelper.assertTrue
+#     through GameTestCompat, because MC 1.21.5 changed assertTrue to take a
+#     Component instead of a String. The three 26.x copies are identical and are
+#     checked in IDENTICAL_26_X.
 # - src/main/java/.../ItemMilestoneLog.java:
 #     Only the version-specific javadoc comment differs across 26.x (the config
 #     type and trigger registration went through McCompat in N251). 1.21.1 differs
@@ -178,6 +204,10 @@ IDENTICAL_FORGE_1201=(
 #     intentionally differ per version (N251, docs/DESIGN_1.3.0.md).
 # - src/test/java/.../ServerLangTest.java:
 #     Fallback source directory path embeds each project's own Minecraft version.
+# - src/test/java/.../MilestoneImportAllTest.java:
+#     Not in IDENTICAL_ALL_4: the 1.21.1, 26.1.2/26.2 and 26.3 copies differ (async
+#     import-all work). The 1.21.1 and 1.20.1-forge copies are identical, so it is
+#     checked in IDENTICAL_FORGE_1201.
 #
 # Files in IDENTICAL_ALL_4 that differ in 1.20.1-forge by design (and are therefore
 # not in IDENTICAL_FORGE_1201; docs/DESIGN_1.20.1.md section 2.3):

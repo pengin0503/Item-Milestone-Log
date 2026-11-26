@@ -7,7 +7,7 @@ Sections marked *(paste)* go into CurseForge as they are.
 
 - [ ] CI is green on `main` (all jobs of the **Build** workflow).
 - [ ] `docs/updates.json` is updated with the new version's entry and `promos` (`<mc>-latest` and `<mc>-recommended`).
-- [ ] The four jars come from the GitHub Release of the version tag, or from that
+- [ ] The six jars come from the GitHub Release of the version tag, or from that
       CI run (see [Getting the jars](#getting-the-jars)).
 - [ ] Quick manual check in a client with the mod installed (not covered by CI):
       after assigning a key to *Open Milestone Log* under Controls, the key opens the
@@ -40,18 +40,20 @@ license. Modpacks on CurseForge itself can include the mod either way.
 
 ## Files
 
-Upload one file per Minecraft version. Each jar only loads on its own Minecraft
-version, so tag each file with exactly one game version.
+Upload one file per version range. Each jar supports every game version in its row,
+so tag each file with all of those game versions (not just the first one).
 
-| File | Display name | Game version | Mod loader | Java | Environment |
+| File | Display name | Game versions | Mod loader | Java | Environment |
 |---|---|---|---|---|---|
-| `itemmilestonelog-neoforge-1.21.1-1.2.0.jar` | Item Milestone Log 1.2.0 (1.21.1) | 1.21.1 | NeoForge | Java 21 | Client, Server |
-| `itemmilestonelog-neoforge-26.1.2-1.2.0.jar` | Item Milestone Log 1.2.0 (26.1.2) | 26.1.2 | NeoForge | Java 25 | Client, Server |
-| `itemmilestonelog-neoforge-26.2-1.2.0.jar` | Item Milestone Log 1.2.0 (26.2) | 26.2 | NeoForge | Java 25 | Client, Server |
-| `itemmilestonelog-neoforge-26.3-1.2.0.jar` | Item Milestone Log 1.2.0 (26.3) | 26.3 | NeoForge | Java 25 | Client, Server |
+| `itemmilestonelog-neoforge-26.x-1.3.1.jar` | Item Milestone Log 1.3.1 (MC 26.1.2–26.3) | 26.1.2, 26.2, 26.3 | NeoForge | Java 25 | Client, Server |
+| `itemmilestonelog-neoforge-1.21-1.21.4-1.3.1.jar` | Item Milestone Log 1.3.1 (MC 1.21–1.21.4) | 1.21, 1.21.1, 1.21.2, 1.21.3, 1.21.4 | NeoForge | Java 21 | Client, Server |
+| `itemmilestonelog-neoforge-1.21.5-1.21.8-1.3.1.jar` | Item Milestone Log 1.3.1 (MC 1.21.5–1.21.8) | 1.21.5, 1.21.6, 1.21.7, 1.21.8 | NeoForge | Java 21 | Client, Server |
+| `itemmilestonelog-neoforge-1.21.9-1.21.10-1.3.1.jar` | Item Milestone Log 1.3.1 (MC 1.21.9–1.21.10) | 1.21.9, 1.21.10 | NeoForge | Java 21 | Client, Server |
+| `itemmilestonelog-neoforge-1.21.11-1.3.1.jar` | Item Milestone Log 1.3.1 (MC 1.21.11) | 1.21.11 | NeoForge | Java 21 | Client, Server |
+| `itemmilestonelog-forge-1.20.1-1.3.1.jar` | Item Milestone Log 1.3.1 (MC 1.20.1) | 1.20.1 | Forge | Java 17 | Client, Server |
 
 - Release type: **Release**.
-- Related projects: none (the mod only needs NeoForge).
+- Related projects: none (the mod only needs NeoForge, or Forge for 1.20.1).
 - Environment: the mod is needed on the server (or in singleplayer); on a dedicated
   server the client side is optional and only adds the GUI. If CurseForge offers only
   one choice, pick the setting that marks it as working on both client and server.
@@ -67,15 +69,17 @@ Release of the version has the same text.
 
 From a release (recommended): push the tag `v<version>` on `main` (see *Releasing* in
 the README). When the **Build** workflow has passed, the GitHub Release
-`v<version>` has the four jars attached. They do not expire.
+`v<version>` has the six jars listed in `publish-manifest.json` attached. They do not
+expire.
 
 Without a tag:
 
 1. Open the **Actions** tab on GitHub → workflow **Build** → the latest successful run on `main`.
-2. Under **Artifacts**, download `itemmilestonelog-1.21.1`, `itemmilestonelog-26.1.2`,
-   `itemmilestonelog-26.2` and `itemmilestonelog-26.3`. Each zip holds one jar
-   (built against the minimum NeoForge of that Minecraft version, and tested on both
-   the minimum and the latest NeoForge).
+2. Under **Artifacts**, download `itemmilestonelog-26.x`, `itemmilestonelog-1.21-a`,
+   `itemmilestonelog-1.21-b1`, `itemmilestonelog-1.21-b2`, `itemmilestonelog-1.21-c`
+   and `itemmilestonelog-1.20.1-forge`. Each zip holds one jar (the NeoForge jars are
+   built against the minimum NeoForge of their range and tested on the minimum and
+   the latest; the Forge jar is tested on Forge 47.3.0 and 47.4.29).
 3. Artifacts expire after 90 days. To rebuild locally instead:
    `./gradlew -p versions/<mc_version> build` → `versions/<mc_version>/build/libs/`.
 

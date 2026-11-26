@@ -1,5 +1,8 @@
 {
   "homepage": "https://www.curseforge.com/minecraft/mc-mods/item-milestone-log",
+  "1.20.1": {
+    "1.3.1": "First release of the Minecraft 1.20.1 (Forge) edition: milestone tracking, quantity and tag targets, presets, world-first records, export/import, the item picker GUI and the public API."
+  },
   "1.21": {
     "1.3.0": "Version support release: one jar per version range, and the full Minecraft 1.21.x line (1.21–1.21.11) is now supported. All 1.2.0 features included; existing milestone data is fully compatible.",
     "1.3.1": "Bug-fix release: fixes the 1.21.5–1.21.8 jar crashing on 1.21.6–1.21.8 (milestone screens, item picker sound) and on 1.21.7 (opening the GUI from the key), and the list scrollbar position on 1.21.4. Adds the Minecraft 1.20.1 (Forge) edition."

@@ -80,10 +80,35 @@ done
 
 mkdir -p "$OUT"
 XVFB_PIDS=()
+WORKERS=()
+QUEUE=""
+LOCK=""
+
+# Kill any JVM still running with its cwd inside the version's harness project (the
+# game). Defined before cleanup so an interrupt during harness preparation is safe.
+kill_project_java() { # <mc>
+  local dir="$ROOT/versions/verify/$1" pid cwd
+  for pid in $(pgrep java); do
+    cwd="$(readlink "/proc/$pid/cwd" 2>/dev/null)" || continue
+    if [[ "$cwd" == "$dir" || "$cwd" == "$dir/"* ]]; then kill -9 "$pid" 2>/dev/null; fi
+  done
+}
+
 cleanup() {
   for p in "${XVFB_PIDS[@]}"; do kill "$p" 2>/dev/null; done
+  for p in "${WORKERS[@]}"; do
+    # Stop the worker and its direct child (the setsid/timeout process group leader);
+    # timeout forwards SIGTERM to the Gradle JVM, and kill_project_java catches any
+    # process that outlived it.
+    pkill -TERM -P "$p" 2>/dev/null
+    kill "$p" 2>/dev/null
+  done
+  for mc in "${VERSIONS[@]}"; do kill_project_java "$mc"; done
+  if [[ -n "$QUEUE" ]]; then rm -f "$QUEUE" "$LOCK"; fi
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # ---- 1. harness projects (sequential; keeps build/ and run/ so caches stay warm) -------
 prepare() {
@@ -97,10 +122,23 @@ prepare() {
     IML_SMOKETEST=1 tools/prepare-121x-harness.sh "$mc" $(harness_121x "$mc")
   fi
   local rc=$?
+  # The harness script removes $dest before generating it. If it fails before
+  # recreating it, restore the saved build/run/.gradle caches into the (recreated)
+  # directory instead of losing them with $keep.
+  local restore_failed=0
+  mkdir -p "$dest"
   for d in build run .gradle; do
-    if [[ -d "$keep/$d" ]]; then rm -rf "${dest:?}/$d"; mv "$keep/$d" "$dest/$d"; fi
+    if [[ -d "$keep/$d" ]]; then
+      rm -rf "${dest:?}/$d"
+      mv "$keep/$d" "$dest/$d" || restore_failed=1
+    fi
   done
-  rm -rf "$keep"
+  if [[ "$restore_failed" -eq 0 ]]; then
+    rm -rf "$keep"
+  else
+    echo "warning: could not restore every cached directory; kept $keep" >&2
+    [[ "$rc" -ne 0 ]] || rc=1
+  fi
   return $rc
 }
 
@@ -155,14 +193,6 @@ done
 sleep 2
 
 # ---- 3. clients ---------------------------------------------------------------------
-kill_project_java() { # any JVM still running with its cwd inside the project (the game)
-  local dir="$ROOT/versions/verify/$1" pid cwd
-  for pid in $(pgrep java); do
-    cwd="$(readlink "/proc/$pid/cwd" 2>/dev/null)" || continue
-    if [[ "$cwd" == "$dir" || "$cwd" == "$dir/"* ]]; then kill -9 "$pid" 2>/dev/null; fi
-  done
-}
-
 run_one() { # <mc> <display>
   local mc="$1" disp="$2" proj="versions/verify/$1"
   local out="$OUT/$mc" run="$ROOT/versions/verify/$1/run"

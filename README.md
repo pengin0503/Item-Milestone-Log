@@ -508,19 +508,23 @@ for both the minimum and the latest NeoForge in `gradle.properties`:
 
 Additional jobs verify 1.21.1 → 26.1.2 world migration (`.github/scripts/run-migration-test.sh`)
 and 1.0.1 ↔ development client/server network compatibility using a real Minecraft client
-under Xvfb (`.github/scripts/run-compat-test.sh`).
+under Xvfb (`.github/scripts/run-compat-test.sh`). The Forge 1.20.1 port is built and
+unit-tested with Java 17, and its release jar runs the same dedicated-server RCON and
+vanilla-client checks on Forge 47.3.0 and 47.4.29.
 
 The jars from the minimum-NeoForge jobs are uploaded as the workflow artifacts
 `itemmilestonelog-<mc_version>`. The GUI layout is not covered by the automated tests.
 
 ### Releasing
 
-1. Set `mod_version` in all four `versions/*/gradle.properties`, update `docs/updates.json` (in the release commit after upload), and add a
+1. Set `mod_version` in all five `versions/*/gradle.properties` (including
+   `versions/1.20.1-forge`), update `docs/updates.json` (in the release commit after upload), and add a
    `## <version>` section to [CHANGELOG.md](CHANGELOG.md).
 2. Once CI is green on `main`, push the tag `v<version>` (for example `v1.2.0`).
-   The workflow runs all tests again and publishes a GitHub Release with the four jars
-   and that changelog section. It stops if the tag, the versions and the jars do not
-   match (`.github/scripts/check-release.sh`, which also runs on every pull request).
+   The workflow runs all tests again and publishes a GitHub Release with the six jars
+   listed in `publish-manifest.json` and that changelog section. It stops if the tag,
+   the versions and the jars do not match (`.github/scripts/check-release.sh`, which
+   also runs on every pull request).
 3. Upload the jars to CurseForge as described in [CURSEFORGE.md](CURSEFORGE.md).
 
 ## License

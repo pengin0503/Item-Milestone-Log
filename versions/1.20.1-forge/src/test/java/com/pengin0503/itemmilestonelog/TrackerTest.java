@@ -12,6 +12,7 @@ import com.pengin0503.itemmilestonelog.api.WorldFirstRecord;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.level.GameType;
 import net.minecraftforge.eventbus.api.Event;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.time.ZoneOffset;
@@ -37,6 +38,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TrackerTest {
+    @AfterEach
+    void clearPendingNotificationsAfterEach() {
+        Tracker.clearPendingNotifications();
+    }
+
     private static final UUID PLAYER_A = UUID.fromString("11111111-1111-1111-1111-111111111111");
     private static final UUID PLAYER_B = UUID.fromString("22222222-2222-2222-2222-222222222222");
 

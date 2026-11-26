@@ -86,6 +86,6 @@ if ! "$ROOT/.github/scripts/check-merged-jar-bytecode.sh" "$JAR"; then
 fi
 
 echo "::group::META-INF/neoforge.mods.toml"
-grep -vE '^\s*(#|$)' <<< "$toml"
+grep -vE '^\s*(#|$)' <<< "$toml" || true
 echo "::endgroup::"
 exit "$status"

@@ -1,27 +1,30 @@
 #!/usr/bin/env bash
-# Installs a NeoForge dedicated server, puts the built mod jar into its mods folder
-# and runs .github/integration/server-test.mjs against it.
+# Installs a NeoForge or Forge dedicated server, puts the built mod jar into its mods
+# folder and runs .github/integration/server-test.mjs against it.
 #
-#   run-server-tests.sh <mc_version> <neoforge_version> <bot: true|false> [mod_jar]
+#   run-server-tests.sh <mc_version> <loader_version> <bot: true|false> [mod_jar] [loader]
 #
-# The jar under test is the one in versions/<mc>/build/libs, loaded the way players
-# load it (a production server, not the development run). CI builds that jar against
-# the minimum NeoForge version, as for a release, and runs it on both the minimum and
-# the latest NeoForge. With the optional 4th argument, that exact jar file is tested
+# The jar under test is the one in versions/<mc>/build/libs (Forge:
+# versions/<mc>-forge/build/libs), loaded the way players load it (a production
+# server, not the development run). CI builds that jar against
+# the minimum loader version, as for a release, and runs it on both the minimum and
+# the latest loader. With the optional 4th argument, that exact jar file is tested
 # instead of the one in versions/<mc>/build/libs (used for the merged 26.x jar,
-# which must run on every 26.x version).
+# which must run on every 26.x version). The optional 5th argument selects the
+# loader: "neoforge" (default) or "forge" for the 1.20.1 port.
 #
 # With bot=true a vanilla-protocol client (mineflayer) joins, the server is then
 # restarted and the client checks that the saved data came back.
 #
-# Needs Java (21 for 1.21.1, 25 for 26.x), curl, Node 22 and
+# Needs Java (17 for Forge 1.20.1, 21 for 1.21.1, 25 for 26.x), curl, Node 22 and
 # "npm ci --prefix .github/integration".
 set -euo pipefail
 
 source "$(dirname "$0")/server-lib.sh"
 
 BOT="$3"
-use_server "$1" "$2"
+LOADER="${5:-neoforge}"
+use_server "$1" "$2" "$LOADER"
 trap stop_server EXIT
 
 install_server

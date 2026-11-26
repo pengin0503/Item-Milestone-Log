@@ -21,7 +21,7 @@ JAR="${jars[0]}"
 echo "Jar: ${JAR#$ROOT/} ($(stat -c %s "$JAR") bytes)"
 
 listing="$(unzip -Z1 "$JAR")"
-toml="$(unzip -p "$JAR" META-INF/neoforge.mods.toml)"
+toml="$(unzip -p "$JAR" META-INF/neoforge.mods.toml 2>/dev/null || true)"
 props="$ROOT/versions/$MC/gradle.properties"
 prop() { grep -E "^$1=" "$props" | cut -d= -f2-; }
 
@@ -66,6 +66,6 @@ if grep -qE '(^|/)(run|build)/|\.bbmodel$' <<< "$listing"; then
 fi
 
 echo "::group::META-INF/neoforge.mods.toml"
-grep -vE '^\s*(#|$)' <<< "$toml"
+grep -vE '^\s*(#|$)' <<< "$toml" || true
 echo "::endgroup::"
 exit $status

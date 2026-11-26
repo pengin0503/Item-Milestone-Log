@@ -1,9 +1,10 @@
 # Shared helpers for the dedicated-server tests. Source this file, then call
 # use_server <mc_version> <neoforge_version> before the other functions.
 #
-# The mod jar under test is the one in versions/<mc>/build/libs, loaded the way
-# players load it: a production server installed by the official NeoForge installer,
-# not the development run.
+# The mod jar under test is the one in versions/<mc>/build/libs (Forge:
+# versions/<mc>-forge/build/libs), loaded the way players load it: a production
+# server installed by the official NeoForge or Forge installer, not the development
+# run.
 #
 # JAVA (default: java on PATH) is the Java used for the installer and the server.
 
@@ -21,17 +22,37 @@ SERVER_LOG=""
 use_server() {
   MC="$1"
   NEO="$2"
-  LIBS="$ROOT/versions/$MC/build/libs"
+  LOADER="${3:-neoforge}"
+  # The Forge port lives in versions/1.20.1-forge, not versions/1.20.1.
+  if [ "$LOADER" = "forge" ]; then
+    LIBS="$ROOT/versions/$MC-forge/build/libs"
+  else
+    LIBS="$ROOT/versions/$MC/build/libs"
+  fi
   SERVER_DIR="$ROOT/build/server/$MC-$NEO"
   LOG_DIR="$ROOT/build/server-logs/$MC-$NEO"
-  # 26.3 (FML 12) registers the config as LOCAL, which FML names <modid>-local.toml.
-  case "$MC" in
-    26.3) CONFIG_FILE="$SERVER_DIR/config/itemmilestonelog-local.toml" ;;
-    *)    CONFIG_FILE="$SERVER_DIR/config/itemmilestonelog-common.toml" ;;
-  esac
-  case "$MC" in
-    1.21.1) DATA_FILE="$SERVER_DIR/world/data/itemmilestonelog_data.dat" ;;
-    *)      DATA_FILE="$SERVER_DIR/world/data/itemmilestonelog/milestones.dat" ;;
+  # Config and SavedData names differ per loader generation:
+  # - Forge 1.20.1 registers a COMMON config and stores SavedData under the overworld
+  #   data directory with the legacy single-file name.
+  # - NeoForge 26.3 (FML 12) registers the config as LOCAL, which FML names
+  #   <modid>-local.toml; the other NeoForge versions use the common config.
+  case "$LOADER:$MC" in
+    forge:1.20.1)
+      CONFIG_FILE="$SERVER_DIR/config/itemmilestonelog-common.toml"
+      DATA_FILE="$SERVER_DIR/world/data/itemmilestonelog_data.dat"
+      ;;
+    neoforge:26.3)
+      CONFIG_FILE="$SERVER_DIR/config/itemmilestonelog-local.toml"
+      DATA_FILE="$SERVER_DIR/world/data/itemmilestonelog/milestones.dat"
+      ;;
+    neoforge:1.21|neoforge:1.21.*)
+      CONFIG_FILE="$SERVER_DIR/config/itemmilestonelog-common.toml"
+      DATA_FILE="$SERVER_DIR/world/data/itemmilestonelog_data.dat"
+      ;;
+    *)
+      CONFIG_FILE="$SERVER_DIR/config/itemmilestonelog-common.toml"
+      DATA_FILE="$SERVER_DIR/world/data/itemmilestonelog/milestones.dat"
+      ;;
   esac
   mkdir -p "$LOG_DIR" "$SERVER_DIR"
 }
@@ -39,15 +60,26 @@ use_server() {
 # ------------------------------------------------------------------ setup
 
 install_server() {
-  if [ -d "$SERVER_DIR/libraries/net/neoforged/neoforge/$NEO" ]; then
-    echo "NeoForge $NEO server already installed in ${SERVER_DIR#$ROOT/}"
+  local installer args_dir maven loader_name
+  if [ "$LOADER" = "forge" ]; then
+    loader_name="Forge $NEO"
+    args_dir="libraries/net/minecraftforge/forge/$MC-$NEO"
+    installer="forge-$MC-$NEO-installer.jar"
+    maven="https://maven.minecraftforge.net/net/minecraftforge/forge/$MC-$NEO"
   else
-    echo "::group::Install NeoForge $NEO server"
-    local installer="neoforge-$NEO-installer.jar"
-    curl -fsSL --retry 3 -o "$SERVER_DIR/$installer" \
-      "https://maven.neoforged.net/releases/net/neoforged/neoforge/$NEO/$installer"
+    loader_name="NeoForge $NEO"
+    args_dir="libraries/net/neoforged/neoforge/$NEO"
+    installer="neoforge-$NEO-installer.jar"
+    maven="https://maven.neoforged.net/releases/net/neoforged/neoforge/$NEO"
+  fi
+
+  if [ -f "$SERVER_DIR/$args_dir/unix_args.txt" ]; then
+    echo "$loader_name server already installed in ${SERVER_DIR#$ROOT/}"
+  else
+    echo "::group::Install $loader_name server"
+    curl -fsSL --retry 3 -o "$SERVER_DIR/$installer" "$maven/$installer"
     if ! (cd "$SERVER_DIR" && "$JAVA" -jar "$installer" --installServer > "$LOG_DIR/installer.log" 2>&1); then
-      echo "NeoForge installer failed:"
+      echo "$loader_name installer failed:"
       tail -n 80 "$LOG_DIR/installer.log"
       echo "::endgroup::"
       return 1
@@ -58,12 +90,14 @@ install_server() {
   fi
   # The installer writes the launch arguments to libraries/.../unix_args.txt (run.sh
   # just calls java with them).
-  ARGS_FILE="libraries/net/neoforged/neoforge/$NEO/unix_args.txt"
+  ARGS_FILE="$args_dir/unix_args.txt"
   if [ ! -f "$SERVER_DIR/$ARGS_FILE" ]; then
-    ARGS_FILE="$(cd "$SERVER_DIR" && find libraries -name unix_args.txt -path '*neoforge*' 2>/dev/null | head -n 1 || true)"
+    local find_path="*neoforge*"
+    [ "$LOADER" = "forge" ] && find_path="*minecraftforge*"
+    ARGS_FILE="$(cd "$SERVER_DIR" && find libraries -name unix_args.txt -path "$find_path" 2>/dev/null | head -n 1 || true)"
   fi
   if [ -z "$ARGS_FILE" ] || [ ! -f "$SERVER_DIR/$ARGS_FILE" ]; then
-    echo "The NeoForge installer did not create unix_args.txt; installed files:"
+    echo "The $loader_name installer did not create unix_args.txt; installed files:"
     (cd "$SERVER_DIR" && find . -maxdepth 2 -not -path './libraries/*' | sort)
     return 1
   fi
@@ -74,7 +108,9 @@ install_mod() {
   if [ -z "$jar" ]; then
     shopt -s nullglob
     local jars=()
-    for f in "$LIBS"/itemmilestonelog-neoforge-"$MC"-*.jar; do
+    local pattern="itemmilestonelog-neoforge-$MC-*.jar"
+    [ "$LOADER" = "forge" ] && pattern="itemmilestonelog-forge-$MC-*.jar"
+    for f in "$LIBS"/$pattern; do
       case "$f" in *-sources.jar|*-javadoc.jar) ;; *) jars+=("$f") ;; esac
     done
     shopt -u nullglob
@@ -150,13 +186,14 @@ EOF
 start_server() {
   local log="$1"
   SERVER_LOG="$log"
-  echo "::group::Start server (MC $MC, NeoForge $NEO) -> ${log#$ROOT/}"
+  local loader_name="NeoForge $NEO"
+  [ "$LOADER" = "forge" ] && loader_name="Forge $NEO"
+  echo "::group::Start server (MC $MC, $loader_name) -> ${log#$ROOT/}"
   # setsid: own process group, so everything the server starts can be stopped together.
-  local jvm_opts=""
-  if [ "${#SERVER_JVM_OPTS[@]}" -gt 0 ]; then
-    printf -v jvm_opts ' %q' "${SERVER_JVM_OPTS[@]}"
-  fi
-  setsid bash -c "cd '$SERVER_DIR' && exec '$JAVA' -Xmx2G${jvm_opts} @'$ARGS_FILE' nogui" \
+  # Positional arguments (not interpolated into the shell command) keep paths with
+  # quotes or spaces intact.
+  setsid bash -c 'cd "$1" && shift && exec "$@"' _ "$SERVER_DIR" "$JAVA" -Xmx2G \
+    "${SERVER_JVM_OPTS[@]}" "@$ARGS_FILE" nogui \
     > "$log" 2>&1 < /dev/null &
   SERVER_PGID=$!
   local waited=0
@@ -190,7 +227,9 @@ stop_server() {
     waited=$((waited + 1))
   done
   if kill -0 "$SERVER_PGID" 2>/dev/null; then
-    echo "::warning::Server (MC $MC, NeoForge $NEO) did not stop within 120s after /stop"
+    local loader_name="NeoForge $NEO"
+    [ "$LOADER" = "forge" ] && loader_name="Forge $NEO"
+    echo "::warning::Server (MC $MC, $loader_name) did not stop within 120s after /stop"
     echo "Last lines of ${SERVER_LOG#$ROOT/}:"
     tail -n 30 "$SERVER_LOG" | sed 's/^/    /'
     # The server PID is the JVM (exec java), so its threads show what blocks the shutdown.
@@ -200,7 +239,7 @@ stop_server() {
       "$jstack" "$SERVER_PGID" > "$LOG_DIR/stop-timeout-threads.txt" 2>&1 || true
       echo "Non-daemon threads (full dump in ${LOG_DIR#$ROOT/}/stop-timeout-threads.txt):"
       awk 'BEGIN { RS = "" } /^"/ { split($0, l, "\n"); if (l[1] !~ / daemon /) print $0 "\n" }' \
-        "$LOG_DIR/stop-timeout-threads.txt" | head -n 120 | sed 's/^/    /'
+        "$LOG_DIR/stop-timeout-threads.txt" | head -n 120 | sed 's/^/    /' || true
     fi
     kill -TERM -- "-$SERVER_PGID" 2>/dev/null || true
     waited=0
@@ -225,9 +264,12 @@ check_log() {
     echo "  FAIL  'Item Milestone Log loaded' not found in the server log"
     ok=1
   fi
-  if grep -nE '^\s+at com\.pengin0503\.itemmilestonelog' "$log" > "$LOG_DIR/mod-stacktraces.txt"; then
+  # A distinct file per server log: the compat test runs three scenarios in the same
+  # LOG_DIR, and a later scenario must not overwrite an earlier scenario's trace.
+  local trace="$LOG_DIR/$(basename "$log" .log)-mod-stacktraces.txt"
+  if grep -nE '^\s+at com\.pengin0503\.itemmilestonelog' "$log" > "$trace"; then
     echo "  FAIL  stack traces through mod code in the server log:"
-    head -n 40 "$LOG_DIR/mod-stacktraces.txt"
+    head -n 40 "$trace"
     ok=1
   else
     echo "  PASS  no stack traces through mod code"
@@ -235,6 +277,30 @@ check_log() {
   if grep -nE 'ClassNotFoundException|NoClassDefFoundError|NoSuchMethodError|NoSuchFieldError' "$log" | grep -i 'itemmilestonelog\|pengin0503'; then
     echo "  FAIL  linkage errors involving the mod"
     ok=1
+  fi
+  # The Forge 1.20.1 verification gate (docs/DESIGN_1.20.1.md section 9, gate 2)
+  # requires no ERROR in the server log. NeoForge logs are not held to this rule
+  # because unrelated loader warnings there are expected.
+  if [ "${LOADER:-neoforge}" = "forge" ]; then
+    local errors="$LOG_DIR/$(basename "$log" .log)-errors.txt"
+    # Two deliberate exemptions, each matched as narrowly as possible:
+    # 1) Vanilla 1.20.1 logs this at ERROR when a flat world's generator settings have no
+    #    "layers" key (prepare_server writes level-type=minecraft\:flat). It is startup
+    #    noise from vanilla code, not a mod or server failure.
+    # 2) prepare_server deliberately plants a malformed presets/broken.json; the mod
+    #    logging the caught parse failure for that exact file is the graceful handling
+    #    the scenario asserts, so it must not trip the gate.
+    # Every other ERROR/FATAL line still fails the gate.
+    if grep -nE '^\[[^]]*\] \[[^]]*/(ERROR|FATAL)\]' "$log" \
+        | grep -vE '\[minecraft/DedicatedServerProperties\]: No key layers in MapLike\[\{\}\]' \
+        | grep -vE 'Failed to parse preset file broken\.json:' \
+        > "$errors"; then
+      echo "  FAIL  ERROR/FATAL lines in the server log:"
+      head -n 20 "$errors"
+      ok=1
+    else
+      echo "  PASS  no ERROR/FATAL lines in the server log"
+    fi
   fi
   return $ok
 }
