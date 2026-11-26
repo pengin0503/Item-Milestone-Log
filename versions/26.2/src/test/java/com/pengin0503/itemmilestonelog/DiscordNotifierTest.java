@@ -8,8 +8,19 @@ import com.pengin0503.itemmilestonelog.api.TargetKey;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLParameters;
 import java.io.IOException;
+import java.lang.reflect.Field;
+import java.net.Authenticator;
+import java.net.CookieHandler;
+import java.net.ProxySelector;
 import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
@@ -18,8 +29,10 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Queue;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
@@ -2380,6 +2393,120 @@ class DiscordNotifierTest {
                     (d, u, j) -> sent.add(new Sent(d, u, j))));
             assertEquals(1, sent.size());
             assertFalse(JsonParser.parseString(sent.get(0).json()).getAsJsonObject().has("flags"));
+        }
+    }
+
+    @Test
+    void shutdownCancelsHttpClientOperationsBeforeTheBlockingClose() throws Exception {
+        FakeHttpClient fake = new FakeHttpClient();
+        Field field = DiscordNotifier.class.getDeclaredField("httpClient");
+        field.setAccessible(true);
+        field.set(null, fake);
+
+        long start = System.nanoTime();
+        DiscordNotifier.shutdown();
+        long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+
+        assertTrue(fake.shutdownNowCalled.get(), "shutdown must call httpClient.shutdownNow()");
+        assertTrue(fake.closeCalled.get(), "shutdown must still close the client");
+        assertTrue(fake.closeSawShutdownNow.get(), "close must run after cancellation");
+        assertTrue(elapsedMillis < 500L,
+                "shutdown must not block on a hung HttpClient.close(): " + elapsedMillis + " ms");
+    }
+
+    /**
+     * Mimics a Java 21+ HttpClient whose close() blocks until the client is shut down. If shutdown()
+     * calls close() without shutdownNow() first, this takes two seconds and the test fails.
+     */
+    private static final class FakeHttpClient extends HttpClient {
+        private final java.util.concurrent.atomic.AtomicBoolean shutdownNowCalled =
+                new java.util.concurrent.atomic.AtomicBoolean();
+        private final java.util.concurrent.atomic.AtomicBoolean closeCalled =
+                new java.util.concurrent.atomic.AtomicBoolean();
+        private final java.util.concurrent.atomic.AtomicBoolean closeSawShutdownNow =
+                new java.util.concurrent.atomic.AtomicBoolean();
+
+        @Override
+        public void shutdownNow() {
+            shutdownNowCalled.set(true);
+        }
+
+        @Override
+        public void close() {
+            closeCalled.set(true);
+            if (!shutdownNowCalled.get()) {
+                try {
+                    Thread.sleep(2_000L);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return;
+            }
+            closeSawShutdownNow.set(true);
+        }
+
+        @Override
+        public Optional<CookieHandler> cookieHandler() {
+            return Optional.empty();
+        }
+
+        @Override
+        public Optional<Duration> connectTimeout() {
+            return Optional.empty();
+        }
+
+        @Override
+        public Redirect followRedirects() {
+            return Redirect.NEVER;
+        }
+
+        @Override
+        public Optional<ProxySelector> proxy() {
+            return Optional.empty();
+        }
+
+        @Override
+        public SSLContext sslContext() {
+            return null;
+        }
+
+        @Override
+        public SSLParameters sslParameters() {
+            return new SSLParameters();
+        }
+
+        @Override
+        public Optional<Authenticator> authenticator() {
+            return Optional.empty();
+        }
+
+        @Override
+        public Version version() {
+            return Version.HTTP_1_1;
+        }
+
+        @Override
+        public Optional<Executor> executor() {
+            return Optional.empty();
+        }
+
+        @Override
+        public <T> HttpResponse<T> send(HttpRequest request, HttpResponse.BodyHandler<T> handler) {
+            throw new UnsupportedOperationException("fake client");
+        }
+
+        @Override
+        public <T> CompletableFuture<HttpResponse<T>> sendAsync(
+                HttpRequest request, HttpResponse.BodyHandler<T> handler) {
+            throw new UnsupportedOperationException("fake client");
+        }
+
+        @Override
+        public <T> CompletableFuture<HttpResponse<T>> sendAsync(
+                HttpRequest request,
+                HttpResponse.BodyHandler<T> handler,
+                HttpResponse.PushPromiseHandler<T> pushPromiseHandler) {
+            throw new UnsupportedOperationException("fake client");
         }
     }
 

@@ -140,7 +140,7 @@
 2. §F-140-3 の Executor のキューが空になるまで最大 **30 秒**（D-140-3）待つ。待機中、5 秒ごとに残タスク数を info ログへ出す。
 3. 最終自動バックアップ（F10 の停止時バックアップ。レート制限無視は従来どおり）を Executor の最終タスクとして投入し、その完了もドレイン待ちに含める。ドレインがタイムアウトした場合は最終バックアップを**同期書き込みにフォールバック**して実行する。
 4. タイムアウト時は未完了タスクを中断し、件数と種類を warn ログに残す。停止処理自体は継続する（サーバーの停止を無期限に引き延ばさない）。
-5. 既存の停止処理（`DiscordNotifier.shutdown`、保留通知・コマンド・UNDO のクリア等）は従来どおり行う。順序は「ドレイン完了（またはタイムアウト処理）→ 最終バックアップ確定 → 既存クリア処理 → Executor シャットダウン」とする。
+5. 既存の停止処理（`DiscordNotifier.shutdown`、保留通知・コマンド・UNDO のクリア等）は従来どおり行う。順序は「ドレイン完了（またはタイムアウト処理）→ 最終バックアップ確定 → 保留通知の送信と報酬コマンドの全件実行（1 tick 上限なし）→ 残りのクリア処理 → Executor シャットダウン」とする。
 - `ServerStopped` では Executor の状態をリセットし（次ワールドで再生成可能にする）、既存の `MilestoneBackup.resetState` 等も従来どおり呼ぶ。
 - Config は追加しない（§2.2）。待ち上限 30 秒は定数とし、純粋ロジック側でテスト可能にする。
 
@@ -392,6 +392,6 @@ B2-D4 の再確認の結果、6件すべてを 1.4.0 に含める（2026-11-26 p
 - main: `2e4cf50`（PR #86 マージ）＋ `ef5fc21`（PR #87）を内包。v1.3.1 タグは `03f4506`。
 - `MilestoneData`（1.21.1）: ルートは `players`／`worldFirsts`／`lastDigestEpoch` のみで `schemaVersion` は無い。読込は要素単位 lenient（warn＋スキップが各所にある＝N141 の集計点になる）。`toSavedDataFileTag` が F10 バックアップ用のルートタグ生成。
 - `MilestoneBackup`（1.21.1）: `onLevelSave`／`onServerStopping` から同期書き込み（圧縮＋原子 move＋世代 prune、レート制限 1 時間）。`writeBackupNow` は F24 用の同期経路。
-- `ItemMilestoneLog.onServerStopping`: 現行は 同期バックアップ→保留通知／コマンド／UNDO クリア→Discord shutdown の順（N149 で順序を固定し直す対象）。
+- `ItemMilestoneLog.onServerStopping`: N149 で「ドレイン→最終バックアップ→保留通知の送信と報酬コマンドの全件実行→クリア→Discord shutdown」の順に固定した（停止直前の通知・報酬コマンドを取りこぼさない）。
 - `Presets`（1.21.1）: §3.1 のとおり。`PresetDefinition` は record（id／name／items／kind）。未知フィールドは読み捨て。`saveCustomTo` の引き継ぎは `name` のみ。
 - `Config`（1.21.1）: 既存キーに `autoBackupEnabled`（既定 true）／`autoBackupGenerations`（既定 5、1〜20）等。第1バッチで追加・変更なし。

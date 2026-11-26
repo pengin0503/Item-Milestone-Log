@@ -223,15 +223,7 @@ public final class MilestoneCommandLogic {
          * stay in {@code currentTickByPlayer} until the next tick.
          */
         public List<E> drainForTick() {
-            if (!currentTickByPlayer.isEmpty()) {
-                for (List<E> entries : currentTickByPlayer.values()) {
-                    if (entries.size() > 1) {
-                        entries.sort(perPlayerOrder);
-                    }
-                    ready.addAll(entries);
-                }
-                currentTickByPlayer.clear();
-            }
+            promoteCurrentTick();
             if (ready.isEmpty()) {
                 return List.of();
             }
@@ -241,6 +233,33 @@ public final class MilestoneCommandLogic {
                 batch.add(ready.removeFirst());
             }
             return batch;
+        }
+
+        /**
+         * Promotes the current tick's entries and drains every ready entry, ignoring the per-tick
+         * cap. Used by the server-stop flush so no reward command queued just before shutdown is
+         * silently dropped.
+         */
+        public List<E> drainAll() {
+            promoteCurrentTick();
+            if (ready.isEmpty()) {
+                return List.of();
+            }
+            List<E> batch = new ArrayList<>(ready);
+            ready.clear();
+            return batch;
+        }
+
+        private void promoteCurrentTick() {
+            if (!currentTickByPlayer.isEmpty()) {
+                for (List<E> entries : currentTickByPlayer.values()) {
+                    if (entries.size() > 1) {
+                        entries.sort(perPlayerOrder);
+                    }
+                    ready.addAll(entries);
+                }
+                currentTickByPlayer.clear();
+            }
         }
 
         public void clear() {

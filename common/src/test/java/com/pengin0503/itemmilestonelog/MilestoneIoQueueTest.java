@@ -82,11 +82,56 @@ class MilestoneIoQueueTest {
         assertFalse(queue.isAccepting());
         assertFalse(queue.submit(MilestoneIoLogic.TaskKind.IMPORT_ALL, () -> {
         }));
+        assertFalse(queue.tryBeginImport(), "no import may begin after the drain transition");
 
         AtomicBoolean ran = new AtomicBoolean();
         assertTrue(queue.submitFinal(() -> ran.set(true)));
         assertTrue(queue.awaitDrain(5_000L, null).completed());
         assertTrue(ran.get());
+    }
+
+    @Test
+    void shutdownNowReleasesDiscardedTaskCountersAndWakesTheDrain() throws Exception {
+        queue = new MilestoneIoQueue(message -> {
+        });
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        assertTrue(queue.submit(MilestoneIoLogic.TaskKind.IMPORT_ALL, () -> {
+            started.countDown();
+            // Keep running through shutdownNow()'s interrupt so the discarded vs. running split
+            // stays deterministic for the counter assertions below.
+            while (true) {
+                try {
+                    if (release.await(5, TimeUnit.SECONDS)) {
+                        return;
+                    }
+                } catch (InterruptedException e) {
+                    // ignore the shutdownNow interrupt and keep the task running
+                }
+            }
+        }));
+        assertTrue(started.await(5, TimeUnit.SECONDS));
+
+        for (int i = 0; i < 5; i++) {
+            assertTrue(queue.submit(MilestoneIoLogic.TaskKind.BACKUP, () -> {
+            }));
+        }
+        assertEquals(6, queue.pendingTaskCount());
+
+        queue.shutdownNow();
+        // Five never-started tasks were discarded; only the running task remains counted.
+        assertEquals(1, queue.pendingTaskCount(), "shutdownNow must release discarded task counters");
+        assertEquals(1, queue.pendingByKindSnapshot().get(MilestoneIoLogic.TaskKind.IMPORT_ALL));
+        assertFalse(queue.pendingByKindSnapshot().containsKey(MilestoneIoLogic.TaskKind.BACKUP));
+
+        release.countDown();
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (queue.pendingTaskCount() != 0 && System.nanoTime() < deadline) {
+            Thread.sleep(10L);
+        }
+        assertEquals(0, queue.pendingTaskCount());
+        assertTrue(queue.awaitDrain(1_000L, null).completed(),
+                "a drain waiting on the queue must be woken after the counters reach zero");
     }
 
     @Test

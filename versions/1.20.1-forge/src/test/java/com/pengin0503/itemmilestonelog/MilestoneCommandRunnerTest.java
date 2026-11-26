@@ -81,6 +81,27 @@ class MilestoneCommandRunnerTest {
     }
 
     @Test
+    void drainAllForStopIgnoresThePerTickCapAndLeavesNothingQueued() {
+        MilestoneCommandRunner.clearPending();
+        try {
+            for (int i = 25; i >= 1; i--) {
+                MilestoneCommandRunner.enqueueUnchecked(
+                        PLAYER_A, "Alice", TargetKey.of("minecraft:diamond", i), 100, false);
+            }
+            assertEquals(25, MilestoneCommandRunner.pendingSize());
+
+            List<MilestoneCommandRunner.QueuedCommand> all = MilestoneCommandRunner.drainAllForStop();
+            assertEquals(25, all.size());
+            assertEquals(1, all.get(0).key().count());
+            assertEquals(25, all.get(24).key().count());
+            assertEquals(0, MilestoneCommandRunner.pendingSize());
+            assertTrue(MilestoneCommandRunner.drainAllForStop().isEmpty());
+        } finally {
+            MilestoneCommandRunner.clearPending();
+        }
+    }
+
+    @Test
     void queueDrainsInTargetKeyOrderCapsAt20PerTickAndClearsCleanly() {
         MilestoneCommandRunner.clearPending();
         try {

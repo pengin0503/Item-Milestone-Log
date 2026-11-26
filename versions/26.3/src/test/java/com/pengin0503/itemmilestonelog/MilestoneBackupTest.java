@@ -327,6 +327,27 @@ class MilestoneBackupTest {
     }
 
     @Test
+    void stopFlagSuppressesSaveTriggeredBackupUntilTheSessionResets(@TempDir Path tempDir) throws IOException {
+        Path backupDir = tempDir.resolve("backups");
+        MilestoneData data = sampleData();
+        Instant ts = ZonedDateTime.of(2026, 11, 24, 11, 15, 30, 0, UTC).toInstant();
+
+        MilestoneBackup.beginStopping();
+        assertTrue(MilestoneBackup.isStopping());
+        // Rate limit ignored, yet the post-ServerStoppingEvent save must not write anything.
+        assertFalse(MilestoneBackup.tryAutoBackupForTest(
+                backupDir, data, null, true, true, ts, UTC, 5));
+        assertFalse(Files.exists(backupDir));
+
+        // ServerStopped / next init clears the flag and normal backups resume.
+        MilestoneBackup.resetState();
+        assertFalse(MilestoneBackup.isStopping());
+        assertTrue(MilestoneBackup.tryAutoBackupForTest(
+                backupDir, data, null, true, true, ts, UTC, 5));
+        assertTrue(Files.isRegularFile(backupDir.resolve("milestones-20261124-111530.dat")));
+    }
+
+    @Test
     void finalBackupIsExactlyOnceAndScopedToTheCurrentSession(@TempDir Path tempDir) throws IOException {
         Path backupDir = tempDir.resolve("backups");
         MilestoneData data = sampleData();

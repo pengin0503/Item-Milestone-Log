@@ -43,6 +43,13 @@ public final class MilestoneBackup {
 
     private static volatile long lastBackupMillis = MilestoneBackupLogic.NO_BACKUP_RECORDED;
     /**
+     * Set for the whole {@code ServerStoppingEvent} sequence. Minecraft fires {@code LevelEvent.Save}
+     * after that event too; without this flag the final backup would not update the rate-limit
+     * timestamp (it must stay server-thread owned), and the save would write a duplicate backup
+     * and log the false "executor unavailable" warning (#106).
+     */
+    private static volatile boolean serverStopping;
+    /**
      * Serializes the whole snapshot write (filename choice, temp write, atomic move and prune) so
      * a synchronous {@link #writeBackupNow} can never collide with an executor backup on the same
      * second (review 1-2). A {@link ReentrantLock} lets the stop-time server-thread fallback try
@@ -74,6 +81,7 @@ public final class MilestoneBackup {
      * backup file names in {@code <world>/itemmilestonelog/backups/}.
      */
     public static void initForServer(@Nullable MinecraftServer server) {
+        serverStopping = false;
         if (server == null) {
             resetState();
             return;
@@ -108,7 +116,17 @@ public final class MilestoneBackup {
     /** Clears in-memory backup timing state (called on {@code ServerStoppedEvent} and in tests). */
     public static void resetState() {
         lastBackupMillis = MilestoneBackupLogic.NO_BACKUP_RECORDED;
+        serverStopping = false;
         beginFinalBackupSession();
+    }
+
+    /** Marks the start of the stop sequence so post-{@code ServerStoppingEvent} saves are ignored. */
+    static void beginStopping() {
+        serverStopping = true;
+    }
+
+    static boolean isStopping() {
+        return serverStopping;
     }
 
     static long lastBackupMillis() {
@@ -117,6 +135,12 @@ public final class MilestoneBackup {
 
     /** Triggered on {@link LevelEvent.Save}: backs up when the overworld saves (rate-limited). */
     public static void onLevelSave(LevelEvent.Save event) {
+        if (serverStopping) {
+            // Minecraft saves the overworld after ServerStoppingEvent; the stop sequence already
+            // wrote (or deliberately skipped) the final backup. A second backup here would write
+            // duplicate content and burn a generation (#106).
+            return;
+        }
         if (!(event.getLevel() instanceof ServerLevel level)) {
             return;
         }
@@ -160,7 +184,7 @@ public final class MilestoneBackup {
      * the server thread; the disk write runs on the {@code itemmilestonelog-io} executor (N45).
      */
     private static void tryAutoBackup(@Nullable MinecraftServer server) {
-        if (server == null) {
+        if (server == null || serverStopping) {
             return;
         }
         try {
@@ -220,6 +244,10 @@ public final class MilestoneBackup {
             ZoneId zone = backupTimeZone();
             int maxGenerations = Config.autoBackupGenerations();
             FinalBackupSession session = currentFinalBackupSession();
+            // Accepting the final backup counts as this hour's backup. The timestamp stays
+            // server-thread owned (the I/O task never writes it); the stop flag remains the primary
+            // guard against the post-ServerStoppingEvent LevelEvent.Save (#106).
+            lastBackupMillis = now.toEpochMilli();
             return new PreparedFinalBackup(session, dir, root, now, zone, maxGenerations);
         } catch (RuntimeException e) {
             ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Could not prepare final SavedData backup: {}",
@@ -259,14 +287,20 @@ public final class MilestoneBackup {
             if (data.isEmpty()) {
                 return false;
             }
-            return claimAndWriteFinalBackup(
+            Instant now = Instant.now();
+            boolean written = claimAndWriteFinalBackup(
                     session,
                     backupsDir(server),
                     data.toSavedDataFileTag(),
-                    Instant.now(),
+                    now,
                     backupTimeZone(),
                     Config.autoBackupGenerations(),
                     FINAL_BACKUP_GRACE_MILLIS);
+            if (written) {
+                // Server-thread fallback: record acceptance here, never on the I/O thread.
+                lastBackupMillis = now.toEpochMilli();
+            }
+            return written;
         } catch (RuntimeException e) {
             ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Could not write final SavedData backup: {}",
                     e.getMessage());
@@ -352,7 +386,7 @@ public final class MilestoneBackup {
      */
     public static boolean writePreparedFinalBackupNow(Runnable prepared) {
         if (prepared instanceof PreparedFinalBackup task) {
-            return claimAndWriteFinalBackup(
+            boolean written = claimAndWriteFinalBackup(
                     task.session,
                     task.dir,
                     task.root,
@@ -360,6 +394,12 @@ public final class MilestoneBackup {
                     task.zone,
                     task.maxGenerations,
                     FINAL_BACKUP_GRACE_MILLIS);
+            if (written) {
+                // prepareFinalBackup already records acceptance, but this also covers a prepared
+                // task created earlier in the same session. Caller is the server thread.
+                lastBackupMillis = task.now.toEpochMilli();
+            }
+            return written;
         }
         prepared.run();
         return false;
@@ -442,6 +482,9 @@ public final class MilestoneBackup {
             Instant now,
             ZoneId zone,
             int maxGenerations) {
+        if (serverStopping) {
+            return false;
+        }
         if (!enabled) {
             return false;
         }

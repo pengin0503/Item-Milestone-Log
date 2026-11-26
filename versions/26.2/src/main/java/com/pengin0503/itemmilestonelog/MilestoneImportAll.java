@@ -3,11 +3,13 @@ package com.pengin0503.itemmilestonelog;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerPlayer;
 
 import javax.annotation.Nullable;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
@@ -102,11 +104,11 @@ public final class MilestoneImportAll {
             try {
                 scheduler.accept(() -> apply(job));
             } catch (Throwable t) {
-                // During shutdown server.execute can reject. Release the in-flight state here and
-                // attempt failure feedback so importall can never stay permanently busy.
-                ItemMilestoneLog.LOGGER.warn(
-                        "[ItemMilestoneLog] Could not schedule importall result application: {}", t.getMessage());
-                releaseRejected(job, t);
+                // server.execute() does not reject during shutdown: BlockableEventLoop runs the
+                // task inline when scheduling is disabled. This catch is only a defensive guard
+                // for unexpected Throwables (e.g. OutOfMemoryError); it must release the in-flight
+                // state without touching the CommandSourceStack from this I/O thread (#107/#133).
+                releaseFailedHandOff(job, t);
             }
         });
         if (!accepted) {
@@ -121,8 +123,12 @@ public final class MilestoneImportAll {
         job.plan.set(MilestoneExport.buildMergePlan(payload));
     }
 
-    /** Releases a job whose result could not be handed to the server thread, with feedback. */
-    private static void releaseRejected(Job job, Throwable cause) {
+    /**
+     * Releases a job whose application could not be handed to the server thread. Feedback is not
+     * sent here: this runs on the I/O thread, and a CommandSourceStack (and the player behind it)
+     * must only be touched on the server thread (#107).
+     */
+    private static void releaseFailedHandOff(Job job, Throwable cause) {
         if (job.failure.get() == null) {
             job.failure.set(cause);
         }
@@ -131,7 +137,9 @@ public final class MilestoneImportAll {
         }
         ACTIVE.compareAndSet(job, null);
         MilestoneIo.endImport();
-        sendFailure(job, job.failure.get());
+        ItemMilestoneLog.LOGGER.warn(
+                "[ItemMilestoneLog] importall {} could not be handed to the server thread: {}",
+                job.fileName, cause.getMessage());
     }
 
     @FunctionalInterface
@@ -146,6 +154,10 @@ public final class MilestoneImportAll {
 
     static Job newJobForTest(Path file, String fileName) {
         return new Job(null, file, fileName, null);
+    }
+
+    static Job newJobForTest(Path file, String fileName, @Nullable CommandSourceStack source) {
+        return new Job(null, file, fileName, source);
     }
 
     static Job activeForTest() {
@@ -175,20 +187,58 @@ public final class MilestoneImportAll {
             MilestoneExport.ImportAllMergeStats stats = MilestoneExport.applyMergePlan(data, plan);
             ScoreboardSync.refreshAll(job.server);
             MilestoneService.syncAllOnlineGuiPlayers(job.server, null);
-            job.source.sendSuccess(() -> ServerLang.tr(job.source,
-                    "message.itemmilestonelog.importall_done",
-                    job.fileName,
-                    stats.importedPlayers(),
-                    stats.addedTargets(),
-                    stats.updatedRecords(),
-                    stats.updatedWorldFirsts(),
-                    stats.skippedEntries()), false);
+            ServerPlayer onlineExecutor = resolveOnlineExecutor(job);
+            Component done = onlineExecutor != null
+                    ? ServerLang.tr(onlineExecutor,
+                            "message.itemmilestonelog.importall_done",
+                            job.fileName,
+                            stats.importedPlayers(),
+                            stats.addedTargets(),
+                            stats.updatedRecords(),
+                            stats.updatedWorldFirsts(),
+                            stats.skippedEntries())
+                    : ServerLang.tr(job.source,
+                            "message.itemmilestonelog.importall_done",
+                            job.fileName,
+                            stats.importedPlayers(),
+                            stats.addedTargets(),
+                            stats.updatedRecords(),
+                            stats.updatedWorldFirsts(),
+                            stats.skippedEntries());
+            sendSuccess(job, onlineExecutor, done);
         } catch (RuntimeException e) {
             ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Applying importall {} failed", job.fileName, e);
             sendFailure(job, e);
         } finally {
             ACTIVE.compareAndSet(job, null);
             MilestoneIo.endImport();
+        }
+    }
+
+    /** Re-resolves a player executor by UUID so a relogin during a long parse still gets feedback. */
+    @Nullable
+    private static ServerPlayer resolveOnlineExecutor(Job job) {
+        if (job.executorUuid == null || job.server == null) {
+            return null;
+        }
+        return job.server.getPlayerList().getPlayer(job.executorUuid);
+    }
+
+    private static void sendSuccess(Job job, @Nullable ServerPlayer onlineExecutor, Component message) {
+        if (job.executorUuid != null) {
+            if (onlineExecutor == null) {
+                ItemMilestoneLog.LOGGER.info(
+                        "[ItemMilestoneLog] importall {} finished, but executor {} is no longer online",
+                        job.fileName, job.executorUuid);
+                return;
+            }
+            if (job.source == null || onlineExecutor != job.source.getPlayer()) {
+                onlineExecutor.sendSystemMessage(message);
+                return;
+            }
+        }
+        if (job.source != null) {
+            job.source.sendSuccess(() -> message, false);
         }
     }
 
@@ -261,14 +311,30 @@ public final class MilestoneImportAll {
             return;
         }
         try {
-            job.source.sendFailure(failureMessage(job.source, job.fileName, failure));
+            ServerPlayer onlineExecutor = resolveOnlineExecutor(job);
+            if (job.executorUuid != null && onlineExecutor == null) {
+                ItemMilestoneLog.LOGGER.warn(
+                        "[ItemMilestoneLog] importall {} failed, but executor {} is no longer online: {}",
+                        job.fileName, job.executorUuid, failure.getMessage());
+                return;
+            }
+            Component message = failureMessage(onlineExecutor, job.source, job.fileName, failure);
+            if (onlineExecutor != null && (job.source == null || onlineExecutor != job.source.getPlayer())) {
+                onlineExecutor.sendSystemMessage(message);
+            } else if (job.source != null) {
+                job.source.sendFailure(message);
+            }
         } catch (RuntimeException e) {
             ItemMilestoneLog.LOGGER.warn(
                     "[ItemMilestoneLog] Could not send importall failure feedback: {}", e.getMessage());
         }
     }
 
-    private static Component failureMessage(CommandSourceStack source, String fileName, Throwable failure) {
+    private static Component failureMessage(
+            @Nullable ServerPlayer player,
+            @Nullable CommandSourceStack source,
+            String fileName,
+            Throwable failure) {
         String reasonKey;
         if (failure instanceof IllegalArgumentException) {
             reasonKey = "message.itemmilestonelog.importall_reason_invalid_format";
@@ -277,8 +343,16 @@ public final class MilestoneImportAll {
         } else {
             reasonKey = "message.itemmilestonelog.importall_reason_error";
         }
+        if (player != null) {
+            return ServerLang.tr(player, "message.itemmilestonelog.importall_failed",
+                    fileName, ServerLang.tr(player, reasonKey));
+        }
         return ServerLang.tr(source, "message.itemmilestonelog.importall_failed",
                 fileName, ServerLang.tr(source, reasonKey));
+    }
+
+    private static Component failureMessage(CommandSourceStack source, String fileName, Throwable failure) {
+        return failureMessage(null, source, fileName, failure);
     }
 
     private static int fail(CommandSourceStack source, Component message) {
@@ -291,16 +365,25 @@ public final class MilestoneImportAll {
         final Path file;
         final String fileName;
         final CommandSourceStack source;
+        @Nullable
+        final UUID executorUuid;
         final AtomicBoolean parseDone = new AtomicBoolean();
         final AtomicBoolean applied = new AtomicBoolean();
         final AtomicReference<MilestoneExport.MergePlan> plan = new AtomicReference<>();
         final AtomicReference<Throwable> failure = new AtomicReference<>();
 
         Job(MinecraftServer server, Path file, String fileName, CommandSourceStack source) {
+            this(server, file, fileName, source,
+                    source != null && source.getPlayer() != null ? source.getPlayer().getUUID() : null);
+        }
+
+        Job(MinecraftServer server, Path file, String fileName, CommandSourceStack source,
+                @Nullable UUID executorUuid) {
             this.server = server;
             this.file = file;
             this.fileName = fileName;
             this.source = source;
+            this.executorUuid = executorUuid;
         }
     }
 }

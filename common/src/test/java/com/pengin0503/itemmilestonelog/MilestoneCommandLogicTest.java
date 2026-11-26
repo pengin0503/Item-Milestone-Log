@@ -215,6 +215,24 @@ class MilestoneCommandLogicTest {
     }
 
     @Test
+    void drainAllPromotesTheCurrentTickAndIgnoresThePerTickCapForTheStopFlush() {
+        MilestoneCommandLogic.CommandQueue<String> queue =
+                new MilestoneCommandLogic.CommandQueue<String>(Comparator.naturalOrder(), 20);
+        for (int i = 25; i >= 1; i--) {
+            queue.enqueue(PLAYER_A, String.format("minecraft:item_%02d", i));
+        }
+        queue.enqueue(PLAYER_B, "minecraft:other");
+
+        List<String> all = queue.drainAll();
+        assertEquals(26, all.size());
+        assertEquals("minecraft:item_01", all.get(0));
+        assertEquals("minecraft:item_25", all.get(24));
+        assertEquals("minecraft:other", all.get(25));
+        assertTrue(queue.isEmpty(), "the stop flush must leave nothing queued");
+        assertTrue(queue.drainAll().isEmpty());
+    }
+
+    @Test
     void callbackTrackerDistinguishesSuccessZeroResultFailureUninvokedAndForked() {
         MilestoneCommandLogic.CallbackTracker uninvoked = new MilestoneCommandLogic.CallbackTracker();
         assertFalse(uninvoked.invoked());
