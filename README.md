@@ -103,9 +103,9 @@ Assign a key to **Open Milestone Log** under *Options → Controls → Key Binds
 | `/milestonelog mutebroadcast` | Toggle muting other players' milestone / world-first / preset-completion broadcasts |
 | `/milestonelog muteprogress` | Toggle muting your quantity-target progress alerts |
 | `/milestonelog discordoptout` | Toggle excluding your milestones from Discord webhook posts (controlled by `allowDiscordOptOut`) |
-| `/milestonelog export` | Export your targets and records to `itemmilestonelog/exports/<player>.json` |
-| `/milestonelog exporthtml` | Export your milestones as a standalone HTML page (`<player>.html`) |
-| `/milestonelog exportcsv` | Export your recorded milestones as a UTF-8 CSV file (`<player>.csv`) |
+| `/milestonelog export` | Export your targets and records to `itemmilestonelog/exports/<player>-<uuid>.json` |
+| `/milestonelog exporthtml` | Export your milestones as a standalone HTML page (`<player>-<uuid>.html`) |
+| `/milestonelog exportcsv` | Export your recorded milestones as a UTF-8 CSV file (`<player>-<uuid>.csv`) |
 | `/milestonelog import <fileName>` | Merge targets (union) and records (smaller playtime wins) from an export file |
 
 > **Pagination & filtering notes:** Omitting `[<page>]` prints the full list, matching 1.0.1 behavior. Passing a page number (starting at `1`) shows 15 entries per page with clickable `[< Prev]` and `[Next >]` buttons. On Minecraft 26.x clients, clicking `[< Prev]` / `[Next >]` on OP `admin` commands displays a vanilla command-confirmation prompt (expected client behavior; non-OP commands run directly).
@@ -229,13 +229,13 @@ Example (`config/itemmilestonelog/presets/my_pack.json`):
 
 All export commands write to `<world>/itemmilestonelog/exports/`:
 
-- **JSON**: `<player>.json` (`export`) and `all-players.json` (`exportall`).
-- **HTML**: `<player>.html` (`exporthtml`) and `all-players.html` (`exporthtmlall`) — self-contained UTF-8 HTML with inline CSS, no JavaScript, and no external resources.
-- **CSV**: `<player>.csv` (`exportcsv`) and `all-players.csv` (`exportcsvall`) — UTF-8 with BOM, CRLF, RFC 4180 quoting, spreadsheet formula-injection protection, one row per recorded milestone.
+- **JSON**: `<player>-<uuid>.json` (`export`) and `all-players.json` (`exportall`).
+- **HTML**: `<player>-<uuid>.html` (`exporthtml`) and `all-players.html` (`exporthtmlall`) — self-contained UTF-8 HTML with inline CSS, no JavaScript, and no external resources.
+- **CSV**: `<player>-<uuid>.csv` (`exportcsv`) and `all-players.csv` (`exportcsvall`) — UTF-8 with BOM, CRLF, RFC 4180 quoting, spreadsheet formula-injection protection, one row per recorded milestone.
 
 > **Dedicated server note:** HTML and CSV export files are written to the **server's** world folder (`<world>/itemmilestonelog/exports/`), where regular players cannot open them directly — HTML/CSV exports are mainly intended for singleplayer and server owners.
 
-JSON export example (`<player>.json`):
+JSON export example (`<player>-<uuid>.json`):
 
 ```json
 {

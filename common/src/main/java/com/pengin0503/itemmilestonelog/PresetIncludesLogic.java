@@ -4,6 +4,7 @@ import com.pengin0503.itemmilestonelog.api.TargetKey;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -106,16 +107,28 @@ public final class PresetIncludesLogic {
         Map<String, List<String>> problemsByPreset = new LinkedHashMap<>();
         Map<String, List<TargetKey>> expanded = new LinkedHashMap<>();
         for (String id : rawItems.keySet()) {
-            // Each preset is expanded independently: a cycle branches differently depending
-            // on which preset is the root, so results must not be memoized across roots.
+            // #102: memoize clean expansions per root and skip duplicate include IDs. An
+            // expansion that never hit a cycle cannot depend on the include stack, so reusing
+            // it inside the same root is exact. Cyclic expansions stay uncached because their
+            // cut point (and therefore their result) depends on which IDs are on the stack.
+            Map<String, List<TargetKey>> cleanMemo = new HashMap<>();
+            // Emit each distinct diagnostic once per root. Diamond graphs would otherwise
+            // repeat the same warning once per path (exponentially many times) while strict
+            // validation only needs to know that the problem exists.
+            Set<String> emittedDiagnostics = new LinkedHashSet<>();
             List<String> rootProblems = new ArrayList<>();
-            expanded.put(id, expand(id, rawItems, includes, new LinkedHashSet<>(), rootProblems));
+            expanded.put(id, expand(id, rawItems, includes, new LinkedHashSet<>(),
+                    rootProblems, emittedDiagnostics, cleanMemo));
             if (!rootProblems.isEmpty()) {
                 problemsByPreset.put(id, rootProblems);
                 warnings.addAll(rootProblems);
             }
         }
         return new Result(expanded, warnings, problemsByPreset);
+    }
+
+    /** Items of one node plus whether any cycle was cut anywhere in its subtree. */
+    private record Expansion(List<TargetKey> items, boolean cyclic) {
     }
 
     /**
@@ -127,26 +140,56 @@ public final class PresetIncludesLogic {
             Map<String, List<TargetKey>> rawItems,
             Map<String, List<String>> includes,
             Set<String> stack,
-            List<String> warnings) {
+            List<String> warnings,
+            Set<String> emittedDiagnostics,
+            Map<String, List<TargetKey>> cleanMemo) {
+        return expandNode(id, rawItems, includes, stack, warnings, emittedDiagnostics, cleanMemo).items();
+    }
+
+    private static Expansion expandNode(
+            String id,
+            Map<String, List<TargetKey>> rawItems,
+            Map<String, List<String>> includes,
+            Set<String> stack,
+            List<String> warnings,
+            Set<String> emittedDiagnostics,
+            Map<String, List<TargetKey>> cleanMemo) {
+        List<TargetKey> cached = cleanMemo.get(id);
+        if (cached != null) {
+            return new Expansion(cached, false);
+        }
         if (!rawItems.containsKey(id)) {
-            warnings.add("unknown preset include '" + id + "' (skipped)");
-            return List.of();
+            report(warnings, emittedDiagnostics,
+                    "unknown preset include '" + id + "' (skipped)");
+            return new Expansion(List.of(), false);
         }
         if (stack.contains(id)) {
             List<String> path = new ArrayList<>(stack);
             path.add(id);
-            warnings.add("preset include cycle detected: " + String.join(" -> ", path) + " (branch cut)");
-            return List.of();
+            report(warnings, emittedDiagnostics,
+                    "preset include cycle detected: " + String.join(" -> ", path) + " (branch cut)");
+            return new Expansion(List.of(), true);
         }
-
         stack.add(id);
         Set<TargetKey> resolved = new LinkedHashSet<>();
-        for (String includeId : includes.getOrDefault(id, List.of())) {
-            if (includeId == null || includeId.isBlank()) {
-                warnings.add("blank preset include id in '" + id + "' (skipped)");
+        boolean cyclic = false;
+        // #102: a repeated include ID adds nothing to the ordered set; expanding it once keeps
+        // item order/dedup identical while making duplicated include lists linear.
+        Set<String> seenIncludes = new LinkedHashSet<>();
+        for (String rawIncludeId : includes.getOrDefault(id, List.of())) {
+            if (rawIncludeId == null || rawIncludeId.isBlank()) {
+                report(warnings, emittedDiagnostics,
+                        "blank preset include id in '" + id + "' (skipped)");
                 continue;
             }
-            resolved.addAll(expand(includeId.trim(), rawItems, includes, stack, warnings));
+            String includeId = rawIncludeId.trim();
+            if (!seenIncludes.add(includeId)) {
+                continue;
+            }
+            Expansion child = expandNode(includeId, rawItems, includes, stack,
+                    warnings, emittedDiagnostics, cleanMemo);
+            cyclic |= child.cyclic();
+            resolved.addAll(child.items());
         }
         for (TargetKey key : rawItems.get(id)) {
             if (key != null) {
@@ -155,6 +198,16 @@ public final class PresetIncludesLogic {
         }
         stack.remove(id);
 
-        return List.copyOf(resolved);
+        List<TargetKey> result = List.copyOf(resolved);
+        if (!cyclic) {
+            cleanMemo.put(id, result);
+        }
+        return new Expansion(result, cyclic);
+    }
+
+    private static void report(List<String> warnings, Set<String> emittedDiagnostics, String message) {
+        if (emittedDiagnostics.add(message)) {
+            warnings.add(message);
+        }
     }
 }

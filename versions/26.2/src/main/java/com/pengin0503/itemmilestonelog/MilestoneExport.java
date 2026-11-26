@@ -190,6 +190,40 @@ public final class MilestoneExport {
         return base;
     }
 
+    /**
+     * #137: player-specific base name with a stable owner suffix. Sanitization alone is not
+     * injective ({@code Bob!}, {@code Bob?} and {@code Bob_} all become {@code Bob_}; a name reused
+     * by a different UUID also collides), so the owner UUID is appended verbatim. UUIDs are unique
+     * and the value is stable across exports and server restarts, keeping the name recognizable.
+     *
+     * <p>When {@code uuid} is null the historical sanitized-only base is returned; production
+     * export paths always pass the player UUID.
+     */
+    public static String sanitizePlayerFileBaseName(@Nullable String playerName, @Nullable UUID uuid) {
+        String base = sanitizePlayerFileBaseName(playerName);
+        return uuid == null ? base : base + "-" + uuid;
+    }
+
+    public static String sanitizePlayerFileName(@Nullable String playerName, @Nullable UUID uuid, String extension) {
+        String ext = extension == null ? "" : extension;
+        if (!ext.isEmpty() && !ext.startsWith(".")) {
+            ext = "." + ext;
+        }
+        return sanitizePlayerFileBaseName(playerName, uuid) + ext;
+    }
+
+    public static String sanitizePlayerFileName(@Nullable String playerName, @Nullable UUID uuid) {
+        return sanitizePlayerFileName(playerName, uuid, ".json");
+    }
+
+    public static String sanitizePlayerHtmlFileName(@Nullable String playerName, @Nullable UUID uuid) {
+        return sanitizePlayerFileName(playerName, uuid, ".html");
+    }
+
+    public static String sanitizePlayerCsvFileName(@Nullable String playerName, @Nullable UUID uuid) {
+        return sanitizePlayerFileName(playerName, uuid, ".csv");
+    }
+
     public static String sanitizePlayerFileName(@Nullable String playerName, String extension) {
         String ext = extension == null ? "" : extension;
         if (!ext.isEmpty() && !ext.startsWith(".")) {
@@ -279,7 +313,7 @@ public final class MilestoneExport {
 
     public static String exportPlayer(Path dir, UUID uuid, String playerName, MilestoneData.PlayerData pd) throws IOException {
         Files.createDirectories(dir);
-        String fileName = sanitizePlayerFileName(playerName);
+        String fileName = sanitizePlayerFileName(playerName, uuid);
         Path target = dir.resolve(fileName).normalize();
         if (!target.getParent().equals(dir.normalize())) {
             throw new IOException("Invalid export target path");
@@ -399,7 +433,7 @@ public final class MilestoneExport {
             Instant generatedAt,
             ZoneId zone) throws IOException {
         Files.createDirectories(dir);
-        String fileName = sanitizePlayerHtmlFileName(playerName);
+        String fileName = sanitizePlayerHtmlFileName(playerName, uuid);
         Path target = dir.resolve(fileName).normalize();
         if (!target.getParent().equals(dir.normalize())) {
             throw new IOException("Invalid export target path");
@@ -546,7 +580,7 @@ public final class MilestoneExport {
             Function<String, String> itemNameResolver,
             ZoneId zone) throws IOException {
         Files.createDirectories(dir);
-        String fileName = sanitizePlayerCsvFileName(playerName);
+        String fileName = sanitizePlayerCsvFileName(playerName, uuid);
         Path target = dir.resolve(fileName).normalize();
         if (!target.getParent().equals(dir.normalize())) {
             throw new IOException("Invalid export target path");

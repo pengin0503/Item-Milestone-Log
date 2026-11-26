@@ -102,7 +102,7 @@ F1 → F4 → F3 → F5 → F6 → F7 の順に実装する（F1 がデータ形
 ### 仕様
 - コマンド（本人のデータが対象、OP 不要）:
   - `/milestonelog export`: 自分の目標と記録を JSON ファイルに書き出し、保存先パスをチャットで知らせる
-    - 保存先: ワールドフォルダ配下 `itemmilestonelog/exports/<プレイヤー名>.json`（同名があれば上書き）
+    - 保存先: ワールドフォルダ配下 `itemmilestonelog/exports/<プレイヤー名>-<UUID>.json`（プレイヤーごとに一意。旧 `<プレイヤー名>.json` も import 可能）
   - `/milestonelog import <fileName>`: 同フォルダ内の JSON を読み込んで自分のデータにマージする
     - マージ規則: 目標は和集合。記録は itemId ごとに **playTicks が小さい方** を採用し、day / epochMillis は採用した側の値を保持する
     - インポートでは F7 のイベントを発火しない。世界初（F4）も更新しない。Discord 通知（F5）も送らない
