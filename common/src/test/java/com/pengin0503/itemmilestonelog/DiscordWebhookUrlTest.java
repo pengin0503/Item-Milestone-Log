@@ -169,6 +169,35 @@ class DiscordWebhookUrlTest {
     }
 
     @Test
+    void httpsUrisWithoutAUsableHostOrWithAnInvalidPortAreMalformed() {
+        String[] malformed = {
+                "https:foo",
+                "https:///path",
+                "https://",
+                "https://bad_host/path",
+                "https://discord.com:99999/api/webhooks/1/token"
+        };
+        for (String value : malformed) {
+            DiscordWebhookUrl.Resolution res = DiscordWebhookUrl.resolve(value, k -> null);
+            assertEquals(DiscordWebhookUrl.Status.MALFORMED_URL, res.status(), "value=" + value);
+            assertFalse(res.isResolved(), "value=" + value);
+            assertNull(res.uri(), "value=" + value);
+            assertNull(res.resolvedUrl(), "value=" + value);
+            assertNotNull(res.warningMessage(), "value=" + value);
+            assertFalse(res.warningMessage().contains(value), "warning must not leak the URL");
+        }
+
+        // The same validation applies to an env: value.
+        DiscordWebhookUrl.Resolution envRes = DiscordWebhookUrl.resolve(
+                "env:IML_OPAQUE_HOOK", k -> "https:opaque-secret");
+        assertEquals(DiscordWebhookUrl.Status.MALFORMED_URL, envRes.status());
+        assertTrue(envRes.fromEnv());
+        assertEquals("IML_OPAQUE_HOOK", envRes.envVarName());
+        assertNull(envRes.uri());
+        assertFalse(envRes.warningMessage().contains("opaque-secret"));
+    }
+
+    @Test
     void httpsValidationAppliesToEnvValueAndWarnNeverContainsSecretValue() {
         // Non-https scheme in env var value
         DiscordWebhookUrl.Resolution httpRes = DiscordWebhookUrl.resolve("env:IML_HTTP_HOOK", k -> SECRET_HTTP_URL);

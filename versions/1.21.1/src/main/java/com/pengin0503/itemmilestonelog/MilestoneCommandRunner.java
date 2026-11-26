@@ -79,6 +79,11 @@ public final class MilestoneCommandRunner {
         return QUEUE.drainForTick();
     }
 
+    /** Test hook: promotes and drains every queued entry without the per-tick cap. */
+    static List<QueuedCommand> drainAllForStop() {
+        return QUEUE.drainAll();
+    }
+
     static int pendingSize() {
         return QUEUE.pendingSize();
     }
@@ -110,6 +115,40 @@ public final class MilestoneCommandRunner {
         }
         List<QueuedCommand> batch = QUEUE.drainForTick();
         executeBatch(batch, template, cmd -> runServerCommand(server, cmd));
+    }
+
+    /**
+     * Server-stop flush: executes every queued milestone command, ignoring the per-tick cap.
+     * {@code ServerStoppingEvent} still runs while players are connected, so reward commands
+     * queued just before shutdown can be delivered before the server shuts them off (#135).
+     */
+    public static void runAllOnStop(@Nullable MinecraftServer server) {
+        if (server == null || QUEUE.isEmpty()) {
+            return;
+        }
+        String template;
+        try {
+            template = Config.milestoneCommand();
+        } catch (Throwable t) {
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Failed to read milestoneCommand config", t);
+            return;
+        }
+        if (template.isBlank()) {
+            QUEUE.clear();
+            return;
+        }
+        // Commands normally do not enqueue further reward commands, but loop defensively so
+        // anything queued by a command handler is also delivered. Bound it so a pathological
+        // feedback loop cannot extend the stop indefinitely.
+        for (int batch = 0; batch < 1_000 && !QUEUE.isEmpty(); batch++) {
+            executeBatch(QUEUE.drainAll(), template, cmd -> runServerCommand(server, cmd));
+        }
+        if (!QUEUE.isEmpty()) {
+            ItemMilestoneLog.LOGGER.warn(
+                    "[ItemMilestoneLog] Dropping {} milestone command(s) that were still queued after the stop flush",
+                    QUEUE.pendingSize());
+            QUEUE.clear();
+        }
     }
 
     /** Renders and dispatches each entry in {@code batch}, isolating errors per entry. */

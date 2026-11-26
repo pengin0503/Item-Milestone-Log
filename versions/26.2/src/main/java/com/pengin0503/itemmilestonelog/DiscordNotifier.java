@@ -1765,6 +1765,10 @@ public final class DiscordNotifier {
             executor = null;
         }
         if (httpClient != null) {
+            // Java 21+ HttpClient.close() waits for in-flight operations; after the executor
+            // timeout that could block ServerStoppingEvent for up to TIMEOUT again. Cancel first
+            // so close() returns promptly (#111).
+            httpClient.shutdownNow();
             httpClient.close();
             httpClient = null;
         }

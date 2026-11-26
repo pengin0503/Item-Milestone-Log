@@ -1390,6 +1390,28 @@ public final class Tracker {
         PENDING_NOTIFICATIONS.clear();
     }
 
+    /**
+     * Sends every queued notification before {@code ServerStoppingEvent} completes and empties the
+     * queue. This runs while players are still connected; Discord submissions are queued on the
+     * notifier executor, which {@link DiscordNotifier#shutdown()} drains afterwards (#135).
+     */
+    public static void flushPendingOnStop(@Nullable MinecraftServer server) {
+        List<PendingNotifications> batch = drainPendingNotifications();
+        if (batch.isEmpty()) {
+            return;
+        }
+        if (server == null) {
+            return;
+        }
+        try {
+            flushPendingNotifications(server, batch);
+        } catch (RuntimeException e) {
+            ItemMilestoneLog.LOGGER.warn(
+                    "[ItemMilestoneLog] Could not flush queued notifications during server stop: {}",
+                    e.getMessage());
+        }
+    }
+
     /** Maximum nesting depth of {@code ItemMilestoneLogApi#recordNow} calls (F32). */
     static final int MAX_RECORD_NOW_DEPTH = ItemMilestoneLogApi.MAX_RECORD_NOW_DEPTH;
 

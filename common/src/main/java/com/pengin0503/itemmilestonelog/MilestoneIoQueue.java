@@ -76,13 +76,16 @@ public final class MilestoneIoQueue {
 
     /**
      * Reserves the single {@code importall} slot. Returns {@code false} when a task is already
-     * running or the queue is stopping.
+     * running or the queue is stopping. The state inspection and the CAS share the monitor with
+     * the drain/shutdown transitions, so an import cannot be begun after a stop transition.
      */
     public boolean tryBeginImport() {
-        if (!MilestoneIoLogic.canBeginImport(accepting, isShutdown(), importInFlight.get())) {
-            return false;
+        synchronized (monitor) {
+            if (!MilestoneIoLogic.canBeginImport(accepting, isShutdown(), importInFlight.get())) {
+                return false;
+            }
+            return importInFlight.compareAndSet(false, true);
         }
-        return importInFlight.compareAndSet(false, true);
     }
 
     /** Releases the {@code importall} slot (idempotent). */
@@ -109,24 +112,41 @@ public final class MilestoneIoQueue {
     private boolean submitInternal(MilestoneIoLogic.TaskKind kind, Runnable task, boolean allowAfterDrain) {
         Objects.requireNonNull(kind, "kind");
         Objects.requireNonNull(task, "task");
-        if (isShutdown()) {
-            return false;
-        }
-        if (!allowAfterDrain && !accepting) {
-            return false;
-        }
-        // Increment both counters under the monitor so a drain snapshot can never observe a
-        // total that has been decremented while its per-kind counter has not (review cosmetic).
+        // Inspect the state and increment both counters under the same monitor used by the drain
+        // and shutdown transitions. Otherwise a thread that had already passed the accepting
+        // check could increment after awaitDrain() observed zero and completed the drain (#109).
         synchronized (monitor) {
+            if (isShutdown()) {
+                return false;
+            }
+            if (!allowAfterDrain && !accepting) {
+                return false;
+            }
             pendingTasks.incrementAndGet();
             pendingByKind.get(kind).incrementAndGet();
         }
         try {
-            executor.execute(() -> runTask(kind, task));
+            executor.execute(new QueuedTask(kind, task));
             return true;
         } catch (RejectedExecutionException e) {
             finishTask(kind);
             return false;
+        }
+    }
+
+    /** Carries the task kind so {@link #shutdownNow()} can release the counters it discards. */
+    private final class QueuedTask implements Runnable {
+        private final MilestoneIoLogic.TaskKind kind;
+        private final Runnable task;
+
+        private QueuedTask(MilestoneIoLogic.TaskKind kind, Runnable task) {
+            this.kind = kind;
+            this.task = task;
+        }
+
+        @Override
+        public void run() {
+            runTask(kind, task);
         }
     }
 
@@ -152,7 +172,11 @@ public final class MilestoneIoQueue {
 
     /** Stops accepting new normal tasks; already queued work still runs. */
     public void beginDrain() {
-        accepting = false;
+        // The transition shares the monitor with submitInternal()/tryBeginImport(), so once this
+        // returns no new normal task can start after a completed drain (#109).
+        synchronized (monitor) {
+            accepting = false;
+        }
     }
 
     /**
@@ -214,16 +238,29 @@ public final class MilestoneIoQueue {
 
     /** Stops accepting tasks and interrupts the running task; queued tasks are discarded. */
     public void shutdownNow() {
-        shutdown = true;
-        accepting = false;
-        executor.shutdownNow();
+        synchronized (monitor) {
+            shutdown = true;
+            accepting = false;
+            // shutdownNow() returns exactly the queued runnables that will never run. Release
+            // their acceptance counters and wake a waiting drain, otherwise pendingTasks can
+            // never return to zero and awaitDrain() only ends by timing out (#109).
+            for (Runnable discarded : executor.shutdownNow()) {
+                if (discarded instanceof QueuedTask queued) {
+                    pendingByKind.get(queued.kind).decrementAndGet();
+                    pendingTasks.decrementAndGet();
+                }
+            }
+            monitor.notifyAll();
+        }
     }
 
     /** Stops accepting tasks after a completed drain. Idempotent. */
     public void shutdown() {
-        shutdown = true;
-        accepting = false;
-        executor.shutdown();
+        synchronized (monitor) {
+            shutdown = true;
+            accepting = false;
+            executor.shutdown();
+        }
     }
 
     /** Returns the executor thread while it is alive (diagnostics/tests). */

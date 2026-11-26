@@ -36,6 +36,9 @@ public final class MilestoneServerStop {
     /** Runs the fixed N149 stop sequence. Must be called on the server thread. */
     public static void onServerStopping(MinecraftServer server) {
         long startNanos = System.nanoTime();
+        // A LevelEvent.Save fires after this event during Minecraft's stop sequence; suppress the
+        // duplicate automatic backup before any stop work or drain can trigger it (#106).
+        MilestoneBackup.beginStopping();
         MilestoneIo.beginStopping();
         MilestoneIoQueue queue = MilestoneIo.current();
 
@@ -116,9 +119,14 @@ public final class MilestoneServerStop {
                     unfinishedTasks, MilestoneIoLogic.describeKinds(unfinishedKinds));
         }
 
-        // Existing stop work, after the drain/final backup as required by F-140-4.
-        Tracker.clearPendingNotifications();
+        // Existing stop work, after the drain/final backup as required by F-140-4. Execute the
+        // reward commands first (they can run other commands and queue further records), then
+        // deliver the notifications (chat + Discord) while players are still connected. Clear any
+        // leftovers defensively afterwards (#135).
+        MilestoneCommandRunner.runAllOnStop(server);
+        Tracker.flushPendingOnStop(server);
         MilestoneCommandRunner.clearPending();
+        Tracker.clearPendingNotifications();
         MilestoneService.UNDO_SNAPSHOTS.clear();
         ScoreboardSync.resetWarningState();
         DiscordNotifier.shutdown();

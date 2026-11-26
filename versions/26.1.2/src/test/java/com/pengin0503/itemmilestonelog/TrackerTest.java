@@ -577,6 +577,21 @@ class TrackerTest {
     }
 
     @Test
+    void flushPendingOnStopWithoutAServerEmptiesTheQueueInsteadOfLeavingItForTheNextSession() {
+        UUID a = UUID.randomUUID();
+        MilestoneRecord rec = new MilestoneRecord(1200, 1L, 1_700_000_000_000L);
+        Tracker.clearPendingNotifications();
+        try {
+            Tracker.queuePendingNotification(a, "Alice", Component.literal("Alice"),
+                    TargetKey.of("minecraft:diamond"), rec, false);
+            Tracker.flushPendingOnStop(null);
+            assertTrue(Tracker.drainPendingNotifications().isEmpty());
+        } finally {
+            Tracker.clearPendingNotifications();
+        }
+    }
+
+    @Test
     void pendingNotificationsExcludeOptedOutPlayersFromDiscordQueueWhilePreservingInGameChannelsAndWorldFirsts() {
         MilestoneData data = new MilestoneData();
         MilestoneData.PlayerData optedOutPd = data.player(PLAYER_A);

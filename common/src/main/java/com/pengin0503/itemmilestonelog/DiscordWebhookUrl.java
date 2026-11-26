@@ -182,6 +182,12 @@ public final class DiscordWebhookUrl {
             if (!"https".equalsIgnoreCase(scheme)) {
                 return new Resolution(Status.INVALID_SCHEME, null, null, envVarName, fromEnv, trimmed);
             }
+            String host = uri.getHost();
+            if (uri.isOpaque() || host == null || host.isEmpty() || uri.getPort() > 65535) {
+                // https:foo, https:///path, https://, https://bad_host/path and an out-of-range
+                // port all pass the scheme check but cannot be used by HttpClient (#112).
+                return new Resolution(Status.MALFORMED_URL, null, null, envVarName, fromEnv, trimmed);
+            }
             return new Resolution(Status.RESOLVED, uri, uri.toString(), envVarName, fromEnv, trimmed);
         } catch (IllegalArgumentException e) {
             return new Resolution(Status.MALFORMED_URL, null, null, envVarName, fromEnv, trimmed);
