@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 
@@ -209,5 +210,132 @@ class PresetIncludesLogicTest {
         assertEquals(expected, result.items("p0"));
         assertEquals(depth, result.items("p0").size());
         assertTrue(result.warnings().isEmpty(), () -> "unexpected warnings: " + result.warnings());
+    }
+
+    // ---- #149: memoization with a cycle elsewhere in the graph -------------------------
+
+    /** Literal copy of the pre-#102 algorithm; used only as a differential oracle in tests. */
+    private static List<TargetKey> oldExpand(String id, Map<String, List<TargetKey>> raw,
+                                             Map<String, List<String>> inc, LinkedHashSet<String> stack,
+                                             List<String> warnings) {
+        if (!raw.containsKey(id)) {
+            warnings.add("unknown preset include '" + id + "' (skipped)");
+            return List.of();
+        }
+        if (stack.contains(id)) {
+            List<String> path = new ArrayList<>(stack);
+            path.add(id);
+            warnings.add("preset include cycle detected: " + String.join(" -> ", path) + " (branch cut)");
+            return List.of();
+        }
+        stack.add(id);
+        LinkedHashSet<TargetKey> resolved = new LinkedHashSet<>();
+        for (String includeId : inc.getOrDefault(id, List.of())) {
+            if (includeId == null || includeId.isBlank()) {
+                warnings.add("blank preset include id in '" + id + "' (skipped)");
+                continue;
+            }
+            resolved.addAll(oldExpand(includeId.trim(), raw, inc, stack, warnings));
+        }
+        for (TargetKey key : raw.get(id)) {
+            if (key != null) {
+                resolved.add(key);
+            }
+        }
+        stack.remove(id);
+        return List.copyOf(resolved);
+    }
+
+    private record OldResult(Map<String, List<TargetKey>> items, List<String> warnings,
+                             Map<String, List<String>> problems) {
+    }
+
+    private static OldResult oldResolve(Map<String, List<TargetKey>> raw,
+                                        Map<String, List<String>> inc) {
+        Map<String, List<TargetKey>> items = new LinkedHashMap<>();
+        Map<String, List<String>> problems = new LinkedHashMap<>();
+        List<String> warnings = new ArrayList<>();
+        for (String id : raw.keySet()) {
+            List<String> rootWarnings = new ArrayList<>();
+            items.put(id, oldExpand(id, raw, inc, new LinkedHashSet<>(), rootWarnings));
+            if (!rootWarnings.isEmpty()) {
+                problems.put(id, new ArrayList<>(new LinkedHashSet<>(rootWarnings)));
+            }
+            warnings.addAll(rootWarnings);
+        }
+        return new OldResult(items, new ArrayList<>(new LinkedHashSet<>(warnings)), problems);
+    }
+
+    /** Depth-n diamond whose two branches meet in a self-looping node at the bottom. */
+    private static Map<String, List<TargetKey>> cyclicDiamondItems(int depth,
+                                                                   Map<String, List<String>> inc) {
+        Map<String, List<TargetKey>> items = new LinkedHashMap<>();
+        items.put("root", List.of(key("minecraft:root")));
+        for (int i = 1; i <= depth; i++) {
+            items.put("a" + i, List.of(key("minecraft:a" + i)));
+            items.put("b" + i, List.of(key("minecraft:b" + i)));
+            inc.put("a" + i, i < depth ? List.of("a" + (i + 1), "b" + (i + 1)) : List.of("loop"));
+            inc.put("b" + i, i < depth ? List.of("a" + (i + 1), "b" + (i + 1)) : List.of("loop"));
+        }
+        items.put("loop", List.of(key("minecraft:loop")));
+        inc.put("root", List.of("a1", "b1"));
+        inc.put("loop", List.of("loop"));
+        return items;
+    }
+
+    @Test
+    void cyclicDiamondDiagnosticsStillMatchTheOldAlgorithmExactly() {
+        Map<String, List<String>> inc = new LinkedHashMap<>();
+        Map<String, List<TargetKey>> items = cyclicDiamondItems(5, inc);
+        OldResult oldResult = oldResolve(items, inc);
+        PresetIncludesLogic.Result result = PresetIncludesLogic.resolve(items, inc);
+
+        assertEquals(oldResult.items(), result.expandedItems());
+        assertEquals(oldResult.warnings(), new ArrayList<>(new LinkedHashSet<>(result.warnings())));
+        assertEquals(oldResult.problems(), result.problemsByPreset());
+    }
+
+    @Test
+    void cyclicDiamondDepth25ExpandsFastWithTheExactItemLists() {
+        int depth = 25;
+        Map<String, List<String>> inc = new LinkedHashMap<>();
+        Map<String, List<TargetKey>> items = cyclicDiamondItems(depth, inc);
+
+        long start = System.nanoTime();
+        PresetIncludesLogic.Result result = assertTimeoutPreemptively(Duration.ofSeconds(5),
+                () -> PresetIncludesLogic.resolve(items, inc));
+        long elapsedMillis = (System.nanoTime() - start) / 1_000_000L;
+
+        // The old algorithm reaches the loop once per path; with working memoization the same
+        // ordered, deduplicated item list is produced in linear instead of exponential work.
+        List<TargetKey> expectedRoot = new ArrayList<>();
+        expectedRoot.add(key("minecraft:loop"));
+        for (int i = depth; i >= 1; i--) {
+            expectedRoot.add(key("minecraft:a" + i));
+            expectedRoot.add(key("minecraft:b" + i));
+        }
+        expectedRoot.add(key("minecraft:root"));
+        assertEquals(expectedRoot, result.items("root"));
+        assertEquals(2 * depth + 2, result.items("root").size());
+        for (int i = 1; i <= depth; i++) {
+            List<TargetKey> expectedA = new ArrayList<>();
+            List<TargetKey> expectedB = new ArrayList<>();
+            expectedA.add(key("minecraft:loop"));
+            expectedB.add(key("minecraft:loop"));
+            for (int j = depth; j > i; j--) {
+                expectedA.add(key("minecraft:a" + j));
+                expectedA.add(key("minecraft:b" + j));
+                expectedB.add(key("minecraft:a" + j));
+                expectedB.add(key("minecraft:b" + j));
+            }
+            expectedA.add(key("minecraft:a" + i));
+            expectedB.add(key("minecraft:b" + i));
+            assertEquals(expectedA, result.items("a" + i));
+            assertEquals(expectedB, result.items("b" + i));
+        }
+        // Generous bound: the acyclic depth-25 benchmark was ~58 ms; a regression back to
+        // exponential expansion cannot finish anywhere near 5 s.
+        assertTrue(elapsedMillis < 5_000L,
+                () -> "cyclic diamond resolve took " + elapsedMillis + " ms");
     }
 }

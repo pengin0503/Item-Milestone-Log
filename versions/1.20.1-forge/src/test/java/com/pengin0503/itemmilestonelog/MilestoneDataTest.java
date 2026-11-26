@@ -949,4 +949,97 @@ class MilestoneDataTest {
         assertEquals(SchemaVersionLogic.CURRENT_SCHEMA_VERSION, unwrapped.getInt("schemaVersion"));
     }
 
+    private static CompoundTag validParityPlayerTag() {
+        CompoundTag player = new CompoundTag();
+        ListTag targets = new ListTag();
+        targets.add(StringTag.valueOf("minecraft:diamond"));
+        player.put("targets", targets);
+        CompoundTag records = new CompoundTag();
+        records.putInt("minecraft:coal", 123);
+        player.put("records", records);
+        ListTag carried = new ListTag();
+        carried.add(StringTag.valueOf("minecraft:emerald"));
+        player.put("carriedFromCreative", carried);
+        player.putString("lastKnownName", "Alice");
+        player.putBoolean("firstJoinHintShown", true);
+        player.putBoolean("muteBroadcasts", true);
+        return player;
+    }
+
+    /** Loads one corrupted player, asserting exactly one element skip and an evacuation decision. */
+    private static MilestoneData.PlayerData loadOneSkip(UUID playerId, CompoundTag playerTag) {
+        CompoundTag players = new CompoundTag();
+        players.put(playerId.toString(), playerTag);
+        CompoundTag root = new CompoundTag();
+        root.put("players", players);
+        root.putInt("schemaVersion", 1);
+
+        MilestoneData loaded = MilestoneData.load(root);
+        assertNotNull(loaded.loadReport());
+        assertEquals(1, loaded.loadReport().elementSkipCount(),
+                "one corrupted field must be counted so F-140-2 can evacuate");
+        assertTrue(loaded.loadReport().toOutcome().requiresEvacuation());
+        MilestoneData.PlayerData pd = loaded.playerOrNull(playerId);
+        assertNotNull(pd);
+        assertEquals(List.of(TargetKey.of("minecraft:diamond")), List.copyOf(pd.targets),
+                "valid sibling targets must survive");
+        return pd;
+    }
+
+    @Test
+    void loadInternalCorruptParityFieldsCountSkipsAndKeepValidSiblings() {
+        UUID player = UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        // 1. records[itemId] value has an invalid type (not a compound, not a legacy int).
+        CompoundTag badRecordValue = validParityPlayerTag();
+        badRecordValue.getCompound("records").put("minecraft:coal", StringTag.valueOf("garbage"));
+        MilestoneData.PlayerData pd1 = loadOneSkip(player, badRecordValue);
+        assertTrue(pd1.records.isEmpty());
+        assertEquals(Set.of("minecraft:emerald"), pd1.carriedFromCreative);
+        assertEquals("Alice", pd1.lastKnownName);
+        assertTrue(pd1.firstJoinHintShown);
+        assertTrue(pd1.muteBroadcasts);
+
+        // 2. one invalid carriedFromCreative id is dropped and counted, the valid one is kept.
+        CompoundTag badCarried = validParityPlayerTag();
+        ListTag carried = new ListTag();
+        carried.add(StringTag.valueOf("minecraft:emerald"));
+        carried.add(StringTag.valueOf("garbage id")); // whitespace makes it an invalid item id
+        badCarried.put("carriedFromCreative", carried);
+        MilestoneData.PlayerData pd2 = loadOneSkip(player, badCarried);
+        assertEquals(Set.of("minecraft:emerald"), pd2.carriedFromCreative);
+        assertEquals(1, pd2.records.size());
+        assertEquals("Alice", pd2.lastKnownName);
+        assertTrue(pd2.firstJoinHintShown);
+        assertTrue(pd2.muteBroadcasts);
+
+        // 3. lastKnownName has an invalid type -> default, other fields survive.
+        CompoundTag badName = validParityPlayerTag();
+        badName.putInt("lastKnownName", 7);
+        MilestoneData.PlayerData pd3 = loadOneSkip(player, badName);
+        assertEquals("", pd3.lastKnownName);
+        assertEquals(1, pd3.records.size());
+        assertEquals(Set.of("minecraft:emerald"), pd3.carriedFromCreative);
+        assertTrue(pd3.firstJoinHintShown);
+        assertTrue(pd3.muteBroadcasts);
+
+        // 4. firstJoinHintShown has an invalid type -> default false.
+        CompoundTag badFirstJoin = validParityPlayerTag();
+        badFirstJoin.putString("firstJoinHintShown", "yes");
+        MilestoneData.PlayerData pd4 = loadOneSkip(player, badFirstJoin);
+        assertFalse(pd4.firstJoinHintShown);
+        assertTrue(pd4.muteBroadcasts);
+        assertEquals("Alice", pd4.lastKnownName);
+        assertEquals(1, pd4.records.size());
+
+        // 5. muteBroadcasts has an invalid type -> default false.
+        CompoundTag badMute = validParityPlayerTag();
+        badMute.putString("muteBroadcasts", "yes");
+        MilestoneData.PlayerData pd5 = loadOneSkip(player, badMute);
+        assertFalse(pd5.muteBroadcasts);
+        assertTrue(pd5.firstJoinHintShown);
+        assertEquals("Alice", pd5.lastKnownName);
+        assertEquals(1, pd5.records.size());
+    }
+
 }
