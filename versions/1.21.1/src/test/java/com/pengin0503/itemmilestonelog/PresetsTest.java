@@ -984,6 +984,16 @@ class PresetsTest {
     // ------------------------------------------------------------------
 
     private static Path presetSchemaPath() {
+        // Under Gradle the test JVM's working directory is the NeoForge run directory
+        // (for example versions/1.21.1/run), so neither fixed relative path below resolves.
+        // Walk up from the real working directory to the filesystem root instead.
+        for (Path dir = Path.of("").toAbsolutePath(); dir != null; dir = dir.getParent()) {
+            Path schema = dir.resolve("docs").resolve("preset-schema.json");
+            if (Files.isRegularFile(schema)) {
+                return schema;
+            }
+        }
+        // Fallbacks for working directories that are not inside the repository checkout.
         Path fromVersionDir = Path.of("..", "..", "docs", "preset-schema.json").normalize();
         if (Files.isRegularFile(fromVersionDir)) {
             return fromVersionDir;
@@ -992,7 +1002,8 @@ class PresetsTest {
         if (Files.isRegularFile(fromRepoRoot)) {
             return fromRepoRoot;
         }
-        throw new AssertionError("Could not locate docs/preset-schema.json");
+        throw new AssertionError("Could not locate docs/preset-schema.json from working directory "
+                + Path.of("").toAbsolutePath());
     }
 
     @Test
