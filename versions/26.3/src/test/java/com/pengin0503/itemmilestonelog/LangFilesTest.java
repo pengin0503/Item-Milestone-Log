@@ -155,6 +155,10 @@ class LangFilesTest {
                 "message.itemmilestonelog.presettop_self_none",
                 "message.itemmilestonelog.presettop_empty",
                 "message.itemmilestonelog.help.presettop",
+                // F-150-10 (PR-3)
+                "message.itemmilestonelog.firsts_close_header",
+                "message.itemmilestonelog.firsts_close_entry",
+                "message.itemmilestonelog.firsts_close_none",
                 "message.itemmilestonelog.firsts_top_header",
                 "message.itemmilestonelog.firsts_top_entry",
                 "message.itemmilestonelog.firsts_top_empty",

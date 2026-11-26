@@ -167,6 +167,11 @@ public final class Pagination {
         return ROOT_COMMAND + " firsts top";
     }
 
+    /** Page-link prefix for {@code /milestonelog firsts close} (F-150-10). */
+    public static String firstsCloseCommandPrefix() {
+        return ROOT_COMMAND + " firsts close";
+    }
+
     /**
      * Page-link prefix for {@code /milestonelog firsts unclaimed scope <scope>} (F-150-6).
      * The scope literal is always written so paged links keep the caller's choice.

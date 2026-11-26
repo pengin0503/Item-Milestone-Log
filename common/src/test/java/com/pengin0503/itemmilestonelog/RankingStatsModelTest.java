@@ -329,4 +329,116 @@ class RankingStatsModelTest {
         assertEquals(12, ranked.get(11).rank());
         assertTrue(ranked.subList(0, 10).stream().noneMatch(e -> e.uuid().equals(ranked.get(11).uuid())));
     }
+
+    private static RankingStatsModel.CloseWorldFirst first(int n, UUID holder, String winner, int ticks) {
+        return new RankingStatsModel.CloseWorldFirst(key(n), holder, winner, ticks);
+    }
+
+    private static RankingStatsModel.WhoHasPlayer visible(UUID uuid, String name,
+                                                          RankingStatsModel.RecordValue... records) {
+        return new RankingStatsModel.WhoHasPlayer(uuid, name, List.of(records), List.of());
+    }
+
+    @Test
+    void firstsClosePicksOneBestRunnerUpPerKeyAndOmitsHolderAndKeylessRows() {
+        List<RankingStatsModel.CloseWorldFirst> worldFirsts = List.of(
+                first(1, U1, "Alice", 100),
+                first(2, U2, "Bob", 300),
+                // No other visible player recorded key 3: the key must not produce a row.
+                first(3, U3, "Carol", 50));
+        List<RankingStatsModel.WhoHasPlayer> players = List.of(
+                // The holder's own record is never a runner-up, even when it would be fastest.
+                visible(U1, "Alice", rec(1, 101, 1)),
+                visible(U2, "Bob", rec(1, 110, 500), rec(2, 320, 600)),
+                visible(U4, "Dave", rec(1, 130, 100)),
+                visible(U3, "Carol", rec(1, 120, 900)),
+                visible(U5, "Eve", rec(2, 320, 700)));
+
+        List<RankingStatsModel.CloseEntry> entries = RankingStatsModel.firstsClose(worldFirsts, players);
+        assertEquals(2, entries.size());
+        assertEquals(new RankingStatsModel.CloseEntry("minecraft:item_1", 1, "Alice", "Bob", 10L),
+                entries.get(0));
+        assertEquals(new RankingStatsModel.CloseEntry("minecraft:item_2", 1, "Bob", "Eve", 20L),
+                entries.get(1));
+        assertTrue(entries.stream().noneMatch(e -> e.runnerName().equals(e.winnerName())),
+                "the holder can never be its own runner-up");
+        assertEquals(List.of(), RankingStatsModel.firstsClose(worldFirsts, List.of()));
+    }
+
+    @Test
+    void firstsCloseBreaksRunnerTiesByKnownEpochThenNameThenUuid() {
+        List<RankingStatsModel.CloseWorldFirst> worldFirsts = List.of(first(1, U1, "Alice", 100));
+        List<RankingStatsModel.WhoHasPlayer> players = List.of(
+                visible(U2, "Bob", rec(1, 120, 0)),       // unknown epoch sorts last
+                visible(U3, "Carol", rec(1, 120, 500)),
+                visible(U6, "Aaron", rec(1, 120, 500)),   // name wins over Carol
+                visible(U5, "Aaron", rec(1, 120, 500)));  // equal name: UUID breaks the tie
+
+        List<RankingStatsModel.CloseEntry> entries = RankingStatsModel.firstsClose(worldFirsts, players);
+        assertEquals(1, entries.size());
+        assertEquals("Aaron", entries.get(0).runnerName());
+        assertEquals(20L, entries.get(0).gapTicks());
+        assertEquals(entries, RankingStatsModel.firstsClose(worldFirsts, List.of(
+                visible(U5, "Aaron", rec(1, 120, 500)),
+                visible(U6, "Aaron", rec(1, 120, 500)),
+                visible(U3, "Carol", rec(1, 120, 500)),
+                visible(U2, "Bob", rec(1, 120, 0)))),
+                "the runner-up choice must not depend on iteration order");
+    }
+
+    @Test
+    void firstsCloseDropsHiddenRunnersNoRunnerKeysAndNegativeGaps() {
+        List<RankingStatsModel.CloseWorldFirst> worldFirsts = List.of(
+                first(1, U1, "Alice", 100),
+                first(2, U2, "Bob", 500));
+        // U6 has a faster key-1 record but is hidden, so the tree never passes it to the model:
+        // neither the chosen runner-up nor the reported gap may leak that record.
+        List<RankingStatsModel.WhoHasPlayer> visiblePlayers = List.of(
+                visible(U3, "Carol", rec(1, 150, 10), rec(2, 400, 20)),
+                visible(U6, "Aaron", rec(1, 110, 30)));
+        List<RankingStatsModel.CloseEntry> entries =
+                RankingStatsModel.firstsClose(worldFirsts, visiblePlayers.subList(0, 1));
+        assertEquals(List.of(new RankingStatsModel.CloseEntry(
+                "minecraft:item_1", 1, "Alice", "Carol", 50L)), entries);
+        // Visibility is the caller's responsibility (as in PR-1/PR-2): only the filtered list
+        // reaches the model, so a hidden player's ticks cannot become a gap baseline.
+        assertEquals(50L, RankingStatsModel.firstsClose(worldFirsts, visiblePlayers.subList(0, 1))
+                .get(0).gapTicks());
+        assertEquals(List.of(), RankingStatsModel.firstsClose(List.of(first(2, U2, "Bob", 500)),
+                List.of(visible(U3, "Carol", rec(2, 400, 20)))));
+    }
+
+    @Test
+    void firstsCloseSortsByGapThenTargetThenRunnerName() {
+        List<RankingStatsModel.CloseWorldFirst> worldFirsts = List.of(
+                first(2, U2, "Bob", 100),
+                first(1, U1, "Alice", 100),
+                first(3, U3, "Carol", 10));
+        List<RankingStatsModel.WhoHasPlayer> players = List.of(
+                visible(U4, "Zed", rec(2, 110, 20)),
+                visible(U5, "Yan", rec(1, 105, 20)),
+                visible(U6, "Aaron", rec(3, 20, 20)));
+
+        assertEquals(List.of("minecraft:item_1", "minecraft:item_2", "minecraft:item_3"),
+                RankingStatsModel.firstsClose(worldFirsts, players).stream()
+                        .map(RankingStatsModel.CloseEntry::itemId).toList());
+    }
+
+    @Test
+    void firstsCloseCapsTheDefaultViewAtTenRows() {
+        List<RankingStatsModel.CloseWorldFirst> worldFirsts = new ArrayList<>();
+        List<RankingStatsModel.WhoHasPlayer> players = new ArrayList<>();
+        for (int i = 0; i < 12; i++) {
+            worldFirsts.add(first(i + 1, U1, "Alice", 100));
+            players.add(visible(new UUID(0, i + 100), "P" + i, rec(i + 1, 100 + i, i)));
+        }
+        List<RankingStatsModel.CloseEntry> all = RankingStatsModel.firstsClose(worldFirsts, players);
+        assertEquals(12, all.size());
+        List<RankingStatsModel.CloseEntry> capped = RankingStatsModel.firstsClose(
+                worldFirsts, players, RankingStatsModel.CLOSE_LIMIT);
+        assertEquals(10, capped.size());
+        assertEquals(0L, capped.get(0).gapTicks());
+        assertEquals(9L, capped.get(9).gapTicks());
+        assertTrue(RankingStatsModel.firstsClose(worldFirsts, players, 0).isEmpty());
+    }
 }

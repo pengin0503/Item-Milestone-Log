@@ -172,6 +172,8 @@ class PaginationTest {
     void rankingPageLinksKeepPresetAndUnclaimedScope() {
         assertEquals("/milestonelog presettop my_preset", Pagination.presettopCommandPrefix("my_preset"));
         assertEquals("/milestonelog firsts top", Pagination.firstsTopCommandPrefix());
+        assertEquals("/milestonelog firsts close 2",
+                Pagination.pageCommand(Pagination.firstsCloseCommandPrefix(), 2));
         for (String scope : List.of("targets", "presets", "all")) {
             assertEquals("/milestonelog firsts unclaimed scope " + scope + " 2",
                     Pagination.pageCommand(Pagination.firstsUnclaimedCommandPrefix(scope), 2));

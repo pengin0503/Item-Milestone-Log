@@ -472,6 +472,45 @@ class MilestoneCommandsHelpTest {
     }
 
     @Test
+    void firstsCloseIsLookupGatedWithoutInheritingTheResetRequirement() {
+        CommandDispatcher<CommandSourceStack> dispatcher = buildDispatcher(src -> true);
+        CommandNode<CommandSourceStack> firsts = rootChild(dispatcher, "firsts");
+        CommandNode<CommandSourceStack> close = firsts.getChild("close");
+        assertNotNull(close, "firsts close must be registered (F-150-10)");
+        assertNotNull(close.getCommand(), "bare firsts close must execute");
+        CommandNode<CommandSourceStack> page = close.getChild("page");
+        assertNotNull(page, "firsts close [<page>] must be registered");
+        assertEquals(IntegerArgumentType.class,
+                ((ArgumentCommandNode<CommandSourceStack, ?>) page).getType().getClass());
+        assertTrue(close.canUse(null),
+                "firsts close must not inherit firstsResetRequirement");
+        assertNull(firsts.getChild("close").getChild("reset"), "close must not expose admin resets");
+
+        for (String line : List.of("milestonelog firsts", "milestonelog firsts 2",
+                "milestonelog firsts top", "milestonelog firsts top 2",
+                "milestonelog firsts close", "milestonelog firsts close 2",
+                com.pengin0503.itemmilestonelog.Pagination.pageCommand(
+                        com.pengin0503.itemmilestonelog.Pagination.firstsCloseCommandPrefix(), 2)
+                        .substring(1))) {
+            ParseResults<CommandSourceStack> parse = dispatcher.parse(line, null);
+            assertFalse(parse.getReader().canRead(), "must fully parse: " + line);
+            assertTrue(parse.getExceptions().isEmpty(), line + ": " + parse.getExceptions());
+            assertNotNull(parse.getContext().getCommand(), line);
+        }
+        assertEquals(IntegerArgumentType.class,
+                ((ArgumentCommandNode<CommandSourceStack, ?>) firsts.getChild("page")).getType().getClass(),
+                "firsts 2 must stay the legacy page argument");
+
+        // The public world-first help entry stays public; only the close branch needs the lookup gate.
+        assertEquals(CommandHelp.Gate.NONE, entryByName("firsts").gate());
+        assertFalse(MilestoneCommands.canUseRankings(false, false),
+                "allowLookup=false without privilege must close the runner-up gate");
+        assertTrue(MilestoneCommands.canUseRankings(true, false));
+        assertTrue(MilestoneCommands.canUseRankings(false, true),
+                "viewhidden privilege must keep the gate open");
+    }
+
+    @Test
     void statsItemAndStatstagAreAdditiveBranchesWithLookupGate() {
         CommandDispatcher<CommandSourceStack> dispatcher = buildDispatcher(src -> true);
         CommandNode<CommandSourceStack> stats = rootChild(dispatcher, "stats");
@@ -791,6 +830,8 @@ class MilestoneCommandsHelpTest {
                 () -> "Expected firsts top usage: " + regularFirstsUsages);
         assertTrue(regularFirstsUsages.stream().anyMatch(u -> u.contains("unclaimed")),
                 () -> "Expected firsts unclaimed usage: " + regularFirstsUsages);
+        assertTrue(regularFirstsUsages.stream().anyMatch(u -> u.contains("close")),
+                () -> "Expected firsts close usage with the gate open: " + regularFirstsUsages);
         assertFalse(regularFirstsUsages.stream().anyMatch(u -> u.contains("reset")),
                 () -> "Resets must stay hidden: " + regularFirstsUsages);
 
