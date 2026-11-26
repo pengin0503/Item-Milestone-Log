@@ -17,15 +17,22 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -259,5 +266,102 @@ class MilestoneBackupTest {
         Instant ts = ZonedDateTime.of(2026, 11, 24, 11, 15, 30, 0, UTC).toInstant();
         assertFalse(MilestoneBackup.writeBackup(blockedPath, data, ts, UTC, 5));
         assertEquals(MilestoneBackupLogic.NO_BACKUP_RECORDED, MilestoneBackup.lastBackupMillis());
+    }
+
+    @Test
+    void snapshotWriteDoesNotOwnRateLimitTimestamp(@TempDir Path tempDir) throws IOException {
+        Path backupDir = tempDir.resolve("backups");
+        MilestoneData data = sampleData();
+        Instant ts = ZonedDateTime.of(2026, 11, 24, 11, 15, 30, 0, UTC).toInstant();
+        CompoundTag root = data.toSavedDataFileTag();
+
+        assertEquals(MilestoneBackupLogic.NO_BACKUP_RECORDED, MilestoneBackup.lastBackupMillis());
+        // The I/O-thread entry point must never mutate the rate-limit timestamp (review 1-1).
+        assertTrue(MilestoneBackup.writeBackupSnapshot(backupDir, root, ts, UTC, 5));
+        assertEquals(MilestoneBackupLogic.NO_BACKUP_RECORDED, MilestoneBackup.lastBackupMillis());
+
+        // The synchronous wrapper owns the timestamp on its caller's (server) thread.
+        Instant later = ts.plusSeconds(30);
+        assertTrue(MilestoneBackup.writeBackup(backupDir, data, later, UTC, 5));
+        assertEquals(later.toEpochMilli(), MilestoneBackup.lastBackupMillis());
+    }
+
+    @Test
+    void concurrentSnapshotWritesAreSerializedAndNeverShareAFilename(@TempDir Path tempDir) throws Exception {
+        Path backupDir = tempDir.resolve("backups");
+        Instant ts = ZonedDateTime.of(2026, 11, 24, 11, 15, 30, 0, UTC).toInstant();
+        CompoundTag root = sampleData().toSavedDataFileTag();
+        int writers = 6;
+
+        ExecutorService pool = Executors.newFixedThreadPool(writers);
+        CountDownLatch start = new CountDownLatch(1);
+        List<Future<Boolean>> futures = new ArrayList<>();
+        try {
+            for (int i = 0; i < writers; i++) {
+                futures.add(pool.submit(() -> {
+                    start.await();
+                    return MilestoneBackup.writeBackupSnapshot(backupDir, root, ts, UTC, 50);
+                }));
+            }
+            start.countDown();
+            for (Future<Boolean> future : futures) {
+                assertTrue(future.get(10, TimeUnit.SECONDS));
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+        // The filename choice through prune is serialized, so the same-second writers must all get
+        // a distinct generation instead of silently overwriting one another (review 1-2).
+        assertEquals(writers, listFileNames(backupDir).size());
+    }
+
+    @Test
+    void finalBackupIsExactlyOnceAndScopedToTheCurrentSession(@TempDir Path tempDir) throws IOException {
+        Path backupDir = tempDir.resolve("backups");
+        MilestoneData data = sampleData();
+        CompoundTag root = data.toSavedDataFileTag();
+        Instant previousWorld = ZonedDateTime.of(2026, 11, 24, 10, 0, 0, 0, UTC).toInstant();
+        Instant currentWorld = ZonedDateTime.of(2026, 11, 24, 11, 0, 0, 0, UTC).toInstant();
+
+        MilestoneBackup.resetState();
+        long firstGeneration = MilestoneBackup.finalBackupGeneration();
+        Runnable previousWorldTask = MilestoneBackup.prepareFinalBackupForTest(
+                backupDir, root, previousWorld, UTC, 5);
+
+        // A late write from the previous world must not mark the next world as already backed up
+        // (review 3-2).
+        MilestoneBackup.resetState();
+        assertNotEquals(firstGeneration, MilestoneBackup.finalBackupGeneration());
+        previousWorldTask.run();
+        assertFalse(MilestoneBackup.isFinalBackupWritten());
+        assertTrue(Files.isRegularFile(backupDir.resolve("milestones-20261124-100000.dat")));
+
+        // The current session writes once; running the async task afterwards must be a no-op.
+        Runnable currentTask = MilestoneBackup.prepareFinalBackupForTest(
+                backupDir, root, currentWorld, UTC, 5);
+        assertTrue(MilestoneBackup.writePreparedFinalBackupNow(currentTask));
+        assertTrue(MilestoneBackup.isFinalBackupWritten());
+        currentTask.run();
+        assertEquals(Set.of(
+                "milestones-20261124-100000.dat",
+                "milestones-20261124-110000.dat"), listFileNames(backupDir));
+    }
+
+    @Test
+    void finalBackupFallbackWaitsOnlyBoundedGraceForAnInFlightClaim(@TempDir Path tempDir) {
+        Path backupDir = tempDir.resolve("backups");
+        Instant ts = ZonedDateTime.of(2026, 11, 24, 11, 15, 30, 0, UTC).toInstant();
+        CompoundTag root = sampleData().toSavedDataFileTag();
+
+        MilestoneBackup.resetState();
+        assertTrue(MilestoneBackup.claimFinalBackupForTest());
+        long start = System.nanoTime();
+        assertFalse(MilestoneBackup.writeFinalBackupNowForTest(backupDir, root, ts, UTC, 5, 150L));
+        long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+        // The fallback must not block on the in-flight writer, but must give it the bounded grace.
+        assertTrue(elapsedMillis >= 100L, "expected the bounded grace to elapse, got " + elapsedMillis + " ms");
+        assertTrue(elapsedMillis < 5_000L, "fallback blocked too long: " + elapsedMillis + " ms");
+        assertFalse(Files.exists(backupDir));
+        assertFalse(MilestoneBackup.isFinalBackupWritten());
     }
 }

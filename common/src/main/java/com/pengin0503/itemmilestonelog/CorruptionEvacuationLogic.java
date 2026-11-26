@@ -99,6 +99,19 @@ public final class CorruptionEvacuationLogic {
         return totalFailure || elementSkipCount >= 1;
     }
 
+    /**
+     * Combines the server-start checks into the total-failure flag used for evacuation.
+     *
+     * <p>An existing file that cannot be read at all ({@code rootUnreadable}) is a total failure
+     * by definition, even when another listener already caused {@link MilestoneData#get} to
+     * return a cached empty instance ({@code loadFailed == false}) and therefore no
+     * {@link MilestoneLoadReport} is available. Without this the unreadable file would never be
+     * evacuated and the next normal save would overwrite it.
+     */
+    public static boolean isTotalLoadFailure(boolean rootUnreadable, boolean rootInvalid, boolean loadFailed) {
+        return rootUnreadable || rootInvalid || loadFailed;
+    }
+
     /** Returns whether {@code fileName} matches {@link #EVACUATION_FILE_PATTERN}. */
     public static boolean isEvacuationDataFileName(String fileName) {
         return fileName != null && EVACUATION_FILE_PATTERN.matcher(fileName).matches();

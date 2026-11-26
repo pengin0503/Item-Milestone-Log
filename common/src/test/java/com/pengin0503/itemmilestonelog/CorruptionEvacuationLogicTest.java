@@ -35,6 +35,19 @@ class CorruptionEvacuationLogicTest {
     }
 
     @Test
+    void unreadableExistingFileIsATotalFailureEvenWhenLoadAppearsCached() {
+        // An existing-but-unreadable file is a total failure by definition. This must hold even
+        // when loadFailed is false because another listener already populated MilestoneData with a
+        // cached empty instance (agy review 4-1) and no load report is available.
+        assertTrue(CorruptionEvacuationLogic.isTotalLoadFailure(true, false, false));
+        assertTrue(CorruptionEvacuationLogic.isTotalLoadFailure(true, true, false));
+        assertTrue(CorruptionEvacuationLogic.isTotalLoadFailure(true, false, true));
+        assertTrue(CorruptionEvacuationLogic.isTotalLoadFailure(false, true, false));
+        assertTrue(CorruptionEvacuationLogic.isTotalLoadFailure(false, false, true));
+        assertFalse(CorruptionEvacuationLogic.isTotalLoadFailure(false, false, false));
+    }
+
+    @Test
     void loadOutcomeRejectsInvalidCounts() {
         assertThrows(IllegalArgumentException.class,
                 () -> new CorruptionEvacuationLogic.LoadOutcome(-1, false, 0));

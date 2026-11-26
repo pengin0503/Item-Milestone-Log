@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 /**
  * F-140-3 (N45): asynchronous {@code /milestonelog importall}.
@@ -80,32 +81,75 @@ public final class MilestoneImportAll {
     }
 
     private static boolean submit(Job job) {
+        return submit(job, MilestoneImportAll::parseJob, runnable -> job.server.execute(runnable));
+    }
+
+    private static boolean submit(Job job, ParseAction parseAction, Consumer<Runnable> scheduler) {
         if (!ACTIVE.compareAndSet(null, job)) {
             return false;
         }
         boolean accepted = MilestoneIo.submit(MilestoneIoLogic.TaskKind.IMPORT_ALL, () -> {
             try {
-                MilestoneExport.AllPlayersImportPayload payload =
-                        MilestoneExport.parseAllPlayersExport(job.file);
-                job.plan.set(MilestoneExport.buildMergePlan(payload));
-            } catch (Exception e) {
-                job.failure.set(e);
+                parseAction.parse(job);
+            } catch (Throwable t) {
+                // Errors (StackOverflowError on deeply nested JSON, OutOfMemoryError) must be
+                // recorded just like checked failures; otherwise the application step is never
+                // scheduled and ACTIVE/importInFlight stay set forever (review 3-1).
+                job.failure.set(t);
             } finally {
                 job.parseDone.set(true);
             }
             try {
-                job.server.execute(() -> apply(job));
-            } catch (RuntimeException e) {
-                // During shutdown server.execute can reject; the stop-time flush (applyPendingOnStop)
-                // still applies any parsed result before the final backup.
+                scheduler.accept(() -> apply(job));
+            } catch (Throwable t) {
+                // During shutdown server.execute can reject. Release the in-flight state here and
+                // attempt failure feedback so importall can never stay permanently busy.
                 ItemMilestoneLog.LOGGER.warn(
-                        "[ItemMilestoneLog] Could not schedule importall result application: {}", e.getMessage());
+                        "[ItemMilestoneLog] Could not schedule importall result application: {}", t.getMessage());
+                releaseRejected(job, t);
             }
         });
         if (!accepted) {
             ACTIVE.compareAndSet(job, null);
         }
         return accepted;
+    }
+
+    private static void parseJob(Job job) throws IOException {
+        MilestoneExport.AllPlayersImportPayload payload =
+                MilestoneExport.parseAllPlayersExport(job.file);
+        job.plan.set(MilestoneExport.buildMergePlan(payload));
+    }
+
+    /** Releases a job whose result could not be handed to the server thread, with feedback. */
+    private static void releaseRejected(Job job, Throwable cause) {
+        if (job.failure.get() == null) {
+            job.failure.set(cause);
+        }
+        if (!job.applied.compareAndSet(false, true)) {
+            return;
+        }
+        ACTIVE.compareAndSet(job, null);
+        MilestoneIo.endImport();
+        sendFailure(job, job.failure.get());
+    }
+
+    @FunctionalInterface
+    interface ParseAction {
+        void parse(Job job) throws Throwable;
+    }
+
+    /** Test hook: runs the parse/schedule path with an injected parser and scheduler. */
+    static boolean submitForTest(Job job, ParseAction parseAction, Consumer<Runnable> scheduler) {
+        return submit(job, parseAction, scheduler);
+    }
+
+    static Job newJobForTest(Path file, String fileName) {
+        return new Job(null, file, fileName, null);
+    }
+
+    static Job activeForTest() {
+        return ACTIVE.get();
     }
 
     /** Applies a fully parsed importall result; safe to call twice. */
@@ -117,7 +161,7 @@ public final class MilestoneImportAll {
             if (!job.parseDone.get()) {
                 return;
             }
-            Exception failure = job.failure.get();
+            Throwable failure = job.failure.get();
             if (failure != null) {
                 sendFailure(job, failure);
                 return;
@@ -212,7 +256,10 @@ public final class MilestoneImportAll {
         }
     }
 
-    private static void sendFailure(Job job, Exception failure) {
+    private static void sendFailure(Job job, Throwable failure) {
+        if (failure == null) {
+            return;
+        }
         try {
             job.source.sendFailure(failureMessage(job.source, job.fileName, failure));
         } catch (RuntimeException e) {
@@ -221,7 +268,7 @@ public final class MilestoneImportAll {
         }
     }
 
-    private static Component failureMessage(CommandSourceStack source, String fileName, Exception failure) {
+    private static Component failureMessage(CommandSourceStack source, String fileName, Throwable failure) {
         String reasonKey;
         if (failure instanceof IllegalArgumentException) {
             reasonKey = "message.itemmilestonelog.importall_reason_invalid_format";
@@ -239,7 +286,7 @@ public final class MilestoneImportAll {
         return 0;
     }
 
-    private static final class Job {
+    static final class Job {
         final MinecraftServer server;
         final Path file;
         final String fileName;
@@ -247,7 +294,7 @@ public final class MilestoneImportAll {
         final AtomicBoolean parseDone = new AtomicBoolean();
         final AtomicBoolean applied = new AtomicBoolean();
         final AtomicReference<MilestoneExport.MergePlan> plan = new AtomicReference<>();
-        final AtomicReference<Exception> failure = new AtomicReference<>();
+        final AtomicReference<Throwable> failure = new AtomicReference<>();
 
         Job(MinecraftServer server, Path file, String fileName, CommandSourceStack source) {
             this.server = server;
