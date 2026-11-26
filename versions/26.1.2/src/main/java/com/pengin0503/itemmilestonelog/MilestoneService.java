@@ -23,6 +23,7 @@ import net.neoforged.neoforge.network.PacketDistributor;
 
 import javax.annotation.Nullable;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -1205,6 +1206,96 @@ public final class MilestoneService {
         } catch (IOException | IllegalArgumentException e) {
             ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Failed to save preset {}", name, e);
             return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.preset_save_failed", name));
+        }
+    }
+
+    /**
+     * F-140-18: imports an {@code IML1:} preset share code. The permission predicate and the
+     * save location/format match {@link #savePreset(ServerPlayer, String)}; the decoded JSON is
+     * validated by the normal preset parse path and existing IDs are never overwritten.
+     */
+    public static ActionResult importPresetCode(ServerPlayer player, String code) {
+        return importPresetCode(player, canManagePresets(player), code, Presets::presetsDir,
+                Config.PRESETS_ENABLED.get());
+    }
+
+    static ActionResult importPresetCode(@Nullable ServerPlayer player, boolean allowed, String code,
+                                         Supplier<Path> presetsDir, boolean presetsEnabled) {
+        if (!presetsEnabled) {
+            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.feature_disabled"));
+        }
+        if (!allowed) {
+            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.preset_no_permission"));
+        }
+
+        PresetShareLogic.Decoded decoded = PresetShareLogic.decode(code,
+                id -> Presets.get(id) != null || Files.isRegularFile(presetsDir.get().resolve(id + ".json")));
+        switch (decoded.status()) {
+            case OK -> {
+                // Continue below.
+            }
+            case INVALID_PREFIX -> {
+                return new ActionResult(false,
+                        ServerLang.tr(player, "message.itemmilestonelog.preset_importcode_invalid_prefix"));
+            }
+            case INVALID_CODE -> {
+                return new ActionResult(false,
+                        ServerLang.tr(player, "message.itemmilestonelog.preset_importcode_invalid_code"));
+            }
+            case INVALID_JSON -> {
+                return new ActionResult(false,
+                        ServerLang.tr(player, "message.itemmilestonelog.preset_importcode_invalid_json"));
+            }
+            case TOO_LONG -> {
+                return new ActionResult(false, ServerLang.tr(player,
+                        "message.itemmilestonelog.preset_importcode_too_long",
+                        code != null ? code.length() : 0, PresetShareLogic.MAX_CODE_CHARS));
+            }
+            case TOO_MANY_ITEMS -> {
+                return new ActionResult(false, ServerLang.tr(player,
+                        "message.itemmilestonelog.preset_importcode_too_many_items",
+                        PresetShareLogic.MAX_ITEMS));
+            }
+            case EMPTY_ITEMS -> {
+                return new ActionResult(false,
+                        ServerLang.tr(player, "message.itemmilestonelog.preset_importcode_empty"));
+            }
+            case INVALID_ID -> {
+                return new ActionResult(false,
+                        ServerLang.tr(player, "message.itemmilestonelog.preset_importcode_invalid_id",
+                                String.valueOf(decoded.id())));
+            }
+            case ID_COLLISION -> {
+                return new ActionResult(false,
+                        ServerLang.tr(player, "message.itemmilestonelog.preset_importcode_collision",
+                                String.valueOf(decoded.id())));
+            }
+        }
+
+        String id = decoded.id();
+        if (!Presets.isValidId(id)) {
+            return new ActionResult(false, ServerLang.tr(player,
+                    "message.itemmilestonelog.preset_importcode_invalid_id", String.valueOf(id)));
+        }
+        Presets.PresetDefinition parsed =
+                Presets.parsePresetContent(decoded.json(), "IML1 share code", id, Presets.PresetKind.FILE);
+        if (parsed == null || parsed.items().isEmpty()) {
+            return new ActionResult(false,
+                    ServerLang.tr(player, "message.itemmilestonelog.preset_importcode_invalid_json"));
+        }
+        if (parsed.items().size() > PresetShareLogic.MAX_ITEMS) {
+            return new ActionResult(false, ServerLang.tr(player,
+                    "message.itemmilestonelog.preset_importcode_too_many_items",
+                    PresetShareLogic.MAX_ITEMS));
+        }
+        try {
+            Presets.saveImportedTo(presetsDir.get(), parsed);
+            return new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.preset_saved",
+                    id, parsed.items().size()));
+        } catch (IOException | IllegalArgumentException e) {
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Failed to import preset {}", id, e);
+            return new ActionResult(false, ServerLang.tr(player,
+                    "message.itemmilestonelog.preset_save_failed", id));
         }
     }
 

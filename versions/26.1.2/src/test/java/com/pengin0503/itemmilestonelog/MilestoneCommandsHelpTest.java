@@ -309,4 +309,25 @@ class MilestoneCommandsHelpTest {
         assertNotNull(nameB, "preset diff must take <nameB>");
         assertNotNull(nameB.getCommand(), "preset diff <nameA> <nameB> must execute");
     }
+
+    @Test
+    void presetShareAndImportcodeAreRegisteredUnderPreset() {
+        CommandDispatcher<CommandSourceStack> dispatcher = buildDispatcher(src -> true);
+        CommandNode<CommandSourceStack> preset = dispatcher.getRoot().getChild("milestonelog").getChild("preset");
+        assertNotNull(preset);
+
+        CommandNode<CommandSourceStack> share = preset.getChild("share");
+        assertNotNull(share, "preset share must be registered");
+        assertNull(share.getCommand(), "bare preset share must not execute");
+        CommandNode<CommandSourceStack> shareName = share.getChild("name");
+        assertNotNull(shareName, "preset share must take <name>");
+        assertNotNull(shareName.getCommand(), "preset share <name> must execute");
+
+        CommandNode<CommandSourceStack> importcode = preset.getChild("importcode");
+        assertNotNull(importcode, "preset importcode must be registered");
+        assertNull(importcode.getCommand(), "bare preset importcode must not execute");
+        CommandNode<CommandSourceStack> code = importcode.getChild("code");
+        assertNotNull(code, "preset importcode must take <code>");
+        assertNotNull(code.getCommand(), "preset importcode <code> must execute");
+    }
 }

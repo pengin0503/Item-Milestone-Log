@@ -24,6 +24,11 @@ public final class ChatCompatImpl implements ChatCompat {
     }
 
     @Override
+    public ClickEvent copyToClipboard(String value) {
+        return new ClickEvent.CopyToClipboard(value);
+    }
+
+    @Override
     @Nullable
     public String suggestCommandValue(@Nullable ClickEvent event) {
         return event instanceof ClickEvent.SuggestCommand suggest ? suggest.command() : null;

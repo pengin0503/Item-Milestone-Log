@@ -154,7 +154,8 @@ public final class Presets {
 
     private static final Pattern VALID_ID_PATTERN = Pattern.compile("^[a-z0-9_-]{1,32}$");
     /** Command literals under /milestone preset; IDs equal to these could never be applied from chat. */
-    private static final Set<String> RESERVED_IDS = Set.of("list", "save", "delete", "reload", "show", "diff");
+    private static final Set<String> RESERVED_IDS = Set.of(
+            "list", "save", "delete", "reload", "show", "diff", "share", "importcode");
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
     /**
@@ -880,6 +881,87 @@ public final class Presets {
         }
         ExtraFields extra = existing.extra();
 
+        List<TargetKey> deduped = normalizeItems(items);
+        if (deduped.isEmpty()) {
+            throw new IllegalArgumentException("No valid items to save");
+        }
+
+        // F-140-11: groups are re-validated against the (includes-expanded) items that will
+        // result from this save, so the written JSON matches the next reload exactly.
+        List<TargetKey> finalItems = expandItemsForSave(id, deduped, extra.includes());
+        PresetGroupLogic.Result groupResult = PresetGroupLogic.validate(extra.groups(), finalItems);
+        for (String warning : groupResult.warnings()) {
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Preset '{}': {}", id, warning);
+        }
+        List<PresetGroup> groups = groupResult.groups();
+
+        writePresetFile(dir, id, name, extra, groups, deduped);
+
+        Map<String, PresetDefinition> next = new TreeMap<>(filePresets);
+        // Store the raw (not yet expanded) definition; rebuildLoadedPresets resolves includes
+        // and groups again for the in-memory table.
+        next.put(id, new PresetDefinition(id, name, deduped, PresetKind.FILE,
+                extra.includes(), extra.description(), extra.category(), extra.order(), extra.version(),
+                extra.requiredMods(), groups, extra.nextPresets(), extra.unlockAfterHours()));
+        filePresets = Collections.unmodifiableMap(new LinkedHashMap<>(next));
+        rebuildLoadedPresets();
+        return existed;
+    }
+
+    /**
+     * F-140-18: saves an imported share code's already-parsed definition as a new config-folder
+     * preset. The write location, JSON format and in-memory table update are the same as
+     * {@link #saveCustomTo(Path, String, List)}, but an existing file is never overwritten (the
+     * command rejects ID collisions before calling this, and this check closes the race).
+     *
+     * @return always {@code false}: imports never overwrite an existing preset
+     */
+    public static synchronized boolean saveImportedTo(Path dir, PresetDefinition definition) throws IOException {
+        if (definition == null) {
+            throw new IllegalArgumentException("Missing preset definition");
+        }
+        String id = definition.id();
+        if (!isValidId(id)) {
+            throw new IllegalArgumentException("Invalid preset ID: " + id);
+        }
+        if (isBuiltin(id)) {
+            throw new IllegalArgumentException("Cannot overwrite built-in preset: " + id);
+        }
+        if (isDatapack(id)) {
+            throw new IllegalArgumentException("Cannot overwrite datapack preset: " + id);
+        }
+        if (Files.exists(dir.resolve(id + ".json"))) {
+            throw new IllegalArgumentException("Preset already exists: " + id);
+        }
+
+        List<TargetKey> deduped = normalizeItems(definition.items());
+        if (deduped.isEmpty()) {
+            throw new IllegalArgumentException("No valid items to save");
+        }
+        ExtraFields extra = new ExtraFields(definition.includes(), definition.description(),
+                definition.category(), definition.order(), definition.version(), definition.requiredMods(),
+                definition.groups(), definition.nextPresets(), definition.unlockAfterHours());
+        // Same re-validation as saveCustomTo so the written file matches the next reload.
+        List<TargetKey> finalItems = expandItemsForSave(id, deduped, extra.includes());
+        PresetGroupLogic.Result groupResult = PresetGroupLogic.validate(extra.groups(), finalItems);
+        for (String warning : groupResult.warnings()) {
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Preset '{}': {}", id, warning);
+        }
+        List<PresetGroup> groups = groupResult.groups();
+
+        writePresetFile(dir, id, definition.name(), extra, groups, deduped);
+
+        Map<String, PresetDefinition> next = new TreeMap<>(filePresets);
+        next.put(id, new PresetDefinition(id, definition.name(), deduped, PresetKind.FILE,
+                extra.includes(), extra.description(), extra.category(), extra.order(), extra.version(),
+                extra.requiredMods(), groups, extra.nextPresets(), extra.unlockAfterHours()));
+        filePresets = Collections.unmodifiableMap(new LinkedHashMap<>(next));
+        rebuildLoadedPresets();
+        return false;
+    }
+
+    /** Normalizes item keys and removes exact duplicates, dropping invalid/air entries. */
+    private static List<TargetKey> normalizeItems(Collection<TargetKey> items) {
         Set<TargetKey> deduped = new LinkedHashSet<>();
         for (TargetKey key : items) {
             if (key == null) {
@@ -890,23 +972,22 @@ public final class Presets {
                 deduped.add(normalized);
             }
         }
-        if (deduped.isEmpty()) {
-            throw new IllegalArgumentException("No valid items to save");
-        }
+        return List.copyOf(deduped);
+    }
 
-        // F-140-11: groups are re-validated against the (includes-expanded) items that will
-        // result from this save, so the written JSON matches the next reload exactly.
-        List<TargetKey> finalItems = expandItemsForSave(id, List.copyOf(deduped), extra.includes());
-        PresetGroupLogic.Result groupResult = PresetGroupLogic.validate(extra.groups(), finalItems);
-        for (String warning : groupResult.warnings()) {
-            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Preset '{}': {}", id, warning);
-        }
-        List<PresetGroup> groups = groupResult.groups();
-
+    /**
+     * Writes one preset JSON document atomically in the normal preset-file format (the file name
+     * carries the ID, so no {@code id} field is written). Shared by {@link #saveCustomTo} and
+     * {@link #saveImportedTo}.
+     */
+    private static void writePresetFile(Path dir, String id, PresetName name, ExtraFields extra,
+                                        List<PresetGroup> groups, List<TargetKey> items) throws IOException {
+        Files.createDirectories(dir);
+        Path target = dir.resolve(id + ".json");
         JsonObject json = new JsonObject();
         writePresetName(json, "name", name);
         writeExtraFields(json, extra, groups);
-        json.add("items", targetItemsJson(deduped));
+        json.add("items", targetItemsJson(items));
 
         Path temp = Files.createTempFile(dir, "preset-" + id + ".", ".tmp");
         try {
@@ -925,16 +1006,6 @@ public final class Presets {
             }
             throw e;
         }
-
-        Map<String, PresetDefinition> next = new TreeMap<>(filePresets);
-        // Store the raw (not yet expanded) definition; rebuildLoadedPresets resolves includes
-        // and groups again for the in-memory table.
-        next.put(id, new PresetDefinition(id, name, List.copyOf(deduped), PresetKind.FILE,
-                extra.includes(), extra.description(), extra.category(), extra.order(), extra.version(),
-                extra.requiredMods(), groups, extra.nextPresets(), extra.unlockAfterHours()));
-        filePresets = Collections.unmodifiableMap(new LinkedHashMap<>(next));
-        rebuildLoadedPresets();
-        return existed;
     }
 
     /**

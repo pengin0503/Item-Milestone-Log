@@ -614,6 +614,13 @@ public final class MilestoneCommands {
                                                 .executes(ctx -> presetDiff(ctx,
                                                         StringArgumentType.getString(ctx, "nameA"),
                                                         StringArgumentType.getString(ctx, "nameB"))))))
+                        .then(literal("share")
+                                .then(argument("name", StringArgumentType.word())
+                                        .suggests(presetSuggestions)
+                                        .executes(ctx -> presetShare(ctx, StringArgumentType.getString(ctx, "name")))))
+                        .then(literal("importcode")
+                                .then(argument("code", StringArgumentType.word())
+                                        .executes(ctx -> presetImportCode(ctx, StringArgumentType.getString(ctx, "code")))))
                         .then(argument("name", StringArgumentType.word())
                                 .suggests(presetSuggestions)
                                 .executes(ctx -> preset(ctx, StringArgumentType.getString(ctx, "name")))))
@@ -1236,6 +1243,50 @@ public final class MilestoneCommands {
         if (hidden > 0) {
             send(ctx, ServerLang.tr(player, "message.itemmilestonelog.preset_show_more", hidden));
         }
+    }
+
+    // --------------------------------------------------------- F-140-18 preset share / importcode
+
+    private static int presetShare(CommandContext<CommandSourceStack> ctx, String name) throws CommandSyntaxException {
+        ServerPlayer player = player(ctx);
+        if (!Config.PRESETS_ENABLED.get()) {
+            return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.feature_disabled"));
+        }
+        Presets.PresetDefinition preset = Presets.get(name);
+        if (preset == null) {
+            return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.preset_unknown",
+                    name, String.join(", ", Presets.names())));
+        }
+        String code = PresetShareLogic.encode(shareData(preset));
+        // One message: the label plus the code, which is click-to-copy.
+        MutableComponent message = ServerLang.tr(player, "message.itemmilestonelog.preset_share_message",
+                MilestoneService.presetDisplayName(player, preset), preset.items().size());
+        message.append(Component.literal(" "));
+        message.append(Component.literal(code).withStyle(style -> style
+                .withUnderlined(true)
+                .withClickEvent(copyToClipboardEvent(code))));
+        return send(ctx, message);
+    }
+
+    private static PresetShareLogic.ShareData shareData(Presets.PresetDefinition preset) {
+        // items() is already includes-expanded (F-140-6); share codes carry the expanded list.
+        return new PresetShareLogic.ShareData(preset.id(), preset.name(), preset.items(),
+                preset.description(), preset.category(), preset.order(), preset.version(),
+                preset.requiredMods(), preset.groups(), preset.nextPresets(), preset.unlockAfterHours());
+    }
+
+    private static ClickEvent copyToClipboardEvent(String code) {
+        return McCompat.chat().copyToClipboard(code);
+    }
+
+    private static int presetImportCode(CommandContext<CommandSourceStack> ctx, String code) throws CommandSyntaxException {
+        ServerPlayer player = player(ctx);
+        MilestoneService.ActionResult result = MilestoneService.importPresetCode(player, code);
+        if (result.success()) {
+            MilestoneService.syncAllOnlineGuiPlayers(player.level().getServer(), null);
+            return send(ctx, result.message());
+        }
+        return fail(ctx, result.message());
     }
 
     private static int presetList(CommandContext<CommandSourceStack> ctx) {
