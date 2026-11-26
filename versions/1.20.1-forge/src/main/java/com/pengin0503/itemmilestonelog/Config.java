@@ -76,6 +76,16 @@ public final class Config {
             .comment("Enable preset commands and preset management in the GUI (existing preset files are never deleted).")
             .define("presetsEnabled", true);
 
+    /**
+     * F-140-20: reject a file/datapack preset entirely when any element fails validation,
+     * instead of skipping only the invalid elements. Built-in presets are never rejected.
+     */
+    public static final ForgeConfigSpec.BooleanValue STRICT_PRESET_VALIDATION = BUILDER
+            .comment("Reject a config-folder or datapack preset entirely when any element fails validation, instead of skipping only the invalid elements.",
+                    "Includes resolution failures (missing preset ID or cycle) and invalid groups also reject the whole preset.",
+                    "Built-in presets are never rejected. A rejected preset is logged as an error and treated as unknown (not listed, applied, or auto-applied).")
+            .define("strictPresetValidation", false);
+
     /** Enable export and import commands. */
     public static final ForgeConfigSpec.BooleanValue EXPORT_IMPORT_ENABLED = BUILDER
             .comment("Enable milestone export and import commands (applies to OPs as well).")
@@ -434,6 +444,18 @@ public final class Config {
             return ITEM_TOOLTIP_STATUS.get();
         } catch (IllegalStateException notLoaded) {
             return true;
+        }
+    }
+
+    /**
+     * F-140-20: {@link #STRICT_PRESET_VALIDATION}, or {@code false} while the config is not
+     * loaded yet (plain unit tests).
+     */
+    public static boolean strictPresetValidation() {
+        try {
+            return STRICT_PRESET_VALIDATION.get();
+        } catch (IllegalStateException notLoaded) {
+            return false;
         }
     }
 

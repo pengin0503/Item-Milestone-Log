@@ -75,6 +75,10 @@ class PresetIncludesLogicTest {
         assertEquals(List.of(key("minecraft:a"), key("minecraft:b")), result.items("b"));
         assertTrue(result.warnings().stream().anyMatch(w -> w.contains("cycle")),
                 () -> "expected a cycle warning, got: " + result.warnings());
+        assertTrue(result.problems("a").stream().anyMatch(w -> w.contains("cycle")),
+                () -> "expected a per-preset cycle problem for a, got: " + result.problems("a"));
+        assertTrue(result.problems("b").stream().anyMatch(w -> w.contains("cycle")),
+                () -> "expected a per-preset cycle problem for b, got: " + result.problems("b"));
     }
 
     @Test
@@ -97,6 +101,8 @@ class PresetIncludesLogicTest {
         assertEquals(List.of(key("minecraft:a")), result.items("a"));
         assertTrue(result.warnings().stream().anyMatch(w -> w.contains("ghost")),
                 () -> "expected an unknown-include warning, got: " + result.warnings());
+        assertTrue(result.problems("a").stream().anyMatch(w -> w.contains("ghost")),
+                () -> "expected a per-preset problem for a, got: " + result.problems("a"));
     }
 
     @Test

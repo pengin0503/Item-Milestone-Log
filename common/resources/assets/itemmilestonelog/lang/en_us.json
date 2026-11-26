@@ -144,6 +144,8 @@
   "itemmilestonelog.configuration.scoreboardWorldFirstObjective.tooltip": "Optional scoreboard objective name for each player's world-first count (empty = disabled). Must match ^[A-Za-z0-9_.+-]{1,32}$ and differ from scoreboardObjective; clearing this setting does not delete existing objectives or scores.",
   "itemmilestonelog.configuration.showFirstJoinHint": "First Join Hint",
   "itemmilestonelog.configuration.showFirstJoinHint.tooltip": "Show a one-time chat tip when a player joins for the first time.",
+  "itemmilestonelog.configuration.strictPresetValidation": "Strict Preset Validation",
+  "itemmilestonelog.configuration.strictPresetValidation.tooltip": "Reject a config-folder or datapack preset entirely when any element fails validation, instead of skipping only the invalid elements. Includes failures and invalid groups also reject it; built-in presets are never rejected.",
   "itemmilestonelog.configuration.title": "%s Settings",
   "itemmilestonelog.configuration.worldFirstEnabled": "World First Enabled",
   "itemmilestonelog.configuration.worldFirstEnabled.tooltip": "Record new server-wide world-first milestones. Existing world-first records are kept and can still be viewed.",
