@@ -2008,4 +2008,235 @@ class MilestoneServiceTest {
         assertEquals("データパック",
                 ServerLang.trForLang("ja_jp", "gui.itemmilestonelog.presets.type.datapack").getString());
     }
+
+    // ---- G-C (F-140-12..15) ----
+
+    @Test
+    void unlockAfterHoursAppliesAtTheThresholdOnceAndNeverReaddsAfterRemoval(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("unlock_after.json"), """
+                {
+                  "name": "Unlock After",
+                  "unlockAfterHours": 1.0,
+                  "items": ["minecraft:diamond", "minecraft:iron_ingot"]
+                }
+                """);
+        assertEquals(1, Presets.reloadFrom(dir));
+
+        MilestoneData data = new MilestoneData();
+        MilestoneData.PlayerData pd = data.player(PLAYER_A);
+        Set<String> knownItems = Set.of("minecraft:diamond", "minecraft:iron_ingot");
+
+        // Below the threshold: nothing is applied and autoApplied is not recorded.
+        assertTrue(MilestoneService.applyUnlockAfterHours(
+                data, PLAYER_A, 71_999, knownItems::contains, true, id -> true).isEmpty());
+        assertTrue(pd.targets.isEmpty());
+        assertTrue(pd.presetState.isEmpty());
+
+        // Exactly at one hour (72,000 ticks): both targets are auto-added and recorded.
+        List<MilestoneService.NextPresetAddition> added = MilestoneService.applyUnlockAfterHours(
+                data, PLAYER_A, 72_000, knownItems::contains, true, id -> true);
+        assertEquals(1, added.size());
+        assertEquals("unlock_after", added.get(0).preset().id());
+        assertEquals(2, added.get(0).added());
+        assertEquals(Set.of(TargetKey.of("minecraft:diamond"), TargetKey.of("minecraft:iron_ingot")), pd.targets);
+        assertTrue(pd.presetState.get("unlock_after").autoApplied());
+
+        // Removing the targets does not allow a re-add.
+        pd.targets.clear();
+        assertTrue(MilestoneService.applyUnlockAfterHours(
+                data, PLAYER_A, 500_000, knownItems::contains, true, id -> true).isEmpty());
+        assertTrue(pd.targets.isEmpty());
+        assertTrue(pd.presetState.get("unlock_after").autoApplied());
+    }
+
+    @Test
+    void unlockAfterHoursSkipsMissingModsWithoutRecordingAndHonorsThePresetSwitch(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("locked_pack.json"), """
+                {
+                  "name": "Locked Pack",
+                  "unlockAfterHours": 0.0,
+                  "requiredMods": ["absent_mod"],
+                  "items": ["minecraft:emerald"]
+                }
+                """);
+        assertEquals(1, Presets.reloadFrom(dir));
+
+        MilestoneData data = new MilestoneData();
+        MilestoneData.PlayerData pd = data.player(PLAYER_A);
+        Set<String> knownItems = Set.of("minecraft:emerald");
+
+        // Missing required mod: no targets, no autoApplied, so a later login re-evaluates it.
+        assertTrue(MilestoneService.applyUnlockAfterHours(
+                data, PLAYER_A, 100_000, knownItems::contains, true, id -> false).isEmpty());
+        assertTrue(pd.targets.isEmpty());
+        assertTrue(pd.presetState.isEmpty());
+
+        // presetsEnabled=false stops the flow even when the mod is present.
+        assertTrue(MilestoneService.applyUnlockAfterHours(
+                data, PLAYER_A, 100_000, knownItems::contains, false, id -> true).isEmpty());
+        assertTrue(pd.targets.isEmpty());
+        assertTrue(pd.presetState.isEmpty());
+
+        // With the mod present, the preset applies and autoApplied is recorded.
+        List<MilestoneService.NextPresetAddition> added = MilestoneService.applyUnlockAfterHours(
+                data, PLAYER_A, 100_000, knownItems::contains, true, id -> true);
+        assertEquals(1, added.size());
+        assertEquals(1, added.get(0).added());
+        assertEquals(Set.of(TargetKey.of("minecraft:emerald")), pd.targets);
+        assertTrue(pd.presetState.get("locked_pack").autoApplied());
+    }
+
+    @Test
+    void versionNoticeInitializesFirstInvolvementThenNotifiesOnceWithNewAndTotalCounts(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("versioned_pack.json"), """
+                {
+                  "name": "Versioned Pack",
+                  "version": 2,
+                  "items": ["minecraft:diamond", "minecraft:iron_ingot", "minecraft:emerald"]
+                }
+                """);
+        assertEquals(1, Presets.reloadFrom(dir));
+
+        MilestoneData data = new MilestoneData();
+        MilestoneData.PlayerData pd = data.player(PLAYER_A);
+        pd.targets.add(TargetKey.of("minecraft:diamond"));
+
+        // First involvement (targets overlap, no presetState record): initialize silently.
+        assertTrue(MilestoneService.notifyPresetVersionUpdates(data, PLAYER_A, null, true).isEmpty());
+        assertEquals(2, pd.presetState.get("versioned_pack").lastSeenVersion());
+
+        // A later version increase notifies once with 2 new targets out of 3 total.
+        pd.presetState.put("versioned_pack", new PresetState(false, 1));
+        List<Component> notices = MilestoneService.notifyPresetVersionUpdates(data, PLAYER_A, null, true);
+        assertEquals(1, notices.size());
+        assertEquals("Preset Versioned Pack was updated: 2 new target(s) (total 3).",
+                notices.get(0).getString());
+        assertEquals(2, pd.presetState.get("versioned_pack").lastSeenVersion());
+        assertTrue(MilestoneService.notifyPresetVersionUpdates(data, PLAYER_A, null, true).isEmpty());
+    }
+
+    @Test
+    void versionNoticeInitializesAZeroSeenRecordAndSkipsUnversionedPresetsAndTheDisabledSwitch(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("versioned_pack.json"), """
+                {
+                  "name": "Versioned Pack",
+                  "version": 2,
+                  "items": ["minecraft:diamond"]
+                }
+                """);
+        Files.writeString(dir.resolve("unversioned_pack.json"), """
+                {
+                  "name": "Unversioned Pack",
+                  "items": ["minecraft:diamond"]
+                }
+                """);
+        assertEquals(2, Presets.reloadFrom(dir));
+
+        MilestoneData data = new MilestoneData();
+        MilestoneData.PlayerData pd = data.player(PLAYER_A);
+        pd.presetState.put("versioned_pack", new PresetState(true, 0));
+        pd.targets.add(TargetKey.of("minecraft:diamond"));
+
+        // An existing record with lastSeenVersion=0 is still a first initialization, not a notice.
+        assertTrue(MilestoneService.notifyPresetVersionUpdates(data, PLAYER_A, null, true).isEmpty());
+        assertTrue(pd.presetState.get("versioned_pack").autoApplied());
+        assertEquals(2, pd.presetState.get("versioned_pack").lastSeenVersion());
+
+        // Unversioned presets are out of scope and gain no state.
+        assertFalse(pd.presetState.containsKey("unversioned_pack"));
+
+        // presetsEnabled=false stops the flow entirely.
+        pd.presetState.put("versioned_pack", new PresetState(false, 1));
+        assertTrue(MilestoneService.notifyPresetVersionUpdates(data, PLAYER_A, null, false).isEmpty());
+        assertEquals(1, pd.presetState.get("versioned_pack").lastSeenVersion());
+    }
+
+    @Test
+    void nextPresetsAutoAddOnCompletionChainStopCyclesAndSkipUnknownOrMissingMods(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("a_pack.json"), """
+                {
+                  "name": "A Pack",
+                  "items": ["minecraft:diamond"],
+                  "nextPresets": ["b_pack", "missing_next"]
+                }
+                """);
+        Files.writeString(dir.resolve("b_pack.json"), """
+                {
+                  "name": "B Pack",
+                  "items": ["minecraft:iron_ingot"],
+                  "nextPresets": ["a_pack"],
+                  "requiredMods": ["absent_mod"]
+                }
+                """);
+        assertEquals(2, Presets.reloadFrom(dir));
+        assertEquals(List.of("missing_next"), MilestoneService.findUnknownNextPresets());
+
+        MilestoneRecord rec = new MilestoneRecord(1200, 2L, 1_700_000_000_000L);
+        TargetKey diamond = TargetKey.of("minecraft:diamond");
+        TargetKey iron = TargetKey.of("minecraft:iron_ingot");
+        Set<String> knownItems = Set.of("minecraft:diamond", "minecraft:iron_ingot");
+        List<Presets.PresetDefinition> testPresets = List.of(
+                Presets.get("a_pack"), Presets.get("b_pack"));
+
+        // Completing a_pack adds b_pack's targets; the unknown next ID is skipped.
+        MilestoneData data = new MilestoneData();
+        Tracker.applyRecord(data, PLAYER_A, "Alice", diamond, rec, false);
+        MilestoneService.PresetEvaluation first = Tracker.evaluatePresetCompletions(
+                data, PLAYER_A, diamond, testPresets, knownItems::contains, true, id -> true);
+        assertEquals(List.of("a_pack"), first.completed().stream().map(Presets.PresetDefinition::id).toList());
+        assertEquals(1, first.nextAdditions().size());
+        assertEquals("b_pack", first.nextAdditions().get(0).preset().id());
+        assertEquals(1, first.nextAdditions().get(0).added());
+        assertTrue(data.playerOrNull(PLAYER_A).targets.contains(iron));
+
+        // Completing b_pack fires a_pack again, but a_pack is already completed: the cycle stops.
+        Tracker.applyRecord(data, PLAYER_A, "Alice", iron, rec, false);
+        MilestoneService.PresetEvaluation second = Tracker.evaluatePresetCompletions(
+                data, PLAYER_A, iron, testPresets, knownItems::contains, true, id -> true);
+        assertEquals(List.of("b_pack"), second.completed().stream().map(Presets.PresetDefinition::id).toList());
+        assertTrue(second.nextAdditions().isEmpty());
+        assertEquals(Set.of("a_pack", "b_pack"), data.playerOrNull(PLAYER_A).completedPresets);
+
+        // requiredMods missing: completion still happens, but no next target is added.
+        MilestoneData missingModData = new MilestoneData();
+        Tracker.applyRecord(missingModData, PLAYER_A, "Alice", diamond, rec, false);
+        MilestoneService.PresetEvaluation skipped = Tracker.evaluatePresetCompletions(
+                missingModData, PLAYER_A, diamond, testPresets, knownItems::contains, true, id -> false);
+        assertEquals(List.of("a_pack"), skipped.completed().stream().map(Presets.PresetDefinition::id).toList());
+        assertTrue(skipped.nextAdditions().isEmpty());
+        assertFalse(missingModData.playerOrNull(PLAYER_A).targets.contains(iron));
+
+        // presetsEnabled=false stops the whole evaluation (and any next-preset addition).
+        MilestoneData disabledData = new MilestoneData();
+        Tracker.applyRecord(disabledData, PLAYER_A, "Alice", diamond, rec, false);
+        MilestoneService.PresetEvaluation disabled = Tracker.evaluatePresetCompletions(
+                disabledData, PLAYER_A, diamond, testPresets, knownItems::contains, false, id -> true);
+        assertTrue(disabled.completed().isEmpty());
+        assertTrue(disabled.nextAdditions().isEmpty());
+        assertTrue(disabledData.playerOrNull(PLAYER_A).completedPresets.isEmpty());
+    }
+
+    @Test
+    void resetAllClearsPresetStateAndTheRestoreMergeOrsAndMaxes() {
+        MilestoneData data = new MilestoneData();
+        MilestoneData.PlayerData pd = data.player(PLAYER_A);
+        pd.presetState.put("a_pack", new PresetState(true, 3));
+        pd.presetState.put("b_pack", new PresetState(false, 1));
+
+        MilestoneService.resetAllRecords(data, PLAYER_A, null);
+        assertTrue(pd.presetState.isEmpty());
+
+        MilestoneData.PlayerData incoming = new MilestoneData.PlayerData();
+        pd.presetState.put("a_pack", new PresetState(false, 2));
+        pd.presetState.put("c_pack", new PresetState(false, 1));
+        incoming.presetState.put("a_pack", new PresetState(true, 1));
+        incoming.presetState.put("b_pack", new PresetState(true, 5));
+        MilestoneService.mergePresetState(pd, incoming);
+
+        assertEquals(Map.of(
+                "a_pack", new PresetState(true, 2),
+                "b_pack", new PresetState(true, 5),
+                "c_pack", new PresetState(false, 1)
+        ), pd.presetState);
+    }
 }

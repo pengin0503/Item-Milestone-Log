@@ -62,6 +62,11 @@ public class MilestoneData extends SavedData {
         public final Map<TargetKey, Integer> progressNotified = new LinkedHashMap<>();
         /** Preset IDs that this player has already completed (announced at most once unless resetall). */
         public final Set<String> completedPresets = new LinkedHashSet<>();
+        /**
+         * F-140-12 (D-140-8): per-preset G-C state ({@code autoApplied} + {@code lastSeenVersion}).
+         * Kept separate from {@link #completedPresets} so completion keeps its original meaning.
+         */
+        public final Map<String, PresetState> presetState = new LinkedHashMap<>();
 
         /** Whether this player hides their records from lookups by non-privileged other players (F14). */
         public boolean isHiddenFromLookup() {
@@ -420,6 +425,47 @@ public class MilestoneData extends SavedData {
                 MilestoneLoadReport.recordElementSkip();
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed completedPresets tag in SavedData");
             }
+            if (McCompat.nbt().containsTyped(entry, "presetState", Tag.TAG_COMPOUND)) {
+                CompoundTag presetStates = McCompat.nbt().getCompound(entry, "presetState");
+                for (String presetId : McCompat.nbt().keys(presetStates)) {
+                    if (!Presets.isValidId(presetId)
+                            || !McCompat.nbt().containsTyped(presetStates, presetId, Tag.TAG_COMPOUND)) {
+                        MilestoneLoadReport.recordElementSkip();
+                        ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid presetState entry '{}' in SavedData", presetId);
+                        continue;
+                    }
+                    CompoundTag stateTag = McCompat.nbt().getCompound(presetStates, presetId);
+                    boolean autoApplied = false;
+                    int lastSeenVersion = 0;
+                    boolean malformed = false;
+                    if (McCompat.nbt().contains(stateTag, "autoApplied")) {
+                        if (McCompat.nbt().containsTyped(stateTag, "autoApplied", NbtCompat.ANY_NUMERIC)) {
+                            autoApplied = McCompat.nbt().getBoolean(stateTag, "autoApplied");
+                        } else {
+                            malformed = true;
+                        }
+                    }
+                    if (!malformed && McCompat.nbt().contains(stateTag, "lastSeenVersion")) {
+                        if (McCompat.nbt().containsTyped(stateTag, "lastSeenVersion", NbtCompat.ANY_NUMERIC)) {
+                            lastSeenVersion = McCompat.nbt().getInt(stateTag, "lastSeenVersion");
+                            if (lastSeenVersion < 0) {
+                                malformed = true;
+                            }
+                        } else {
+                            malformed = true;
+                        }
+                    }
+                    if (malformed) {
+                        MilestoneLoadReport.recordElementSkip();
+                        ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed presetState entry '{}' in SavedData", presetId);
+                        continue;
+                    }
+                    pd.presetState.put(presetId, new PresetState(autoApplied, lastSeenVersion));
+                }
+            } else if (McCompat.nbt().contains(entry, "presetState")) {
+                MilestoneLoadReport.recordElementSkip();
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed presetState tag in SavedData");
+            }
             data.players.put(uuid, pd);
         }
 
@@ -549,6 +595,16 @@ public class MilestoneData extends SavedData {
                     completedTag.add(StringTag.valueOf(presetId));
                 }
                 entry.put("completedPresets", completedTag);
+            }
+            if (!pd.presetState.isEmpty()) {
+                CompoundTag presetStateTag = new CompoundTag();
+                for (Map.Entry<String, PresetState> state : pd.presetState.entrySet()) {
+                    CompoundTag stateTag = new CompoundTag();
+                    stateTag.putBoolean("autoApplied", state.getValue().autoApplied());
+                    stateTag.putInt("lastSeenVersion", state.getValue().lastSeenVersion());
+                    presetStateTag.put(state.getKey(), stateTag);
+                }
+                entry.put("presetState", presetStateTag);
             }
             all.put(e.getKey().toString(), entry);
         }

@@ -60,6 +60,8 @@ public class MilestoneData extends SavedData {
         public long lastSeen = 0L;
         public final Map<TargetKey, Integer> progressNotified = new LinkedHashMap<>();
         public final Set<String> completedPresets = new LinkedHashSet<>();
+        /** F-140-12 (D-140-8): per-preset G-C state ({@code autoApplied} + {@code lastSeenVersion}). */
+        public final Map<String, PresetState> presetState = new LinkedHashMap<>();
 
         /** Whether this player hides their records from lookups by non-privileged other players (F14). */
         public boolean isHiddenFromLookup() {
@@ -163,6 +165,20 @@ public class MilestoneData extends SavedData {
     /** Lenient per-entry wrapper for {@code completedPresets} elements: non-string values decode to "" and are skipped. */
     private static final Codec<String> LENIENT_COMPLETED_PRESET_CODEC = Codec.STRING.orElse("");
 
+    /** F-140-12 (D-140-8): one {@code presetState} value ({@code autoApplied} + {@code lastSeenVersion}). */
+    private static final Codec<PresetState> PRESET_STATE_CODEC = RecordCodecBuilder.create(instance -> instance.group(
+            Codec.BOOL.optionalFieldOf("autoApplied", false).forGetter(PresetState::autoApplied),
+            Codec.INT.optionalFieldOf("lastSeenVersion", 0).forGetter(PresetState::lastSeenVersion)
+    ).apply(instance, PresetState::new));
+
+    /** Lenient per-entry wrapper: a malformed state decodes to {@code lastSeenVersion == -1} and is skipped. */
+    private static final Codec<PresetState> LENIENT_PRESET_STATE_CODEC =
+            PRESET_STATE_CODEC.orElse(new PresetState(false, -1));
+
+    private static Map<String, PresetState> encodePresetState(PlayerData pd) {
+        return PresetStateLogic.copyOf(pd.presetState);
+    }
+
     private static Map<String, Integer> encodeProgressNotified(PlayerData pd) {
         if (pd.progressNotified.isEmpty()) {
             return Map.of();
@@ -200,8 +216,11 @@ public class MilestoneData extends SavedData {
                     .forGetter(MilestoneData::encodeProgressNotified),
             Codec.list(LENIENT_COMPLETED_PRESET_CODEC)
                     .lenientOptionalFieldOf("completedPresets", List.of())
-                    .forGetter(pd -> pd.completedPresets.isEmpty() ? List.of() : new ArrayList<>(pd.completedPresets))
-    ).apply(instance, (targets, records, carriedFromCreative, lastKnownName, firstJoinHintShown, muteBroadcasts, muteProgressAlerts, excludeFromDiscord, hideFromLookup, lastSeen, progressNotified, completedPresets) -> {
+                    .forGetter(pd -> pd.completedPresets.isEmpty() ? List.of() : new ArrayList<>(pd.completedPresets)),
+            Codec.unboundedMap(Codec.STRING, LENIENT_PRESET_STATE_CODEC)
+                    .lenientOptionalFieldOf("presetState", Map.of())
+                    .forGetter(MilestoneData::encodePresetState)
+    ).apply(instance, (targets, records, carriedFromCreative, lastKnownName, firstJoinHintShown, muteBroadcasts, muteProgressAlerts, excludeFromDiscord, hideFromLookup, lastSeen, progressNotified, completedPresets, presetState) -> {
         PlayerData pd = new PlayerData();
         for (String raw : targets) {
             TargetKey parsed = TargetKey.tryParseEncoded(raw);
@@ -280,6 +299,16 @@ public class MilestoneData extends SavedData {
                 MilestoneLoadReport.recordElementSkip();
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid completedPresets entry '{}' in SavedData", presetId);
             }
+        }
+        for (Map.Entry<String, PresetState> stateEntry : presetState.entrySet()) {
+            String presetId = stateEntry.getKey();
+            PresetState state = stateEntry.getValue();
+            if (!Presets.isValidId(presetId) || state == null || state.lastSeenVersion() < 0) {
+                MilestoneLoadReport.recordElementSkip();
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid presetState entry '{}' in SavedData", presetId);
+                continue;
+            }
+            pd.presetState.put(presetId, state);
         }
         return pd;
     }));

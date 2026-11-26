@@ -85,6 +85,7 @@ public final class Tracker {
         final List<QueuedRecord> discordRecords = new ArrayList<>();
         final List<QueuedPresetCompletion> presetCompletions = new ArrayList<>();
         final List<QueuedPresetCompletion> discordPresetCompletions = new ArrayList<>();
+        final List<MilestoneService.NextPresetAddition> nextPresetAdditions = new ArrayList<>();
 
         PendingNotifications(UUID playerId, String playerName, Component actorDisplayName) {
             this.playerId = playerId;
@@ -235,7 +236,9 @@ public final class Tracker {
                 Config.SHOW_FIRST_JOIN_HINT.get(),
                 hasMod,
                 player,
-                nowMillis);
+                nowMillis,
+                Playtime.currentTicks(player),
+                MilestoneService::isModLoaded);
         for (Component msg : messages) {
             player.sendSystemMessage(msg);
         }
@@ -336,6 +339,25 @@ public final class Tracker {
             boolean hasModChannel,
             @Nullable ServerPlayer player,
             long nowMillis) {
+        return processPlayerLogin(data, playerId, playerName, defaultTargets, firstJoinPresets,
+                presetsEnabled, isKnownNonAirItem, showFirstJoinHint, hasModChannel, player,
+                nowMillis, 0, id -> true);
+    }
+
+    static List<Component> processPlayerLogin(
+            MilestoneData data,
+            UUID playerId,
+            @Nullable String playerName,
+            Set<TargetKey> defaultTargets,
+            @Nullable List<? extends String> firstJoinPresets,
+            boolean presetsEnabled,
+            Predicate<String> isKnownNonAirItem,
+            boolean showFirstJoinHint,
+            boolean hasModChannel,
+            @Nullable ServerPlayer player,
+            long nowMillis,
+            int playTicks,
+            Predicate<String> modLoaded) {
         int firstJoinAdded = data.playerOrNull(playerId) == null
                 ? MilestoneService.applyFirstJoinPresets(
                         data, playerId, firstJoinPresets, isKnownNonAirItem, presetsEnabled)
@@ -357,6 +379,10 @@ public final class Tracker {
             messages.add(ServerLang.tr(
                     player, "message.itemmilestonelog.first_join_presets", firstJoinAdded));
         }
+        List<MilestoneService.NextPresetAddition> unlocked = MilestoneService.applyUnlockAfterHours(
+                data, playerId, playTicks, isKnownNonAirItem, presetsEnabled, modLoaded);
+        messages.addAll(unlockMessages(player, unlocked));
+        messages.addAll(MilestoneService.notifyPresetVersionUpdates(data, playerId, player, presetsEnabled));
         if (showFirstJoinHint && !pd.firstJoinHintShown) {
             pd.firstJoinHintShown = true;
             data.setDirty();
@@ -473,6 +499,15 @@ public final class Tracker {
     public static void scanInventory(ServerPlayer player) {
         MilestoneData data = MilestoneData.get(player.level().getServer());
         MilestoneData.PlayerData pd = data.playerOrNull(player.getUUID());
+        // F-140-14: the lightweight unlockAfterHours check rides the existing scan cycle.
+        List<MilestoneService.NextPresetAddition> unlocked = MilestoneService.applyUnlockAfterHours(
+                data, player.getUUID(), Playtime.currentTicks(player));
+        if (!unlocked.isEmpty()) {
+            for (Component message : unlockMessages(player, unlocked)) {
+                player.sendSystemMessage(message);
+            }
+            MilestoneService.syncPlayerIfOpen(player);
+        }
         Set<TargetKey> pending = new HashSet<>(effectiveTargets(pd));
         if (pd != null) {
             pending.removeAll(pd.records.keySet());
@@ -1178,12 +1213,30 @@ public final class Tracker {
             Collection<Presets.PresetDefinition> allPresets,
             Predicate<String> itemExists,
             boolean presetsEnabled) {
+        return evaluatePresetCompletions(data, playerId, justRecordedKey, allPresets, itemExists,
+                presetsEnabled, id -> true).completed();
+    }
+
+    /**
+     * F-140-13: evaluates F5 completions and, for every preset newly added to
+     * {@code completedPresets}, auto-adds its {@code nextPresets} through the normal apply path.
+     * Only presets that newly entered the completed set can fire, so cycles stop and nothing is
+     * applied retroactively.
+     */
+    static MilestoneService.PresetEvaluation evaluatePresetCompletions(
+            MilestoneData data,
+            UUID playerId,
+            TargetKey justRecordedKey,
+            Collection<Presets.PresetDefinition> allPresets,
+            Predicate<String> itemExists,
+            boolean presetsEnabled,
+            Predicate<String> modLoaded) {
         if (!presetsEnabled) {
-            return List.of();
+            return MilestoneService.PresetEvaluation.empty();
         }
         MilestoneData.PlayerData pd = data.playerOrNull(playerId);
         if (pd == null || pd.records.isEmpty()) {
-            return List.of();
+            return MilestoneService.PresetEvaluation.empty();
         }
         List<Presets.PresetDefinition> newlyCompleted = Presets.findNewlyCompletedPresets(
                 justRecordedKey,
@@ -1193,18 +1246,25 @@ public final class Tracker {
                 pd.completedPresets,
                 true);
         if (newlyCompleted.isEmpty()) {
-            return List.of();
+            return MilestoneService.PresetEvaluation.empty();
         }
-        boolean dirty = false;
+        List<Presets.PresetDefinition> newlyAdded = new ArrayList<>();
         for (Presets.PresetDefinition preset : newlyCompleted) {
             if (pd.completedPresets.add(preset.id())) {
-                dirty = true;
+                newlyAdded.add(preset);
             }
         }
-        if (dirty) {
+        if (!newlyAdded.isEmpty()) {
             data.setDirty();
         }
-        return newlyCompleted;
+        List<MilestoneService.NextPresetAddition> nextAdditions = new ArrayList<>();
+        for (Presets.PresetDefinition preset : newlyAdded) {
+            nextAdditions.addAll(MilestoneService.applyNextPresets(
+                    data, playerId, preset, itemExists, modLoaded));
+        }
+        return new MilestoneService.PresetEvaluation(
+                newlyCompleted,
+                nextAdditions.isEmpty() ? List.of() : List.copyOf(nextAdditions));
     }
 
     static boolean shouldReceivePresetCompletionChat(
@@ -1272,7 +1332,21 @@ public final class Tracker {
             List<Presets.PresetDefinition> completedPresets,
             long epochMillis,
             boolean postToDiscord) {
-        if (completedPresets == null || completedPresets.isEmpty()) {
+        queuePendingPresetCompletions(playerId, playerName, actorDisplayName, completedPresets,
+                List.of(), epochMillis, postToDiscord);
+    }
+
+    static void queuePendingPresetCompletions(
+            UUID playerId,
+            @Nullable String playerName,
+            @Nullable Component actorDisplayName,
+            List<Presets.PresetDefinition> completedPresets,
+            List<MilestoneService.NextPresetAddition> nextAdditions,
+            long epochMillis,
+            boolean postToDiscord) {
+        boolean hasCompletions = completedPresets != null && !completedPresets.isEmpty();
+        boolean hasNextAdditions = nextAdditions != null && !nextAdditions.isEmpty();
+        if (!hasCompletions && !hasNextAdditions) {
             return;
         }
         String safeName = playerName != null ? playerName : "";
@@ -1285,15 +1359,20 @@ public final class Tracker {
         if (actorDisplayName != null) {
             pending.actorDisplayName = actorDisplayName;
         }
-        for (Presets.PresetDefinition preset : completedPresets) {
-            if (preset == null) {
-                continue;
+        if (completedPresets != null) {
+            for (Presets.PresetDefinition preset : completedPresets) {
+                if (preset == null) {
+                    continue;
+                }
+                QueuedPresetCompletion queued = new QueuedPresetCompletion(preset, epochMillis);
+                pending.presetCompletions.add(queued);
+                if (postToDiscord) {
+                    pending.discordPresetCompletions.add(queued);
+                }
             }
-            QueuedPresetCompletion queued = new QueuedPresetCompletion(preset, epochMillis);
-            pending.presetCompletions.add(queued);
-            if (postToDiscord) {
-                pending.discordPresetCompletions.add(queued);
-            }
+        }
+        if (nextAdditions != null) {
+            pending.nextPresetAdditions.addAll(nextAdditions);
         }
     }
 
@@ -1565,13 +1644,15 @@ public final class Tracker {
                     key, null, false, List.of());
         }
 
-        List<Presets.PresetDefinition> completedPresets = evaluatePresetCompletions(
+        MilestoneService.PresetEvaluation presetEvaluation = evaluatePresetCompletions(
                 data,
                 targetId,
                 key,
                 allPresets,
                 isKnownNonAirItem,
-                presetsEnabled);
+                presetsEnabled,
+                MilestoneService::isModLoaded);
+        List<Presets.PresetDefinition> completedPresets = presetEvaluation.completed();
 
         onLogged.accept(key, rec);
 
@@ -1592,6 +1673,8 @@ public final class Tracker {
                         presetName));
             }
         }
+        sendNextPresetAdditions(targetMessageSender, targetPlayer,
+                presetEvaluation.nextAdditions(), notifyPlayer);
 
         postRecordEvents(targetPlayer, key, rec, outcome, completedPresets, RecordCause.ADMIN_GRANT, eventPoster);
 
@@ -1629,13 +1712,15 @@ public final class Tracker {
         ScoreboardSync.refreshScores(server, player.getUUID());
         boolean worldFirst = outcome == RecordOutcome.RECORDED_WORLD_FIRST;
         McCompat.triggers().trigger(player, key, worldFirst, worldFirstEnabled);
-        List<Presets.PresetDefinition> completedPresets = evaluatePresetCompletions(
+        MilestoneService.PresetEvaluation presetEvaluation = evaluatePresetCompletions(
                 data,
                 player.getUUID(),
                 key,
                 Presets.all(),
                 MilestoneService::isKnownNonAirItem,
-                Config.PRESETS_ENABLED.get());
+                Config.PRESETS_ENABLED.get(),
+                MilestoneService::isModLoaded);
+        List<Presets.PresetDefinition> completedPresets = presetEvaluation.completed();
         ZoneId zone = Config.displayTimeZone();
         String formattedRecord = Playtime.formatRecord(rec, zone);
 
@@ -1659,6 +1744,7 @@ public final class Tracker {
                         safePlayerName,
                         player.getDisplayName(),
                         completedPresets,
+                        presetEvaluation.nextAdditions(),
                         rec.epochMillis(),
                         postToDiscord);
             }
@@ -1676,6 +1762,8 @@ public final class Tracker {
                         Config.ANNOUNCE_PRESET_COMPLETION.get(),
                         Config.NOTIFY_PLAYER.get());
             }
+            sendNextPresetAdditions(msg -> player.sendSystemMessage(msg), player,
+                    presetEvaluation.nextAdditions(), Config.NOTIFY_PLAYER.get());
             postRecordEvents(player, key, rec, outcome, completedPresets, cause, event -> MinecraftForge.EVENT_BUS.post(event));
             if (postToDiscord) {
                 DiscordNotifier.notifyMilestone(pd, safePlayerName, key, rec, worldFirst);
@@ -1759,6 +1847,49 @@ public final class Tracker {
                     "message.itemmilestonelog.preset_completed",
                     presetName));
         }
+    }
+
+    /** F-140-13: sends the personal "next preset auto-added" feedback for one completion. */
+    static void sendNextPresetAdditions(
+            Consumer<Component> sender,
+            @Nullable ServerPlayer player,
+            List<MilestoneService.NextPresetAddition> additions,
+            boolean notifyPlayer) {
+        if (!notifyPlayer || sender == null || additions == null || additions.isEmpty()) {
+            return;
+        }
+        for (MilestoneService.NextPresetAddition addition : additions) {
+            if (addition == null || addition.added() <= 0) {
+                continue;
+            }
+            Component presetName = MilestoneService.presetDisplayName(player, addition.preset());
+            sender.accept(ServerLang.tr(
+                    player,
+                    "message.itemmilestonelog.preset_next_added",
+                    presetName,
+                    addition.added()));
+        }
+    }
+
+    /** F-140-14: renders the personal "playtime unlocked" feedback for auto-applied presets. */
+    static List<Component> unlockMessages(@Nullable ServerPlayer player,
+                                          List<MilestoneService.NextPresetAddition> additions) {
+        if (additions == null || additions.isEmpty()) {
+            return List.of();
+        }
+        List<Component> messages = new ArrayList<>(additions.size());
+        for (MilestoneService.NextPresetAddition addition : additions) {
+            if (addition == null || addition.added() <= 0) {
+                continue;
+            }
+            Component presetName = MilestoneService.presetDisplayName(player, addition.preset());
+            messages.add(ServerLang.tr(
+                    player,
+                    "message.itemmilestonelog.preset_unlock_added",
+                    presetName,
+                    addition.added()));
+        }
+        return messages;
     }
 
     /**
@@ -1915,6 +2046,14 @@ public final class Tracker {
                         announcePresetCompletion,
                         notifyPlayer);
             }
+        }
+        // F-140-13: next-preset auto-add feedback travels with the completion notification.
+        if (!pending.nextPresetAdditions.isEmpty() && onlineActor != null) {
+            sendNextPresetAdditions(
+                    msg -> onlineActor.sendSystemMessage(msg),
+                    onlineActor,
+                    pending.nextPresetAdditions,
+                    notifyPlayer);
         }
 
         // 5. Discord record notifications (still sent even if player went offline)
