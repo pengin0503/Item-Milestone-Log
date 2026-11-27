@@ -8,6 +8,7 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.IntTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.StringTag;
+import net.minecraft.nbt.Tag;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -1040,6 +1041,89 @@ class MilestoneDataTest {
         assertTrue(pd5.firstJoinHintShown);
         assertEquals("Alice", pd5.lastKnownName);
         assertEquals(1, pd5.records.size());
+    }
+
+    /** Loads one corrupted player beside a valid one, asserting exactly one recorded skip. */
+    private static MilestoneData loadWithValidSibling(UUID badPlayer, Tag badEntry,
+                                                      UUID goodPlayer, CompoundTag goodEntry) {
+        CompoundTag players = new CompoundTag();
+        players.put(badPlayer.toString(), badEntry);
+        players.put(goodPlayer.toString(), goodEntry);
+        CompoundTag root = new CompoundTag();
+        root.put("players", players);
+        root.putInt("schemaVersion", 1);
+
+        MilestoneData loaded = MilestoneData.load(root);
+        assertNotNull(loaded.loadReport());
+        assertEquals(1, loaded.loadReport().elementSkipCount(),
+                "one wrong-typed container must be counted so RB-1/F-140-2 can evacuate");
+        assertTrue(loaded.loadReport().toOutcome().requiresEvacuation());
+        return loaded;
+    }
+
+    @Test
+    void loadInternalNonListTargetsRecordSkipAndKeepValidSiblings() {
+        UUID badPlayer = UUID.fromString("33333333-3333-3333-3333-333333333333");
+        UUID goodPlayer = UUID.fromString("44444444-4444-4444-4444-444444444444");
+
+        CompoundTag badEntry = validParityPlayerTag();
+        badEntry.putString("targets", "minecraft:diamond"); // string instead of list
+        MilestoneData loaded = loadWithValidSibling(badPlayer, badEntry, goodPlayer, validParityPlayerTag());
+
+        MilestoneData.PlayerData badPd = loaded.playerOrNull(badPlayer);
+        assertNotNull(badPd);
+        assertTrue(badPd.targets.isEmpty(), "wrong-typed targets must not be read");
+        assertEquals(Map.of(TargetKey.of("minecraft:coal"), MilestoneRecord.legacy(123)), badPd.records);
+        assertEquals(Set.of("minecraft:emerald"), badPd.carriedFromCreative);
+        assertEquals("Alice", badPd.lastKnownName);
+        assertTrue(badPd.firstJoinHintShown);
+        assertTrue(badPd.muteBroadcasts);
+
+        MilestoneData.PlayerData goodPd = loaded.playerOrNull(goodPlayer);
+        assertNotNull(goodPd);
+        assertEquals(List.of(TargetKey.of("minecraft:diamond")), List.copyOf(goodPd.targets));
+        assertEquals(Map.of(TargetKey.of("minecraft:coal"), MilestoneRecord.legacy(123)), goodPd.records);
+    }
+
+    @Test
+    void loadInternalNonCompoundRecordsRecordSkipAndKeepValidSiblings() {
+        UUID badPlayer = UUID.fromString("33333333-3333-3333-3333-333333333333");
+        UUID goodPlayer = UUID.fromString("44444444-4444-4444-4444-444444444444");
+
+        CompoundTag badEntry = validParityPlayerTag();
+        badEntry.putString("records", "garbage"); // string instead of compound
+        MilestoneData loaded = loadWithValidSibling(badPlayer, badEntry, goodPlayer, validParityPlayerTag());
+
+        MilestoneData.PlayerData badPd = loaded.playerOrNull(badPlayer);
+        assertNotNull(badPd);
+        assertEquals(List.of(TargetKey.of("minecraft:diamond")), List.copyOf(badPd.targets));
+        assertTrue(badPd.records.isEmpty(), "wrong-typed records must not be read");
+        assertEquals(Set.of("minecraft:emerald"), badPd.carriedFromCreative);
+        assertEquals("Alice", badPd.lastKnownName);
+        assertTrue(badPd.firstJoinHintShown);
+        assertTrue(badPd.muteBroadcasts);
+
+        MilestoneData.PlayerData goodPd = loaded.playerOrNull(goodPlayer);
+        assertNotNull(goodPd);
+        assertEquals(List.of(TargetKey.of("minecraft:diamond")), List.copyOf(goodPd.targets));
+        assertEquals(Map.of(TargetKey.of("minecraft:coal"), MilestoneRecord.legacy(123)), goodPd.records);
+    }
+
+    @Test
+    void loadInternalNonCompoundPlayerEntryRecordSkipAndKeepValidSiblingPlayer() {
+        UUID badPlayer = UUID.fromString("33333333-3333-3333-3333-333333333333");
+        UUID goodPlayer = UUID.fromString("44444444-4444-4444-4444-444444444444");
+
+        MilestoneData loaded = loadWithValidSibling(badPlayer, IntTag.valueOf(7),
+                goodPlayer, validParityPlayerTag());
+
+        assertNull(loaded.playerOrNull(badPlayer), "non-compound player entry must be skipped");
+
+        MilestoneData.PlayerData goodPd = loaded.playerOrNull(goodPlayer);
+        assertNotNull(goodPd);
+        assertEquals(List.of(TargetKey.of("minecraft:diamond")), List.copyOf(goodPd.targets));
+        assertEquals(Map.of(TargetKey.of("minecraft:coal"), MilestoneRecord.legacy(123)), goodPd.records);
+        assertEquals(Set.of("minecraft:emerald"), goodPd.carriedFromCreative);
     }
 
 }

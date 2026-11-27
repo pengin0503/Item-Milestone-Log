@@ -291,8 +291,21 @@ public class MilestoneData extends SavedData {
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping player entry with invalid UUID '{}' in SavedData", uuidKey);
                 continue;
             }
+            if (!McCompat.nbt().containsTyped(all, uuidKey, Tag.TAG_COMPOUND)) {
+                // RB-1: getCompound yields a fresh empty tag for a non-compound entry, which
+                // used to load as an empty PlayerData without recording a skip.
+                MilestoneLoadReport.recordElementSkip();
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping non-compound player entry '{}' in SavedData", uuidKey);
+                continue;
+            }
             CompoundTag entry = McCompat.nbt().getCompound(all, uuidKey);
             PlayerData pd = new PlayerData();
+            // RB-1: a present but non-list targets tag is silently replaced by an empty list.
+            if (McCompat.nbt().contains(entry, "targets")
+                    && !McCompat.nbt().containsTyped(entry, "targets", Tag.TAG_LIST)) {
+                MilestoneLoadReport.recordElementSkip();
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed targets tag in SavedData");
+            }
             ListTag targets = McCompat.nbt().getStringList(entry, "targets");
             for (Tag t : targets) {
                 String raw = McCompat.nbt().tagAsString(t);
@@ -303,6 +316,12 @@ public class MilestoneData extends SavedData {
                     MilestoneLoadReport.recordElementSkip();
                     ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid target entry '{}' in SavedData", raw);
                 }
+            }
+            // RB-1: a present but non-compound records tag is silently replaced by an empty compound.
+            if (McCompat.nbt().contains(entry, "records")
+                    && !McCompat.nbt().containsTyped(entry, "records", Tag.TAG_COMPOUND)) {
+                MilestoneLoadReport.recordElementSkip();
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed records tag in SavedData");
             }
             CompoundTag records = McCompat.nbt().getCompound(entry, "records");
             for (String itemId : McCompat.nbt().keys(records)) {

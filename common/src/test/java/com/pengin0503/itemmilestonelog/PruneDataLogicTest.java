@@ -20,7 +20,7 @@ class PruneDataLogicTest {
     private static final long OLD_LAST_SEEN = NOW - (DAYS * PruneDataLogic.MILLIS_PER_DAY) - 1L;
 
     private static PruneDataLogic.PlayerState emptyDefaultState() {
-        return new PruneDataLogic.PlayerState(0, 0, true, false, false, false, false);
+        return new PruneDataLogic.PlayerState(0, 0, true, false, false, false, false, true, true, true);
     }
 
     @Test
@@ -31,30 +31,45 @@ class PruneDataLogicTest {
     @Test
     void nonEmptyRecordsTargetsOrCarriedFromCreativeExcludePlayer() {
         assertFalse(PruneDataLogic.isPruneTarget(
-                new PruneDataLogic.PlayerState(1, 0, true, false, false, false, false),
+                new PruneDataLogic.PlayerState(1, 0, true, false, false, false, false, true, true, true),
                 false, OLD_LAST_SEEN, NOW, DAYS));
         assertFalse(PruneDataLogic.isPruneTarget(
-                new PruneDataLogic.PlayerState(0, 1, true, false, false, false, false),
+                new PruneDataLogic.PlayerState(0, 1, true, false, false, false, false, true, true, true),
                 false, OLD_LAST_SEEN, NOW, DAYS));
         assertFalse(PruneDataLogic.isPruneTarget(
-                new PruneDataLogic.PlayerState(0, 0, false, false, false, false, false),
+                new PruneDataLogic.PlayerState(0, 0, false, false, false, false, false, true, true, true),
                 false, OLD_LAST_SEEN, NOW, DAYS));
         assertFalse(PruneDataLogic.isPruneTarget(null, false, OLD_LAST_SEEN, NOW, DAYS));
     }
 
     @Test
+    void persistedFunctionalStateExcludesPlayer() {
+        // progressNotified, completedPresets and presetState are functional state: losing them to a
+        // prune would silently drop progress thresholds and preset G-C state.
+        assertFalse(PruneDataLogic.isPruneTarget(
+                new PruneDataLogic.PlayerState(0, 0, true, false, false, false, false, false, true, true),
+                false, OLD_LAST_SEEN, NOW, DAYS));
+        assertFalse(PruneDataLogic.isPruneTarget(
+                new PruneDataLogic.PlayerState(0, 0, true, false, false, false, false, true, false, true),
+                false, OLD_LAST_SEEN, NOW, DAYS));
+        assertFalse(PruneDataLogic.isPruneTarget(
+                new PruneDataLogic.PlayerState(0, 0, true, false, false, false, false, true, true, false),
+                false, OLD_LAST_SEEN, NOW, DAYS));
+    }
+
+    @Test
     void anyNonDefaultPersonalSettingExcludesPlayer() {
         assertFalse(PruneDataLogic.isPruneTarget(
-                new PruneDataLogic.PlayerState(0, 0, true, true, false, false, false),
+                new PruneDataLogic.PlayerState(0, 0, true, true, false, false, false, true, true, true),
                 false, OLD_LAST_SEEN, NOW, DAYS));
         assertFalse(PruneDataLogic.isPruneTarget(
-                new PruneDataLogic.PlayerState(0, 0, true, false, true, false, false),
+                new PruneDataLogic.PlayerState(0, 0, true, false, true, false, false, true, true, true),
                 false, OLD_LAST_SEEN, NOW, DAYS));
         assertFalse(PruneDataLogic.isPruneTarget(
-                new PruneDataLogic.PlayerState(0, 0, true, false, false, true, false),
+                new PruneDataLogic.PlayerState(0, 0, true, false, false, true, false, true, true, true),
                 false, OLD_LAST_SEEN, NOW, DAYS));
         assertFalse(PruneDataLogic.isPruneTarget(
-                new PruneDataLogic.PlayerState(0, 0, true, false, false, false, true),
+                new PruneDataLogic.PlayerState(0, 0, true, false, false, false, true, true, true, true),
                 false, OLD_LAST_SEEN, NOW, DAYS));
     }
 

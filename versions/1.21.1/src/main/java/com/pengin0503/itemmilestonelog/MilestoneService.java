@@ -1595,7 +1595,10 @@ public final class MilestoneService {
                 pd.muteBroadcasts,
                 pd.hideFromLookup,
                 pd.muteProgressAlerts,
-                pd.excludeFromDiscord
+                pd.excludeFromDiscord,
+                pd.progressNotified.isEmpty(),
+                pd.completedPresets.isEmpty(),
+                pd.presetState.isEmpty()
         );
     }
 

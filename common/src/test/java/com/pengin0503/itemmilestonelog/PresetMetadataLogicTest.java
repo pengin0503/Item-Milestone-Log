@@ -22,7 +22,13 @@ class PresetMetadataLogicTest {
         assertEquals(0, PresetMetadataLogic.parseOrder("0"));
         assertEquals(-7, PresetMetadataLogic.parseOrder("-7"));
         assertEquals(42, PresetMetadataLogic.parseOrder(" 42 "));
+        // SF-6: JSON Schema integers include integral decimals/exponents.
+        assertEquals(1, PresetMetadataLogic.parseOrder("1.0"));
+        assertEquals(1, PresetMetadataLogic.parseOrder("1e0"));
+        assertEquals(100, PresetMetadataLogic.parseOrder("1e2"));
         assertNull(PresetMetadataLogic.parseOrder("1.5"));
+        assertNull(PresetMetadataLogic.parseOrder("1e-1"));
+        assertNull(PresetMetadataLogic.parseOrder("1e999"));
         assertNull(PresetMetadataLogic.parseOrder("abc"));
         assertNull(PresetMetadataLogic.parseOrder(""));
         assertNull(PresetMetadataLogic.parseOrder("99999999999999999999"));
@@ -32,6 +38,9 @@ class PresetMetadataLogicTest {
     void versionMustBeAnIntegerAtLeastOne() {
         assertEquals(1, PresetMetadataLogic.parseVersion("1"));
         assertEquals(99, PresetMetadataLogic.parseVersion("99"));
+        assertEquals(1, PresetMetadataLogic.parseVersion("1.0"));
+        assertEquals(1, PresetMetadataLogic.parseVersion("1e0"));
+        assertNull(PresetMetadataLogic.parseVersion("1.5"));
         assertNull(PresetMetadataLogic.parseVersion("0"));
         assertNull(PresetMetadataLogic.parseVersion("-1"));
         assertNull(PresetMetadataLogic.parseVersion("1.5"));
