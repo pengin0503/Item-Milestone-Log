@@ -19,7 +19,8 @@ VERSIONS_FORGE_1201=(1.21.1 1.20.1-forge)
 # Files that must be byte-identical across ALL four Minecraft versions
 # (1.21.1, 26.1.2, 26.2, 26.3).
 IDENTICAL_ALL_4=(
-  # src/main/java (20 files)
+  # src/main/java (21 files)
+  "src/main/java/com/pengin0503/itemmilestonelog/AuditLog.java"
   "src/main/java/com/pengin0503/itemmilestonelog/DiscordNotifier.java"
   "src/main/java/com/pengin0503/itemmilestonelog/ItemInfoLogic.java"
   "src/main/java/com/pengin0503/itemmilestonelog/MilestoneBackup.java"
@@ -41,7 +42,8 @@ IDENTICAL_ALL_4=(
   "src/main/java/com/pengin0503/itemmilestonelog/client/ActionRowLayout.java"
   "src/main/java/com/pengin0503/itemmilestonelog/network/TargetEntry.java"
 
-  # src/test/java (21 files)
+  # src/test/java (22 files)
+  "src/test/java/com/pengin0503/itemmilestonelog/AuditLogTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/ConfigurationScreenLangTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/DiscordNotifierTest.java"
   "src/test/java/com/pengin0503/itemmilestonelog/ItemInfoLogicTest.java"
