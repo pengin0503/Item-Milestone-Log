@@ -1196,6 +1196,10 @@ public final class MilestoneService {
         if (Presets.isDatapack(name)) {
             return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.preset_datapack_protected", name));
         }
+        // F-150-40 (N178): protected custom presets refuse every overwrite path.
+        if (Presets.isProtected(name)) {
+            return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.preset_protected", name));
+        }
         MilestoneData.PlayerData pd = data.playerOrNull(playerId);
         if (pd == null || pd.targets.isEmpty()) {
             return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.preset_no_personal_targets"));
@@ -1325,6 +1329,10 @@ public final class MilestoneService {
         // F21: data pack presets cannot be deleted from in-game either.
         if (Presets.isDatapack(name)) {
             return new ActionResult(false, ServerLang.tr(source, "message.itemmilestonelog.preset_datapack_protected", name));
+        }
+        // F-150-40 (N178): protected custom presets refuse deletion.
+        if (Presets.isProtected(name)) {
+            return new ActionResult(false, ServerLang.tr(source, "message.itemmilestonelog.preset_protected", name));
         }
         if (!Presets.isValidId(name) || Presets.get(name) == null) {
             return new ActionResult(false, ServerLang.tr(source, "message.itemmilestonelog.preset_unknown",

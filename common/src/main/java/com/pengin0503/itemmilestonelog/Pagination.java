@@ -221,6 +221,18 @@ public final class Pagination {
         return ROOT_COMMAND + " firsts close";
     }
 
+    /** Page-link prefix for {@code /milestonelog firsts history <item>} (F-150-38). */
+    public static String firstsHistoryCommandPrefix(String itemId, int count) {
+        Objects.requireNonNull(itemId, "itemId");
+        return ROOT_COMMAND + " firsts history " + itemId + (count > 1 ? " " + count : "");
+    }
+
+    /** Page-link prefix for {@code /milestonelog firstshistorytag <tag>} (F-150-38). */
+    public static String firstsHistoryTagCommandPrefix(String tagId, int count) {
+        Objects.requireNonNull(tagId, "tagId");
+        return ROOT_COMMAND + " firstshistorytag " + tagId + (count > 1 ? " " + count : "");
+    }
+
     /**
      * Page-link prefix for {@code /milestonelog firsts unclaimed scope <scope>} (F-150-6).
      * The scope literal is always written so paged links keep the caller's choice.

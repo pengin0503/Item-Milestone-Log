@@ -897,6 +897,80 @@ class MilestoneCommandsHelpTest {
     }
 
     @Test
+    void firstsHistoryIsLookupGatedWithoutInheritingTheResetRequirement() {
+        CommandDispatcher<CommandSourceStack> dispatcher = buildDispatcher(src -> true);
+        CommandNode<CommandSourceStack> firsts = rootChild(dispatcher, "firsts");
+        CommandNode<CommandSourceStack> history = firsts.getChild("history");
+        assertNotNull(history, "firsts history must be registered (F-150-38)");
+        assertTrue(history.canUse(null), "history must not inherit firstsResetRequirement");
+        assertNull(history.getChild("reset"), "history must not expose admin resets");
+        CommandNode<CommandSourceStack> item = history.getChild("item");
+        assertNotNull(item, "firsts history must take <item>");
+        assertNotNull(item.getCommand(), "firsts history <item> must execute");
+        assertNotNull(item.getChild("count"), "firsts history <item> [<count>] must be registered");
+        assertNotNull(item.getChild("page"), "firsts history <item> [<page>] must be registered");
+
+        CommandNode<CommandSourceStack> tagCommand = rootChild(dispatcher, "firstshistorytag");
+        assertNotNull(tagCommand, "firstshistorytag must be registered (F-150-38)");
+        CommandNode<CommandSourceStack> tag = tagCommand.getChild("tag");
+        assertNotNull(tag, "firstshistorytag must take <tag>");
+        assertNotNull(tag.getCommand(), "firstshistorytag <tag> must execute");
+        assertNotNull(tag.getChild("count"));
+        assertNotNull(tag.getChild("page"));
+        assertEquals(CommandHelp.Gate.LOOKUP, entryByName("firstshistorytag").gate());
+        assertEquals(CommandHelp.Gate.NONE, entryByName("firsts").gate(),
+                "the public world-first entry must stay ungated (D-150-93)");
+
+        for (String line : List.of(
+                "milestonelog firsts history minecraft:diamond",
+                "milestonelog firsts history minecraft:diamond 2",
+                "milestonelog firsts history minecraft:diamond 2 3",
+                "milestonelog firstshistorytag c:ingots/iron",
+                "milestonelog firstshistorytag c:ingots/iron 2",
+                "milestonelog firstshistorytag c:ingots/iron 2 3")) {
+            ParseResults<CommandSourceStack> parse = dispatcher.parse(line, null);
+            assertFalse(parse.getReader().canRead(), "must fully parse: " + line);
+            assertTrue(parse.getExceptions().isEmpty(), line + ": " + parse.getExceptions());
+            assertNotNull(parse.getContext().getCommand(), line);
+        }
+    }
+
+    @Test
+    void presetEditProtectAndUnprotectAreRegisteredLiteralsNotPresetIds() {
+        CommandDispatcher<CommandSourceStack> dispatcher = buildDispatcher(src -> true);
+        CommandNode<CommandSourceStack> preset = rootChild(dispatcher, "preset");
+        CommandNode<CommandSourceStack> edit = preset.getChild("edit");
+        assertNotNull(edit, "preset edit must be registered (F-150-40)");
+        assertNull(edit.getCommand(), "bare preset edit must not execute");
+        CommandNode<CommandSourceStack> name = edit.getChild("name");
+        assertNotNull(name, "preset edit must take <name>");
+        assertNull(name.getCommand(), "preset edit needs an action literal");
+        assertNotNull(name.getChild("add"), "preset edit add must be registered");
+        assertNotNull(name.getChild("remove"), "preset edit remove must be registered");
+        assertNotNull(name.getChild("add").getChild("item").getCommand());
+        assertNotNull(name.getChild("add").getChild("item").getChild("count"));
+        assertNotNull(name.getChild("remove").getChild("item").getCommand());
+        assertNotNull(name.getChild("remove").getChild("item").getChild("count"));
+
+        for (String literal : List.of("edit", "protect", "unprotect")) {
+            assertFalse(Presets.isValidId(literal), literal + " must be a reserved ID (D-150-97)");
+        }
+        for (String line : List.of(
+                "milestonelog preset edit my_preset add minecraft:diamond",
+                "milestonelog preset edit my_preset add minecraft:diamond 3",
+                "milestonelog preset edit my_preset remove minecraft:diamond",
+                "milestonelog preset protect my_preset",
+                "milestonelog preset protect my_preset confirm",
+                "milestonelog preset unprotect my_preset",
+                "milestonelog preset unprotect my_preset confirm")) {
+            ParseResults<CommandSourceStack> parse = dispatcher.parse(line, null);
+            assertFalse(parse.getReader().canRead(), "must fully parse: " + line);
+            assertTrue(parse.getExceptions().isEmpty(), line + ": " + parse.getExceptions());
+            assertNotNull(parse.getContext().getCommand(), line);
+        }
+    }
+
+    @Test
     void everyRegisteredSubcommandAppearsInHelpTableAndViceVersa() {
         CommandDispatcher<CommandSourceStack> dispatcher = buildDispatcher(src -> true);
         CommandNode<CommandSourceStack> root = dispatcher.getRoot().getChild("milestonelog");
@@ -974,7 +1048,10 @@ class MilestoneCommandsHelpTest {
                 "message.itemmilestonelog.help.admin_granttag",
                 "message.itemmilestonelog.help.admin_removetag",
                 "message.itemmilestonelog.help.import_dryrun",
-                "message.itemmilestonelog.help.undo_list");
+                "message.itemmilestonelog.help.undo_list",
+                // PR-4: sub-literal descriptions; `firstshistorytag` is a real top-level ENTRY.
+                "message.itemmilestonelog.help.firsts_history",
+                "message.itemmilestonelog.help.preset_edit");
         actualHelpKeys.removeAll(auxiliaryHelpKeys);
         assertEquals(expectedHelpKeys, actualHelpKeys,
                 "en_us.json help.* keys must match CommandHelp.ENTRIES plus PR-1 and PR-2 auxiliary keys");

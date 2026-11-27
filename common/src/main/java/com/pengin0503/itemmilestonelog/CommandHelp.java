@@ -113,6 +113,7 @@ public final class CommandHelp {
             new Entry("resetall", true, Gate.NONE),
             new Entry("undo", true, Gate.NONE),
             new Entry("firsts", false, Gate.NONE),
+            new Entry("firstshistorytag", false, Gate.LOOKUP),
             new Entry("info", true, Gate.NONE),
             new Entry("top", false, Gate.LOOKUP),
             new Entry("presettop", false, Gate.LOOKUP),

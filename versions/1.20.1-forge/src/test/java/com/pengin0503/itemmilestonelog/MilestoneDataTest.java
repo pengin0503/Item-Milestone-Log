@@ -11,6 +11,7 @@ import net.minecraft.nbt.StringTag;
 import net.minecraft.nbt.Tag;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -1301,4 +1302,220 @@ class MilestoneDataTest {
         assertEquals(Map.of(TargetKey.of("minecraft:coal"), MilestoneRecord.legacy(123)), goodPd.records);
         assertEquals(Set.of("minecraft:emerald"), goodPd.carriedFromCreative);
     }
+
+    @Test
+    void firstsHolderHistoryMissingFromLegacyTagLoadsEmptyAndKeepsOtherFields() {
+        MilestoneData original = new MilestoneData();
+        MilestoneData.PlayerData pd = original.player(PLAYER_A);
+        TargetKey diamond = TargetKey.of("minecraft:diamond", 3);
+        MilestoneRecord record = new MilestoneRecord(1234, 5L, 1795600000000L);
+        pd.targets.add(diamond);
+        pd.records.put(diamond, record);
+        pd.lastKnownName = "Alice";
+        assertTrue(original.recordWorldFirstIfAbsent(diamond, PLAYER_A, "Alice", record));
+
+        // A 1.4.0 file has no root firstsHolderHistory compound.
+        CompoundTag saved = original.save(new CompoundTag());
+        int savedSchemaVersion = McCompat.nbt().getInt(saved, "schemaVersion");
+        saved.remove("firstsHolderHistory");
+
+        MilestoneData loaded = MilestoneData.load(saved);
+        assertTrue(loaded.firstsHolderHistory().isEmpty());
+        assertTrue(loaded.holderHistory(diamond.toEncodedString()).isEmpty());
+        MilestoneData.PlayerData loadedPd = loaded.playerOrNull(PLAYER_A);
+        assertNotNull(loadedPd);
+        assertEquals(pd.targets, loadedPd.targets);
+        assertEquals(pd.records, loadedPd.records);
+        assertEquals("Alice", loadedPd.lastKnownName);
+        assertEquals(original.worldFirsts(), loaded.worldFirsts());
+        assertEquals(savedSchemaVersion, loaded.retainedSchemaVersion());
+        assertEquals(savedSchemaVersion, loaded.schemaVersionForSave());
+    }
+
+    @Test
+    void firstsHolderHistoryRoundTripsWithEncodedKeysAndExactFieldNames() {
+        UUID playerB = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        MilestoneData original = new MilestoneData();
+        TargetKey diamond = TargetKey.of("minecraft:diamond", 3);
+        TargetKey emerald = TargetKey.of("minecraft:emerald");
+        TargetKey rotating = TargetKey.of("minecraft:stone");
+        assertTrue(original.recordWorldFirstIfAbsent(diamond, PLAYER_A, "Alice",
+                new MilestoneRecord(111, 5L, 1795600000000L)));
+        assertTrue(original.removeWorldFirst(diamond));
+        assertTrue(original.recordWorldFirstIfAbsent(diamond, playerB, "Bob",
+                new MilestoneRecord(222, 6L, 1795600001000L)));
+        assertTrue(original.removeWorldFirst(diamond));
+        assertTrue(original.recordWorldFirstIfAbsent(emerald, PLAYER_A, "Alice",
+                new MilestoneRecord(333, 7L, 1795600002000L)));
+        assertTrue(original.removeWorldFirst(emerald));
+
+        // HISTORY_LIMIT rotations: the two oldest entries must be dropped oldest-first.
+        List<HolderEntry> rotated = new ArrayList<>();
+        for (int i = 0; i < FirstsHolderHistory.HISTORY_LIMIT + 2; i++) {
+            assertTrue(original.recordWorldFirstIfAbsent(rotating, playerB, "Holder" + i,
+                    new MilestoneRecord(1000 + i, 1L, 1800000000000L + i)));
+            assertTrue(original.removeWorldFirst(rotating));
+            if (i >= 2) {
+                rotated.add(new HolderEntry(playerB.toString(), "Holder" + i,
+                        1000 + i, 1800000000000L + i));
+            }
+        }
+
+        String encodedKey = diamond.toEncodedString();
+        List<HolderEntry> diamondHistory = List.of(
+                new HolderEntry(PLAYER_A.toString(), "Alice", 111, 1795600000000L),
+                new HolderEntry(playerB.toString(), "Bob", 222, 1795600001000L));
+        Map<String, List<HolderEntry>> expectedHistory = Map.of(
+                encodedKey, diamondHistory,
+                emerald.toEncodedString(),
+                List.of(new HolderEntry(PLAYER_A.toString(), "Alice", 333, 1795600002000L)),
+                rotating.toEncodedString(), List.copyOf(rotated));
+        assertEquals(diamondHistory, original.holderHistory(encodedKey));
+        assertEquals(expectedHistory, original.firstsHolderHistory());
+
+        CompoundTag saved = original.save(new CompoundTag());
+        CompoundTag history = McCompat.nbt().getCompound(saved, "firstsHolderHistory");
+        assertTrue(history.contains(encodedKey));
+        ListTag encodedList = McCompat.nbt().getList(history, encodedKey);
+        assertEquals(2, encodedList.size());
+        CompoundTag encodedFirst = (CompoundTag) encodedList.get(0);
+        assertEquals(PLAYER_A.toString(), McCompat.nbt().getString(encodedFirst, "uuid"));
+        assertEquals("Alice", McCompat.nbt().getString(encodedFirst, "name"));
+        assertEquals(111, McCompat.nbt().getInt(encodedFirst, "playTicks"));
+        assertEquals(1795600000000L, McCompat.nbt().getLong(encodedFirst, "epochMillis"));
+        CompoundTag encodedSecond = (CompoundTag) encodedList.get(1);
+        assertEquals(playerB.toString(), McCompat.nbt().getString(encodedSecond, "uuid"));
+        assertEquals("Bob", McCompat.nbt().getString(encodedSecond, "name"));
+        assertEquals(222, McCompat.nbt().getInt(encodedSecond, "playTicks"));
+        assertEquals(1795600001000L, McCompat.nbt().getLong(encodedSecond, "epochMillis"));
+        assertEquals(FirstsHolderHistory.HISTORY_LIMIT,
+                McCompat.nbt().getList(history, rotating.toEncodedString()).size());
+
+        MilestoneData loaded = MilestoneData.load(saved);
+        assertEquals(diamondHistory, loaded.holderHistory(encodedKey));
+        assertEquals(expectedHistory, loaded.firstsHolderHistory());
+    }
+
+    @Test
+    void firstsHolderHistoryLoaderSkipsMalformedElementsAndKeepsValidSiblings() {
+        UUID playerB = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        MilestoneData original = new MilestoneData();
+        MilestoneData.PlayerData pd = original.player(PLAYER_A);
+        TargetKey diamond = TargetKey.of("minecraft:diamond", 3);
+        MilestoneRecord record = new MilestoneRecord(4321, 7L, 1795600000000L);
+        pd.targets.add(diamond);
+        pd.records.put(diamond, record);
+        pd.lastKnownName = "Alice";
+        assertTrue(original.recordWorldFirstIfAbsent(diamond, PLAYER_A, "Alice", record));
+
+        CompoundTag saved = original.save(new CompoundTag());
+        int savedSchemaVersion = McCompat.nbt().getInt(saved, "schemaVersion");
+        HolderEntry validA = new HolderEntry(PLAYER_A.toString(), "Alice", 11, 1795600000000L);
+        HolderEntry validB = new HolderEntry(playerB.toString(), "Bob", 22, 1795600001000L);
+
+        CompoundTag goodA = new CompoundTag();
+        goodA.putString("uuid", validA.uuid());
+        goodA.putString("name", validA.name());
+        goodA.putInt("playTicks", validA.playTicks());
+        goodA.putLong("epochMillis", validA.epochMillis());
+        CompoundTag goodB = new CompoundTag();
+        goodB.putString("uuid", validB.uuid());
+        goodB.putString("name", validB.name());
+        goodB.putInt("playTicks", validB.playTicks());
+        goodB.putLong("epochMillis", validB.epochMillis());
+        CompoundTag badUuid = goodB.copy();
+        badUuid.putString("uuid", "not-a-uuid");
+        CompoundTag negativeTicks = goodB.copy();
+        negativeTicks.putInt("playTicks", -1);
+        CompoundTag wrongType = goodB.copy();
+        wrongType.putString("playTicks", "not an int");
+
+        ListTag diamondList = new ListTag();
+        diamondList.add(goodA);
+        diamondList.add(badUuid);
+        diamondList.add(negativeTicks);
+        diamondList.add(wrongType);
+        ListTag emeraldList = new ListTag();
+        emeraldList.add(goodB);
+        ListTag badKeyList = new ListTag();
+        badKeyList.add(goodB.copy());
+        CompoundTag history = new CompoundTag();
+        history.put(diamond.toEncodedString(), diamondList);
+        history.put("minecraft:emerald", emeraldList);
+        history.put("not a valid key", badKeyList);
+        saved.put("firstsHolderHistory", history);
+
+        MilestoneData loaded = MilestoneData.load(saved);
+        assertEquals(List.of(validA), loaded.holderHistory(diamond.toEncodedString()));
+        assertEquals(Map.of(
+                diamond.toEncodedString(), List.of(validA),
+                "minecraft:emerald", List.of(validB)), loaded.firstsHolderHistory());
+        assertNotNull(loaded.loadReport());
+        // bad UUID + negative playTicks + wrong-typed ticks + bad encoded key
+        assertEquals(4, loaded.loadReport().elementSkipCount());
+        assertFalse(loaded.loadReport().totalFailure());
+        MilestoneData.PlayerData loadedPd = loaded.playerOrNull(PLAYER_A);
+        assertNotNull(loadedPd);
+        assertEquals(pd.targets, loadedPd.targets);
+        assertEquals(pd.records, loadedPd.records);
+        assertEquals("Alice", loadedPd.lastKnownName);
+        assertEquals(original.worldFirsts(), loaded.worldFirsts());
+        assertEquals(savedSchemaVersion, loaded.retainedSchemaVersion());
+    }
+
+    @Test
+    void removingFirstsHolderHistoryFromSavedTagIsANonDestructiveDowngrade() {
+        UUID playerB = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        MilestoneData original = new MilestoneData();
+        MilestoneData.PlayerData pd = original.player(PLAYER_A);
+        TargetKey diamond = TargetKey.of("minecraft:diamond", 3);
+        MilestoneRecord record = new MilestoneRecord(5555, 9L, 1795600000000L);
+        pd.targets.add(diamond);
+        pd.records.put(diamond, record);
+        pd.progressNotified.put(diamond, 25);
+        pd.completedPresets.add("vanilla_endgame");
+        pd.presetState.put("vanilla_endgame", new PresetState(true, 2));
+        pd.lastKnownName = "Alice";
+        pd.lastSeen = 1795800000000L;
+        assertTrue(original.recordWorldFirstIfAbsent(diamond, PLAYER_A, "Alice", record));
+        assertTrue(original.removeWorldFirst(diamond));
+        assertTrue(original.recordWorldFirstIfAbsent(diamond, playerB, "Bob",
+                new MilestoneRecord(6666, 10L, 1795600001000L)));
+        assertTrue(original.removeWorldFirst(diamond));
+        assertTrue(original.recordWorldFirstIfAbsent(diamond, PLAYER_A, "Alice",
+                new MilestoneRecord(7777, 11L, 1795600002000L)));
+
+        CompoundTag saved = original.save(new CompoundTag());
+        MilestoneData before = MilestoneData.load(saved);
+
+        // Simulate a 1.4.0 read: only the unknown root key is dropped.
+        CompoundTag downgraded = saved.copy();
+        assertTrue(downgraded.contains("firstsHolderHistory"));
+        downgraded.remove("firstsHolderHistory");
+
+        MilestoneData after = MilestoneData.load(downgraded);
+        String encodedKey = diamond.toEncodedString();
+        assertFalse(before.firstsHolderHistory().isEmpty());
+        assertEquals(2, before.holderHistory(encodedKey).size());
+        assertTrue(after.firstsHolderHistory().isEmpty());
+        assertTrue(after.holderHistory(encodedKey).isEmpty());
+        MilestoneData.PlayerData beforePd = before.playerOrNull(PLAYER_A);
+        MilestoneData.PlayerData afterPd = after.playerOrNull(PLAYER_A);
+        assertNotNull(beforePd);
+        assertNotNull(afterPd);
+        assertEquals(beforePd.targets, afterPd.targets);
+        assertEquals(beforePd.records, afterPd.records);
+        assertEquals(beforePd.progressNotified, afterPd.progressNotified);
+        assertEquals(beforePd.completedPresets, afterPd.completedPresets);
+        assertEquals(beforePd.presetState, afterPd.presetState);
+        assertEquals(beforePd.lastKnownName, afterPd.lastKnownName);
+        assertEquals(beforePd.lastSeen, afterPd.lastSeen);
+        assertEquals(before.worldFirsts(), after.worldFirsts());
+        assertEquals(before.retainedSchemaVersion(), after.retainedSchemaVersion());
+        assertNotNull(before.loadReport());
+        assertNotNull(after.loadReport());
+        assertEquals(0, before.loadReport().elementSkipCount());
+        assertEquals(0, after.loadReport().elementSkipCount());
+    }
+
 }

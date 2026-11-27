@@ -28,7 +28,7 @@ class CommandHelpTest {
                 "summary", "playtime", "add", "addhand", "addtag", "remove", "removetag", "removeall",
                 "targets", "list", "search",
                 "preset", "presetremove", "presetprogress", "reset", "resettag", "resetall", "undo",
-                "firsts", "info", "top", "presettop", "toptag", "recent", "stats", "statstag",
+                "firsts", "firstshistorytag", "info", "top", "presettop", "toptag", "recent", "stats", "statstag",
                 "whohas", "whohastag", "lookup",
                 "privacy", "mutebroadcast", "muteprogress", "discordoptout",
                 "settings", "randomtarget", "trends", "recap",
@@ -63,7 +63,7 @@ class CommandHelpTest {
         List<String> visible = namesOf(CommandHelp.visibleEntries(console, e -> true));
 
         assertEquals(List.of(
-                "preset", "firsts", "top", "presettop", "toptag", "recent", "stats", "statstag",
+                "preset", "firsts", "firstshistorytag", "top", "presettop", "toptag", "recent", "stats", "statstag",
                 "whohas", "whohastag", "lookup",
                 "compare", "timeline", "timelinetag", "modstats", "presetstats", "presetmatrix",
                 "exportall", "exporthtmlall", "exportcsvall", "importall",

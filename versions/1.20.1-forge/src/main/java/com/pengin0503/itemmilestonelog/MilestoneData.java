@@ -15,9 +15,11 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.level.saveddata.SavedData;
 
 import javax.annotation.Nullable;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -78,6 +80,8 @@ public class MilestoneData extends SavedData {
 
     private final Map<UUID, PlayerData> players = new LinkedHashMap<>();
     private final Map<TargetKey, WorldFirstRecord> worldFirsts = new LinkedHashMap<>();
+    /** F-150-38 (N167): past world-first holders per encoded target key, oldest first. */
+    private final Map<String, List<HolderEntry>> firstsHolderHistory = new LinkedHashMap<>();
     /** Epoch millis of the last Discord digest (0 = never initialized/sent, F9). */
     private long lastDigestEpochMillis = 0L;
     /** Schema version retained from the last load; 0 when the field was missing or invalid (F-140-1). */
@@ -170,7 +174,43 @@ public class MilestoneData extends SavedData {
         return true;
     }
 
+    /** F-150-38 (N167): past holders for one encoded target key (oldest first). */
+    public List<HolderEntry> holderHistory(String encodedKey) {
+        List<HolderEntry> stored = firstsHolderHistory.get(encodedKey);
+        return stored == null ? List.of() : Collections.unmodifiableList(stored);
+    }
+
+    /** F-150-38 (N167): the whole optional history map (encoded target key -> oldest-first list). */
+    public Map<String, List<HolderEntry>> firstsHolderHistory() {
+        return Collections.unmodifiableMap(firstsHolderHistory);
+    }
+
+    /**
+     * F-150-38 (N167): appends the outgoing holder when a world first is removed or cleared.
+     * This is the only holder-change path: normal records are first-writer-wins and never
+     * replace the holder (D-150-92 / pitfall 12).
+     */
+    private void appendPastHolder(TargetKey key, WorldFirstRecord outgoing) {
+        if (key == null || outgoing == null) {
+            return;
+        }
+        HolderEntry entry = HolderEntry.of(
+                outgoing.playerUuid().toString(), outgoing.playerName(),
+                outgoing.playTicks(), outgoing.epochMillis());
+        if (!entry.isValid()) {
+            return;
+        }
+        String encodedKey = key.toEncodedString();
+        firstsHolderHistory.put(encodedKey,
+                FirstsHolderHistory.append(firstsHolderHistory.get(encodedKey), entry));
+        setDirty();
+    }
+
     public boolean removeWorldFirst(TargetKey key) {
+        WorldFirstRecord outgoing = worldFirsts.get(key);
+        if (outgoing != null) {
+            appendPastHolder(key, outgoing);
+        }
         if (worldFirsts.remove(key) != null) {
             setDirty();
             return true;
@@ -181,6 +221,9 @@ public class MilestoneData extends SavedData {
     public int clearWorldFirsts() {
         int count = worldFirsts.size();
         if (count > 0) {
+            for (Map.Entry<TargetKey, WorldFirstRecord> e : worldFirsts.entrySet()) {
+                appendPastHolder(e.getKey(), e.getValue());
+            }
             worldFirsts.clear();
             setDirty();
         }
@@ -247,6 +290,38 @@ public class MilestoneData extends SavedData {
                 : MilestoneRecord.UNKNOWN_EPOCH;
         TargetKey key = new TargetKey(itemId, count);
         out.put(key, new WorldFirstRecord(itemId, count, uuid, name, ticks, day, epoch));
+    }
+
+    /**
+     * F-150-38 (N167): lenient single-holder decode, the NBT equivalent of 26.3's
+     * {@code LENIENT_HOLDER_ENTRY_CODEC}. {@code uuid} and {@code playTicks} are required;
+     * {@code name} / {@code epochMillis} default to {@code ""} / {@code 0} when absent.
+     */
+    private static HolderEntry readHolderTag(Tag raw) {
+        if (!(raw instanceof CompoundTag holderTag)
+                || !McCompat.nbt().containsTyped(holderTag, "uuid", Tag.TAG_STRING)
+                || !McCompat.nbt().containsTyped(holderTag, "playTicks", NbtCompat.ANY_NUMERIC)) {
+            return HolderEntry.INVALID;
+        }
+        String name = "";
+        if (McCompat.nbt().contains(holderTag, "name")) {
+            if (!McCompat.nbt().containsTyped(holderTag, "name", Tag.TAG_STRING)) {
+                return HolderEntry.INVALID;
+            }
+            name = McCompat.nbt().getString(holderTag, "name");
+        }
+        long epochMillis = 0L;
+        if (McCompat.nbt().contains(holderTag, "epochMillis")) {
+            if (!McCompat.nbt().containsTyped(holderTag, "epochMillis", NbtCompat.ANY_NUMERIC)) {
+                return HolderEntry.INVALID;
+            }
+            epochMillis = McCompat.nbt().getLong(holderTag, "epochMillis");
+        }
+        return HolderEntry.of(
+                McCompat.nbt().getString(holderTag, "uuid"),
+                name,
+                McCompat.nbt().getLong(holderTag, "playTicks"),
+                epochMillis);
     }
 
     /**
@@ -621,6 +696,43 @@ public class MilestoneData extends SavedData {
             }
         }
 
+        // F-150-38 (N167): lenient per-element decode of the optional root history map.
+        // Missing field = empty map; a bad key or element is skipped with one elementSkip and
+        // never drops its siblings (D-150-92). Mirrors 26.3's fromCodec holder-history block.
+        if (McCompat.nbt().containsTyped(tag, "firstsHolderHistory", Tag.TAG_COMPOUND)) {
+            CompoundTag histories = McCompat.nbt().getCompound(tag, "firstsHolderHistory");
+            for (String encodedKey : McCompat.nbt().keys(histories)) {
+                if (!McCompat.nbt().containsTyped(histories, encodedKey, Tag.TAG_LIST)
+                        || TargetKey.tryParseEncoded(encodedKey) == null) {
+                    MilestoneLoadReport.recordElementSkip();
+                    ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid firstsHolderHistory key '{}' in SavedData",
+                            encodedKey);
+                    continue;
+                }
+                List<HolderEntry> accepted = new ArrayList<>();
+                for (Tag rawElement : McCompat.nbt().getList(histories, encodedKey)) {
+                    HolderEntry entry = readHolderTag(rawElement);
+                    if (!entry.isValid()) {
+                        MilestoneLoadReport.recordElementSkip();
+                        ItemMilestoneLog.LOGGER.warn(
+                                "[ItemMilestoneLog] Skipping invalid firstsHolderHistory element for '{}' in SavedData",
+                                encodedKey);
+                        continue;
+                    }
+                    accepted.add(entry);
+                    if (accepted.size() >= FirstsHolderHistory.HISTORY_LIMIT) {
+                        break;
+                    }
+                }
+                if (!accepted.isEmpty()) {
+                    data.firstsHolderHistory.put(encodedKey, List.copyOf(accepted));
+                }
+            }
+        } else if (McCompat.nbt().contains(tag, "firstsHolderHistory")) {
+            MilestoneLoadReport.recordElementSkip();
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed firstsHolderHistory tag in SavedData");
+        }
+
         if (McCompat.nbt().containsTyped(tag, "lastDigestEpoch", NbtCompat.ANY_NUMERIC)) {
             long lastDigest = McCompat.nbt().getLong(tag, "lastDigestEpoch");
             if (lastDigest > 0L) {
@@ -766,6 +878,29 @@ public class MilestoneData extends SavedData {
                 firsts.put(key.itemId(), itemTag);
             }
             tag.put("worldFirsts", firsts);
+        }
+
+        // F-150-38 (N167): optional root field, written only when non-empty. Keys are encoded
+        // target keys; values are oldest-first lists of holder compounds. schemaVersion stays
+        // unchanged and the export/import JSON and backup formats are untouched (D-150-98).
+        if (!firstsHolderHistory.isEmpty()) {
+            CompoundTag histories = new CompoundTag();
+            for (Map.Entry<String, List<HolderEntry>> e : firstsHolderHistory.entrySet()) {
+                ListTag list = new ListTag();
+                for (HolderEntry holder : e.getValue()) {
+                    if (!holder.isValid()) {
+                        continue;
+                    }
+                    CompoundTag holderTag = new CompoundTag();
+                    holderTag.putString("uuid", holder.uuid());
+                    holderTag.putString("name", holder.name());
+                    holderTag.putInt("playTicks", holder.playTicks());
+                    holderTag.putLong("epochMillis", holder.epochMillis());
+                    list.add(holderTag);
+                }
+                histories.put(e.getKey(), list);
+            }
+            tag.put("firstsHolderHistory", histories);
         }
 
         if (lastDigestEpochMillis > 0L) {
