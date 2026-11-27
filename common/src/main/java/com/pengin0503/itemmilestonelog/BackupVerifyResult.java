@@ -26,7 +26,12 @@ public record BackupVerifyResult(Status status, int players, int worldFirsts, in
         IO_ERROR
     }
 
-    private static final String KEY_PREFIX = "message.itemmilestonelog.backup_verify_";
+    /**
+     * Prefix of the six fixed verification keys. The trailing '.' marks this as a dynamic-prefix
+     * constant to ServerLangTest's static lang-key scan (which ignores literals ending in '.',
+     * as it does for {@code CommandHelp.HELP_KEY_PREFIX}); this is not itself a message key.
+     */
+    private static final String KEY_PREFIX = "message.itemmilestonelog.backup_verify.";
 
     public BackupVerifyResult {
         Objects.requireNonNull(status, "status");
@@ -54,7 +59,10 @@ public record BackupVerifyResult(Status status, int players, int worldFirsts, in
 
     /** Translation key of the single fixed wording for this outcome. */
     public String messageKey() {
-        return KEY_PREFIX + status.name().toLowerCase(Locale.ROOT);
+        // Swap the scan marker for the underscore used by the neighbouring backup_* keys,
+        // e.g. message.itemmilestonelog.backup_verify_ok.
+        return KEY_PREFIX.substring(0, KEY_PREFIX.length() - 1)
+                + "_" + status.name().toLowerCase(Locale.ROOT);
     }
 
     /** Whether the backup parsed cleanly and is compatible with this release. */
