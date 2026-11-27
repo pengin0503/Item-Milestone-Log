@@ -9,6 +9,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.Set;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -298,5 +300,300 @@ class CommandAnalysisModelTest {
         assertTrue(CommandAnalysisModel.recapDaily(List.of(), NOW).entries().isEmpty());
         assertEquals(CommandAnalysisModel.RecapKind.LEGACY, CommandAnalysisModel.RecapKind.parse("legacy"));
         assertNull(CommandAnalysisModel.RecapKind.parse("weekly"));
+    }
+
+    // ================================================================= PR-2: read-only analytics
+
+    private static final UUID U1 = UUID.fromString("00000000-0000-0000-0000-000000000001");
+    private static final UUID U2 = UUID.fromString("00000000-0000-0000-0000-000000000002");
+    private static final UUID U3 = UUID.fromString("00000000-0000-0000-0000-000000000003");
+
+    private static CommandAnalysisModel.RecordValue rv(String id, int count, int ticks, long epoch) {
+        return new CommandAnalysisModel.RecordValue(id, count, ticks, 0L, epoch);
+    }
+
+    private static CommandAnalysisModel.TargetRef k(String id, int count) {
+        return new CommandAnalysisModel.TargetRef(id, count);
+    }
+
+    @Test
+    void compareSplitsThreeSetsNormalizesDiffAndIgnoresUnknownEpochs() {
+        List<CommandAnalysisModel.RecordValue> a = List.of(
+                rv("minecraft:a", 1, 100, 0L), rv("minecraft:b", 1, 300, 500L),
+                rv("minecraft:only_self", 1, 50, 0L));
+        List<CommandAnalysisModel.RecordValue> b = List.of(
+                rv("minecraft:a", 1, 150, 0L), rv("minecraft:b", 1, 250, 900L),
+                rv("minecraft:only_them", 1, 75, 0L));
+        CommandAnalysisModel.CompareResult result = CommandAnalysisModel.compare(a, b);
+        assertEquals(List.of(k("minecraft:a", 1), k("minecraft:b", 1)),
+                result.common().stream().map(CommandAnalysisModel.CompareRow::key).toList());
+        assertEquals(50L, result.common().get(0).diffTicks());
+        assertFalse(result.common().get(0).inverted());
+        assertEquals(50L, result.common().get(1).diffTicks());
+        assertTrue(result.common().get(1).inverted());
+        assertEquals(List.of(k("minecraft:only_them", 1)),
+                result.onlyThem().stream().map(CommandAnalysisModel.CompareRow::key).toList());
+        assertEquals(List.of(k("minecraft:only_self", 1)),
+                result.onlyYou().stream().map(CommandAnalysisModel.CompareRow::key).toList());
+        assertEquals(0, result.moreCount());
+        // epochMillis never enters the difference: only playTicks does.
+        assertEquals(result, CommandAnalysisModel.compare(List.of(
+                        rv("minecraft:a", 1, 100, 12345L), rv("minecraft:b", 1, 300, 9999L),
+                        rv("minecraft:only_self", 1, 50, 7777L)),
+                List.of(rv("minecraft:a", 1, 150, 1111L), rv("minecraft:b", 1, 250, 2222L),
+                        rv("minecraft:only_them", 1, 75, 3333L))));
+        // Console comparison (A = empty): everything is "them only", in playTicks order.
+        CommandAnalysisModel.CompareResult console = CommandAnalysisModel.compare(List.of(), b);
+        assertTrue(console.common().isEmpty());
+        assertTrue(console.onlyYou().isEmpty());
+        assertEquals(3, console.onlyThem().size());
+        assertTrue(CommandAnalysisModel.compare(List.of(), List.of()).common().isEmpty());
+    }
+
+    @Test
+    void compareCapsAtTwoHundredRowsInDisplayOrder() {
+        List<CommandAnalysisModel.RecordValue> a = new ArrayList<>();
+        List<CommandAnalysisModel.RecordValue> b = new ArrayList<>();
+        for (int i = 0; i < 250; i++) {
+            a.add(rv("minecraft:shared" + i, 1, i, 0L));
+            b.add(rv("minecraft:shared" + i, 1, i + 1, 0L));
+        }
+        CommandAnalysisModel.CompareResult result = CommandAnalysisModel.compare(a, b);
+        assertEquals(CommandAnalysisModel.COMPARE_LIMIT, result.common().size());
+        assertEquals(50, result.moreCount());
+        assertEquals("minecraft:shared0", result.common().get(0).key().itemId());
+    }
+
+    @Test
+    void compareBranchesCoverMissingRouteAndRivals() {
+        List<CommandAnalysisModel.RecordValue> a = List.of(
+                rv("minecraft:shared", 1, 100, 0L), rv("minecraft:self", 1, 30, 0L));
+        List<CommandAnalysisModel.RecordValue> b = List.of(
+                rv("minecraft:shared", 1, 400, 0L), rv("minecraft:them", 1, 10, 0L));
+        CommandAnalysisModel.CompareBranchResult branches = CommandAnalysisModel.compareBranches(
+                CommandAnalysisModel.CompareBranch.MISSING, a, b, List.of(), U2, U1, 2);
+        assertEquals(List.of(k("minecraft:them", 1)),
+                branches.missing().entries().stream()
+                        .map(CommandAnalysisModel.CompareRow::key).toList());
+        assertTrue(branches.route().entries().isEmpty());
+
+        CommandAnalysisModel.RouteResult route = CommandAnalysisModel.compareRoute(a, b);
+        assertEquals(1, route.entries().size());
+        assertEquals(300L, route.entries().get(0).diffTicks());
+        assertFalse(route.entries().get(0).inverted());
+        assertTrue(CommandAnalysisModel.compareRoute(
+                List.of(rv("minecraft:shared", 1, 400, 0L)),
+                List.of(rv("minecraft:shared", 1, 100, 0L))).entries().get(0).inverted());
+        assertEquals(100, route.entries().get(0).selfTicks());
+        assertEquals(400, route.entries().get(0).otherTicks());
+
+        List<CommandAnalysisModel.RivalPlayer> players = List.of(
+                new CommandAnalysisModel.RivalPlayer(U2, "Them", 100),
+                new CommandAnalysisModel.RivalPlayer(U1, "Self", 95),
+                new CommandAnalysisModel.RivalPlayer(U3, "Near", 90),
+                new CommandAnalysisModel.RivalPlayer(UUID.randomUUID(), "Far", 89));
+        CommandAnalysisModel.RivalResult rivals = CommandAnalysisModel.compareRivals(U2, U1, 100, players);
+        assertEquals(List.of("Near"), rivals.entries().stream()
+                .map(CommandAnalysisModel.RivalEntry::name).toList());
+        assertEquals(10, rivals.entries().get(0).gap());
+        assertTrue(CommandAnalysisModel.compareRivals(U2, U1, 100, List.of()).entries().isEmpty());
+        assertEquals(CommandAnalysisModel.CompareBranch.RIVAL,
+                CommandAnalysisModel.CompareBranch.parse("rival"));
+        assertNull(CommandAnalysisModel.CompareBranch.parse("other"));
+    }
+
+    @Test
+    void timelineComputesConsecutiveGapsKeepsWorldFirstSeparateAndIgnoresInputOrder() {
+        List<CommandAnalysisModel.TimelineHolder> holders = List.of(
+                new CommandAnalysisModel.TimelineHolder(U3, "C", 250, 0L),
+                new CommandAnalysisModel.TimelineHolder(U1, "A", 100, 10L),
+                new CommandAnalysisModel.TimelineHolder(U2, "B", 100, 20L));
+        CommandAnalysisModel.TimelineResult result = CommandAnalysisModel.timeline(holders,
+                new CommandAnalysisModel.TimelineHolder(U1, "A", 50, 0L), 100);
+        assertEquals(List.of(0L, 0L, 150L), result.entries().stream()
+                .map(CommandAnalysisModel.TimelineEntry::gapTicks).toList());
+        assertEquals(List.of(1, 2, 3), result.entries().stream()
+                .map(CommandAnalysisModel.TimelineEntry::index).toList());
+        assertNotNull(result.worldFirst());
+        assertTrue(result.worldFirst().worldFirst());
+        assertEquals(50, result.worldFirst().playTicks());
+        assertEquals(result, CommandAnalysisModel.timeline(List.of(holders.get(1), holders.get(0),
+                holders.get(2)), holders.get(1) == null ? null
+                : new CommandAnalysisModel.TimelineHolder(U1, "A", 50, 0L), 100));
+        assertEquals(0, CommandAnalysisModel.timeline(List.of(), null, 100).entries().size());
+        List<CommandAnalysisModel.TimelineHolder> many = new ArrayList<>();
+        for (int i = 0; i < 150; i++) {
+            many.add(new CommandAnalysisModel.TimelineHolder(U1, "P" + i, i, 0L));
+        }
+        CommandAnalysisModel.TimelineResult capped = CommandAnalysisModel.timeline(many, null,
+                CommandAnalysisModel.TIMELINE_LIMIT);
+        assertEquals(CommandAnalysisModel.TIMELINE_LIMIT, capped.entries().size());
+        assertEquals(50, capped.moreCount());
+    }
+
+    @Test
+    void sessionWindowHonoursBoundaryUnknownEpochsFourWindowsAndOrder() {
+        List<CommandAnalysisModel.RecordValue> records = List.of(
+                rv("minecraft:recent", 1, 1, NOW - 24L * 3_600_000L),
+                rv("minecraft:older", 1, 2, NOW - 25L * 3_600_000L),
+                rv("minecraft:unknown", 1, 3, 0L),
+                rv("minecraft:newest", 1, 4, NOW - 1000L));
+        assertEquals(List.of("minecraft:newest", "minecraft:recent"),
+                CommandAnalysisModel.sessionWindow(records, NOW, 24).entries().stream()
+                        .map(CommandAnalysisModel.RecordValue::itemId).toList());
+        assertEquals(1, CommandAnalysisModel.sessionWindow(records, NOW, 23).entries().size());
+        assertEquals(3, CommandAnalysisModel.sessionWindow(records, NOW, 72).entries().size());
+        assertEquals(1, CommandAnalysisModel.sessionWindow(records, NOW, 1).entries().size());
+        assertEquals(6, CommandAnalysisModel.parseSessionHours("6"));
+        assertNull(CommandAnalysisModel.parseSessionHours("12"));
+        assertTrue(CommandAnalysisModel.sessionWindow(List.of(), NOW, 24).entries().isEmpty());
+        List<CommandAnalysisModel.RecordValue> many = new ArrayList<>();
+        for (int i = 0; i < 250; i++) {
+            many.add(rv("minecraft:r" + i, 1, 1, NOW - 1000L));
+        }
+        assertEquals(CommandAnalysisModel.SESSION_LIMIT,
+                CommandAnalysisModel.sessionWindow(many, NOW, 24).entries().size());
+        assertEquals(50, CommandAnalysisModel.sessionWindow(many, NOW, 24).moreCount());
+    }
+
+    @Test
+    void paceHandlesZeroDivisionCompetitionRanksScopesAndCap() {
+        List<CommandAnalysisModel.PacePlayer> players = List.of(
+                new CommandAnalysisModel.PacePlayer(U1, "Zero", 10, 0L),
+                new CommandAnalysisModel.PacePlayer(U2, "Fast", 20, 72_000L),
+                new CommandAnalysisModel.PacePlayer(U3, "Tied", 10, 36_000L));
+        CommandAnalysisModel.PaceResult result = CommandAnalysisModel.pace(players,
+                CommandAnalysisModel.PACE_LIMIT);
+        assertEquals(List.of("Fast", "Tied", "Zero"), result.entries().stream()
+                .map(CommandAnalysisModel.PaceEntry::name).toList());
+        assertEquals(20L, result.entries().get(0).milestonesPerHour());
+        assertEquals(20L, result.entries().get(1).milestonesPerHour());
+        assertEquals(-1L, result.entries().get(2).milestonesPerHour());
+        assertEquals(List.of(1, 1, 3), result.entries().stream()
+                .map(CommandAnalysisModel.PaceEntry::rank).toList());
+        assertEquals(3, result.playerCount());
+        assertEquals(CommandAnalysisModel.PaceScope.PRESETS,
+                CommandAnalysisModel.PaceScope.parse("presets"));
+        assertNull(CommandAnalysisModel.PaceScope.parse("bogus"));
+        assertEquals("targets", CommandAnalysisModel.PaceScope.TARGETS.commandValue());
+        assertEquals(new CommandAnalysisModel.PaceSummary(2, 5, 1, 3),
+                new CommandAnalysisModel.PaceSummary(2, 5, 1, 3));
+        List<CommandAnalysisModel.PacePlayer> many = new ArrayList<>();
+        for (int i = 0; i < 40; i++) {
+            many.add(new CommandAnalysisModel.PacePlayer(U1, "P" + i, i + 1, 72_000L));
+        }
+        assertEquals(CommandAnalysisModel.PACE_LIMIT,
+                CommandAnalysisModel.pace(many, CommandAnalysisModel.PACE_LIMIT).entries().size());
+    }
+
+    @Test
+    void modStatsExtractsNamespacesDeduplicatesUnionsAndKeepsFirstsGlobal() {
+        assertEquals("minecraft", CommandAnalysisModel.namespaceOf("minecraft:diamond"));
+        assertEquals("c", CommandAnalysisModel.namespaceOf("#c:ingots/iron"));
+        assertEquals("a", CommandAnalysisModel.namespaceOf("a:b:c"));
+        assertNull(CommandAnalysisModel.namespaceOf(""));
+        assertNull(CommandAnalysisModel.namespaceOf(null));
+        CommandAnalysisModel.NamespaceResult result = CommandAnalysisModel.namespaceStats(
+                List.of(k("minecraft:a", 1), k("mod:b", 1), k("mod:b", 1)),
+                List.of(k("minecraft:a", 1), k("mod:b", 2), k("mod:b", 2), k("unknown", 1)),
+                List.of(k("hidden:c", 1)), CommandAnalysisModel.MODSTATS_LIMIT);
+        assertEquals(List.of("minecraft", "mod", "unknown", "hidden"),
+                result.entries().stream().map(CommandAnalysisModel.NamespaceStats::namespace).toList());
+        CommandAnalysisModel.NamespaceStats mod = result.entries().get(1);
+        assertEquals(1, mod.targets());
+        assertEquals(1, mod.records());
+        assertEquals(0, mod.firsts());
+        assertEquals(1, result.entries().get(3).firsts()); // world firsts stay global
+        assertTrue(CommandAnalysisModel.namespaceStats(List.of(), List.of(), List.of(),
+                CommandAnalysisModel.MODSTATS_LIMIT).entries().isEmpty());
+    }
+
+    @Test
+    void rankingAxisCoversAllAxesPeriodSkipsUnknownAndTeamUsesFastest() {
+        List<CommandAnalysisModel.AxisPlayer> players = List.of(
+                new CommandAnalysisModel.AxisPlayer(U1, "A", List.of(
+                        rv("minecraft:a", 1, 100, NOW - 1000L), rv("minecraft:b", 1, 200, 0L)),
+                        true, "red"),
+                new CommandAnalysisModel.AxisPlayer(U2, "B", List.of(
+                        rv("minecraft:a", 1, 50, NOW - 2000L)), false, "red"),
+                new CommandAnalysisModel.AxisPlayer(U3, "C", List.of(
+                        rv("minecraft:a", 1, 30, NOW - 1000L)), true, null));
+        CommandAnalysisModel.AxisResult all = CommandAnalysisModel.rankingAxis(players,
+                CommandAnalysisModel.RankingAxis.ALL, 7, NOW);
+        assertEquals(List.of("A", "B", "C"), all.entries().stream()
+                .map(CommandAnalysisModel.AxisCountEntry::name).toList());
+        CommandAnalysisModel.AxisResult online = CommandAnalysisModel.rankingAxis(players,
+                CommandAnalysisModel.RankingAxis.ONLINE, 7, NOW);
+        assertEquals(List.of("A", "C"), online.entries().stream()
+                .map(CommandAnalysisModel.AxisCountEntry::name).toList());
+        CommandAnalysisModel.AxisResult period = CommandAnalysisModel.rankingAxis(players,
+                CommandAnalysisModel.RankingAxis.PERIOD, 7, NOW);
+        assertEquals(1, period.skippedUnknown());
+        assertEquals(1, period.entries().get(0).count());
+        CommandAnalysisModel.AxisResult team = CommandAnalysisModel.rankingAxis(players,
+                CommandAnalysisModel.RankingAxis.TEAM, 7, NOW);
+        assertEquals(30, team.teams().get(0).playTicks());
+        assertNull(team.teams().get(0).team());
+        assertEquals(50, team.teams().get(1).playTicks());
+        assertEquals("red", team.teams().get(1).team());
+        assertEquals(CommandAnalysisModel.RankingAxis.TEAM,
+                CommandAnalysisModel.RankingAxis.parse("team"));
+        assertNull(CommandAnalysisModel.RankingAxis.parse("nope"));
+    }
+
+    @Test
+    void presetStatsUsesVisibleDenominatorEvenMedianAndTwentyCap() {
+        List<CommandAnalysisModel.PresetStatsPlayer> players = List.of(
+                new CommandAnalysisModel.PresetStatsPlayer(U1, "A", Set.of("p1"), List.of(
+                        rv("minecraft:a", 1, 100, 0L), rv("minecraft:b", 1, 200, 0L))),
+                new CommandAnalysisModel.PresetStatsPlayer(U2, "B", Set.of(), List.of(
+                        rv("minecraft:a", 1, 300, 0L), rv("minecraft:b", 1, 400, 0L))),
+                new CommandAnalysisModel.PresetStatsPlayer(U3, "C", Set.of("p1"), List.of(
+                        rv("minecraft:a", 1, 500, 0L))));
+        CommandAnalysisModel.PresetStatsResult stats = CommandAnalysisModel.presetStats(players,
+                List.of("p1", "p2"), CommandAnalysisModel.PRESETSTATS_LIMIT);
+        assertEquals(2, stats.entries().get(0).completed());
+        assertEquals(3, stats.entries().get(0).totalPlayers());
+        CommandAnalysisModel.PresetEstimate estimate = CommandAnalysisModel.presetPredict(players,
+                List.of(k("minecraft:a", 1), k("minecraft:b", 1)));
+        assertEquals(2, estimate.finishers());
+        assertEquals(300L, estimate.medianTicks());
+        assertEquals(0, CommandAnalysisModel.presetPredict(players,
+                List.of(k("minecraft:missing", 1))).finishers());
+        assertEquals(0, CommandAnalysisModel.presetStats(List.of(), List.of("p1"),
+                CommandAnalysisModel.PRESETSTATS_LIMIT).entries().get(0).totalPlayers());
+        List<String> many = new ArrayList<>();
+        for (int i = 0; i < 30; i++) {
+            many.add("p" + i);
+        }
+        assertEquals(CommandAnalysisModel.PRESETSTATS_LIMIT,
+                CommandAnalysisModel.presetStats(players, many,
+                        CommandAnalysisModel.PRESETSTATS_LIMIT).entries().size());
+    }
+
+    @Test
+    void presetMatrixCapsColumnsIgnoresCompletionMarkersAndKeepsSuppliedTotals() {
+        List<String> presets = new ArrayList<>();
+        for (int i = 0; i < 12; i++) {
+            presets.add("p" + i);
+        }
+        Map<String, CommandAnalysisModel.MatrixValue> progress = new java.util.HashMap<>();
+        progress.put("p0", new CommandAnalysisModel.MatrixValue(3, 5, true));
+        progress.put("p1", new CommandAnalysisModel.MatrixValue(2, 4, false));
+        CommandAnalysisModel.PresetMatrixResult result = CommandAnalysisModel.presetMatrix(
+                List.of(new CommandAnalysisModel.MatrixPlayer(U1, "B", progress),
+                        new CommandAnalysisModel.MatrixPlayer(U2, "A", Map.of())),
+                presets, CommandAnalysisModel.PRESETMATRIX_COLUMNS,
+                CommandAnalysisModel.PRESETMATRIX_LIMIT);
+        assertEquals(List.of("A", "B"), result.rows().stream()
+                .map(CommandAnalysisModel.MatrixRow::name).toList());
+        assertEquals(CommandAnalysisModel.PRESETMATRIX_COLUMNS, result.rows().get(0).cells().size());
+        assertEquals(2, result.omittedPresets());
+        assertEquals(new CommandAnalysisModel.MatrixValue(3, 5, true), result.rows().get(1).cells().get(0));
+        assertEquals(new CommandAnalysisModel.MatrixValue(2, 4, false), result.rows().get(1).cells().get(1));
+        assertEquals(new CommandAnalysisModel.MatrixValue(0, 0, false), result.rows().get(0).cells().get(0));
+        assertTrue(CommandAnalysisModel.presetMatrix(List.of(), presets,
+                CommandAnalysisModel.PRESETMATRIX_COLUMNS,
+                CommandAnalysisModel.PRESETMATRIX_LIMIT).rows().isEmpty());
     }
 }
