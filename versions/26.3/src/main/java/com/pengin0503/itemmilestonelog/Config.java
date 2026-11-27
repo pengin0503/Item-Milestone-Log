@@ -103,6 +103,13 @@ public final class Config {
                     "Set to false to send an individual notification immediately for every record.")
             .define("groupSimultaneousRecords", true);
 
+    /** N63/N125: single shared aggregation window for in-game and Discord notifications. */
+    public static final ModConfigSpec.IntValue NOTIFICATION_WINDOW_TICKS = BUILDER
+            .comment("Window length in ticks (1-20) used to aggregate in-game and Discord notifications before one flush.",
+                    "1 keeps the current per-tick behaviour; the same window applies to both destinations.")
+            .defineInRange("notificationWindowTicks", 1,
+                    NotificationGrouping.MIN_WINDOW_TICKS, NotificationGrouping.MAX_WINDOW_TICKS);
+
     public static final ModConfigSpec.BooleanValue DISCORD_USE_EMBEDS = BUILDER
             .comment("Send Discord milestone notifications as rich embeds instead of plain text.",
                     "Set to false to keep the plain-text format.")
@@ -353,6 +360,18 @@ public final class Config {
             return DISCORD_DIGEST_INTERVAL_DAYS.get();
         } catch (IllegalStateException notLoaded) {
             return DiscordDigestLogic.DEFAULT_INTERVAL_DAYS;
+        }
+    }
+
+    /**
+     * N63/N125: {@link #NOTIFICATION_WINDOW_TICKS}, or {@code 1} while the config is not loaded yet
+     * (plain unit tests). The default is the current per-tick F27 behaviour.
+     */
+    public static int notificationWindowTicks() {
+        try {
+            return NotificationGrouping.normalizeWindowTicks(NOTIFICATION_WINDOW_TICKS.get());
+        } catch (IllegalStateException notLoaded) {
+            return NotificationGrouping.normalizeWindowTicks(NotificationGrouping.MIN_WINDOW_TICKS);
         }
     }
 

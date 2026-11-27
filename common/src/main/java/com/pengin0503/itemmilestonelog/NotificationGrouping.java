@@ -24,6 +24,10 @@ public final class NotificationGrouping {
     public static final int DISCORD_PLAIN_MAX_CHARS = 2000;
     /** Maximum character count for a Discord embed {@code description} (for F4 reuse). */
     public static final int DISCORD_EMBED_DESCRIPTION_MAX_CHARS = 4096;
+    /** Shortest supported shared notification window; 1 keeps the original per-tick F27 behaviour. */
+    public static final int MIN_WINDOW_TICKS = 1;
+    /** Longest supported shared notification window (in-game and Discord). */
+    public static final int MAX_WINDOW_TICKS = 20;
 
     public enum SendMode {
         NONE,
@@ -76,6 +80,47 @@ public final class NotificationGrouping {
     }
 
     private NotificationGrouping() {
+    }
+
+    /**
+     * Clamps a configured window length into the shared 1..20 range. A missing or invalid
+     * configuration value is expected to arrive here as {@link #MIN_WINDOW_TICKS}.
+     */
+    public static int normalizeWindowTicks(int windowTicks) {
+        return Math.max(MIN_WINDOW_TICKS, Math.min(MAX_WINDOW_TICKS, windowTicks));
+    }
+
+    /**
+     * The single window definition shared by in-game and Discord notification aggregation (N63/N125):
+     * {@code windowIndex = floorDiv(serverTick, windowTicks)}. Queues are still one per player; the
+     * index is stored on that queue, not used as a map key.
+     */
+    public static long windowIndex(long serverTick, int windowTicks) {
+        return Math.floorDiv(serverTick, (long) normalizeWindowTicks(windowTicks));
+    }
+
+    /**
+     * True once the {@code ServerTickEvent.Post} being handled has moved past the window in which
+     * a queue was filled. The window closes on the first Post whose index is greater, so a 1-tick
+     * window still flushes on the very next Post (byte-for-byte current behaviour).
+     */
+    public static boolean windowClosed(long pendingWindowIndex, long currentTick, int windowTicks) {
+        return windowIndex(currentTick, windowTicks) > pendingWindowIndex;
+    }
+
+    /**
+     * Dispatch decision for the progress-alert channel (N63). Progress alerts are a separate
+     * channel: they reuse the F27 {@value #GROUP_THRESHOLD} threshold and chat-list caps but never
+     * enter the record or Discord plans. 1-2 alerts are sent individually, 3+ become one message.
+     */
+    public static <T> ChannelPlan<T> planProgressChannel(List<T> alerts) {
+        if (alerts == null || alerts.isEmpty()) {
+            return ChannelPlan.none();
+        }
+        if (alerts.size() >= GROUP_THRESHOLD) {
+            return new ChannelPlan<>(SendMode.GROUPED, List.copyOf(alerts));
+        }
+        return new ChannelPlan<>(SendMode.INDIVIDUAL, List.copyOf(alerts));
     }
 
     /**

@@ -85,19 +85,31 @@ public final class Tracker {
         Component actorDisplayName;
         final List<QueuedRecord> records = new ArrayList<>();
         final List<QueuedRecord> discordRecords = new ArrayList<>();
+        /** N63: progress alerts are their own channel inside the same window (never sent to Discord). */
+        final List<ProgressAlertNotification> progressAlerts = new ArrayList<>();
         final List<QueuedPresetCompletion> presetCompletions = new ArrayList<>();
         final List<QueuedPresetCompletion> discordPresetCompletions = new ArrayList<>();
         final List<MilestoneService.NextPresetAddition> nextPresetAdditions = new ArrayList<>();
 
+        /** Shared N63/N125 window this batch belongs to; one index per player queue, not a map key. */
+        final long windowIndex;
+
         PendingNotifications(UUID playerId, String playerName, Component actorDisplayName) {
+            this(playerId, playerName, actorDisplayName, 0L);
+        }
+
+        PendingNotifications(UUID playerId, String playerName, Component actorDisplayName, long windowIndex) {
             this.playerId = playerId;
             this.playerName = playerName;
             this.actorDisplayName = actorDisplayName;
+            this.windowIndex = windowIndex;
         }
     }
 
     /** Queued human-facing notifications to flush on ServerTickEvent.Post (insertion order). Server thread only. */
     private static final Map<UUID, PendingNotifications> PENDING_NOTIFICATIONS = new LinkedHashMap<>();
+    /** Tick last observed at Post; enqueues during the following tick inherit its window. Server thread only. */
+    private static volatile long lastObservedServerTick = 0L;
 
     private Tracker() {
     }
@@ -553,7 +565,7 @@ public final class Tracker {
                     Config.progressAlertThresholds(),
                     Config.PROGRESS_ALERT_MIN_COUNT.get());
             if (!alerts.isEmpty()) {
-                sendProgressAlerts(player, alerts);
+                submitProgressAlerts(player, alerts);
             }
         }
 
@@ -1140,7 +1152,7 @@ public final class Tracker {
                     Config.progressAlertThresholds(),
                     Config.PROGRESS_ALERT_MIN_COUNT.get());
             if (!alerts.isEmpty()) {
-                sendProgressAlerts(player, alerts);
+                submitProgressAlerts(player, alerts);
             }
         }
     }
@@ -1181,7 +1193,7 @@ public final class Tracker {
                     Config.progressAlertThresholds(),
                     Config.PROGRESS_ALERT_MIN_COUNT.get());
             if (!alerts.isEmpty()) {
-                sendProgressAlerts(player, alerts);
+                submitProgressAlerts(player, alerts);
             }
         }
     }
@@ -1257,6 +1269,63 @@ public final class Tracker {
                     n.percent());
             player.sendSystemMessage(msg);
         }
+    }
+
+    /**
+     * N63: progress alerts join the shared window as their own channel while grouping is enabled.
+     * With {@code groupSimultaneousRecords=false} they stay immediate and one-by-one (D-150-107);
+     * only the destination resolution belongs to a later PR, so the message key stays unchanged here.
+     */
+    private static void submitProgressAlerts(ServerPlayer player, List<ProgressAlertNotification> alerts) {
+        if (alerts == null || alerts.isEmpty()) {
+            return;
+        }
+        if (Config.GROUP_SIMULTANEOUS_RECORDS.get()) {
+            queueProgressAlerts(player.getUUID(), player.getDisplayName(), alerts);
+        } else {
+            sendProgressAlerts(player, alerts);
+        }
+    }
+
+    static void queueProgressAlerts(UUID playerId, @Nullable Component actorDisplayName,
+                                    List<ProgressAlertNotification> alerts) {
+        queueProgressAlerts(playerId, actorDisplayName, alerts, currentWindowIndex());
+    }
+
+    /** Explicit-window overload for deterministic queue tests; production callers use the observed tick. */
+    static void queueProgressAlerts(UUID playerId, @Nullable Component actorDisplayName,
+                                    List<ProgressAlertNotification> alerts, long windowIndex) {
+        if (alerts == null || alerts.isEmpty()) {
+            return;
+        }
+        String safeName = actorDisplayName != null ? actorDisplayName.getString() : "";
+        PendingNotifications pending = PENDING_NOTIFICATIONS.computeIfAbsent(playerId,
+                id -> new PendingNotifications(id, safeName, actorDisplayName, windowIndex));
+        if (actorDisplayName != null) {
+            pending.actorDisplayName = actorDisplayName;
+        }
+        pending.progressAlerts.addAll(alerts);
+    }
+
+    /** Flush-time dispatch of the separate progress channel: 1-2 individual, 3+ one grouped message. */
+    private static void sendProgressAlerts(ServerPlayer player,
+                                           NotificationGrouping.ChannelPlan<ProgressAlertNotification> plan) {
+        if (plan.mode() == NotificationGrouping.SendMode.NONE) {
+            return;
+        }
+        if (plan.mode() == NotificationGrouping.SendMode.INDIVIDUAL) {
+            sendProgressAlerts(player, plan.items());
+            return;
+        }
+        List<ProgressAlertNotification> alerts = plan.items();
+        List<TargetKey> keys = alerts.stream()
+                .map(ProgressAlertNotification::key)
+                .sorted()
+                .toList();
+        String language = player.getLanguage();
+        Component targetList = buildTargetListComponent(language, keys, MilestoneService::targetDisplayName);
+        player.sendSystemMessage(ServerLang.tr(player, "message.itemmilestonelog.progress_alert_group",
+                alerts.size(), targetList));
     }
 
     enum RecordOutcome {
@@ -1364,10 +1433,23 @@ public final class Tracker {
         if (event.phase != TickEvent.Phase.END) {
             return;
         }
+        long tick = event.getServer().getTickCount();
+        lastObservedServerTick = tick;
         if (!PENDING_NOTIFICATIONS.isEmpty()) {
-            flushPendingNotifications(event.getServer(), drainPendingNotifications());
+            int windowTicks = Config.notificationWindowTicks();
+            boolean windowClosed = PENDING_NOTIFICATIONS.values().stream()
+                    .anyMatch(pending -> NotificationGrouping.windowClosed(
+                            pending.windowIndex, tick, windowTicks));
+            if (windowClosed) {
+                flushPendingNotifications(event.getServer(), drainPendingNotifications());
+            }
         }
         MilestoneCommandRunner.drainAndRun(event.getServer());
+    }
+
+    /** Window used for queues filled before the next ServerTickEvent.Post updates the clock. */
+    private static long currentWindowIndex() {
+        return NotificationGrouping.windowIndex(lastObservedServerTick, Config.notificationWindowTicks());
     }
 
     static void queuePendingNotification(
@@ -1391,7 +1473,7 @@ public final class Tracker {
         String safeName = playerName != null ? playerName : "";
         Component safeDisplayName = actorDisplayName != null ? actorDisplayName : Component.literal(safeName);
         PendingNotifications pending = PENDING_NOTIFICATIONS.computeIfAbsent(
-                playerId, id -> new PendingNotifications(id, safeName, safeDisplayName));
+                playerId, id -> new PendingNotifications(id, safeName, safeDisplayName, currentWindowIndex()));
         if (!safeName.isEmpty()) {
             pending.playerName = safeName;
         }
@@ -1432,7 +1514,7 @@ public final class Tracker {
         String safeName = playerName != null ? playerName : "";
         Component safeDisplayName = actorDisplayName != null ? actorDisplayName : Component.literal(safeName);
         PendingNotifications pending = PENDING_NOTIFICATIONS.computeIfAbsent(
-                playerId, id -> new PendingNotifications(id, safeName, safeDisplayName));
+                playerId, id -> new PendingNotifications(id, safeName, safeDisplayName, currentWindowIndex()));
         if (!safeName.isEmpty()) {
             pending.playerName = safeName;
         }
@@ -1468,6 +1550,7 @@ public final class Tracker {
     /** Discards queued notifications without sending (called on ServerStoppingEvent). */
     public static void clearPendingNotifications() {
         PENDING_NOTIFICATIONS.clear();
+        lastObservedServerTick = 0L;
         // An integrated server can stop right after a craft: do not carry the queued check
         // into the next world's first tick.
         PENDING_CRAFT_CHECKS.clear();
@@ -2125,6 +2208,12 @@ public final class Tracker {
         // 1. Player chat notification (skip if offline)
         if (onlineActor != null) {
             sendPlayerChannel(onlineActor, plan.playerChat());
+        }
+
+        // 1b. N63 progress alerts: a separate channel in the same window, chat only, inserted
+        // immediately after the player's record chat so the F27 ordering below stays unchanged.
+        if (onlineActor != null) {
+            sendProgressAlerts(onlineActor, NotificationGrouping.planProgressChannel(pending.progressAlerts));
         }
 
         // 2. Broadcast to other online players

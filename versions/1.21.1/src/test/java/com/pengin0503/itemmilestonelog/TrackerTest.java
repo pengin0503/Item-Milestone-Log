@@ -603,6 +603,55 @@ class TrackerTest {
     }
 
     @Test
+    void progressAlertsAreQueuedInTheirOwnChannelOfTheSharedWindow() {
+        TargetKey diamond = TargetKey.of("minecraft:diamond", 100);
+        TargetKey emerald = TargetKey.of("minecraft:emerald", 100);
+        TargetKey coal = TargetKey.of("minecraft:coal", 100);
+        Tracker.clearPendingNotifications();
+        try {
+            List<Tracker.ProgressAlertNotification> two = List.of(
+                    new Tracker.ProgressAlertNotification(diamond, 50, 100, 50),
+                    new Tracker.ProgressAlertNotification(emerald, 90, 100, 90));
+            Tracker.queueProgressAlerts(PLAYER_A, Component.literal("Alice"), two, 7L);
+            List<Tracker.PendingNotifications> drained = Tracker.drainPendingNotifications();
+            assertEquals(1, drained.size());
+            assertEquals(7L, drained.get(0).windowIndex);
+            assertEquals(two, drained.get(0).progressAlerts);
+            assertTrue(drained.get(0).records.isEmpty(), "progress alerts must not enter the record channel");
+            assertTrue(drained.get(0).discordRecords.isEmpty(), "progress alerts must never go to Discord");
+            assertEquals(NotificationGrouping.SendMode.INDIVIDUAL,
+                    NotificationGrouping.planProgressChannel(drained.get(0).progressAlerts).mode());
+
+            List<Tracker.ProgressAlertNotification> three = new ArrayList<>(two);
+            three.add(new Tracker.ProgressAlertNotification(coal, 50, 100, 50));
+            Tracker.queueProgressAlerts(PLAYER_B, Component.literal("Bob"), three, 7L);
+            List<Tracker.PendingNotifications> grouped = Tracker.drainPendingNotifications();
+            assertEquals(3, grouped.get(0).progressAlerts.size());
+            assertEquals(NotificationGrouping.SendMode.GROUPED,
+                    NotificationGrouping.planProgressChannel(grouped.get(0).progressAlerts).mode());
+        } finally {
+            Tracker.clearPendingNotifications();
+        }
+    }
+
+    @Test
+    void flushPendingOnStopDrainsAWindowThatHasNotClosedYet() {
+        Tracker.clearPendingNotifications();
+        try {
+            Tracker.ProgressAlertNotification alert = new Tracker.ProgressAlertNotification(
+                    TargetKey.of("minecraft:diamond", 100), 50, 100, 50);
+            Tracker.queueProgressAlerts(PLAYER_A, Component.literal("Alice"), List.of(alert), 999L);
+            assertFalse(NotificationGrouping.windowClosed(999L, 1, NotificationGrouping.MAX_WINDOW_TICKS),
+                    "the queued window must still be open at tick 1");
+            Tracker.flushPendingOnStop(null);
+            assertTrue(Tracker.drainPendingNotifications().isEmpty(),
+                    "stop must flush or discard the pending window, never carry it over");
+        } finally {
+            Tracker.clearPendingNotifications();
+        }
+    }
+
+    @Test
     void pendingNotificationsExcludeOptedOutPlayersFromDiscordQueueWhilePreservingInGameChannelsAndWorldFirsts() {
         MilestoneData data = new MilestoneData();
         MilestoneData.PlayerData optedOutPd = data.player(PLAYER_A);
