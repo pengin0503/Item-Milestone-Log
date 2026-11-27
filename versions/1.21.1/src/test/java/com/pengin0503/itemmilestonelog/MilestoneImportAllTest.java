@@ -9,7 +9,9 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
+import com.pengin0503.itemmilestonelog.api.TargetKey;
 import java.io.IOException;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.nio.file.Path;
 import java.util.UUID;
@@ -20,6 +22,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -342,6 +345,102 @@ class MilestoneImportAllTest {
         awaitParseDone(job);
         assertEquals(0, source.successCount.get());
         assertEquals(0, source.failureCount.get());
+    }
+
+    // RB-3: model a BlockableEventLoop that executes inline once shutdown disables scheduling.
+    @Test
+    void inlineShutdownSchedulerLeavesThePlanParkedAndTheStopPathAppliesExactlyOnce() throws Exception {
+        MilestoneIo.start(message -> {
+        });
+        assertTrue(MilestoneIo.tryBeginImport());
+        FakeSource source = new FakeSource();
+        MilestoneImportAll.Job job = MilestoneImportAll.newJobForTest(
+                Path.of("irrelevant.json"), "irrelevant.json", source);
+        // applyPendingOnStop is called on the test (server) thread; the I/O thread is a different one.
+        job.applyThreadForTest = Thread.currentThread();
+        job.dataForTest = new MilestoneData();
+        MilestoneExport.MergePlan plan = new MilestoneExport.MergePlan(List.of(), 0, null, 0);
+        AtomicReference<Runnable> handedOff = new AtomicReference<>();
+        AtomicReference<Thread> schedulerThread = new AtomicReference<>();
+        AtomicInteger merges = new AtomicInteger();
+        MilestoneImportAll.MergeAction previous = MilestoneImportAll.mergeActionForTest;
+        MilestoneImportAll.mergeActionForTest = (data, p) -> {
+            merges.incrementAndGet();
+            return new MilestoneExport.ImportAllMergeStats(0, 0, 0, 0, 0);
+        };
+        try {
+            assertTrue(MilestoneImportAll.submitForTest(job, j -> j.plan.set(plan), runnable -> {
+                schedulerThread.set(Thread.currentThread());
+                handedOff.set(runnable);
+                // server.execute() runs the task inline on the caller thread during shutdown.
+                runnable.run();
+            }));
+            awaitParseDone(job);
+            assertEquals(MilestoneIoQueue.THREAD_NAME, schedulerThread.get().getName());
+            assertEquals(0, merges.get(), "an inline run on the I/O thread must never apply the plan");
+            assertTrue(MilestoneImportAll.activeForTest() == job, "the parsed plan must stay parked");
+            assertEquals(0, source.successCount.get());
+            assertEquals(0, source.failureCount.get());
+
+            MilestoneImportAll.applyPendingOnStop(null);
+            assertEquals(1, merges.get(), "the server-thread stop path applies the parked plan");
+            assertEquals(1, source.successCount.get());
+            assertNull(MilestoneImportAll.activeForTest());
+            assertFalse(MilestoneIo.isImportInFlight());
+
+            // A repeated inline run and a repeated stop call must not apply or report twice.
+            handedOff.get().run();
+            MilestoneImportAll.applyPendingOnStop(null);
+            assertEquals(1, merges.get(), "apply must happen exactly once");
+            assertEquals(1, source.successCount.get());
+        } finally {
+            MilestoneImportAll.mergeActionForTest = previous;
+        }
+    }
+
+    // RB-3: an Error during the merge must roll back to the pre-import state and surface a failure.
+    @Test
+    void applyErrorRestoresPreImportDataAndSurfacesFailure() throws Exception {
+        MilestoneIo.start(message -> {
+        });
+        assertTrue(MilestoneIo.tryBeginImport());
+        FakeSource source = new FakeSource();
+        MilestoneImportAll.Job job = MilestoneImportAll.newJobForTest(
+                Path.of("irrelevant.json"), "irrelevant.json", source);
+        MilestoneData data = new MilestoneData();
+        job.dataForTest = data;
+        UUID uuid = UUID.fromString("55555555-5555-5555-5555-555555555555");
+        TargetKey target = TargetKey.of("minecraft:diamond");
+        MilestoneData.PlayerData before = data.player(uuid);
+        before.lastKnownName = "before";
+        before.targets.add(target);
+        MilestoneExport.MergePlan plan = new MilestoneExport.MergePlan(
+                List.of(new MilestoneExport.PlayerMergePlan(uuid, List.of("before"), List.of(), List.of())),
+                0, null, 0);
+        AtomicReference<Runnable> scheduled = new AtomicReference<>();
+        MilestoneImportAll.MergeAction previous = MilestoneImportAll.mergeActionForTest;
+        MilestoneImportAll.mergeActionForTest = (d, p) -> {
+            MilestoneData.PlayerData halfApplied = d.player(uuid);
+            halfApplied.lastKnownName = "half-applied";
+            halfApplied.targets.clear();
+            throw new AssertionError("Error during merge");
+        };
+        try {
+            assertTrue(MilestoneImportAll.submitForTest(job, j -> j.plan.set(plan), scheduled::set));
+            awaitParseDone(job);
+            scheduled.get().run();
+
+            MilestoneData.PlayerData restored = data.playerOrNull(uuid);
+            assertNotNull(restored);
+            assertEquals("before", restored.lastKnownName, "pre-import name must be restored");
+            assertTrue(restored.targets.contains(target), "pre-import targets must be restored");
+            assertEquals(1, source.failureCount.get(), "the Error must be reported to the initiator");
+            assertEquals(0, source.successCount.get());
+            assertNull(MilestoneImportAll.activeForTest());
+            assertFalse(MilestoneIo.isImportInFlight());
+        } finally {
+            MilestoneImportAll.mergeActionForTest = previous;
+        }
     }
 
     private static void awaitParseDone(MilestoneImportAll.Job job) throws InterruptedException {

@@ -168,19 +168,32 @@ public final class Pagination {
         return ROOT_COMMAND + " targets near threshold " + threshold;
     }
 
-    /** Page-link prefix for {@code /milestonelog trends days <n>} (F-150-35). */
+    /**
+     * Page-link prefix for {@code /milestonelog trends days <n> page <p>} (F-150-35).
+     * The {@code page} literal is required by the registered grammar; {@link #pageCommand} adds the
+     * page number after it.
+     */
     public static String trendsCommandPrefix(int days) {
         if (days <= 0) {
             throw new IllegalArgumentException("days must be positive: " + days);
         }
-        return ROOT_COMMAND + " trends days " + days;
+        return ROOT_COMMAND + " trends days " + days + " page";
+    }
+
+    /**
+     * Escapes a raw query for interpolation into a Brigadier {@code StringArgumentType.string()}
+     * literal, so backslashes and quotes decode back to the original query in a page link.
+     */
+    public static String escapeQuotedArgument(String raw) {
+        Objects.requireNonNull(raw, "raw");
+        return raw.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
     /** Page-link prefix for the (PR-2) cross-command search, quoted so phrases stay one argument. */
     public static String searchCommandPrefix(String query, String scope) {
         Objects.requireNonNull(query, "query");
         Objects.requireNonNull(scope, "scope");
-        return ROOT_COMMAND + " search \"" + query + "\" " + scope;
+        return ROOT_COMMAND + " search \"" + escapeQuotedArgument(query) + "\" " + scope;
     }
 
     private static String withSuffix(String base, String suffix) {

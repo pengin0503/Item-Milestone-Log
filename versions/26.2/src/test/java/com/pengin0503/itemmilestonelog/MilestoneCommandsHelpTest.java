@@ -1175,4 +1175,85 @@ class MilestoneCommandsHelpTest {
     private static String parsedArgument(ParseResults<CommandSourceStack> parse, String name) {
         return (String) parse.getContext().getArguments().get(name).getResult();
     }
+
+    @Test
+    void generatedFooterLinksParseWithTheRegisteredGrammar() {
+        CommandDispatcher<CommandSourceStack> dispatcher = buildDispatcher(src -> true);
+        String rawQuery = "a\\b\"c";
+        MilestoneCommands.FilterCriteria criteria =
+                new MilestoneCommands.FilterCriteria(List.of(rawQuery), null, rawQuery, null);
+        List<String> links = List.of(
+                Pagination.pageCommand(Pagination.trendsCommandPrefix(7), 2),
+                Pagination.pageCommand(Pagination.searchCommandPrefix(rawQuery, "scope all"), 2),
+                Pagination.pageCommand(Pagination.listCommandPrefix(criteria.listSuffix()), 2),
+                Pagination.pageCommand(Pagination.targetsCommandPrefix(
+                        Pagination.TargetFilter.ALL, criteria.targetSuffix()), 2));
+        for (String line : links) {
+            ParseResults<CommandSourceStack> parse = dispatcher.parse(line.substring(1), null);
+            assertFalse(parse.getReader().canRead(), "must fully parse: " + line);
+            assertTrue(parse.getExceptions().isEmpty(), line + ": " + parse.getExceptions());
+            assertNotNull(parse.getContext().getCommand(), line);
+        }
+        ParseResults<CommandSourceStack> trends = dispatcher.parse(links.get(0).substring(1), null);
+        assertEquals("7", parsedArgument(trends, "days"));
+        assertEquals(2, (Object) trends.getContext().getArguments().get("page").getResult());
+        for (int i = 1; i < links.size(); i++) {
+            ParseResults<CommandSourceStack> parse = dispatcher.parse(links.get(i).substring(1), null);
+            assertEquals(rawQuery, parsedArgument(parse, "query"), links.get(i));
+        }
+        assertEquals("all", parsedArgument(dispatcher.parse(links.get(1).substring(1), null), "scope"));
+    }
+
+    @Test
+    void readOnlyHandlersLeaveADataLessPlayerUntouched() {
+        MilestoneData data = new MilestoneData();
+        UUID playerId = UUID.fromString("33333333-3333-3333-3333-333333333333");
+        assertTrue(MilestoneCommands.settingsLinesFor(data, playerId).stream()
+                .noneMatch(CommandAnalysisModel.SettingLine::enabled));
+        for (CommandAnalysisModel.RecapKind kind : List.of(CommandAnalysisModel.RecapKind.RETURN,
+                CommandAnalysisModel.RecapKind.DAILY)) {
+            assertTrue(MilestoneCommands.recapResultFor(data, playerId, kind,
+                    System.currentTimeMillis()).entries().isEmpty(), kind.name());
+        }
+        assertTrue(data.allPlayers().isEmpty(), "read-only handlers must not insert PlayerData");
+        assertFalse(data.isDirty(), "read-only handlers must not dirty the data set");
+    }
+
+    @Test
+    void settingsToggleNoOpLeavesADataLessPlayerUntouched() {
+        // R2-SF-1: an absent PlayerData has all-off defaults, so every "off" toggle is a no-op and
+        // must not insert or dirty a PlayerData. Only "on" needs a write (done by the legacy handler).
+        MilestoneData data = new MilestoneData();
+        UUID playerId = UUID.fromString("44444444-4444-4444-4444-444444444444");
+        for (CommandAnalysisModel.Toggle toggle : CommandAnalysisModel.Toggle.values()) {
+            assertFalse(MilestoneCommands.settingsToggleNeedsWrite(data, playerId, toggle, false),
+                    toggle + " off must be a no-op for a data-less player");
+            assertTrue(MilestoneCommands.settingsToggleNeedsWrite(data, playerId, toggle, true),
+                    toggle + " on must reach the legacy write handler");
+        }
+        assertTrue(data.allPlayers().isEmpty(), "the read-only decision must not insert PlayerData");
+        assertFalse(data.isDirty(), "the read-only decision must not dirty the data set");
+    }
+
+    @Test
+    void previewStatesCoverEveryRelatedKeyIncludingUntrackedOnes() throws Exception {
+        List<CommandAnalysisModel.TargetRef> refs = new ArrayList<>();
+        for (int i = 0; i < 12; i++) {
+            refs.add(new CommandAnalysisModel.TargetRef("c:tag_" + i, 1));
+        }
+        List<ItemInfoLogic.TagEntry> displayed = List.of(new ItemInfoLogic.TagEntry(
+                com.pengin0503.itemmilestonelog.api.TargetKey.of("c:tag_0"),
+                new ItemInfoLogic.OwnStatus(ItemInfoLogic.OwnStatusKind.TARGET, null, false, 2, 10)));
+        Map<CommandAnalysisModel.TargetRef, CommandAnalysisModel.PreviewState> states =
+                MilestoneCommands.infoPreviewStates(refs, displayed);
+        assertEquals(refs.size(), states.size());
+        assertEquals("target", states.get(refs.get(0)).statusKey());
+        assertEquals("none", states.get(refs.get(1)).statusKey());
+        CommandAnalysisModel.PreviewResult result = CommandAnalysisModel.infoPreview(refs, states);
+        assertEquals(10, result.entries().size());
+        assertEquals(2, result.moreCount());
+        assertEquals("none", result.entries().get(1).statusKey());
+        // R2-MN-2(b): the duplicate-section pin is now a rendered-output assertion through
+        // MilestoneCommands.sendInfoRelatedTags in the version-local MilestoneCommandRenderTest.
+    }
 }

@@ -43,6 +43,17 @@ public final class MilestoneBackup {
 
     private static volatile long lastBackupMillis = MilestoneBackupLogic.NO_BACKUP_RECORDED;
     /**
+     * SF-7: the server thread is the only writer of {@link #lastBackupMillis}. The I/O thread
+     * publishes the outcome of an auto-backup here; a later server-thread save commits the
+     * timestamp only when the write actually succeeded, so a failed write is retried (v1.3.1
+     * behaviour).
+     */
+    private static volatile AutoBackupResult autoBackupResult;
+    /** Server-thread owned: set at acceptance, cleared when the published result is settled. */
+    private static volatile boolean autoBackupInFlight;
+    /** Incremented on start/stop so a late I/O task cannot settle into a different world session. */
+    private static volatile long autoBackupGeneration;
+    /**
      * Set for the whole {@code ServerStoppingEvent} sequence. Minecraft fires {@code LevelEvent.Save}
      * after that event too; without this flag the final backup would not update the rate-limit
      * timestamp (it must stay server-thread owned), and the save would write a duplicate backup
@@ -86,6 +97,7 @@ public final class MilestoneBackup {
             resetState();
             return;
         }
+        resetAutoBackupState();
         beginFinalBackupSession();
         try {
             initFromDir(backupsDir(server), backupTimeZone());
@@ -117,7 +129,15 @@ public final class MilestoneBackup {
     public static void resetState() {
         lastBackupMillis = MilestoneBackupLogic.NO_BACKUP_RECORDED;
         serverStopping = false;
+        resetAutoBackupState();
         beginFinalBackupSession();
+    }
+
+    /** Clears the auto-backup handoff and invalidates late I/O results from the previous session. */
+    private static void resetAutoBackupState() {
+        autoBackupGeneration++;
+        autoBackupInFlight = false;
+        autoBackupResult = null;
     }
 
     /** Marks the start of the stop sequence so post-{@code ServerStoppingEvent} saves are ignored. */
@@ -182,41 +202,101 @@ public final class MilestoneBackup {
     /**
      * Save-triggered backup (rate-limited on the server thread). The NBT root snapshot is taken on
      * the server thread; the disk write runs on the {@code itemmilestonelog-io} executor (N45).
+     * SF-7: the timestamp stays server-thread owned and is committed only after the I/O thread
+     * reports a successful write; a second save cannot queue a duplicate while one is pending.
      */
     private static void tryAutoBackup(@Nullable MinecraftServer server) {
         if (server == null || serverStopping) {
             return;
         }
         try {
-            if (!Config.autoBackupEnabled()) {
-                return;
-            }
             Instant now = Instant.now();
-            if (!MilestoneBackupLogic.isRateLimitElapsed(lastBackupMillis, now.toEpochMilli())) {
+            if (!tryBeginAutoBackup(Config.autoBackupEnabled(), false, now.toEpochMilli())) {
                 return;
             }
             MilestoneData data = MilestoneData.get(server);
             if (data.isEmpty()) {
+                // Nothing was queued, so release the slot for a later save.
+                autoBackupInFlight = false;
                 return;
             }
             Path dir = backupsDir(server);
             CompoundTag root = data.toSavedDataFileTag();
             ZoneId zone = backupTimeZone();
             int maxGenerations = Config.autoBackupGenerations();
-            // F-140-3: the rate-limit timestamp is owned by the server thread and is recorded at
-            // acceptance time, before the asynchronous write starts. Recording it in the I/O task
-            // would let concurrent saves queue duplicate backups while a write is pending (and a
-            // late write from a previous world could contaminate the next world in single-player).
-            lastBackupMillis = now.toEpochMilli();
-            Runnable writeTask = () -> writeBackupSnapshot(dir, root, now, zone, maxGenerations);
+            long generation = autoBackupGeneration;
+            Runnable writeTask = () -> {
+                boolean written;
+                try {
+                    written = writeBackupSnapshot(dir, root, now, zone, maxGenerations);
+                } catch (RuntimeException e) {
+                    written = false;
+                }
+                publishAutoBackupResult(generation, now.toEpochMilli(), written);
+            };
             if (!MilestoneIo.submit(MilestoneIoLogic.TaskKind.BACKUP, writeTask)) {
                 // N45: executor rejected/shut down -> run only this task synchronously.
                 ItemMilestoneLog.LOGGER.warn(
                         "[ItemMilestoneLog] I/O executor unavailable; writing automatic SavedData backup synchronously");
-                writeTask.run();
+                try {
+                    writeTask.run();
+                } finally {
+                    // Synchronous fallback: the server thread settles its own result immediately.
+                    settleAutoBackupResult();
+                }
             }
         } catch (RuntimeException e) {
             ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Automatic SavedData backup failed: {}", e.getMessage());
+            // No task was queued on this path; never leave the in-flight slot stuck.
+            autoBackupInFlight = false;
+        }
+    }
+
+    /**
+     * Server-thread gate for a save-triggered auto-backup. Settles a previously published I/O result
+     * first (committing the timestamp only on success), then applies the rate limit and the
+     * in-flight guard before reserving the single backup slot.
+     *
+     * @return {@code true} when the caller should serialize a snapshot and queue the write
+     */
+    private static boolean tryBeginAutoBackup(boolean enabled, boolean ignoreRateLimit, long nowMillis) {
+        settleAutoBackupResult();
+        if (serverStopping || !enabled) {
+            return false;
+        }
+        if (!ignoreRateLimit && !MilestoneBackupLogic.isRateLimitElapsed(lastBackupMillis, nowMillis)) {
+            return false;
+        }
+        if (autoBackupInFlight) {
+            return false;
+        }
+        autoBackupInFlight = true;
+        return true;
+    }
+
+    /** I/O thread: publishes the write outcome for the server thread to settle (SF-7). */
+    private static void publishAutoBackupResult(long generation, long timestampMillis, boolean written) {
+        if (generation != autoBackupGeneration) {
+            // Session changed (world left / server restarted): a stale result must not contaminate it.
+            return;
+        }
+        autoBackupResult = new AutoBackupResult(generation, timestampMillis, written);
+    }
+
+    /** Server thread: commits a successful write's timestamp and releases the in-flight slot. */
+    private static void settleAutoBackupResult() {
+        AutoBackupResult result = autoBackupResult;
+        if (result == null) {
+            return;
+        }
+        autoBackupResult = null;
+        // R2-MN-3: a stale result must not release the current generation's in-flight slot.
+        if (result.generation != autoBackupGeneration) {
+            return;
+        }
+        autoBackupInFlight = false;
+        if (result.written) {
+            lastBackupMillis = result.timestampMillis;
         }
     }
 
@@ -474,6 +554,36 @@ public final class MilestoneBackup {
         return currentFinalBackupSession().state.compareAndSet(FINAL_BACKUP_OPEN, FINAL_BACKUP_CLAIMED);
     }
 
+    /** Test hook: server-thread acceptance gate without a server (SF-7). */
+    static boolean tryBeginAutoBackupForTest(boolean enabled, boolean ignoreRateLimit, long nowMillis) {
+        return tryBeginAutoBackup(enabled, ignoreRateLimit, nowMillis);
+    }
+
+    /** Test hook: publishes an I/O-thread auto-backup outcome (SF-7). */
+    static void publishAutoBackupResultForTest(long timestampMillis, boolean written) {
+        publishAutoBackupResult(autoBackupGeneration, timestampMillis, written);
+    }
+
+    /** R2-MN-3 test hook: models a stale I/O thread observing an older generation before reset. */
+    static void publishStaleAutoBackupResultForTest(long generation, long timestampMillis, boolean written) {
+        autoBackupResult = new AutoBackupResult(generation, timestampMillis, written);
+    }
+
+    /** R2-MN-3 test hook: the generation a late I/O result could capture. */
+    static long autoBackupGenerationForTest() {
+        return autoBackupGeneration;
+    }
+
+    /** Test hook: server-thread settlement of a published outcome (SF-7). */
+    static void settleAutoBackupResultForTest() {
+        settleAutoBackupResult();
+    }
+
+    /** Test hook: whether a save-triggered backup is pending (SF-7). */
+    static boolean isAutoBackupInFlightForTest() {
+        return autoBackupInFlight;
+    }
+
     static boolean tryAutoBackupForTest(
             Path dir,
             @Nullable MilestoneData data,
@@ -634,6 +744,19 @@ public final class MilestoneBackup {
             } catch (IOException e) {
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Could not delete old backup {}: {}", oldName, e.getMessage());
             }
+        }
+    }
+
+    /** One-shot outcome of an asynchronous auto-backup write (SF-7). */
+    private static final class AutoBackupResult {
+        final long generation;
+        final long timestampMillis;
+        final boolean written;
+
+        AutoBackupResult(long generation, long timestampMillis, boolean written) {
+            this.generation = generation;
+            this.timestampMillis = timestampMillis;
+            this.written = written;
         }
     }
 

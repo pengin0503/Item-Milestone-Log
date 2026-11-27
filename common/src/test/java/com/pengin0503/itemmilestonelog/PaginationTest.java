@@ -152,8 +152,8 @@ class PaginationTest {
         assertEquals("/milestonelog targets pending filter \"iron block\" kind counts 2",
                 Pagination.pageCommand(Pagination.targetsCommandPrefix(Pagination.TargetFilter.PENDING,
                         "filter \"iron block\" kind counts"), 2));
-        assertEquals("/milestonelog search \"iron block\" all 2",
-                Pagination.pageCommand(Pagination.searchCommandPrefix("iron block", "all"), 2));
+        assertEquals("/milestonelog search \"iron block\" scope all 2",
+                Pagination.pageCommand(Pagination.searchCommandPrefix("iron block", "scope all"), 2));
 
         // F-150-21/27/19: opt-in literals appear before page numbers; legacy links stay unchanged.
         assertEquals("/milestonelog list compact 2",
@@ -165,7 +165,7 @@ class PaginationTest {
                         true, ""), 2));
         assertEquals("/milestonelog targets near threshold 50 2",
                 Pagination.pageCommand(Pagination.targetsNearCommandPrefix(50), 2));
-        assertEquals("/milestonelog trends days 7 2",
+        assertEquals("/milestonelog trends days 7 page 2",
                 Pagination.pageCommand(Pagination.trendsCommandPrefix(7), 2));
         assertThrows(IllegalArgumentException.class, () -> Pagination.targetsNearCommandPrefix(0));
 
@@ -196,14 +196,24 @@ class PaginationTest {
 
     @Test
     void searchPageLinksKeepTheQuotedQueryAndEveryScope() {
-        // PR-1's helper shape is unchanged; the command layer passes the 'scope' literal as part
-        // of the second argument so the generated clickable link parses with the real command tree.
+        // The command layer passes the 'scope' literal as part of the second argument; that is the
+        // only form the real grammar accepts (parse assertions live in MilestoneCommandsHelpTest).
         for (String scope : List.of("all", "targets", "records", "presets")) {
-            assertEquals("/milestonelog search \"iron block\" " + scope + " 2",
-                    Pagination.pageCommand(Pagination.searchCommandPrefix("iron block", scope), 2));
-            assertEquals("/milestonelog search \"iron block\" scope " + scope + " 3",
-                    Pagination.pageCommand(Pagination.searchCommandPrefix("iron block", "scope " + scope), 3));
+            assertEquals("/milestonelog search \"iron block\" scope " + scope + " 2",
+                    Pagination.pageCommand(Pagination.searchCommandPrefix("iron block", "scope " + scope), 2));
         }
+    }
+
+    @Test
+    void quotedPageLinkArgumentsEscapeBackslashesAndQuotes() {
+        String raw = "a\\b\"c";
+        assertEquals("a\\\\b\\\"c", Pagination.escapeQuotedArgument(raw));
+        assertEquals("/milestonelog search \"a\\\\b\\\"c\" scope all 2",
+                Pagination.pageCommand(Pagination.searchCommandPrefix(raw, "scope all"), 2));
+        // The targets/list filter suffixes apply the same escaping at their call sites.
+        assertEquals("/milestonelog targets filter \"a\\\\b\\\"c\" kind tags 3",
+                Pagination.pageCommand(Pagination.targetsCommandPrefix(Pagination.TargetFilter.ALL,
+                        "filter \"" + Pagination.escapeQuotedArgument(raw) + "\" kind tags"), 3));
     }
 
     @Test

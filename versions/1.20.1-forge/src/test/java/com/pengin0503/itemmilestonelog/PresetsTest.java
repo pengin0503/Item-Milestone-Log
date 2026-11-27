@@ -1276,4 +1276,118 @@ class PresetsTest {
                 "presets that cannot contain the recorded key must not be registry-scanned");
     }
 
+
+    // SF-4: pathological nesting is rejected before Gson's recursive tree builder can overflow.
+    @Test
+    void deeplyNestedPresetJsonIsRejectedInsteadOfEscapingStackOverflow() {
+        String json = "{\"items\":[\"minecraft:dirt\"],\"junk\":"
+                + "[".repeat(6_000) + "]".repeat(6_000) + "}";
+        assertNull(Presets.parsePresetContent(json, "deep.json", "deep", Presets.PresetKind.FILE));
+    }
+
+    @Test
+    void deeplyNestedExistingPresetFileCannotBeSilentlyOverwritten(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("deep_existing.json");
+        String json = "{\"name\":\"Deep\",\"items\":[\"minecraft:dirt\"],\"junk\":"
+                + "[".repeat(6_000) + "]".repeat(6_000) + "}";
+        java.nio.file.Files.writeString(file, json);
+        assertThrows(java.io.IOException.class,
+                () -> Presets.saveCustomTo(dir, "deep_existing", List.of(TargetKey.of("minecraft:diamond")), false));
+        assertEquals(json, java.nio.file.Files.readString(file), "unreadable metadata must not be overwritten");
+    }
+
+    // SF-6: JSON Schema integers include integral decimals and exponents.
+    @Test
+    void integralJsonNumbersAreAcceptedInBothValidationModes(@TempDir Path dir) throws Exception {
+        java.nio.file.Files.writeString(dir.resolve("integral.json"), """
+                {
+                  "version": 1.0,
+                  "order": -2e0,
+                  "items": [
+                    {"item": "minecraft:diamond", "count": 3.0},
+                    {"item": "minecraft:emerald", "count": 4e0}
+                  ]
+                }
+                """);
+        List<TargetKey> expected = List.of(TargetKey.of("minecraft:diamond", 3), TargetKey.of("minecraft:emerald", 4));
+        for (boolean strict : List.of(false, true)) {
+            assertEquals(1, Presets.reloadFrom(dir, strict));
+            Presets.PresetDefinition preset = Presets.get("integral");
+            assertNotNull(preset);
+            assertEquals(Integer.valueOf(1), preset.version());
+            assertEquals(-2, preset.order());
+            assertEquals(expected, preset.items());
+            assertTrue(preset.problems().isEmpty(), () -> "integral numbers must not be rejected: " + preset.problems());
+        }
+        Presets.reloadFrom(dir.resolve("clean"));
+    }
+
+    // SF-12: a directory error must keep the already loaded custom presets in memory.
+    @Test
+    void directoryListingFailureKeepsPreviouslyLoadedPresets(@TempDir Path dir) throws Exception {
+        java.nio.file.Files.writeString(dir.resolve("kept.json"), """
+                { "items": ["minecraft:diamond"] }
+                """);
+        assertEquals(1, Presets.reloadFrom(dir));
+        assertNotNull(Presets.get("kept"));
+
+        Path notDirectory = dir.resolve("not-a-directory");
+        java.nio.file.Files.writeString(notDirectory, "regular file");
+        assertEquals(0, Presets.reloadFrom(notDirectory));
+        assertNotNull(Presets.get("kept"), "a transient directory failure must not clear in-memory presets");
+        assertEquals(List.of("atm_star", "kept", "vanilla_endgame"), Presets.names());
+
+        Presets.reloadFrom(dir.resolve("clean"));
+    }
+
+    // SF-13: an unreadable file must make the save fail instead of silently overwriting it.
+    @Test
+    void saveWithUnreadableExistingFileAbortsInsteadOfOverwriting(@TempDir Path dir) throws Exception {
+        Path target = dir.resolve("unreadable.json");
+        java.nio.file.Files.createDirectory(target);
+        assertThrows(java.io.IOException.class,
+                () -> Presets.saveCustomTo(dir, "unreadable", List.of(TargetKey.of("minecraft:diamond"))));
+        assertTrue(java.nio.file.Files.isDirectory(target), "the existing file must be left untouched");
+        Presets.reloadFrom(dir.resolve("clean"));
+    }
+
+    // SF-14: strict validation must not report success for a preset the next rebuild drops.
+    @Test
+    void strictSaveRejectsProblemsBeforeWritingAndLenientSaveStillWorks(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("strict_save.json");
+        String original = """
+                {"name":"Kept","items":["minecraft:dirt"],"includes":["missing_include"]}
+                """;
+        java.nio.file.Files.writeString(file, original);
+        assertEquals(1, Presets.reloadFrom(dir, false));
+
+        IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
+                () -> Presets.saveCustomTo(dir, "strict_save", List.of(TargetKey.of("minecraft:diamond")), true));
+        assertTrue(failure.getMessage().contains("missing_include"), () -> "collected problem not surfaced: " + failure.getMessage());
+        assertEquals(original, java.nio.file.Files.readString(file), "a rejected strict save must not write the file");
+
+        assertTrue(Presets.saveCustomTo(dir, "strict_save", List.of(TargetKey.of("minecraft:diamond")), false));
+        assertEquals(0, Presets.reloadFrom(dir, true), "the lenient save's stale include still fails strict reload");
+        Presets.reloadFrom(dir.resolve("clean"));
+    }
+
+    @Test
+    void strictImportRejectsProblemsBeforeWritingAndLenientImportStillWorks(@TempDir Path dir) throws Exception {
+        Presets.PresetDefinition definition = new Presets.PresetDefinition(
+                "strict_import", PresetName.ofPlain("Strict Import"),
+                List.of(TargetKey.of("minecraft:diamond")), Presets.PresetKind.FILE,
+                List.of("missing_include"), PresetName.absent(), null, 0, null,
+                List.of(), List.of(), List.of(), null);
+        Path file = dir.resolve("strict_import.json");
+        IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
+                () -> Presets.saveImportedTo(dir, definition, true));
+        assertTrue(failure.getMessage().contains("missing_include"), () -> "collected problem not surfaced: " + failure.getMessage());
+        assertFalse(java.nio.file.Files.exists(file), "a rejected strict import must not write the file");
+        assertNull(Presets.get("strict_import"));
+
+        assertFalse(Presets.saveImportedTo(dir, definition, false));
+        assertTrue(java.nio.file.Files.exists(file));
+        Presets.reloadFrom(dir.resolve("clean"));
+    }
+
 }

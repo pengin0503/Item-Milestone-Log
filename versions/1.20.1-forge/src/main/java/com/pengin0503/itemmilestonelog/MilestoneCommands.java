@@ -54,6 +54,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
@@ -1395,7 +1396,7 @@ public final class MilestoneCommands {
     // ------------------------------------------------- F-150-1 / F-150-2 filtering foundation
 
     /** Parsed (and validated) filter criteria shared by the targets/list handlers. */
-    private record FilterCriteria(List<String> tokens,
+    record FilterCriteria(List<String> tokens,
                                   @Nullable TargetFilterModel.Kind kind,
                                   @Nullable String rawQuery,
                                   @Nullable String kindArg) {
@@ -1417,7 +1418,7 @@ public final class MilestoneCommands {
             }
             StringBuilder suffix = new StringBuilder();
             if (rawQuery != null) {
-                suffix.append("filter \"").append(rawQuery).append('"');
+                suffix.append("filter \"").append(Pagination.escapeQuotedArgument(rawQuery)).append('"');
             }
             if (kindArg != null) {
                 if (suffix.length() > 0) {
@@ -1429,7 +1430,7 @@ public final class MilestoneCommands {
         }
 
         String listSuffix() {
-            return rawQuery == null ? "" : "filter \"" + rawQuery + '"';
+            return rawQuery == null ? "" : "filter \"" + Pagination.escapeQuotedArgument(rawQuery) + '"';
         }
     }
 
@@ -1965,9 +1966,8 @@ public final class MilestoneCommands {
     /** Read-only view of the four existing personal flags; never writes anything. */
     private static int settings(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
         ServerPlayer player = player(ctx);
-        MilestoneData.PlayerData pd = MilestoneData.get(player.level().getServer()).player(player.getUUID());
-        List<CommandAnalysisModel.SettingLine> lines = CommandAnalysisModel.settingsSnapshot(
-                pd.muteBroadcasts, pd.muteProgressAlerts, pd.excludeFromDiscord, pd.hideFromLookup);
+        List<CommandAnalysisModel.SettingLine> lines = settingsLinesFor(
+                MilestoneData.get(player.level().getServer()), player.getUUID());
         ctx.getSource().sendSuccess(() -> ServerLang.tr(player,
                 "message.itemmilestonelog.settings_header"), false);
         for (CommandAnalysisModel.SettingLine line : lines) {
@@ -1978,6 +1978,16 @@ public final class MilestoneCommands {
                     "message.itemmilestonelog.settings_line", Component.literal(line.name()), state), false);
         }
         return lines.size() + 1;
+    }
+
+    /** SF-9: read-only settings view; a data-less player gets all-off defaults and no PlayerData. */
+    static List<CommandAnalysisModel.SettingLine> settingsLinesFor(MilestoneData data, UUID playerId) {
+        MilestoneData.PlayerData pd = data.playerOrNull(playerId);
+        return CommandAnalysisModel.settingsSnapshot(
+                pd != null && pd.muteBroadcasts,
+                pd != null && pd.muteProgressAlerts,
+                pd != null && pd.excludeFromDiscord,
+                pd != null && pd.hideFromLookup);
     }
 
     /** Sets one existing flag through the legacy handlers; an already-equal value is a no-op. */
@@ -1992,28 +2002,49 @@ public final class MilestoneCommands {
         if (!CommandAnalysisModel.settingsToggleAllowed(toggle, Config.ALLOW_DISCORD_OPT_OUT.get())) {
             return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.feature_disabled"));
         }
-        MilestoneData.PlayerData pd = MilestoneData.get(player.level().getServer()).player(player.getUUID());
+        // R2-SF-1: a missing PlayerData has all-off defaults. Read only here; the legacy handler
+        // creates the PlayerData when a value actually changes, never on a no-op.
+        boolean needsWrite = settingsToggleNeedsWrite(
+                MilestoneData.get(player.level().getServer()), player.getUUID(), toggle, desired);
         return switch (toggle) {
-            case BROADCAST -> pd.muteBroadcasts == desired
+            case BROADCAST -> !needsWrite
                     ? send(ctx, ServerLang.tr(player, desired
                             ? "message.itemmilestonelog.mutebroadcast_on"
                             : "message.itemmilestonelog.mutebroadcast_off"))
                     : muteBroadcast(ctx);
-            case PROGRESS -> pd.muteProgressAlerts == desired
+            case PROGRESS -> !needsWrite
                     ? send(ctx, ServerLang.tr(player, desired
                             ? "message.itemmilestonelog.muteprogress_on"
                             : "message.itemmilestonelog.muteprogress_off"))
                     : muteProgress(ctx);
-            case DISCORD -> pd.excludeFromDiscord == desired
+            case DISCORD -> !needsWrite
                     ? send(ctx, ServerLang.tr(player, desired
                             ? "message.itemmilestonelog.discordoptout_on"
                             : "message.itemmilestonelog.discordoptout_off"))
                     : respond(ctx, MilestoneService.toggleDiscordOptOut(player));
-            case PRIVACY -> pd.hideFromLookup == desired
+            case PRIVACY -> !needsWrite
                     ? send(ctx, ServerLang.tr(player, desired
                             ? "message.itemmilestonelog.privacy_on"
                             : "message.itemmilestonelog.privacy_off"))
                     : respond(ctx, MilestoneService.togglePrivacy(player));
+        };
+    }
+
+    /**
+     * R2-SF-1: read-only decision for a settings toggle. A data-less player has all flags {@code false};
+     * {@code true} therefore needs a write and {@code false} is an exact no-op.
+     */
+    static boolean settingsToggleNeedsWrite(MilestoneData data, UUID playerId,
+                                            CommandAnalysisModel.Toggle toggle, boolean desired) {
+        MilestoneData.PlayerData pd = data.playerOrNull(playerId);
+        if (pd == null) {
+            return desired;
+        }
+        return switch (toggle) {
+            case BROADCAST -> pd.muteBroadcasts != desired;
+            case PROGRESS -> pd.muteProgressAlerts != desired;
+            case DISCORD -> pd.excludeFromDiscord != desired;
+            case PRIVACY -> pd.hideFromLookup != desired;
         };
     }
 
@@ -2123,6 +2154,56 @@ public final class MilestoneCommands {
 
     // --------------------------------------------------------- PR-1 F-150-36 recap
 
+    /**
+     * SF-9/RB-2: computes the result from existing data only. RETURN uses the pre-login
+     * {@code lastSeen} captured by Tracker, falling back to the stored value when no login was seen
+     * in this JVM. A data-less player never creates or dirties a PlayerData.
+     */
+    static CommandAnalysisModel.RecapResult recapResultFor(MilestoneData data, UUID playerId,
+                                                           CommandAnalysisModel.RecapKind kind,
+                                                           long nowMillis) {
+        MilestoneData.PlayerData pd = data.playerOrNull(playerId);
+        Map<TargetKey, MilestoneRecord> records = pd != null ? pd.records : Map.of();
+        if (kind == CommandAnalysisModel.RecapKind.RETURN) {
+            long since = Tracker.preLoginLastSeen(playerId);
+            if (since <= 0L && pd != null) {
+                since = pd.lastSeen;
+            }
+            LoginWorldFirstSummaryLogic.Selection selection = LoginWorldFirstSummaryLogic.select(
+                    data.worldFirsts(), playerId, since, nowMillis);
+            List<CommandAnalysisModel.ReturnCandidate> candidates = new ArrayList<>();
+            for (WorldFirstRecord worldFirst : selection.entries()) {
+                MilestoneData.PlayerData holder = data.playerOrNull(worldFirst.playerUuid());
+                String name = WorldFirstNames.choose(worldFirst.playerUuid(), worldFirst.playerName(),
+                        holder != null, holder != null ? holder.lastKnownName : null).name();
+                candidates.add(new CommandAnalysisModel.ReturnCandidate(
+                        worldFirst.itemId(), worldFirst.count(), name, worldFirst.epochMillis()));
+            }
+            return CommandAnalysisModel.recapReturn(candidates);
+        }
+        if (kind == CommandAnalysisModel.RecapKind.DAILY) {
+            List<CommandAnalysisModel.RecordValue> values = new ArrayList<>();
+            for (Map.Entry<TargetKey, MilestoneRecord> e : records.entrySet()) {
+                MilestoneRecord r = e.getValue();
+                values.add(new CommandAnalysisModel.RecordValue(e.getKey().itemId(), e.getKey().count(),
+                        r.playTicks(), r.day(), r.epochMillis()));
+            }
+            return CommandAnalysisModel.recapDaily(values, nowMillis);
+        }
+        Set<TargetKey> effective = Tracker.effectiveTargets(pd);
+        int unknown = 0;
+        int stillTracked = 0;
+        for (Map.Entry<TargetKey, MilestoneRecord> e : records.entrySet()) {
+            if (e.getValue().epochMillis() == 0L) {
+                unknown++;
+                if (effective.contains(e.getKey())) {
+                    stillTracked++;
+                }
+            }
+        }
+        return CommandAnalysisModel.recapLegacy(unknown, stillTracked);
+    }
+
     private static int recap(CommandContext<CommandSourceStack> ctx, @Nullable String rawKind)
             throws CommandSyntaxException {
         ServerPlayer player = player(ctx);
@@ -2132,43 +2213,9 @@ public final class MilestoneCommands {
             kind = CommandAnalysisModel.RecapKind.RETURN;
         }
         MilestoneData data = MilestoneData.get(player.level().getServer());
-        MilestoneData.PlayerData pd = data.player(player.getUUID());
         ZoneId zone = Config.displayTimeZone();
-        CommandAnalysisModel.RecapResult result;
-        if (kind == CommandAnalysisModel.RecapKind.RETURN) {
-            LoginWorldFirstSummaryLogic.Selection selection = LoginWorldFirstSummaryLogic.select(
-                    data.worldFirsts(), player.getUUID(), pd.lastSeen, System.currentTimeMillis());
-            List<CommandAnalysisModel.ReturnCandidate> candidates = new ArrayList<>();
-            for (WorldFirstRecord worldFirst : selection.entries()) {
-                MilestoneData.PlayerData holder = data.playerOrNull(worldFirst.playerUuid());
-                String name = WorldFirstNames.choose(worldFirst.playerUuid(), worldFirst.playerName(),
-                        holder != null, holder != null ? holder.lastKnownName : null).name();
-                candidates.add(new CommandAnalysisModel.ReturnCandidate(
-                        worldFirst.itemId(), worldFirst.count(), name, worldFirst.epochMillis()));
-            }
-            result = CommandAnalysisModel.recapReturn(candidates);
-        } else if (kind == CommandAnalysisModel.RecapKind.DAILY) {
-            List<CommandAnalysisModel.RecordValue> values = new ArrayList<>();
-            for (Map.Entry<TargetKey, MilestoneRecord> e : pd.records.entrySet()) {
-                MilestoneRecord r = e.getValue();
-                values.add(new CommandAnalysisModel.RecordValue(e.getKey().itemId(), e.getKey().count(),
-                        r.playTicks(), r.day(), r.epochMillis()));
-            }
-            result = CommandAnalysisModel.recapDaily(values, System.currentTimeMillis());
-        } else {
-            Set<TargetKey> effective = Tracker.effectiveTargets(pd);
-            int unknown = 0;
-            int stillTracked = 0;
-            for (Map.Entry<TargetKey, MilestoneRecord> e : pd.records.entrySet()) {
-                if (e.getValue().epochMillis() == 0L) {
-                    unknown++;
-                    if (effective.contains(e.getKey())) {
-                        stillTracked++;
-                    }
-                }
-            }
-            result = CommandAnalysisModel.recapLegacy(unknown, stillTracked);
-        }
+        CommandAnalysisModel.RecapResult result =
+                recapResultFor(data, player.getUUID(), kind, System.currentTimeMillis());
         final CommandAnalysisModel.RecapKind effectiveKind = kind;
         ctx.getSource().sendSuccess(() -> ServerLang.tr(player,
                 "message.itemmilestonelog.recap_header", effectiveKind.commandValue()), false);
@@ -2179,17 +2226,28 @@ public final class MilestoneCommands {
         if (result.entries().isEmpty()) {
             return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.recap_empty"));
         }
+        return sendRecapLines(ctx.getSource(), player, result, kind, zone);
+    }
+
+    /** R2-MN-1: renders capped recap rows and the overflow count for both return and daily. */
+    static int sendRecapLines(CommandSourceStack source, @Nullable ServerPlayer player,
+                             CommandAnalysisModel.RecapResult result,
+                             CommandAnalysisModel.RecapKind kind, ZoneId zone) {
         for (CommandAnalysisModel.RecapEntry entry : result.entries()) {
             Component detail = kind == CommandAnalysisModel.RecapKind.RETURN
                     ? Component.literal(entry.holderName() + " ")
                             .append(Component.literal(Playtime.formatDate(entry.epochMillis(), zone)))
                     : Component.literal(Playtime.formatDate(entry.epochMillis(), zone));
-            ctx.getSource().sendSuccess(() -> ServerLang.tr(player,
+            source.sendSuccess(() -> ServerLang.tr(player,
                     "message.itemmilestonelog.recap_entry",
                     MilestoneService.targetDisplayName(new TargetKey(entry.itemId(), entry.count())),
                     detail), false);
         }
-        return result.entries().size();
+        if (result.moreCount() > 0) {
+            source.sendSuccess(() -> ServerLang.tr(player, "message.itemmilestonelog.recap_more",
+                    result.moreCount()), false);
+        }
+        return result.entries().size() + (result.moreCount() > 0 ? 1 : 0);
     }
 
 
@@ -3301,30 +3359,132 @@ public final class MilestoneCommands {
 
     // --------------------------------------------------------- F49 Discord test
 
+    // MN-3 test seams; all null in production.
+    @Nullable
+    static Consumer<Runnable> discordTestSchedulerForTest;
+    @Nullable
+    static Boolean discordTestOnServerThreadForTest;
+    @Nullable
+    static Boolean discordExecutorAliveForTest;
+    @Nullable
+    static Consumer<DiscordTestResult> discordTestAbandonedForTest;
+
+    static void resetDiscordTestHooksForTest() {
+        discordTestSchedulerForTest = null;
+        discordTestOnServerThreadForTest = null;
+        discordExecutorAliveForTest = null;
+        discordTestAbandonedForTest = null;
+    }
+
     private static int discordTest(CommandContext<CommandSourceStack> ctx, DiscordRouting.Destination destination) {
         CommandSourceStack source = ctx.getSource();
         MinecraftServer server = source.getServer();
         ServerPlayer executorPlayer = source.getPlayer();
         UUID executorUuid = executorPlayer != null ? executorPlayer.getUUID() : null;
 
-        DiscordTestResult immediateError = DiscordNotifier.sendTestMessage(destination, result -> {
-            if (server == null) {
-                return;
-            }
-            server.execute(() -> deliverDiscordTestResult(server, source, executorPlayer, executorUuid, result));
-        });
+        DiscordTestResult immediateError = DiscordNotifier.sendTestMessage(
+                destination,
+                result -> handOffDiscordTestResult(server, source, executorPlayer, executorUuid, result),
+                result -> abandonDiscordTestResult(server, source, executorPlayer, executorUuid,
+                        "Discord sender shut down before completion"));
         if (immediateError != null) {
             return fail(ctx, formatDiscordTestResult(source.getPlayer(), immediateError));
         }
         return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.discordtest_sending"));
     }
 
-    private static void deliverDiscordTestResult(
-            MinecraftServer server,
-            CommandSourceStack source,
+    /**
+     * MN-3: hand the completion to the server thread, never apply it inline on the Discord thread.
+     * {@code MinecraftServer.execute} runs a task inline during shutdown, so the runnable checks
+     * thread ownership before touching the player list or the command source. When no delivery is
+     * possible an explicit ABANDONED outcome is logged instead of dropping the result silently.
+     */
+    static void handOffDiscordTestResult(
+            @Nullable MinecraftServer server,
+            @Nullable CommandSourceStack source,
             @Nullable ServerPlayer executorPlayer,
             @Nullable UUID executorUuid,
             DiscordTestResult result) {
+        handOffDiscordTestResult(server, source, executorPlayer, executorUuid, result,
+                "completion could not be delivered");
+    }
+
+    /**
+     * R2-SF-2: the {@code onAbandoned} callback from the Discord sender. The abandoned result takes
+     * the same strictly server-thread handoff as every other result; when the source is gone the
+     * delivery runnable keeps the log-only path instead.
+     */
+    static void abandonDiscordTestResult(
+            @Nullable MinecraftServer server,
+            @Nullable CommandSourceStack source,
+            @Nullable ServerPlayer executorPlayer,
+            @Nullable UUID executorUuid,
+            String reason) {
+        handOffDiscordTestResult(server, source, executorPlayer, executorUuid,
+                DiscordTestResult.abandoned(), reason);
+    }
+
+    private static void handOffDiscordTestResult(
+            @Nullable MinecraftServer server,
+            @Nullable CommandSourceStack source,
+            @Nullable ServerPlayer executorPlayer,
+            @Nullable UUID executorUuid,
+            DiscordTestResult result,
+            String abandonReason) {
+        boolean executorAlive = discordExecutorAliveForTest != null
+                ? discordExecutorAliveForTest
+                : DiscordNotifier.isExecutorAlive();
+        // An abandoned notice no longer needs the Discord sender: only a real server-thread
+        // delivery path matters, so a dead executor must not hide the message from the initiator.
+        boolean abandonedResult = result.kind() == DiscordTestResult.Kind.ABANDONED;
+        if ((server == null && discordTestSchedulerForTest == null)
+                || (!abandonedResult && !executorAlive)) {
+            logAbandonedDiscordTestResult(result, abandonReason);
+            return;
+        }
+        Runnable delivery = () -> {
+            boolean onServerThread = discordTestOnServerThreadForTest != null
+                    ? discordTestOnServerThreadForTest
+                    : server != null && server.isSameThread();
+            if (!onServerThread) {
+                logAbandonedDiscordTestResult(result, "inline execution off the server thread");
+                return;
+            }
+            deliverDiscordTestResult(server, source, executorPlayer, executorUuid, result);
+        };
+        try {
+            if (discordTestSchedulerForTest != null) {
+                discordTestSchedulerForTest.accept(delivery);
+            } else {
+                server.execute(delivery);
+            }
+        } catch (RuntimeException e) {
+            logAbandonedDiscordTestResult(result, "server executor rejected delivery");
+        }
+    }
+
+    /** Logs an explicit abandoned outcome; never touches the source/player from this thread. */
+    static void logAbandonedDiscordTestResult(DiscordTestResult result, String reason) {
+        DiscordTestResult abandoned = result.kind() == DiscordTestResult.Kind.ABANDONED
+                ? result
+                : DiscordTestResult.abandoned();
+        ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] discordtest result abandoned ({}): {} ({})",
+                reason, result.kind(), result.detail());
+        if (discordTestAbandonedForTest != null) {
+            discordTestAbandonedForTest.accept(abandoned);
+        }
+    }
+
+    private static void deliverDiscordTestResult(
+            MinecraftServer server,
+            @Nullable CommandSourceStack source,
+            @Nullable ServerPlayer executorPlayer,
+            @Nullable UUID executorUuid,
+            DiscordTestResult result) {
+        if (result.kind() == DiscordTestResult.Kind.ABANDONED) {
+            deliverAbandonedDiscordTestResult(source, result);
+            return;
+        }
         if (executorUuid != null) {
             ServerPlayer online = server.getPlayerList().getPlayer(executorUuid);
             if (online == null) {
@@ -3350,6 +3510,16 @@ public final class MilestoneCommands {
         }
     }
 
+    /** R2-SF-2: an abandoned result is a failure notice to the initiator, still on the server thread. */
+    private static void deliverAbandonedDiscordTestResult(
+            @Nullable CommandSourceStack source, DiscordTestResult result) {
+        if (source == null) {
+            logAbandonedDiscordTestResult(result, "command source no longer exists");
+            return;
+        }
+        source.sendFailure(formatDiscordTestResult(source.getPlayer(), result));
+    }
+
     private static Component formatDiscordTestResult(@Nullable ServerPlayer player, DiscordTestResult result) {
         return switch (result.kind()) {
             case NOT_CONFIGURED -> ServerLang.tr(player, "message.itemmilestonelog.discordtest_not_configured");
@@ -3362,6 +3532,7 @@ public final class MilestoneCommands {
             case RATE_LIMITED -> ServerLang.tr(player, "message.itemmilestonelog.discordtest_rate_limited");
             case HTTP_ERROR -> ServerLang.tr(player, "message.itemmilestonelog.discordtest_http_error", result.detail());
             case NETWORK_ERROR -> ServerLang.tr(player, "message.itemmilestonelog.discordtest_network_error", result.detail());
+            case ABANDONED -> ServerLang.tr(player, "message.itemmilestonelog.discordtest_abandoned");
         };
     }
 
@@ -3825,7 +3996,7 @@ public final class MilestoneCommands {
                 source.sendSuccess(() -> ServerLang.tr(source,
                         "message.itemmilestonelog.whohas_recorded_entry",
                         e.rank(), Component.literal(e.name()),
-                        Playtime.format((int) e.playTicks())), false);
+                        Playtime.format((int) e.playTicks()), e.rank()), false);
             } else {
                 source.sendSuccess(() -> ServerLang.tr(source,
                         "message.itemmilestonelog.whohas_targeting_entry",
@@ -3943,9 +4114,30 @@ public final class MilestoneCommands {
         }
 
         // 5. Related tag targets, at most 10 rows plus the overflow count.
+        lines += sendInfoRelatedTags(source, player, relatedKeys, records, effectiveTargets, carried,
+                tagIndex, possession, zone, preview);
+        return lines;
+    }
+
+    /**
+     * R2-MN-2(b): renders step 5 of {@code info}. This is the real handler seam: the base section is
+     * suppressed when preview is active, so the preview block is the only related-tag section then.
+     */
+    static int sendInfoRelatedTags(
+            CommandSourceStack source,
+            @Nullable ServerPlayer player,
+            List<TargetKey> relatedKeys,
+            Map<TargetKey, MilestoneRecord> records,
+            Set<TargetKey> effectiveTargets,
+            Set<String> carried,
+            TagIndex tagIndex,
+            Map<String, Integer> possession,
+            ZoneId zone,
+            boolean preview) {
         ItemInfoLogic.RelatedTags relatedTags = ItemInfoLogic.relatedTagEntries(
                 relatedKeys, records, effectiveTargets, carried, tagIndex, possession);
-        if (!relatedTags.isEmpty()) {
+        int lines = 0;
+        if (!relatedTags.isEmpty() && !preview) {
             source.sendSuccess(() -> ServerLang.tr(player, "message.itemmilestonelog.info_tag_header"), false);
             lines++;
             for (ItemInfoLogic.TagEntry entry : relatedTags.entries()) {
@@ -3963,22 +4155,13 @@ public final class MilestoneCommands {
         }
         if (preview) {
             Map<TargetKey, ItemInfoLogic.TagEntry> byKey = new HashMap<>();
-            Map<CommandAnalysisModel.TargetRef, CommandAnalysisModel.PreviewState> states = new HashMap<>();
             for (ItemInfoLogic.TagEntry entry : relatedTags.entries()) {
                 byKey.put(entry.key(), entry);
-                String statusKey = switch (entry.status().kind()) {
-                    case RECORDED -> "recorded";
-                    case TARGET -> "target";
-                    case TARGET_PROGRESS -> "target_progress";
-                    case NONE -> "none";
-                };
-                states.put(new CommandAnalysisModel.TargetRef(entry.key().itemId(), entry.key().count()),
-                        new CommandAnalysisModel.PreviewState(statusKey, entry.status().current(),
-                                entry.status().goal(), entry.status().record() != null
-                                ? entry.status().record().playTicks() : 0L));
             }
             List<CommandAnalysisModel.TargetRef> relatedRefs = relatedKeys.stream()
                     .map(k -> new CommandAnalysisModel.TargetRef(k.itemId(), k.count())).toList();
+            Map<CommandAnalysisModel.TargetRef, CommandAnalysisModel.PreviewState> states =
+                    infoPreviewStates(relatedRefs, relatedTags.entries());
             CommandAnalysisModel.PreviewResult result = CommandAnalysisModel.infoPreview(relatedRefs, states);
             source.sendSuccess(() -> ServerLang.tr(player, "message.itemmilestonelog.info_preview_header",
                     result.entries().size() + result.moreCount()), false);
@@ -4000,6 +4183,31 @@ public final class MilestoneCommands {
             }
         }
         return lines;
+    }
+
+    /**
+     * SF-8: preview states for every related key. Untracked keys get a NONE state so they appear in
+     * the preview; displayed entries override the default with their real status by key.
+     */
+    static Map<CommandAnalysisModel.TargetRef, CommandAnalysisModel.PreviewState> infoPreviewStates(
+            List<CommandAnalysisModel.TargetRef> relatedRefs, List<ItemInfoLogic.TagEntry> displayedEntries) {
+        Map<CommandAnalysisModel.TargetRef, CommandAnalysisModel.PreviewState> states = new HashMap<>();
+        for (CommandAnalysisModel.TargetRef ref : relatedRefs) {
+            states.put(ref, new CommandAnalysisModel.PreviewState("none", 0, 0, 0L));
+        }
+        for (ItemInfoLogic.TagEntry entry : displayedEntries) {
+            String statusKey = switch (entry.status().kind()) {
+                case RECORDED -> "recorded";
+                case TARGET -> "target";
+                case TARGET_PROGRESS -> "target_progress";
+                case NONE -> "none";
+            };
+            states.put(new CommandAnalysisModel.TargetRef(entry.key().itemId(), entry.key().count()),
+                    new CommandAnalysisModel.PreviewState(statusKey, entry.status().current(),
+                            entry.status().goal(), entry.status().record() != null
+                            ? entry.status().record().playTicks() : 0L));
+        }
+        return states;
     }
 
     /**

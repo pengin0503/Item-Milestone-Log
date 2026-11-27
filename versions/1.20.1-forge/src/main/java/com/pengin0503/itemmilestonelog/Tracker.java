@@ -70,6 +70,8 @@ public final class Tracker {
     private static volatile DefaultTargetsCache defaultTargetsCache = new DefaultTargetsCache(null, Set.of());
     /** Craft/smelt results awaiting verification next tick: player -> itemId -> max event count. Server thread only. */
     private static final Map<UUID, Map<String, Integer>> PENDING_CRAFT_CHECKS = new HashMap<>();
+    /** RB-2: stored {@code lastSeen} captured before each login overwrote it. Server thread only. */
+    private static final Map<UUID, Long> PRE_LOGIN_LAST_SEEN = new HashMap<>();
 
     record QueuedRecord(TargetKey key, MilestoneRecord record, boolean worldFirst) {
     }
@@ -358,7 +360,11 @@ public final class Tracker {
             long nowMillis,
             int playTicks,
             Predicate<String> modLoaded) {
-        int firstJoinAdded = data.playerOrNull(playerId) == null
+        // R2-MN-2(a): the production capture lives in the login path itself (the event handler
+        // routes through this overload), before any first-join preset or lastSeen overwrite.
+        MilestoneData.PlayerData beforeLogin = data.playerOrNull(playerId);
+        rememberPreLoginLastSeen(playerId, beforeLogin != null ? beforeLogin.lastSeen : 0L);
+        int firstJoinAdded = beforeLogin == null
                 ? MilestoneService.applyFirstJoinPresets(
                         data, playerId, firstJoinPresets, isKnownNonAirItem, presetsEnabled)
                 : 0;
@@ -804,6 +810,16 @@ public final class Tracker {
     @Nullable
     static Map<String, Integer> takePendingCraftChecks(UUID playerId) {
         return PENDING_CRAFT_CHECKS.remove(playerId);
+    }
+
+    /** RB-2: remembers the pre-login {@code lastSeen} for {@code recap return}. */
+    static void rememberPreLoginLastSeen(UUID playerId, long value) {
+        PRE_LOGIN_LAST_SEEN.put(playerId, value);
+    }
+
+    /** RB-2: the captured pre-login {@code lastSeen}, or 0 when this JVM saw no login for the player. */
+    static long preLoginLastSeen(UUID playerId) {
+        return PRE_LOGIN_LAST_SEEN.getOrDefault(playerId, 0L);
     }
 
     @SubscribeEvent

@@ -11,13 +11,17 @@ import java.util.UUID;
  *
  * <p>A player's data is eligible for pruning iff ALL of the following hold:
  * <ul>
- *   <li>0 recorded milestones, 0 personal targets, and {@code carriedFromCreative} is empty</li>
+ *   <li>0 recorded milestones, 0 personal targets, and empty {@code carriedFromCreative},
+ *       {@code progressNotified}, {@code completedPresets} and {@code presetState} collections</li>
  *   <li>all personal settings are at their defaults ({@code muteBroadcasts}, {@code hideFromLookup},
  *       {@code muteProgressAlerts}, and {@code excludeFromDiscord} are all {@code false})</li>
  *   <li>the player is not currently online</li>
  *   <li>a last-seen timestamp is known ({@code > 0}) and is strictly more than {@code days} days
  *       before {@code nowMillis}</li>
  * </ul>
+ *
+ * <p>Cosmetic-only data ({@code lastKnownName}, {@code firstJoinHintShown}) never blocks pruning.
+ * {@code lastSeen} is the inactivity timestamp, not functional state.
  *
  * <p>Must remain Java 21 compatible and free of Minecraft/NeoForge dependencies.
  */
@@ -39,7 +43,10 @@ public final class PruneDataLogic {
             boolean muteBroadcasts,
             boolean hideFromLookup,
             boolean muteProgressAlerts,
-            boolean excludeFromDiscord) {
+            boolean excludeFromDiscord,
+            boolean progressNotifiedEmpty,
+            boolean completedPresetsEmpty,
+            boolean presetStateEmpty) {
     }
 
     private PruneDataLogic() {
@@ -47,7 +54,8 @@ public final class PruneDataLogic {
 
     /**
      * Returns whether the player's stored data has no records, no personal targets, no creative-carry
-     * markers, and all personal settings at their defaults.
+     * markers, no progress-notification thresholds, no completed-preset entries and no per-preset
+     * state, with all personal settings at their defaults. Cosmetic fields are deliberately ignored.
      */
     public static boolean isEmptyWithDefaultSettings(PlayerState state) {
         if (state == null) {
@@ -59,7 +67,10 @@ public final class PruneDataLogic {
                 && !state.muteBroadcasts()
                 && !state.hideFromLookup()
                 && !state.muteProgressAlerts()
-                && !state.excludeFromDiscord();
+                && !state.excludeFromDiscord()
+                && state.progressNotifiedEmpty()
+                && state.completedPresetsEmpty()
+                && state.presetStateEmpty();
     }
 
     /**

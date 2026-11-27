@@ -7,13 +7,17 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonPrimitive;
+import com.google.gson.stream.MalformedJsonException;
+import com.google.gson.stream.JsonReader;
+import com.google.gson.stream.JsonToken;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
 import net.neoforged.fml.loading.FMLPaths;
 
 import javax.annotation.Nullable;
 import java.io.IOException;
-import java.io.Reader;
+import java.io.StringReader;
 import java.io.Writer;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
@@ -313,9 +317,8 @@ public final class Presets {
         try {
             Files.createDirectories(dir);
         } catch (IOException e) {
+            // SF-12: a directory error must not discard already loaded custom presets.
             ItemMilestoneLog.LOGGER.error("[ItemMilestoneLog] Could not create presets directory {}: {}", dir, e.getMessage());
-            filePresets = Map.of();
-            rebuildLoadedPresets(strict);
             return 0;
         }
 
@@ -327,9 +330,8 @@ public final class Presets {
                     .sorted()
                     .forEach(jsonFiles::add);
         } catch (IOException e) {
+            // SF-12: keep the previous in-memory presets; the files are still intact.
             ItemMilestoneLog.LOGGER.error("[ItemMilestoneLog] Could not list presets directory {}: {}", dir, e.getMessage());
-            filePresets = Map.of();
-            rebuildLoadedPresets(strict);
             return 0;
         }
 
@@ -601,7 +603,10 @@ public final class Presets {
             return -1;
         }
         String raw = prim.getAsString();
-        return TargetKey.tryParseCount(raw);
+        // SF-6: the shipped schema declares count as an integer, which includes integral
+        // decimals/exponents (1.0, 1e0). Do not widen TargetKey's encoded-string parser.
+        Integer parsed = PresetMetadataLogic.parseStrictInt(raw);
+        return parsed != null && TargetKey.isValidCount(parsed) ? parsed : -1;
     }
 
     /**
@@ -662,6 +667,52 @@ public final class Presets {
 
     /** G2/F54 + F-140-11: everything a rewrite carries over from an existing preset file. */
     private record ExistingFields(PresetName name, ExtraFields extra) {
+    }
+
+    /**
+     * SF-4: the shipped schema never nests deeper than a handful of levels. Reject pathological
+     * documents with a streaming, non-recursive scan before Gson builds its tree, so a deeply
+     * nested file cannot overflow the stack on parsers that do recurse. Malformed JSON is left
+     * to the normal parser to diagnose.
+     */
+    private static final int MAX_JSON_NESTING = 128;
+
+    private static boolean isTooDeeplyNested(String json) {
+        try {
+            JsonReader reader = new JsonReader(new StringReader(json));
+            int depth = 0;
+            while (true) {
+                JsonToken token = reader.peek();
+                if (token == JsonToken.BEGIN_ARRAY || token == JsonToken.BEGIN_OBJECT) {
+                    if (++depth > MAX_JSON_NESTING) {
+                        return true;
+                    }
+                    if (token == JsonToken.BEGIN_ARRAY) {
+                        reader.beginArray();
+                    } else {
+                        reader.beginObject();
+                    }
+                } else if (token == JsonToken.END_ARRAY || token == JsonToken.END_OBJECT) {
+                    depth--;
+                    if (token == JsonToken.END_ARRAY) {
+                        reader.endArray();
+                    } else {
+                        reader.endObject();
+                    }
+                } else if (token == JsonToken.END_DOCUMENT) {
+                    return false;
+                } else if (token == JsonToken.NAME) {
+                    reader.nextName();
+                } else {
+                    reader.skipValue();
+                }
+            }
+        } catch (MalformedJsonException e) {
+            // Newer Gson versions enforce their own nesting limit while peeking.
+            return e.getMessage() != null && e.getMessage().contains("Nesting limit");
+        } catch (Exception | StackOverflowError ignored) {
+            return false;
+        }
     }
 
     /** A JSON primitive number's textual form, or {@code null} when it is not a number. */
@@ -829,18 +880,38 @@ public final class Presets {
 
     /**
      * G2/F54 + F-140-11: reads an existing file's carried-over fields. Only the fields are
-     * parsed (the items are replaced by the GUI save), and a corrupt/unreadable file yields
+     * parsed (the items are replaced by the GUI save), and a corrupt-but-readable file yields
      * defaults exactly like the historical name-only carry-over.
+     *
+     * <p>SF-4: Gson's recursive parser can throw {@link StackOverflowError} on deeply nested
+     * input; that is rejected with a warning like any other invalid document. SF-13: an I/O
+     * failure (or a nesting overflow) is propagated so a GUI save aborts instead of silently
+     * overwriting metadata that could not be read.
      */
-    private static ExistingFields readExistingFields(Path file) {
-        try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
-            JsonElement el = JsonParser.parseReader(reader);
+    private static ExistingFields readExistingFields(Path file) throws IOException {
+        try {
+            String content = Files.readString(file, StandardCharsets.UTF_8);
+            if (isTooDeeplyNested(content)) {
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Preset file {} is too deeply nested to read; refusing to overwrite it",
+                        file.getFileName());
+                throw new IOException("Preset file is too deeply nested to read");
+            }
+            JsonElement el = JsonParser.parseReader(new StringReader(content));
             if (el.isJsonObject()) {
                 JsonObject root = el.getAsJsonObject();
                 return new ExistingFields(extractName(root), parseExtraFields(root, file.getFileName().toString(), new Problems()));
             }
-        } catch (Exception ignored) {
-            // Corrupt or unreadable existing file: fall back to defaults (ID name, no new fields).
+        } catch (StackOverflowError e) {
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Preset file {} is too deeply nested to read; refusing to overwrite it",
+                    file.getFileName());
+            throw new IOException("Preset file is too deeply nested to read", e);
+        } catch (IOException e) {
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Could not read existing preset file {}; refusing to overwrite it: {}",
+                    file.getFileName(), e.getMessage());
+            throw e;
+        } catch (Exception e) {
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Could not read metadata from preset file {}; using defaults: {}",
+                    file.getFileName(), e.getMessage());
         }
         return new ExistingFields(PresetName.absent(), ExtraFields.EMPTY);
     }
@@ -874,13 +945,18 @@ public final class Presets {
             String content, String sourceLabel, String id, PresetKind kind, Problems problems) {
         JsonObject root;
         try {
+            if (isTooDeeplyNested(content)) {
+                ItemMilestoneLog.LOGGER.error("[ItemMilestoneLog] Preset file {} is too deeply nested; rejecting it", sourceLabel);
+                return null;
+            }
             JsonElement el = JsonParser.parseString(content);
             if (!el.isJsonObject()) {
                 ItemMilestoneLog.LOGGER.error("[ItemMilestoneLog] Preset file {} must contain a JSON object", sourceLabel);
                 return null;
             }
             root = el.getAsJsonObject();
-        } catch (Exception e) {
+        } catch (Exception | StackOverflowError e) {
+            // SF-4: JSON is parsed recursively; a deeply nested document can exhaust the stack.
             ItemMilestoneLog.LOGGER.error("[ItemMilestoneLog] Failed to parse preset file {}: {}", sourceLabel, e.getMessage());
             return null;
         }
@@ -971,7 +1047,16 @@ public final class Presets {
      * overwritten. F21: an ID that currently resolves to a datapack preset is rejected (place a
      * config-folder file by hand to intentionally shadow one).
      */
-    public static synchronized boolean saveCustomTo(Path dir, String id, List<TargetKey> items) throws IOException {
+    public static boolean saveCustomTo(Path dir, String id, List<TargetKey> items) throws IOException {
+        return saveCustomTo(dir, id, items, Config.strictPresetValidation());
+    }
+
+    /**
+     * SF-14: save path with an explicit validation mode (the production wrapper reads the
+     * config; unit tests use this seam). A strict-mode rejection happens before any write or
+     * in-memory update, so nothing is rolled back because nothing was changed.
+     */
+    static synchronized boolean saveCustomTo(Path dir, String id, List<TargetKey> items, boolean strict) throws IOException {
         if (!isValidId(id)) {
             throw new IllegalArgumentException("Invalid preset ID: " + id);
         }
@@ -1002,12 +1087,16 @@ public final class Presets {
 
         // F-140-11: groups are re-validated against the (includes-expanded) items that will
         // result from this save, so the written JSON matches the next reload exactly.
-        List<TargetKey> finalItems = expandItemsForSave(id, deduped, extra.includes());
+        SaveExpansion expansion = expandItemsForSave(id, deduped, extra.includes());
+        List<TargetKey> finalItems = expansion.items();
         PresetGroupLogic.Result groupResult = PresetGroupLogic.validate(extra.groups(), finalItems);
         for (String warning : groupResult.warnings()) {
             ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Preset '{}': {}", id, warning);
         }
         List<PresetGroup> groups = groupResult.groups();
+        List<String> problems = new ArrayList<>(expansion.problems());
+        problems.addAll(groupResult.warnings());
+        rejectStrictSave(id, strict, problems);
 
         writePresetFile(dir, id, name, extra, groups, deduped);
 
@@ -1030,7 +1119,12 @@ public final class Presets {
      *
      * @return always {@code false}: imports never overwrite an existing preset
      */
-    public static synchronized boolean saveImportedTo(Path dir, PresetDefinition definition) throws IOException {
+    public static boolean saveImportedTo(Path dir, PresetDefinition definition) throws IOException {
+        return saveImportedTo(dir, definition, Config.strictPresetValidation());
+    }
+
+    /** SF-14: import counterpart of {@link #saveCustomTo(Path, String, List, boolean)}. */
+    static synchronized boolean saveImportedTo(Path dir, PresetDefinition definition, boolean strict) throws IOException {
         if (definition == null) {
             throw new IllegalArgumentException("Missing preset definition");
         }
@@ -1056,12 +1150,17 @@ public final class Presets {
                 definition.category(), definition.order(), definition.version(), definition.requiredMods(),
                 definition.groups(), definition.nextPresets(), definition.unlockAfterHours());
         // Same re-validation as saveCustomTo so the written file matches the next reload.
-        List<TargetKey> finalItems = expandItemsForSave(id, deduped, extra.includes());
+        SaveExpansion expansion = expandItemsForSave(id, deduped, extra.includes());
+        List<TargetKey> finalItems = expansion.items();
         PresetGroupLogic.Result groupResult = PresetGroupLogic.validate(extra.groups(), finalItems);
         for (String warning : groupResult.warnings()) {
             ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Preset '{}': {}", id, warning);
         }
         List<PresetGroup> groups = groupResult.groups();
+        List<String> problems = new ArrayList<>(definition.problems());
+        problems.addAll(expansion.problems());
+        problems.addAll(groupResult.warnings());
+        rejectStrictSave(id, strict, problems);
 
         writePresetFile(dir, id, definition.name(), extra, groups, deduped);
 
@@ -1127,7 +1226,11 @@ public final class Presets {
      * with the GUI's new items substituted for that preset. Used only to re-validate groups (the
      * in-memory table is rebuilt by {@link #rebuildLoadedPresets()}).
      */
-    private static List<TargetKey> expandItemsForSave(String id, List<TargetKey> ownItems, List<String> includes) {
+    /** SF-14: expanded items together with the problems that strict mode would reject. */
+    private record SaveExpansion(List<TargetKey> items, List<String> problems) {
+    }
+
+    private static SaveExpansion expandItemsForSave(String id, List<TargetKey> ownItems, List<String> includes) {
         Map<String, PresetDefinition> raw = rawPresets(false);
         Map<String, List<TargetKey>> itemsById = new LinkedHashMap<>();
         Map<String, List<String>> includesById = new LinkedHashMap<>();
@@ -1141,7 +1244,23 @@ public final class Presets {
         for (String warning : result.warnings()) {
             ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Preset includes: {}", warning);
         }
-        return result.items(id);
+        return new SaveExpansion(result.items(id), result.problems(id));
+    }
+
+    /**
+     * SF-14: strict mode rejects a save whose collected problems would make
+     * {@link #rebuildLoadedPresets(boolean)} drop the preset on the next reload. Called before
+     * the file is written so the failure needs no rollback; the exception message carries the
+     * problem text and the command handler turns it into a user-visible failure.
+     */
+    private static void rejectStrictSave(String id, boolean strict, List<String> problems) {
+        if (!strict || problems.isEmpty()) {
+            return;
+        }
+        String first = problems.get(0);
+        ItemMilestoneLog.LOGGER.error(
+                "[ItemMilestoneLog] Refusing to save preset '{}' because strictPresetValidation is enabled: {}", id, first);
+        throw new IllegalArgumentException("Preset rejected by strict validation: " + first);
     }
 
     /** Writes a plain or per-language preset name field when a name is present. */

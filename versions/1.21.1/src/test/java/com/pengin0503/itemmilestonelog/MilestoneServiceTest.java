@@ -1814,6 +1814,53 @@ class MilestoneServiceTest {
     }
 
     @Test
+    void pruneInactivePlayersKeepsPersistedFunctionalStateButPrunesCosmeticOnlyPlayers() {
+        long now = 1_800_000_000_000L;
+        int days = 30;
+        long oldTime = now - (days * PruneDataLogic.MILLIS_PER_DAY) - 10_000L;
+
+        UUID cosmeticOnly = UUID.fromString("00000000-0000-0000-0000-0000000000f1");
+        UUID hasPresetState = UUID.fromString("00000000-0000-0000-0000-0000000000f2");
+        UUID hasProgressNotified = UUID.fromString("00000000-0000-0000-0000-0000000000f3");
+        UUID hasCompletedPreset = UUID.fromString("00000000-0000-0000-0000-0000000000f4");
+
+        MilestoneData data = new MilestoneData();
+
+        // Cosmetic-only fields still do not block pruning (F37).
+        MilestoneData.PlayerData cosmeticPd = data.player(cosmeticOnly);
+        cosmeticPd.lastSeen = oldTime;
+        cosmeticPd.lastKnownName = "OldVisitor";
+        cosmeticPd.firstJoinHintShown = true;
+
+        // SF-11: presetState-only players must survive; so must progress thresholds and completed presets.
+        MilestoneData.PlayerData presetPd = data.player(hasPresetState);
+        presetPd.lastSeen = oldTime;
+        presetPd.presetState.put("versioned_pack", new PresetState(true, 3));
+
+        MilestoneData.PlayerData progressPd = data.player(hasProgressNotified);
+        progressPd.lastSeen = oldTime;
+        progressPd.progressNotified.put(TargetKey.of("minecraft:iron_ingot"), 50);
+
+        MilestoneData.PlayerData completedPd = data.player(hasCompletedPreset);
+        completedPd.lastSeen = oldTime;
+        completedPd.completedPresets.add("vanilla_endgame");
+
+        assertEquals(4, data.allPlayers().size());
+        assertEquals(1, MilestoneService.pruneInactivePlayers(data, uuid -> false, null, now, days, false));
+        assertEquals(4, data.allPlayers().size());
+        assertEquals(1, MilestoneService.pruneInactivePlayers(data, uuid -> false, null, now, days, true));
+        assertEquals(3, data.allPlayers().size());
+
+        assertNull(data.playerOrNull(cosmeticOnly));
+        assertNotNull(data.playerOrNull(hasPresetState));
+        assertNotNull(data.playerOrNull(hasProgressNotified));
+        assertNotNull(data.playerOrNull(hasCompletedPreset));
+        assertEquals(new PresetState(true, 3), data.playerOrNull(hasPresetState).presetState.get("versioned_pack"));
+        assertEquals(50, data.playerOrNull(hasProgressNotified).progressNotified.get(TargetKey.of("minecraft:iron_ingot")));
+        assertEquals(Set.of("vanilla_endgame"), data.playerOrNull(hasCompletedPreset).completedPresets);
+    }
+
+    @Test
     void tagCommandHelpersBuildTagKeysAndPickTheTagErrorMessage() {
         assertEquals("#c:ingots/iron", MilestoneService.tagKeyId("c:ingots/iron"));
         assertEquals("message.itemmilestonelog.invalid_tag", MilestoneService.invalidTargetKey("#c:ingots/iron"));
@@ -2409,6 +2456,28 @@ class MilestoneServiceTest {
                 data, PLAYER_A, 500_000, knownItems::contains, true, id -> true).isEmpty());
         assertTrue(pd.targets.isEmpty());
         assertTrue(pd.presetState.get("unlock_after").autoApplied());
+    }
+
+    @Test
+    void unlockAfterHoursStillAppliesAfterThePlayTimeIntWraps(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("wrapped_unlock.json"), """
+                {
+                  "name": "Wrapped Unlock",
+                  "unlockAfterHours": 1.0,
+                  "items": ["minecraft:gold_ingot"]
+                }
+                """);
+        assertEquals(1, Presets.reloadFrom(dir));
+
+        MilestoneData data = new MilestoneData();
+        data.player(PLAYER_A);
+        Set<String> knownItems = Set.of("minecraft:gold_ingot");
+        // A wrapped vanilla PLAY_TIME reads as a negative int; the threshold must still fire.
+        List<MilestoneService.NextPresetAddition> added = MilestoneService.applyUnlockAfterHours(
+                data, PLAYER_A, -1, knownItems::contains, true, id -> true);
+        assertEquals(1, added.size());
+        assertEquals("wrapped_unlock", added.get(0).preset().id());
+        assertEquals(Set.of(TargetKey.of("minecraft:gold_ingot")), data.playerOrNull(PLAYER_A).targets);
     }
 
     @Test

@@ -61,6 +61,8 @@ class DiscordNotifierTest {
         DiscordNotifier.resetDigestThrottler();
         // Clear interrupt flag in case an interruption test left it set.
         Thread.interrupted();
+        // SF-10: never let a test executor/client leak into the next test.
+        DiscordNotifier.shutdown(0L);
     }
 
     @Test
@@ -2525,4 +2527,122 @@ class DiscordNotifierTest {
         assertEquals(expectedValue, field.get("value").getAsString());
         assertTrue(field.get("inline").getAsBoolean());
     }
+
+    // SF-10: a bounded-queue rejection must be counted, not silently discarded.
+    @Test
+    void queueFullRejectionsAreCountedAsDroppedPosts() throws Exception {
+        CountDownLatch release = new CountDownLatch(1);
+        Runnable blocked = () -> {
+            try {
+                release.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        };
+        DiscordNotifier.resetDropCountForTest();
+        try {
+            // The single worker takes one post; the bounded queue holds 100 more. Everything
+            // beyond that is rejected by the queue-full handler and must be accounted for.
+            for (int i = 0; i < 150; i++) {
+                DiscordNotifier.submitPostForTest(blocked);
+            }
+            assertTrue(DiscordNotifier.droppedPostCount() >= 40,
+                    "queue-full rejections must be counted: " + DiscordNotifier.droppedPostCount());
+        } finally {
+            release.countDown();
+        }
+    }
+
+    // SF-10: undelivered posts cancelled at stop time must be counted as drops.
+    @Test
+    void shutdownWithAFullQueueCountsTheDiscardedPosts() throws Exception {
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        Runnable blocked = () -> {
+            entered.countDown();
+            try {
+                release.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        };
+        DiscordNotifier.resetDropCountForTest();
+        try {
+            for (int i = 0; i < 50; i++) {
+                DiscordNotifier.submitPostForTest(blocked);
+            }
+            assertTrue(entered.await(5, TimeUnit.SECONDS));
+            // Zero window: stop must not wait when there is no delivery chance left.
+            DiscordNotifier.shutdown(0L);
+            assertTrue(DiscordNotifier.droppedPostCount() >= 40,
+                    "shutdown must count every queued post it discards: " + DiscordNotifier.droppedPostCount());
+        } finally {
+            release.countDown();
+        }
+    }
+
+    // R2-SF-2: the queue-full handler must report an ABANDONED result for a discarded incoming test.
+    @Test
+    void queueFullDiscardOfAnIncomingTestReportsAbandoned() throws Exception {
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        Runnable blocked = () -> {
+            entered.countDown();
+            try {
+                release.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        };
+        List<DiscordTestResult> abandoned = new ArrayList<>();
+        DiscordNotifier.resetTestInProgress();
+        DiscordNotifier.resetDropCountForTest();
+        try {
+            DiscordNotifier.submitPostForTest(blocked); // the single worker takes this one
+            assertTrue(entered.await(5, TimeUnit.SECONDS));
+            // The oldest queued post is a test task: the handler re-queues it and discards the
+            // incoming test task instead of letting its callback vanish.
+            DiscordNotifier.enqueueTestTaskForTest(() -> {}, r -> {});
+            for (int i = 0; i < 99; i++) {
+                DiscordNotifier.submitPostForTest(blocked);
+            }
+            assertNull(DiscordNotifier.sendTestMessage(
+                    DiscordRouting.Destination.MAIN, SECRET_WEBHOOK_1, key -> "", false, "en_us",
+                    Instant.ofEpochMilli(EPOCH_2023_11_14),
+                    r -> {
+                        throw new AssertionError("a discarded test must never complete normally");
+                    },
+                    abandoned::add));
+
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            while (abandoned.isEmpty() && System.nanoTime() < deadline) {
+                Thread.sleep(5);
+            }
+            assertEquals(1, abandoned.size(), "the discarded test must report abandonment");
+            assertEquals(DiscordTestResult.Kind.ABANDONED, abandoned.get(0).kind());
+            assertFalse(DiscordNotifier.isTestInProgress(), "the abandoned task must release the slot");
+        } finally {
+            release.countDown();
+        }
+    }
+
+    // SF-10: the flushed batch really gets the bounded window to deliver before shutdownNow.
+    @Test
+    void flushedBatchIsDeliveredInsideTheBoundedStopWindow() {
+        DiscordNotifier.resetDropCountForTest();
+        int posts = 20;
+        AtomicInteger delivered = new AtomicInteger();
+        for (int i = 0; i < posts; i++) {
+            DiscordNotifier.submitPostForTest(delivered::incrementAndGet);
+        }
+        long start = System.nanoTime();
+        DiscordNotifier.shutdown(DiscordNotifier.STOP_DELIVERY_WINDOW_MILLIS);
+        long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+        assertEquals(posts, delivered.get(), "the flushed batch must be delivered during the window");
+        assertEquals(0, DiscordNotifier.droppedPostCount(), "nothing should be dropped inside the window");
+        assertTrue(elapsedMillis < DiscordNotifier.STOP_DELIVERY_WINDOW_MILLIS,
+                "the stop window must stay bounded: " + elapsedMillis + " ms");
+    }
+
+
 }
