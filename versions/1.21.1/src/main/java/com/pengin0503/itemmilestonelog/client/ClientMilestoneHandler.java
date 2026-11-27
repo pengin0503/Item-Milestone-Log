@@ -254,6 +254,7 @@ public final class ClientMilestoneHandler {
      */
     private static void rebuildTooltipIndex(SyncMilestonesPayload payload) {
         latestSync = payload;
+        MilestoneHudOverlay.onSyncReceived(payload);
         List<ItemTooltipLogic.Status> statuses =
                 new ArrayList<>(payload.targets().size() + payload.records().size());
         Set<String> tagIds = new LinkedHashSet<>();

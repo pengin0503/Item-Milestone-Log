@@ -13,7 +13,7 @@ import java.util.Objects;
 import java.util.TreeSet;
 
 /**
- * Pure-Java storage for F-150-72 (N70): per-server overrides of the nine client display keys in
+ * Pure-Java storage for F-150-72 (N70): per-server overrides of the twelve client display keys in
  * {@code <configDir>/itemmilestonelog-client/profiles.json}. Profiles are keyed by the opaque
  * {@link ClientStorageIO#serverKey(String, String)} hash; raw addresses and world names are never
  * written. At most {@value #MAX_PROFILES} profiles are kept, oldest insertion first.
@@ -159,7 +159,7 @@ public final class ClientProfileStore {
         }
     }
 
-    /** Returns only the nine allowed display keys; unknown keys are silently discarded. */
+    /** Returns only the twelve allowed display keys; unknown keys are silently discarded. */
     public static Map<String, String> filter(Map<String, String> raw) {
         if (raw == null || raw.isEmpty()) {
             return Map.of();

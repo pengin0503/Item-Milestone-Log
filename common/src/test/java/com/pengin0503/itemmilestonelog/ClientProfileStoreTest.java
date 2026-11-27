@@ -12,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** F-150-72 regression coverage: hashed identity, nine-key allow-list, 32-profile cap, lenient reads. */
+/** F-150-72 regression coverage: hashed identity, twelve-key allow-list, 32-profile cap, lenient reads. */
 class ClientProfileStoreTest {
     @TempDir
     Path configDir;
@@ -20,9 +20,9 @@ class ClientProfileStoreTest {
     private static final String SERVER = ClientStorageIO.serverKey("mc.example.com:25565", "World One");
 
     @Test
-    void onlyTheNineDisplayKeysAreAccepted() {
-        assertEquals(9, DisplayOptions.KEYS.size());
-        assertEquals(9, ClientProfileStore.allowedKeys().size());
+    void onlyTheTwelveDisplayKeysAreAccepted() {
+        assertEquals(12, DisplayOptions.KEYS.size());
+        assertEquals(12, ClientProfileStore.allowedKeys().size());
         assertTrue(ClientProfileStore.allowedKeys().containsAll(DisplayOptions.KEYS));
 
         Map<String, String> raw = new LinkedHashMap<>();
@@ -30,10 +30,17 @@ class ClientProfileStoreTest {
         raw.put("serverAddress", "mc.example.com:25565");
         raw.put("autoBackupEnabled", "false");
         raw.put("tooltipMaxLines", "5");
+        // F-150-80-5: the three HUD layout keys are profile-overridable too.
+        raw.put("pinHudAnchor", "bottom-right");
+        raw.put("pinHudAutoHide", "false");
+        raw.put("pinHudScale", "125");
         Map<String, String> filtered = ClientProfileStore.filter(raw);
-        assertEquals(2, filtered.size());
+        assertEquals(5, filtered.size());
         assertEquals("true", filtered.get("pinHudEnabled"));
         assertEquals("5", filtered.get("tooltipMaxLines"));
+        assertEquals("bottom-right", filtered.get("pinHudAnchor"));
+        assertEquals("false", filtered.get("pinHudAutoHide"));
+        assertEquals("125", filtered.get("pinHudScale"));
         assertFalse(filtered.containsKey("serverAddress"));
         assertFalse(filtered.containsKey("autoBackupEnabled"));
     }
