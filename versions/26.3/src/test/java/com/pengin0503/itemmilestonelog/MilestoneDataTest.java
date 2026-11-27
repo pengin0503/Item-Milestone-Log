@@ -1519,4 +1519,171 @@ class MilestoneDataTest {
         assertTrue(loaded.loadReport().toOutcome().requiresEvacuation());
     }
 
+    @Test
+    void targetMetaMissingFromLegacyTagLoadsEmptyAndKeepsOtherFields() {
+        MilestoneData original = new MilestoneData();
+        MilestoneData.PlayerData pd = original.player(PLAYER_A);
+        TargetKey diamond = TargetKey.of("minecraft:diamond", 3);
+        MilestoneRecord record = new MilestoneRecord(1234, 5L, 1795600000000L);
+        pd.targets.add(diamond);
+        pd.records.put(diamond, record);
+        pd.lastKnownName = "Alice";
+        pd.completedPresets.add("vanilla_endgame");
+        pd.presetState.put("vanilla_endgame", new PresetState(true, 2));
+        original.recordWorldFirstIfAbsent(diamond, PLAYER_A, "Alice", record);
+
+        // A 1.4.0 file has no targetMeta key in its player compound.
+        CompoundTag saved = encodeRoot(original);
+        CompoundTag savedPlayers = saved.getCompoundOrEmpty("players");
+        CompoundTag savedPd = savedPlayers.getCompoundOrEmpty(PLAYER_A.toString());
+        savedPd.remove("targetMeta");
+        savedPlayers.put(PLAYER_A.toString(), savedPd);
+        saved.put("players", savedPlayers);
+
+        MilestoneData loaded = MilestoneData.CODEC.parse(NbtOps.INSTANCE, saved).getOrThrow();
+        MilestoneData.PlayerData loadedPd = loaded.playerOrNull(PLAYER_A);
+        assertNotNull(loadedPd);
+        assertTrue(loadedPd.targetMeta.isEmpty());
+        assertEquals(pd.targets, loadedPd.targets);
+        assertEquals(pd.records, loadedPd.records);
+        assertEquals("Alice", loadedPd.lastKnownName);
+        assertEquals(pd.completedPresets, loadedPd.completedPresets);
+        assertEquals(pd.presetState, loadedPd.presetState);
+        assertEquals(original.worldFirsts(), loaded.worldFirsts());
+    }
+
+    @Test
+    void targetMetaRoundTripsWithEncodedKeysAndExactFieldNames() {
+        MilestoneData original = new MilestoneData();
+        MilestoneData.PlayerData pd = original.player(PLAYER_A);
+        pd.targets.add(TargetKey.of("minecraft:diamond", 3));
+        pd.targets.add(TargetKey.of("minecraft:emerald"));
+        TargetMeta pinned = new TargetMeta(7, "star pick", true);
+        TargetMeta plain = new TargetMeta(2, "", false);
+        pd.targetMeta.put("minecraft:diamond#3", pinned);
+        pd.targetMeta.put("minecraft:emerald", plain);
+
+        CompoundTag saved = encodeRoot(original);
+        CompoundTag metas = saved.getCompoundOrEmpty("players")
+                .getCompoundOrEmpty(PLAYER_A.toString()).getCompoundOrEmpty("targetMeta");
+        assertTrue(metas.contains("minecraft:diamond#3"));
+        CompoundTag first = metas.getCompoundOrEmpty("minecraft:diamond#3");
+        assertEquals(7, first.getIntOr("priority", -1));
+        assertEquals("star pick", first.getStringOr("label", "?"));
+        assertTrue(first.getBooleanOr("pinned", false));
+        assertTrue(metas.contains("minecraft:emerald"));
+        assertEquals(2, metas.getCompoundOrEmpty("minecraft:emerald").getIntOr("priority", -1));
+
+        MilestoneData loaded = MilestoneData.CODEC.parse(NbtOps.INSTANCE, saved).getOrThrow();
+        MilestoneData.PlayerData loadedPd = loaded.playerOrNull(PLAYER_A);
+        assertNotNull(loadedPd);
+        assertEquals(Map.of("minecraft:diamond#3", pinned, "minecraft:emerald", plain), loadedPd.targetMeta);
+    }
+
+    @Test
+    void targetMetaLoaderSkipsMalformedElementsAndKeepsValidSiblings() {
+        MilestoneData original = new MilestoneData();
+        MilestoneData.PlayerData pd = original.player(PLAYER_A);
+        TargetKey diamond = TargetKey.of("minecraft:diamond", 3);
+        MilestoneRecord record = new MilestoneRecord(4321, 7L, 1795600000000L);
+        pd.targets.add(diamond);
+        pd.records.put(diamond, record);
+        pd.lastKnownName = "Alice";
+        pd.presetState.put("vanilla_endgame", new PresetState(true, 4));
+
+        CompoundTag saved = encodeRoot(original);
+        CompoundTag savedPd = saved.getCompoundOrEmpty("players").getCompoundOrEmpty(PLAYER_A.toString());
+
+        CompoundTag goodA = new CompoundTag();
+        goodA.putInt("priority", 4);
+        goodA.putString("label", "valid");
+        goodA.putBoolean("pinned", true);
+        CompoundTag goodB = new CompoundTag();
+        goodB.putInt("priority", 0);
+        goodB.putString("label", "");
+        goodB.putBoolean("pinned", false);
+        CompoundTag outOfRange = new CompoundTag();
+        outOfRange.putInt("priority", 12);
+        outOfRange.putString("label", "bad");
+        outOfRange.putBoolean("pinned", false);
+        CompoundTag overlong = new CompoundTag();
+        overlong.putInt("priority", 3);
+        overlong.putString("label", "x".repeat(33));
+        overlong.putBoolean("pinned", false);
+        CompoundTag wrongType = new CompoundTag();
+        wrongType.putString("priority", "5");
+        wrongType.putString("label", "bad");
+        wrongType.putBoolean("pinned", false);
+        CompoundTag metas = new CompoundTag();
+        metas.put("minecraft:diamond#3", goodA);
+        metas.put("minecraft:emerald", goodB);
+        metas.put("out_of_range", outOfRange);
+        metas.put("overlong", overlong);
+        metas.put("wrong_type", wrongType);
+        metas.put("scalar", StringTag.valueOf("nope"));
+        savedPd.put("targetMeta", metas);
+
+        MilestoneData loaded = MilestoneData.CODEC.parse(NbtOps.INSTANCE, saved).getOrThrow();
+        MilestoneData.PlayerData loadedPd = loaded.playerOrNull(PLAYER_A);
+        assertNotNull(loadedPd);
+        assertEquals(Map.of(
+                "minecraft:diamond#3", new TargetMeta(4, "valid", true),
+                "minecraft:emerald", new TargetMeta(0, "", false)), loadedPd.targetMeta);
+        assertNotNull(loaded.loadReport());
+        assertEquals(4, loaded.loadReport().elementSkipCount());
+        assertFalse(loaded.loadReport().totalFailure());
+        assertEquals(pd.targets, loadedPd.targets);
+        assertEquals(pd.records, loadedPd.records);
+        assertEquals("Alice", loadedPd.lastKnownName);
+        assertEquals(pd.presetState, loadedPd.presetState);
+    }
+
+    @Test
+    void removingTargetMetaFromSavedTagIsANonDestructiveDowngrade() {
+        MilestoneData original = new MilestoneData();
+        MilestoneData.PlayerData pd = original.player(PLAYER_A);
+        TargetKey diamond = TargetKey.of("minecraft:diamond", 3);
+        MilestoneRecord record = new MilestoneRecord(5555, 9L, 1795600000000L);
+        pd.targets.add(diamond);
+        pd.records.put(diamond, record);
+        pd.progressNotified.put(diamond, 25);
+        pd.completedPresets.add("vanilla_endgame");
+        pd.presetState.put("vanilla_endgame", new PresetState(true, 2));
+        pd.lastKnownName = "Alice";
+        pd.lastSeen = 1795800000000L;
+        pd.targetMeta.put("minecraft:diamond#3", new TargetMeta(9, "keep", true));
+        original.recordWorldFirstIfAbsent(diamond, PLAYER_A, "Alice", record);
+
+        CompoundTag saved = encodeRoot(original);
+        MilestoneData before = MilestoneData.CODEC.parse(NbtOps.INSTANCE, saved).getOrThrow();
+
+        // Simulate a 1.4.0 read: the unknown targetMeta key is dropped, nothing else changes.
+        CompoundTag downgraded = saved.copy();
+        CompoundTag players = downgraded.getCompoundOrEmpty("players");
+        CompoundTag playerTag = players.getCompoundOrEmpty(PLAYER_A.toString());
+        assertTrue(playerTag.contains("targetMeta"));
+        playerTag.remove("targetMeta");
+        players.put(PLAYER_A.toString(), playerTag);
+        downgraded.put("players", players);
+
+        MilestoneData after = MilestoneData.CODEC.parse(NbtOps.INSTANCE, downgraded).getOrThrow();
+        MilestoneData.PlayerData beforePd = before.playerOrNull(PLAYER_A);
+        MilestoneData.PlayerData afterPd = after.playerOrNull(PLAYER_A);
+        assertNotNull(beforePd);
+        assertNotNull(afterPd);
+        assertEquals(1, beforePd.targetMeta.size());
+        assertTrue(afterPd.targetMeta.isEmpty());
+        assertEquals(beforePd.targets, afterPd.targets);
+        assertEquals(beforePd.records, afterPd.records);
+        assertEquals(beforePd.progressNotified, afterPd.progressNotified);
+        assertEquals(beforePd.completedPresets, afterPd.completedPresets);
+        assertEquals(beforePd.presetState, afterPd.presetState);
+        assertEquals(beforePd.lastKnownName, afterPd.lastKnownName);
+        assertEquals(beforePd.lastSeen, afterPd.lastSeen);
+        assertEquals(before.worldFirsts(), after.worldFirsts());
+        assertEquals(before.retainedSchemaVersion(), after.retainedSchemaVersion());
+        assertNotNull(after.loadReport());
+        assertEquals(0, after.loadReport().elementSkipCount());
+    }
+
 }

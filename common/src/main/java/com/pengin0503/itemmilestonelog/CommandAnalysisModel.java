@@ -43,6 +43,12 @@ public final class CommandAnalysisModel {
     public static final long RECAP_DAILY_MILLIS = 24L * 60L * 60L * 1000L;
     /** Minecraft ticks per hour, used only for the optional daily pace value. */
     public static final long TICKS_PER_HOUR = 20L * 60L * 60L;
+    /** Lower bound of a quantity target, matching the trees' {@code TargetKey.MIN_COUNT}. */
+    public static final int MIN_COUNT = 1;
+    /** Upper bound of a quantity target, matching the trees' {@code TargetKey.MAX_COUNT}. */
+    public static final int MAX_COUNT = 1_000_000;
+    /** Maximum number of comma-separated counts accepted by {@code addsteps} (F-150-17). */
+    public static final int MAX_STEPS = 20;
 
     private CommandAnalysisModel() {
     }
@@ -1390,5 +1396,231 @@ public final class CommandAnalysisModel {
         int kept = Math.min(rows.size(), Math.max(0, maxRows));
         return new PresetMatrixResult(rows.subList(0, kept), rows.size() - kept,
                 presetIdsInOrder.size() - columns.size());
+    }
+
+    // ==========================================================================================
+    // PR-3: shared set/cap math for the write commands
+    // (F-150-13/14/37 copy+share, F-150-17 steps, F-150-30 bulk, F-150-26 import dry-run)
+    //
+    // Everything below is Minecraft-free: the caller supplies already-resolved keys and applies the
+    // returned plan through its own MilestoneService calls. Nothing is stored, no config is read and
+    // no registry lookup happens here. Item id validity is only "non-null and non-blank".
+    // ==========================================================================================
+
+    private static boolean isValidRef(TargetRef key) {
+        return key != null && key.itemId() != null && !key.itemId().isBlank();
+    }
+
+    /** Non-null, blank-free keys, in iteration order (used for read-only membership checks). */
+    private static Set<TargetRef> validKeySet(Collection<TargetRef> keys) {
+        Set<TargetRef> unique = new LinkedHashSet<>();
+        if (keys != null) {
+            for (TargetRef key : keys) {
+                if (isValidRef(key)) {
+                    unique.add(key);
+                }
+            }
+        }
+        return unique;
+    }
+
+    /** The missing keys of a copy, the number of skipped source keys and the number to copy. */
+    public record CopyPlan(List<TargetRef> missing, int skipped, int copied) {
+        public CopyPlan {
+            missing = List.copyOf(missing);
+        }
+    }
+
+    /**
+     * F-150-13/14/37: keys in {@code source} absent from {@code existing}, in source iteration order,
+     * capped by the remaining capacity ({@code maxTargets - existing.size()}, never negative). The
+     * existing keys, duplicate keys and capacity overflow are counted as skipped; nothing is mutated
+     * and no record data is involved. The caller decides which keys belong in {@code source} (for
+     * example, config defaults are excluded by the caller because everybody already has them).
+     */
+    public static CopyPlan copyTargets(Collection<TargetRef> existing, Collection<TargetRef> source,
+                                       int maxTargets) {
+        Set<TargetRef> known = validKeySet(existing);
+        int existingSize = existing == null ? 0 : existing.size();
+        int capacity = Math.max(0, maxTargets - existingSize);
+        Set<TargetRef> added = new LinkedHashSet<>();
+        List<TargetRef> missing = new ArrayList<>();
+        int skipped = 0;
+        if (source != null) {
+            for (TargetRef key : source) {
+                if (!isValidRef(key) || known.contains(key) || !added.add(key)
+                        || missing.size() >= capacity) {
+                    skipped++;
+                } else {
+                    missing.add(key);
+                }
+            }
+        }
+        return new CopyPlan(missing, skipped, missing.size());
+    }
+
+    /** F-150-37: share acceptance is exactly the F-150-13 copy calculation, with no duplicate logic. */
+    public static CopyPlan sharePlan(Collection<TargetRef> existing, Collection<TargetRef> shared,
+                                     int maxTargets) {
+        return copyTargets(existing, shared, maxTargets);
+    }
+
+    /**
+     * Strict comma-separated {@code addsteps} parse: 1..{@link #MAX_STEPS} counts, each an unsigned
+     * decimal integer in {@link #MIN_COUNT}..{@link #MAX_COUNT}, strictly ascending. Signs, spaces,
+     * decimals, empty entries and overflow are rejected with {@code null} rather than an exception.
+     */
+    public static List<Integer> parseSteps(String raw) {
+        if (raw == null || raw.isEmpty()) {
+            return null;
+        }
+        String[] parts = raw.split(",", -1);
+        if (parts.length > MAX_STEPS) {
+            return null;
+        }
+        List<Integer> values = new ArrayList<>(parts.length);
+        int previous = Integer.MIN_VALUE;
+        for (String part : parts) {
+            if (part.isEmpty()) {
+                return null;
+            }
+            long value = 0L;
+            for (int i = 0; i < part.length(); i++) {
+                char digit = part.charAt(i);
+                if (digit < '0' || digit > '9') {
+                    return null;
+                }
+                value = value * 10L + (digit - '0');
+                if (value > MAX_COUNT) {
+                    return null;
+                }
+            }
+            int count = (int) value;
+            if (count < MIN_COUNT || count > MAX_COUNT || count <= previous) {
+                return null;
+            }
+            values.add(count);
+            previous = count;
+        }
+        return List.copyOf(values);
+    }
+
+    /** New step keys for one caller-supplied item id (tags arrive as {@code "#tag"}). */
+    public record StepsPlan(List<TargetRef> keys, int skipped, int invalid) {
+        public StepsPlan {
+            keys = List.copyOf(keys);
+        }
+    }
+
+    /**
+     * F-150-17: builds {@code TargetRef(itemId, count)} keys from already parsed counts, filters the
+     * keys already present and applies exactly the {@link #copyTargets} capacity rule. Counts that
+     * are null or outside the quantity range are reported as invalid (normally zero because
+     * {@link #parseSteps} has already validated the input).
+     */
+    public static StepsPlan stepsFor(String itemId, Collection<Integer> counts,
+                                     Collection<TargetRef> existing, int maxTargets) {
+        boolean validId = itemId != null && !itemId.isBlank();
+        List<TargetRef> candidates = new ArrayList<>();
+        int invalid = 0;
+        if (counts != null) {
+            for (Integer count : counts) {
+                if (!validId || count == null || count < MIN_COUNT || count > MAX_COUNT) {
+                    invalid++;
+                } else {
+                    candidates.add(new TargetRef(itemId, count));
+                }
+            }
+        }
+        CopyPlan plan = copyTargets(existing, candidates, maxTargets);
+        return new StepsPlan(plan.missing(), plan.skipped(), invalid);
+    }
+
+    /** F-150-30 {@code bulk preview}: the three actionable counts plus the tag capacity overflow. */
+    public record BulkPlan(int stepTargets, int taggedItems, int completedTargets, int skipped) {
+    }
+
+    /**
+     * Read-only preview over personal targets. {@code stepTargets} are quantity goals,
+     * {@code completedTargets} are personal goals already present in {@code recordedKeys}, and
+     * {@code taggedItems} are the new keys {@code expandtag} would add, capped by the same capacity
+     * rule as copy/steps. Records and world firsts are never touched by this calculation.
+     */
+    public static BulkPlan bulkPlan(Collection<TargetRef> targets, Set<TargetRef> recordedKeys,
+                                    Collection<TargetRef> tagItems, int maxTargets) {
+        Set<TargetRef> recorded = recordedKeys == null ? Set.of() : recordedKeys;
+        int stepTargets = 0;
+        int completedTargets = 0;
+        if (targets != null) {
+            for (TargetRef key : targets) {
+                if (!isValidRef(key)) {
+                    continue;
+                }
+                if (key.count() > MIN_COUNT) {
+                    stepTargets++;
+                }
+                if (recorded.contains(key)) {
+                    completedTargets++;
+                }
+            }
+        }
+        CopyPlan tags = copyTargets(targets, tagItems, maxTargets);
+        return new BulkPlan(stepTargets, tags.copied(), completedTargets, tags.skipped());
+    }
+
+    /** F-150-26 dry run: the four displayed counts, with no writes and no detail lines. */
+    public record ImportPreview(int targetsToAdd, int recordsToOverwrite, int newWorldFirsts,
+                                int skipped) {
+    }
+
+    /**
+     * Pure four-number diff for {@code import} / {@code importall dryrun}. Target adds reuse the
+     * copy capacity rule; a record is overwritten only when the imported playTicks is strictly
+     * smaller than the stored one; world firsts are deduplicated. Invalid/null keys are skipped and
+     * included in {@code skipped}. Every argument is read-only.
+     */
+    public static ImportPreview importPreview(Collection<TargetRef> currentTargets,
+                                              Collection<TargetRef> importedTargets,
+                                              Map<TargetRef, Integer> currentRecords,
+                                              Map<TargetRef, Integer> importedRecords,
+                                              Collection<TargetRef> currentFirsts,
+                                              Collection<TargetRef> importedFirsts,
+                                              int maxTargets) {
+        CopyPlan targets = copyTargets(currentTargets, importedTargets, maxTargets);
+        int skipped = targets.skipped();
+        int recordsToOverwrite = 0;
+        if (importedRecords != null) {
+            for (Map.Entry<TargetRef, Integer> entry : importedRecords.entrySet()) {
+                TargetRef key = entry.getKey();
+                if (!isValidRef(key)) {
+                    skipped++;
+                    continue;
+                }
+                Integer importedTicks = entry.getValue();
+                if (importedTicks == null || currentRecords == null) {
+                    continue;
+                }
+                Integer currentTicks = currentRecords.get(key);
+                if (currentTicks != null && importedTicks < currentTicks) {
+                    recordsToOverwrite++;
+                }
+            }
+        }
+        Set<TargetRef> knownFirsts = validKeySet(currentFirsts);
+        Set<TargetRef> seenNew = new LinkedHashSet<>();
+        int newWorldFirsts = 0;
+        if (importedFirsts != null) {
+            for (TargetRef key : importedFirsts) {
+                if (!isValidRef(key)) {
+                    skipped++;
+                    continue;
+                }
+                if (knownFirsts.contains(key) || !seenNew.add(key)) {
+                    continue;
+                }
+                newWorldFirsts++;
+            }
+        }
+        return new ImportPreview(targets.copied(), recordsToOverwrite, newWorldFirsts, skipped);
     }
 }

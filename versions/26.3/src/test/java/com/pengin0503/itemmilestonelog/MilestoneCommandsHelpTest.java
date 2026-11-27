@@ -968,7 +968,13 @@ class MilestoneCommandsHelpTest {
                 "message.itemmilestonelog.help.compare_branches",
                 "message.itemmilestonelog.help.compact",
                 "message.itemmilestonelog.help.info_preview",
-                "message.itemmilestonelog.help.list_sort");
+                "message.itemmilestonelog.help.list_sort",
+                "message.itemmilestonelog.help.admin_addtag",
+                "message.itemmilestonelog.help.admin_copyfrom",
+                "message.itemmilestonelog.help.admin_granttag",
+                "message.itemmilestonelog.help.admin_removetag",
+                "message.itemmilestonelog.help.import_dryrun",
+                "message.itemmilestonelog.help.undo_list");
         actualHelpKeys.removeAll(auxiliaryHelpKeys);
         assertEquals(expectedHelpKeys, actualHelpKeys,
                 "en_us.json help.* keys must match CommandHelp.ENTRIES plus PR-1 and PR-2 auxiliary keys");
@@ -1023,6 +1029,74 @@ class MilestoneCommandsHelpTest {
         List<String> opAdminUsages = MilestoneCommands.helpUsages(op, null, entryByName("admin"));
         assertTrue(opAdminUsages.stream().anyMatch(u -> u.contains("players")), () -> "Expected players usage: " + opAdminUsages);
         assertTrue(opAdminUsages.stream().anyMatch(u -> u.contains("<player>")), () -> "Expected <player> usage: " + opAdminUsages);
+    }
+
+    @Test
+    void pr3WriteOperationsAreRegisteredWithExpectedGatesAndSyntax() {
+        CommandDispatcher<CommandSourceStack> op = buildDispatcher(src -> true);
+        CommandDispatcher<CommandSourceStack> regular = buildDispatcher(src -> false);
+        CommandNode<CommandSourceStack> root = op.getRoot().getChild("milestonelog");
+        assertNotNull(root);
+
+        for (String name : List.of("copytargets", "sharetargets", "addsteps", "bulk", "pinned")) {
+            assertNotNull(root.getChild(name), "missing PR-3 top-level literal: " + name);
+        }
+        assertEquals(CommandHelp.Gate.LOOKUP, entryByName("copytargets").gate());
+        assertEquals(CommandHelp.Gate.LOOKUP, entryByName("sharetargets").gate());
+        assertEquals(CommandHelp.Gate.NONE, entryByName("addsteps").gate());
+        assertEquals(CommandHelp.Gate.NONE, entryByName("bulk").gate());
+        assertEquals(CommandHelp.Gate.NONE, entryByName("pinned").gate());
+
+        CommandNode<CommandSourceStack> adminPlayer = root.getChild("admin").getChild("player");
+        assertNotNull(adminPlayer);
+        for (String name : List.of("copyfrom", "addtag", "removetag", "granttag", "resettag")) {
+            assertNotNull(adminPlayer.getChild(name), "missing admin literal: " + name);
+        }
+        CommandNode<CommandSourceStack> regularAdmin = regular.getRoot().getChild("milestonelog")
+                .getChild("admin");
+        assertFalse(regularAdmin.canUse(null), "admin must still require the admin node");
+        assertNotNull(regularAdmin.getChild("player").getChild("copyfrom"));
+
+        assertNotNull(root.getChild("undo").getChild("list"));
+        assertNotNull(root.getChild("undo").getChild("generation"));
+        assertNotNull(root.getChild("import").getChild("fileName").getChild("dryrun"));
+        assertNotNull(root.getChild("importall").getChild("fileName").getChild("dryrun"));
+        assertNotNull(root.getChild("targets").getChild("meta"));
+        assertNotNull(root.getChild("bulk").getChild("addsteps"));
+        assertNotNull(root.getChild("bulk").getChild("expandtag"));
+        assertNotNull(root.getChild("bulk").getChild("cleanup"));
+        assertNotNull(root.getChild("bulk").getChild("preview"));
+
+        for (String line : List.of(
+                "milestonelog copytargets Alice",
+                "milestonelog copytargets Alice confirm",
+                "milestonelog sharetargets offer Alice",
+                "milestonelog sharetargets accept \"IML1:abc\"",
+                "milestonelog sharetargets accept \"IML1:abc\" confirm",
+                "milestonelog sharetargets revoke",
+                "milestonelog addsteps minecraft:diamond \"10,25,50\"",
+                "milestonelog addsteps tag c:ingots/iron \"10,25\"",
+                "milestonelog addsteps minecraft:diamond \"10,25,50\" confirm",
+                "milestonelog bulk preview",
+                "milestonelog bulk addsteps minecraft:diamond \"10,25\"",
+                "milestonelog bulk expandtag c:ingots/iron confirm",
+                "milestonelog bulk cleanup",
+                "milestonelog pinned",
+                "milestonelog undo list",
+                "milestonelog undo 2",
+                "milestonelog targets meta minecraft:diamond",
+                "milestonelog targets meta minecraft:diamond 10 priority 5 label \"main\" pin on",
+                "milestonelog targets meta clear minecraft:diamond",
+                "milestonelog admin Alice copyfrom Bob",
+                "milestonelog admin Alice copyfrom Bob confirm",
+                "milestonelog admin Alice addtag c:ingots/iron 5",
+                "milestonelog admin Alice removetag c:ingots/iron",
+                "milestonelog admin Alice granttag c:ingots/iron 5")) {
+            ParseResults<CommandSourceStack> parse = op.parse(line, null);
+            assertFalse(parse.getReader().canRead(), "must fully parse: " + line);
+            assertTrue(parse.getExceptions().isEmpty(), line + ": " + parse.getExceptions());
+            assertNotNull(parse.getContext().getCommand(), line);
+        }
     }
 
     @Test

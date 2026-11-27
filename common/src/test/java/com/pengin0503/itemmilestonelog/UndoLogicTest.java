@@ -2,6 +2,7 @@ package com.pengin0503.itemmilestonelog;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -13,6 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** F23 undo: restore rules (re-record conflict, progressNotified, completedPresets) and the snapshot store. */
@@ -240,19 +242,161 @@ class UndoLogicTest {
     }
 
     @Test
-    void consumeRemovesOnlyTheGivenSnapshot() {
+    void consumeInvalidatesTheGivenGenerationAndAllNewerOnes() {
+        UndoLogic.Store<String, Rec> store = new UndoLogic.Store<>();
+        UndoLogic.Snapshot<String, Rec> first = resetSnapshot(Map.of("a", new Rec(1, "s")), Set.of(), Map.of(), 0L);
+        UndoLogic.Snapshot<String, Rec> second = resetSnapshot(Map.of("b", new Rec(2, "s")), Set.of(), Map.of(), 1L);
+        UndoLogic.Snapshot<String, Rec> third = resetSnapshot(Map.of("c", new Rec(3, "s")), Set.of(), Map.of(), 2L);
+        store.offer(PLAYER_A, first);
+        store.offer(PLAYER_A, second);
+        store.offer(PLAYER_A, third);
+
+        store.consume(PLAYER_A, second); // middle generation: second and the newer third are invalid
+        assertSame(first, store.peekValid(PLAYER_A, 3L));
+        assertEquals(1, store.size());
+
+        store.offer(PLAYER_A, second);
+        store.offer(PLAYER_A, third);
+        store.consume(PLAYER_A, third); // newest generation: only it is removed
+        assertSame(second, store.peekValid(PLAYER_A, 3L));
+        assertEquals(List.of(second, first), store.list(PLAYER_A, 3L));
+
+        store.consume(PLAYER_A, second);
+        assertSame(first, store.peekValid(PLAYER_A, 3L));
+        store.consume(PLAYER_A, first);
+        assertNull(store.peekValid(PLAYER_A, 3L));
+        assertEquals(0, store.size());
+
+        store.offer(PLAYER_B, first);
+        store.clear();
+        assertNull(store.peekValid(PLAYER_B, 0L));
+        assertEquals(0, store.size());
+    }
+
+    @Test
+    void historyRetainsFiveGenerationsNewestFirst() {
+        assertEquals(5, UndoLogic.UNDO_HISTORY_DEPTH);
+        UndoLogic.Store<String, Rec> store = new UndoLogic.Store<>();
+        List<UndoLogic.Snapshot<String, Rec>> offered = new ArrayList<>();
+        List<UndoLogic.Snapshot<String, Rec>> expectedNewestFirst = new ArrayList<>();
+        for (int i = 1; i <= UndoLogic.UNDO_HISTORY_DEPTH; i++) {
+            UndoLogic.Snapshot<String, Rec> snapshot =
+                    resetSnapshot(Map.of("k" + i, new Rec(i, "s")), Set.of(), Map.of(), i);
+            assertTrue(store.offer(PLAYER_A, snapshot));
+            offered.add(snapshot);
+        }
+        for (int i = offered.size() - 1; i >= 0; i--) {
+            expectedNewestFirst.add(offered.get(i));
+        }
+
+        assertEquals(5, store.size());
+        assertEquals(expectedNewestFirst, store.list(PLAYER_A, 6L));
+        assertSame(offered.get(0), store.get(PLAYER_A, 5, 6L));
+    }
+
+    @Test
+    void sixthOfferDropsOldestTailWhileNewestStays() {
+        UndoLogic.Store<String, Rec> store = new UndoLogic.Store<>();
+        List<UndoLogic.Snapshot<String, Rec>> offered = new ArrayList<>();
+        for (int i = 1; i <= UndoLogic.UNDO_HISTORY_DEPTH + 1; i++) {
+            UndoLogic.Snapshot<String, Rec> snapshot =
+                    resetSnapshot(Map.of("k" + i, new Rec(i, "s")), Set.of(), Map.of(), i);
+            assertTrue(store.offer(PLAYER_A, snapshot));
+            offered.add(snapshot);
+        }
+
+        assertEquals(UndoLogic.UNDO_HISTORY_DEPTH, store.size());
+        assertSame(offered.get(5), store.peekValid(PLAYER_A, 7L));
+        assertSame(offered.get(5), store.get(PLAYER_A, 1, 7L));
+        assertSame(offered.get(1), store.get(PLAYER_A, 5, 7L));
+        assertFalse(store.list(PLAYER_A, 7L).contains(offered.get(0)));
+    }
+
+    @Test
+    void listIsNewestFirstAndPrunesExpiredSnapshotsAtEveryPosition() {
+        long now = UndoLogic.VALIDITY_NANOS + 10L;
+        UndoLogic.Snapshot<String, Rec> oldest = resetSnapshot(Map.of("oldest", new Rec(1, "s")), Set.of(), Map.of(), 10L);
+        UndoLogic.Snapshot<String, Rec> expiredMiddle = resetSnapshot(Map.of("middle", new Rec(2, "s")), Set.of(), Map.of(), 9L);
+        UndoLogic.Snapshot<String, Rec> newest = resetSnapshot(Map.of("newest", new Rec(3, "s")), Set.of(), Map.of(), now);
+        UndoLogic.Store<String, Rec> store = new UndoLogic.Store<>();
+        store.offer(PLAYER_A, oldest);
+        store.offer(PLAYER_A, expiredMiddle);
+        store.offer(PLAYER_A, newest);
+
+        List<UndoLogic.Snapshot<String, Rec>> listed = store.list(PLAYER_A, now);
+        assertEquals(List.of(newest, oldest), listed);
+        assertEquals(2, store.size());
+        assertThrows(UnsupportedOperationException.class, () -> listed.add(newest));
+        assertSame(newest, store.peekValid(PLAYER_A, now));
+        assertSame(newest, store.get(PLAYER_A, 1, now));
+        assertSame(oldest, store.get(PLAYER_A, 2, now));
+
+        long later = now + UndoLogic.VALIDITY_NANOS + 2L;
+        assertTrue(store.list(PLAYER_A, later).isEmpty());
+        assertNull(store.peekValid(PLAYER_A, later));
+        assertEquals(0, store.size());
+    }
+
+    @Test
+    void getSupportsFirstAndFifthGenerationAndRejectsOutOfRange() {
+        UndoLogic.Store<String, Rec> store = new UndoLogic.Store<>();
+        List<UndoLogic.Snapshot<String, Rec>> offered = new ArrayList<>();
+        for (int i = 1; i <= 5; i++) {
+            UndoLogic.Snapshot<String, Rec> snapshot =
+                    resetSnapshot(Map.of("k" + i, new Rec(i, "s")), Set.of(), Map.of(), i);
+            store.offer(PLAYER_A, snapshot);
+            offered.add(snapshot);
+        }
+
+        assertSame(offered.get(4), store.get(PLAYER_A, 1, 6L));
+        assertSame(offered.get(0), store.get(PLAYER_A, 5, 6L));
+        assertNull(store.get(PLAYER_A, 0, 6L));
+        assertNull(store.get(PLAYER_A, 6, 6L));
+        assertNull(store.get(PLAYER_B, 1, 6L));
+
+        long later = UndoLogic.VALIDITY_NANOS + 2L;
+        assertNull(store.get(PLAYER_A, 5, later));
+        assertEquals(4, store.size());
+        assertSame(offered.get(1), store.get(PLAYER_A, 4, later));
+    }
+
+    @Test
+    void consumingMiddleGenerationDropsItAndNewerWhileOlderSurvives() {
+        UndoLogic.Store<String, Rec> store = new UndoLogic.Store<>();
+        UndoLogic.Snapshot<String, Rec> oldest = resetSnapshot(Map.of("a", new Rec(1, "s")), Set.of(), Map.of(), 0L);
+        UndoLogic.Snapshot<String, Rec> middle = resetSnapshot(Map.of("b", new Rec(2, "s")), Set.of(), Map.of(), 1L);
+        UndoLogic.Snapshot<String, Rec> newest = resetSnapshot(Map.of("c", new Rec(3, "s")), Set.of(), Map.of(), 2L);
+        store.offer(PLAYER_A, oldest);
+        store.offer(PLAYER_A, middle);
+        store.offer(PLAYER_A, newest);
+
+        store.consume(PLAYER_A, middle);
+
+        assertEquals(List.of(oldest), store.list(PLAYER_A, 3L));
+        assertSame(oldest, store.peekValid(PLAYER_A, 3L));
+        assertEquals(1, store.size());
+        store.consume(PLAYER_A, newest); // already invalidated: no-op
+        assertSame(oldest, store.peekValid(PLAYER_A, 3L));
+    }
+
+    @Test
+    void clearAndEmptyOrNullOffersLeaveANonEmptyStackUntouched() {
         UndoLogic.Store<String, Rec> store = new UndoLogic.Store<>();
         UndoLogic.Snapshot<String, Rec> first = resetSnapshot(Map.of("a", new Rec(1, "s")), Set.of(), Map.of(), 0L);
         UndoLogic.Snapshot<String, Rec> second = resetSnapshot(Map.of("b", new Rec(2, "s")), Set.of(), Map.of(), 1L);
         store.offer(PLAYER_A, first);
         store.offer(PLAYER_A, second);
-        store.consume(PLAYER_A, first);
-        assertSame(second, store.peekValid(PLAYER_A, 2L));
-        store.consume(PLAYER_A, second);
-        assertNull(store.peekValid(PLAYER_A, 2L));
 
-        store.offer(PLAYER_B, first);
+        assertFalse(store.offer(PLAYER_A, resetSnapshot(Map.of(), Set.of("p"), Map.of(), 5L)));
+        assertFalse(store.offer(PLAYER_A, UndoLogic.Snapshot.bulkRemoval(List.of(), Map.of(), 5L)));
+        assertFalse(store.offer(PLAYER_A, null));
+        store.consume(PLAYER_A, null);
+        assertEquals(2, store.size());
+        assertEquals(List.of(second, first), store.list(PLAYER_A, 6L));
+
         store.clear();
-        assertNull(store.peekValid(PLAYER_B, 0L));
+        assertEquals(0, store.size());
+        assertTrue(store.list(PLAYER_A, 6L).isEmpty());
+        assertNull(store.peekValid(PLAYER_A, 6L));
     }
 }
