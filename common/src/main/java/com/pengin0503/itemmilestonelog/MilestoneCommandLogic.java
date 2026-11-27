@@ -35,6 +35,15 @@ public final class MilestoneCommandLogic {
     public static final String PLACEHOLDER_COUNT = "%count%";
     public static final String PLACEHOLDER_PLAYTIME = "%playtime%";
     public static final String PLACEHOLDER_WORLD_FIRST = "%worldfirst%";
+    /** F-150-45 (N13): preset-completion-only placeholders. F7's template is unchanged. */
+    public static final String PLACEHOLDER_PRESET = "%preset%";
+    public static final String PLACEHOLDER_BUILTIN = "%builtin%";
+
+    /**
+     * Safe preset-ID format. Must stay in sync with {@code Presets.isValidId}; the version layer
+     * additionally rejects that class's reserved command literals before enqueueing (D-150-118).
+     */
+    private static final Pattern VALID_PRESET_ID_PATTERN = Pattern.compile("^[a-z0-9_-]{1,32}$");
 
     private MilestoneCommandLogic() {
     }
@@ -47,12 +56,19 @@ public final class MilestoneCommandLogic {
         return playerName != null && VALID_PLAYER_NAME.matcher(playerName).matches();
     }
 
-    /** Outcome status of {@link #render}. */
+    /** Format check for {@code %preset%}; the version layer also rejects reserved preset IDs. */
+    public static boolean isValidPresetId(String presetId) {
+        return presetId != null && VALID_PRESET_ID_PATTERN.matcher(presetId).matches();
+    }
+
+    /** Outcome status of {@link #render} and {@link #renderForPreset}. */
     public enum RenderStatus {
         /** Config template is empty/blank (feature disabled). */
         DISABLED,
         /** Template references {@code %player%} but the player name failed validation. */
         INVALID_PLAYER_NAME,
+        /** F-150-45 only: template references {@code %preset%} with an unsafe preset ID. */
+        INVALID_PRESET_ID,
         /** Command was rendered and is ready to execute. */
         READY
     }
@@ -61,6 +77,7 @@ public final class MilestoneCommandLogic {
     public record RenderResult(RenderStatus status, String command) {
         public static final RenderResult DISABLED = new RenderResult(RenderStatus.DISABLED, null);
         public static final RenderResult INVALID_PLAYER_NAME = new RenderResult(RenderStatus.INVALID_PLAYER_NAME, null);
+        public static final RenderResult INVALID_PRESET_ID = new RenderResult(RenderStatus.INVALID_PRESET_ID, null);
 
         public static RenderResult ready(String command) {
             return new RenderResult(RenderStatus.READY, Objects.requireNonNull(command, "command"));
@@ -98,45 +115,70 @@ public final class MilestoneCommandLogic {
             return RenderResult.INVALID_PLAYER_NAME;
         }
 
-        String uuidStr = playerUuid != null ? playerUuid.toString() : "";
-        String itemStr = itemId != null ? itemId : "";
-        String countStr = Integer.toString(count);
-        String playtimeStr = formattedPlaytime != null ? formattedPlaytime : "";
-        String worldFirstStr = Boolean.toString(worldFirst);
+        Map<String, String> values = new LinkedHashMap<>();
+        values.put(PLACEHOLDER_PLAYER, playerName);
+        values.put(PLACEHOLDER_UUID, playerUuid != null ? playerUuid.toString() : "");
+        values.put(PLACEHOLDER_ITEM, itemId != null ? itemId : "");
+        values.put(PLACEHOLDER_COUNT, Integer.toString(count));
+        values.put(PLACEHOLDER_PLAYTIME, formattedPlaytime != null ? formattedPlaytime : "");
+        values.put(PLACEHOLDER_WORLD_FIRST, Boolean.toString(worldFirst));
+        return renderResolved(template, playerName, values);
+    }
+
+    /**
+     * F-150-45 (N13): renders the separate preset-completion template. The existing F7
+     * {@link #render} signature and output are unchanged; this overload uses its own placeholder
+     * table ({@code %player%}, {@code %uuid%}, {@code %preset%}, {@code %builtin%}) and the same
+     * shared single-pass substitution and player-name validation.
+     */
+    public static RenderResult renderForPreset(
+            String template,
+            String playerName,
+            UUID playerUuid,
+            String presetId,
+            boolean builtin) {
+        if (template == null || template.trim().isEmpty()) {
+            return RenderResult.DISABLED;
+        }
+        if (template.contains(PLACEHOLDER_PRESET) && !isValidPresetId(presetId)) {
+            return RenderResult.INVALID_PRESET_ID;
+        }
+        Map<String, String> values = new LinkedHashMap<>();
+        values.put(PLACEHOLDER_PLAYER, playerName);
+        values.put(PLACEHOLDER_UUID, playerUuid != null ? playerUuid.toString() : "");
+        values.put(PLACEHOLDER_PRESET, presetId != null ? presetId : "");
+        values.put(PLACEHOLDER_BUILTIN, Boolean.toString(builtin));
+        return renderResolved(template, playerName, values);
+    }
+
+    /** Single-pass placeholder substitution shared by F7 and the N13/N109 hook templates. */
+    private static RenderResult renderResolved(String template, String playerName, Map<String, String> values) {
+        if (template == null) {
+            return RenderResult.DISABLED;
+        }
+        String trimmed = template.trim();
+        if (trimmed.isEmpty()) {
+            return RenderResult.DISABLED;
+        }
+        if (trimmed.contains(PLACEHOLDER_PLAYER) && !isValidPlayerName(playerName)) {
+            return RenderResult.INVALID_PLAYER_NAME;
+        }
 
         StringBuilder out = new StringBuilder(trimmed.length() + 32);
         int len = trimmed.length();
         int i = 0;
         while (i < len) {
             if (trimmed.charAt(i) == '%') {
-                if (trimmed.startsWith(PLACEHOLDER_PLAYER, i)) {
-                    out.append(playerName);
-                    i += PLACEHOLDER_PLAYER.length();
-                    continue;
+                boolean matched = false;
+                for (Map.Entry<String, String> entry : values.entrySet()) {
+                    if (trimmed.startsWith(entry.getKey(), i)) {
+                        out.append(entry.getValue());
+                        i += entry.getKey().length();
+                        matched = true;
+                        break;
+                    }
                 }
-                if (trimmed.startsWith(PLACEHOLDER_UUID, i)) {
-                    out.append(uuidStr);
-                    i += PLACEHOLDER_UUID.length();
-                    continue;
-                }
-                if (trimmed.startsWith(PLACEHOLDER_ITEM, i)) {
-                    out.append(itemStr);
-                    i += PLACEHOLDER_ITEM.length();
-                    continue;
-                }
-                if (trimmed.startsWith(PLACEHOLDER_COUNT, i)) {
-                    out.append(countStr);
-                    i += PLACEHOLDER_COUNT.length();
-                    continue;
-                }
-                if (trimmed.startsWith(PLACEHOLDER_PLAYTIME, i)) {
-                    out.append(playtimeStr);
-                    i += PLACEHOLDER_PLAYTIME.length();
-                    continue;
-                }
-                if (trimmed.startsWith(PLACEHOLDER_WORLD_FIRST, i)) {
-                    out.append(worldFirstStr);
-                    i += PLACEHOLDER_WORLD_FIRST.length();
+                if (matched) {
                     continue;
                 }
             }

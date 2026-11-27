@@ -2000,4 +2000,80 @@ class TrackerTest {
                 new Tracker.RetroactiveTriggerEntry(removedTarget, false)
         ), Tracker.collectRetroactiveTriggers(data, PLAYER_A, false));
     }
+
+
+    @Test
+    void commandHooksQueueExactlyOncePerPresetAndWorldFirstEvent() {
+        MilestoneCommandRunner.clearPending();
+        try {
+            TargetKey diamond = TargetKey.of("minecraft:diamond");
+            MilestoneRecord rec = new MilestoneRecord(1200, 4L, 1_700_000_000_000L);
+            Presets.PresetDefinition builtin = new Presets.PresetDefinition(
+                    "builtin_pack", "Builtin Pack", List.of(diamond), true);
+            Presets.PresetDefinition custom = new Presets.PresetDefinition(
+                    "custom_pack", "Custom Pack", List.of(diamond), false);
+            List<Event> events = new ArrayList<>();
+
+            Tracker.postRecordEvents(null, PLAYER_A, "Alice", diamond, rec,
+                    Tracker.RecordOutcome.RECORDED_WORLD_FIRST, List.of(builtin, custom),
+                    RecordCause.GAMEPLAY,
+                    MilestoneCommandRunner::enqueuePresetUnchecked,
+                    MilestoneCommandRunner::enqueueWorldFirstUnchecked,
+                    events::add);
+
+            assertEquals(3, events.size());
+            // F7 is untouched: only the two new queues received entries.
+            assertEquals(0, MilestoneCommandRunner.pendingSize());
+            assertEquals(2, MilestoneCommandRunner.pendingPresetSize());
+            assertEquals(1, MilestoneCommandRunner.pendingWorldFirstSize());
+
+            List<MilestoneCommandRunner.QueuedPresetCommand> presetBatch =
+                    MilestoneCommandRunner.drainPresetForTick();
+            assertEquals(List.of("builtin_pack", "custom_pack"),
+                    presetBatch.stream().map(MilestoneCommandRunner.QueuedPresetCommand::presetId).toList());
+            assertEquals(PLAYER_A, presetBatch.get(0).playerId());
+            assertEquals("Alice", presetBatch.get(0).playerName());
+            assertTrue(presetBatch.get(0).builtin());
+            assertFalse(presetBatch.get(1).builtin());
+
+            List<MilestoneCommandRunner.QueuedWorldFirstCommand> wfBatch =
+                    MilestoneCommandRunner.drainWorldFirstForTick();
+            assertEquals(1, wfBatch.size());
+            assertEquals(PLAYER_A, wfBatch.get(0).playerId());
+            assertEquals(diamond, wfBatch.get(0).key());
+            assertEquals(1200, wfBatch.get(0).playTicks());
+
+            // A second player without a world first and without a completion queues nothing.
+            Tracker.postRecordEvents(null, PLAYER_B, "Bob", diamond, rec,
+                    Tracker.RecordOutcome.RECORDED, List.of(),
+                    RecordCause.GAMEPLAY,
+                    MilestoneCommandRunner::enqueuePresetUnchecked,
+                    MilestoneCommandRunner::enqueueWorldFirstUnchecked,
+                    event -> { });
+            assertEquals(0, MilestoneCommandRunner.pendingPresetSize()
+                    + MilestoneCommandRunner.pendingWorldFirstSize());
+
+            // Admin grant / already-recorded never queues a world-first hook.
+            Tracker.postRecordEvents(null, PLAYER_B, "Bob", diamond, rec,
+                    Tracker.RecordOutcome.ALREADY_RECORDED, List.of(builtin, custom),
+                    RecordCause.ADMIN_GRANT,
+                    MilestoneCommandRunner::enqueuePresetUnchecked,
+                    MilestoneCommandRunner::enqueueWorldFirstUnchecked,
+                    event -> { });
+            assertEquals(0, MilestoneCommandRunner.pendingPresetSize()
+                    + MilestoneCommandRunner.pendingWorldFirstSize());
+
+            // Null identity (event-only unit tests) cannot queue commands.
+            Tracker.postRecordEvents(null, null, null, diamond, rec,
+                    Tracker.RecordOutcome.RECORDED_WORLD_FIRST, List.of(builtin),
+                    RecordCause.GAMEPLAY,
+                    MilestoneCommandRunner::enqueuePresetUnchecked,
+                    MilestoneCommandRunner::enqueueWorldFirstUnchecked,
+                    event -> { });
+            assertEquals(0, MilestoneCommandRunner.pendingPresetSize()
+                    + MilestoneCommandRunner.pendingWorldFirstSize());
+        } finally {
+            MilestoneCommandRunner.clearPending();
+        }
+    }
 }

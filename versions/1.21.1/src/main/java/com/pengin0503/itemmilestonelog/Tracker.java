@@ -2025,6 +2025,43 @@ public final class Tracker {
             List<Presets.PresetDefinition> completedPresets,
             RecordCause cause,
             Consumer<Event> eventPoster) {
+        postRecordEvents(player,
+                player != null ? player.getUUID() : null,
+                player != null ? McCompat.player().profileName(player.getGameProfile()) : null,
+                key, record, outcome, completedPresets, cause,
+                MilestoneCommandRunner::enqueuePreset,
+                MilestoneCommandRunner::enqueueWorldFirst,
+                eventPoster);
+    }
+
+    /** Test seam: production passes the config-gated {@link MilestoneCommandRunner} methods. */
+    @FunctionalInterface
+    interface PresetCommandHook {
+        void enqueue(UUID playerId, @Nullable String playerName, String presetId, boolean builtin);
+    }
+
+    @FunctionalInterface
+    interface WorldFirstCommandHook {
+        void enqueue(UUID playerId, @Nullable String playerName, TargetKey key, int playTicks);
+    }
+
+    /**
+     * Posts the record/completion events and, on the same loop, queues one command per event for
+     * the F-150-45 (N13) and F-150-46 (N109) hooks. Each hook has its own template and queue, so
+     * F7's milestoneCommand path is unaffected. A null player (unit tests) never queues hooks.
+     */
+    static void postRecordEvents(
+            ServerPlayer player,
+            @Nullable UUID playerId,
+            @Nullable String playerName,
+            TargetKey key,
+            MilestoneRecord record,
+            RecordOutcome outcome,
+            List<Presets.PresetDefinition> completedPresets,
+            RecordCause cause,
+            PresetCommandHook presetHook,
+            WorldFirstCommandHook worldFirstHook,
+            Consumer<Event> eventPoster) {
         if (outcome == RecordOutcome.ALREADY_RECORDED) {
             return;
         }
@@ -2037,9 +2074,17 @@ public final class Tracker {
                 record.epochMillis(),
                 outcome == RecordOutcome.RECORDED_WORLD_FIRST,
                 cause));
+        // N109: only the single first-writer-wins record queues a world-first hook command.
+        if (playerId != null && outcome == RecordOutcome.RECORDED_WORLD_FIRST) {
+            worldFirstHook.enqueue(playerId, playerName, key, record.playTicks());
+        }
         if (completedPresets != null) {
             for (Presets.PresetDefinition preset : completedPresets) {
                 eventPoster.accept(new PresetCompletedEvent(player, preset.id(), preset.builtin()));
+                // N13: exactly one hook command immediately after that preset's completion event.
+                if (playerId != null && Presets.isValidId(preset.id())) {
+                    presetHook.enqueue(playerId, playerName, preset.id(), preset.builtin());
+                }
             }
         }
     }

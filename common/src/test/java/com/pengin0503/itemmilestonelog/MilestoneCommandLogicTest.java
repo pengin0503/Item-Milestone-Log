@@ -233,6 +233,50 @@ class MilestoneCommandLogicTest {
     }
 
     @Test
+    void renderForPresetSubstitutesItsFourPlaceholdersWithoutTouchingF7Rendering() {
+        MilestoneCommandLogic.RenderResult all = MilestoneCommandLogic.renderForPreset(
+                "  say %player%|%uuid%|%preset%|%builtin%|%worldfirst%  ",
+                ".Bedrock_01", PLAYER_A, "vanilla_endgame", true);
+        assertEquals(MilestoneCommandLogic.RenderStatus.READY, all.status());
+        assertEquals("say .Bedrock_01|11111111-1111-1111-1111-111111111111|vanilla_endgame|true|%worldfirst%",
+                all.command());
+
+        assertEquals("say custom_pack|false", MilestoneCommandLogic.renderForPreset(
+                "say %preset%|%builtin%", "Alice", PLAYER_A, "custom_pack", false).command());
+        assertEquals("say p|false", MilestoneCommandLogic.renderForPreset(
+                "say %preset%|%builtin%", "Alice", null, "p", false).command());
+
+        // F7's template has no %preset%/%builtin% substitution (the two feature templates stay separate).
+        assertEquals("say %preset% %builtin%", MilestoneCommandLogic.render(
+                "say %preset% %builtin%", "Alice", PLAYER_A, "minecraft:diamond", 1, "0h 00m 00s", false).command());
+        assertEquals("say wf=true", MilestoneCommandLogic.render(
+                "say wf=%worldfirst%", "Alice", PLAYER_A, "minecraft:diamond", 1, "0h 00m 00s", true).command());
+    }
+
+    @Test
+    void renderForPresetSkipsInvalidPlayerNamesInvalidPresetIdsAndDisabledTemplates() {
+        for (String badName : new String[]{"@a", "Alice Bob", "", null, "a".repeat(21), "Alice;op"}) {
+            assertEquals(MilestoneCommandLogic.RenderStatus.INVALID_PLAYER_NAME,
+                    MilestoneCommandLogic.renderForPreset(
+                            "give %player% %preset%", badName, PLAYER_A, "custom_pack", false).status(),
+                    "expected INVALID_PLAYER_NAME for: " + badName);
+        }
+        for (String badId : new String[]{null, "", "Uppercase", "bad id", "../escape", "a".repeat(33), "%uuid%"}) {
+            assertEquals(MilestoneCommandLogic.RenderStatus.INVALID_PRESET_ID,
+                    MilestoneCommandLogic.renderForPreset(
+                            "give @a function %preset%", "Alice", PLAYER_A, badId, false).status(),
+                    "expected INVALID_PRESET_ID for: " + badId);
+        }
+        // An invalid ID is harmless when the template never embeds it.
+        assertEquals(MilestoneCommandLogic.RenderStatus.READY,
+                MilestoneCommandLogic.renderForPreset("say hi", "Alice", PLAYER_A, null, false).status());
+        for (String blank : new String[]{null, "", "   \t "}) {
+            assertEquals(MilestoneCommandLogic.RenderStatus.DISABLED,
+                    MilestoneCommandLogic.renderForPreset(blank, "Alice", PLAYER_A, "custom_pack", false).status());
+        }
+    }
+
+    @Test
     void callbackTrackerDistinguishesSuccessZeroResultFailureUninvokedAndForked() {
         MilestoneCommandLogic.CallbackTracker uninvoked = new MilestoneCommandLogic.CallbackTracker();
         assertFalse(uninvoked.invoked());
