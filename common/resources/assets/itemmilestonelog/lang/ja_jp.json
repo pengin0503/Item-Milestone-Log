@@ -723,5 +723,18 @@
   "message.itemmilestonelog.discordstatus_digest_sent": "手動ダイジェストを %s 件、メインWebhookへ送信待ちにしました。",
   "message.itemmilestonelog.discordstatus_digest_empty": "手動ダイジェストに新しい項目はありませんでした（%s 件確認）。",
   "message.itemmilestonelog.discordstatus_digest_failed": "手動ダイジェストを送信できませんでした。Webhook設定を確認してください。",
-  "message.itemmilestonelog.discordstatus_denied": "Discord の状態を表示する権限がありません。"
+  "message.itemmilestonelog.discordstatus_denied": "Discord の状態を表示する権限がありません。",
+  "message.itemmilestonelog.help.backup": "SavedDataバックアップを管理（now / list / verify）（管理者）",
+  "message.itemmilestonelog.backup_now_success": "SavedDataバックアップを作成しました。",
+  "message.itemmilestonelog.backup_now_failed": "SavedDataバックアップを作成できませんでした。",
+  "message.itemmilestonelog.backup_list_header": "SavedDataバックアップ（%s件）:",
+  "message.itemmilestonelog.backup_list_line": "%s | %sバイト | %s",
+  "message.itemmilestonelog.backup_list_empty": "バックアップはありません。",
+  "message.itemmilestonelog.backup_list_more": "次のページ",
+  "message.itemmilestonelog.backup_verify_ok": "バックアップを検証しました: プレイヤー%s件、世界初%s件、schema v%s。",
+  "message.itemmilestonelog.backup_verify_invalid_name": "不正なバックアップファイル名です。",
+  "message.itemmilestonelog.backup_verify_not_found": "バックアップファイルが見つかりません。",
+  "message.itemmilestonelog.backup_verify_invalid_nbt": "バックアップファイルが破損しているか、有効なNBTではありません。",
+  "message.itemmilestonelog.backup_verify_incompatible_schema": "バックアップのschemaVersionがこのリリースと互換性がありません。",
+  "message.itemmilestonelog.backup_verify_io_error": "バックアップを読み込めませんでした。"
 }

@@ -202,6 +202,62 @@ public final class MilestoneBackup {
     }
 
     /**
+     * F-150-55 (N39): read-only verification of one backup. {@code requestedName == null} selects the
+     * newest pattern-matching file; an explicit name must be a bare pattern-matching file directly
+     * under {@code dir} (the same containment rule as the writer). Nothing is written, no live
+     * {@link MilestoneData} is loaded and no pruning runs, so a corrupt backup can only be reported.
+     */
+    static BackupVerifyResult verifyBackup(Path dir, @Nullable String requestedName, ZoneId zone,
+                                           @Nullable HolderLookup.Provider registries) {
+        if (dir == null) {
+            return BackupVerifyResult.failure(BackupVerifyResult.Status.NOT_FOUND);
+        }
+        Path normalizedDir = dir.normalize();
+        if (requestedName != null && !requestedName.isBlank()) {
+            if (!MilestoneBackupLogic.isBackupFileName(requestedName)) {
+                return BackupVerifyResult.failure(BackupVerifyResult.Status.INVALID_NAME);
+            }
+            Path target = normalizedDir.resolve(requestedName).normalize();
+            if (!normalizedDir.equals(target.getParent())) {
+                return BackupVerifyResult.failure(BackupVerifyResult.Status.INVALID_NAME);
+            }
+            if (!Files.isRegularFile(target)) {
+                return BackupVerifyResult.failure(BackupVerifyResult.Status.NOT_FOUND);
+            }
+            return BackupVerify.verifyFile(target, registries);
+        }
+        if (!Files.isDirectory(normalizedDir)) {
+            return BackupVerifyResult.failure(BackupVerifyResult.Status.NOT_FOUND);
+        }
+        List<String> names = new ArrayList<>();
+        try (Stream<Path> stream = Files.list(normalizedDir)) {
+            stream.filter(Files::isRegularFile)
+                    .map(p -> p.getFileName().toString())
+                    .filter(MilestoneBackupLogic::isBackupFileName)
+                    .forEach(names::add);
+        } catch (IOException | RuntimeException e) {
+            return BackupVerifyResult.failure(BackupVerifyResult.Status.IO_ERROR);
+        }
+        String newest = null;
+        long newestMillis = MilestoneBackupLogic.NO_BACKUP_RECORDED;
+        for (String name : names) {
+            long millis = MilestoneBackupLogic.parseTimestampMillis(name, zone);
+            if (millis == MilestoneBackupLogic.NO_BACKUP_RECORDED) {
+                continue;
+            }
+            if (newest == null || millis > newestMillis
+                    || (millis == newestMillis && MilestoneBackupLogic.BACKUP_NAME_ORDER.compare(name, newest) > 0)) {
+                newest = name;
+                newestMillis = millis;
+            }
+        }
+        if (newest == null) {
+            return BackupVerifyResult.failure(BackupVerifyResult.Status.NOT_FOUND);
+        }
+        return BackupVerify.verifyFile(normalizedDir.resolve(newest).normalize(), registries);
+    }
+
+    /**
      * Save-triggered backup (rate-limited on the server thread). The NBT root snapshot is taken on
      * the server thread; the disk write runs on the {@code itemmilestonelog-io} executor (N45).
      * SF-7: the timestamp stays server-thread owned and is committed only after the I/O thread

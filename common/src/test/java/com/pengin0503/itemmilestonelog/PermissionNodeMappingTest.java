@@ -164,13 +164,12 @@ class PermissionNodeMappingTest {
                 "discordtest payload and discordtest worldfirst payload share the existing DISCORDTEST gate");
         requiresWithin(commands, "discordtest", "discordTestRequirement");
 
-        // The remaining three nodes are registered by PR-1 but reserved for later PRs.
-        for (String constant : new String[]{"BACKUP_MANAGE", "BACKUP_VIEW", "AUDIT_VIEW"}) {
-            assertFalse(commands.contains("MilestonePermissions." + constant),
-                    constant + " must not replace an existing call site in PR-1");
-            assertFalse(service.contains("MilestonePermissions." + constant),
-                    constant + " must not replace an existing call site in PR-1");
-        }
+        // PR-4 consumes BACKUP_MANAGE / BACKUP_VIEW on their new command tree; AUDIT_VIEW is
+        // still reserved for the audit-log PR. No new node may replace an existing call site.
+        assertFalse(commands.contains("MilestonePermissions.AUDIT_VIEW"),
+                "AUDIT_VIEW must not replace an existing call site before its PR");
+        assertFalse(service.contains("MilestonePermissions.AUDIT_VIEW"),
+                "AUDIT_VIEW must not replace an existing call site before its PR");
         String permissions = Files.readString(resolve(PERMISSIONS_REL));
         for (String name : MilestonePermissionLogic.NODE_NAMES) {
             assertTrue(permissions.contains("MilestonePermissionLogic."
@@ -180,6 +179,29 @@ class PermissionNodeMappingTest {
                 "all nodes must share the single level-2 default resolver");
         assertTrue(count(permissions, "documentedNode(") == 8,
                 "the seven new nodes must use the shared documented-node helper");
+    }
+
+    @Test
+    void backupNodesGateTheWriteAndReadChildren() throws IOException {
+        String commands = Files.readString(resolve(COMMANDS_REL));
+        assertTrue(commands.contains("MilestonePermissions.check(src, MilestonePermissions.BACKUP_MANAGE, "
+                        + "adminRequirement.test(src))"),
+                "backup now must keep the BACKUP_MANAGE gate with the legacy admin check");
+        assertTrue(commands.contains("MilestonePermissions.check(src, MilestonePermissions.BACKUP_VIEW, "
+                        + "adminRequirement.test(src))"),
+                "backup list/verify must keep the BACKUP_VIEW gate with the legacy admin check");
+        assertTrue(commands.contains(".requires(src -> backupManageRequirement.test(src)"
+                        + " || backupViewRequirement.test(src))"),
+                "the backup parent must accept either node so either child stays reachable");
+        requiresWithin(commands, "now", "backupManageRequirement");
+        requiresWithin(commands, "verify", "backupViewRequirement");
+        assertTrue(commands.contains(".requires(backupViewRequirement)\n"
+                        + "                                .executes(ctx -> backupList(ctx, 1))"),
+                "backup list must be gated by BACKUP_VIEW");
+        assertEquals(1, count(commands, ".requires(backupManageRequirement)"),
+                "BACKUP_MANAGE must gate only backup now");
+        assertEquals(2, count(commands, ".requires(backupViewRequirement)"),
+                "BACKUP_VIEW must gate backup list and backup verify");
     }
 
     private static String constantName(String nodeName) {

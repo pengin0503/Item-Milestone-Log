@@ -149,4 +149,32 @@ class MilestoneBackupLogicTest {
         // Clock moving backwards stays rate-limited
         assertFalse(MilestoneBackupLogic.isRateLimitElapsed(t0, t0 - 1_000L));
     }
+
+    @Test
+    void backupListOrderingUsesTheSamePatternTimestampAndNameOrderUtilities() {
+        // F-150-55: `backup list` must not invent its own parser or directory filter.
+        List<String> names = List.of(
+                "notes.txt",
+                "milestones-20261124-100000.dat",
+                "milestones-20261124-111530-10.dat",
+                "milestones-20261124-111530.dat",
+                "milestones-20261124-111530-2.dat",
+                ".milestones-20261124-111530.dat.tmp",
+                "milestones-20261124-111530-1.dat");
+        assertEquals(List.of(
+                "milestones-20261124-111530-10.dat",
+                "milestones-20261124-111530-2.dat",
+                "milestones-20261124-111530-1.dat",
+                "milestones-20261124-111530.dat",
+                "milestones-20261124-100000.dat"
+        ), MilestoneBackupLogic.newestFirst(names, UTC));
+        assertEquals(List.of("milestones-20261124-111530.dat"),
+                MilestoneBackupLogic.newestFirst(List.of("milestones-20261124-111530.dat"), UTC));
+        assertTrue(MilestoneBackupLogic.newestFirst(List.of(), UTC).isEmpty());
+        assertTrue(MilestoneBackupLogic.newestFirst(null, UTC).isEmpty());
+        // An invalid calendar date is parsed as NO_BACKUP_RECORDED and sorted last.
+        assertEquals(List.of("milestones-20261124-100000.dat", "milestones-20269999-111530.dat"),
+                MilestoneBackupLogic.newestFirst(List.of(
+                        "milestones-20269999-111530.dat", "milestones-20261124-100000.dat"), UTC));
+    }
 }

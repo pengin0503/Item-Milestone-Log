@@ -723,5 +723,18 @@
   "message.itemmilestonelog.discordstatus_digest_sent": "Manual digest queued %s entries for the main webhook.",
   "message.itemmilestonelog.discordstatus_digest_empty": "Manual digest found no new entries (%s checked).",
   "message.itemmilestonelog.discordstatus_digest_failed": "Manual digest could not be sent. Check the webhook configuration.",
-  "message.itemmilestonelog.discordstatus_denied": "You do not have permission to view Discord status."
+  "message.itemmilestonelog.discordstatus_denied": "You do not have permission to view Discord status.",
+  "message.itemmilestonelog.help.backup": "Manage SavedData backups (now / list / verify) (admin)",
+  "message.itemmilestonelog.backup_now_success": "SavedData backup created.",
+  "message.itemmilestonelog.backup_now_failed": "Could not create a SavedData backup.",
+  "message.itemmilestonelog.backup_list_header": "SavedData backups (%s):",
+  "message.itemmilestonelog.backup_list_line": "%s | %s bytes | %s",
+  "message.itemmilestonelog.backup_list_empty": "No backups found.",
+  "message.itemmilestonelog.backup_list_more": "Next page",
+  "message.itemmilestonelog.backup_verify_ok": "Backup verified: %s players, %s world-firsts, schema v%s.",
+  "message.itemmilestonelog.backup_verify_invalid_name": "Invalid backup file name.",
+  "message.itemmilestonelog.backup_verify_not_found": "Backup file not found.",
+  "message.itemmilestonelog.backup_verify_invalid_nbt": "Backup file is corrupt or not valid NBT.",
+  "message.itemmilestonelog.backup_verify_incompatible_schema": "Backup schema version is not compatible with this release.",
+  "message.itemmilestonelog.backup_verify_io_error": "Backup could not be read."
 }

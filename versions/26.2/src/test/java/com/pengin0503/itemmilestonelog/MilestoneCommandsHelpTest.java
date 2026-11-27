@@ -41,7 +41,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class MilestoneCommandsHelpTest {
     private static final Set<String> ADMIN_ONLY = Set.of(
             "exportall", "exporthtmlall", "exportcsvall", "importall",
-            "admin", "prunedata", "renameitem", "renametag", "discordtest", "doctor", "discordstatus");
+            "admin", "prunedata", "renameitem", "renametag", "discordtest", "doctor", "discordstatus", "backup");
 
     private static CommandDispatcher<CommandSourceStack> buildDispatcher(Predicate<CommandSourceStack> adminRequirement) {
         CommandDispatcher<CommandSourceStack> dispatcher = new CommandDispatcher<>();
@@ -1125,6 +1125,61 @@ class MilestoneCommandsHelpTest {
         actualHelpKeys.removeAll(auxiliaryHelpKeys);
         assertEquals(expectedHelpKeys, actualHelpKeys,
                 "en_us.json help.* keys must match CommandHelp.ENTRIES plus PR-1 and PR-2 auxiliary keys");
+    }
+
+    @Test
+    void backupTreeIsRegisteredWithStep5NodesAndNoBareExecution() {
+        CommandDispatcher<CommandSourceStack> op = buildDispatcher(src -> true);
+        CommandDispatcher<CommandSourceStack> regular = buildDispatcher(src -> false);
+        CommandNode<CommandSourceStack> root = op.getRoot().getChild("milestonelog");
+        CommandNode<CommandSourceStack> backup = root.getChild("backup");
+        assertNotNull(backup, "backup must be registered (F-150-55)");
+        assertNull(backup.getCommand(), "the backup parent must not execute on its own");
+
+        CommandNode<CommandSourceStack> now = backup.getChild("now");
+        assertNotNull(now, "backup now must be registered");
+        assertNotNull(now.getCommand(), "backup now must execute with no arguments");
+        assertTrue(now.getChildren().isEmpty(), "backup now takes no arguments");
+
+        CommandNode<CommandSourceStack> list = backup.getChild("list");
+        assertNotNull(list, "backup list must be registered");
+        assertNotNull(list.getCommand(), "backup list executes on page 1");
+        CommandNode<CommandSourceStack> listPage = list.getChild("page");
+        assertNotNull(listPage, "backup list page must be registered");
+        CommandNode<CommandSourceStack> pageArg = listPage.getChild("page");
+        assertNotNull(pageArg, "backup list page must take <page>");
+        assertNotNull(pageArg.getCommand(), "backup list page <page> must execute");
+        assertTrue(pageArg instanceof ArgumentCommandNode<?, ?>
+                        && ((ArgumentCommandNode<?, ?>) pageArg).getType() instanceof IntegerArgumentType,
+                "page must use the vanilla integer argument");
+
+        CommandNode<CommandSourceStack> verify = backup.getChild("verify");
+        assertNotNull(verify, "backup verify must be registered");
+        assertNotNull(verify.getCommand(), "backup verify uses the newest matching file");
+        CommandNode<CommandSourceStack> nameArg = verify.getChild("fileName");
+        assertNotNull(nameArg, "backup verify must take an optional <fileName>");
+        assertNotNull(nameArg.getCommand(), "backup verify <fileName> must execute");
+        assertTrue(nameArg instanceof ArgumentCommandNode<?, ?>
+                        && ((ArgumentCommandNode<?, ?>) nameArg).getType() instanceof StringArgumentType,
+                "fileName must use the vanilla word argument");
+
+        CommandHelp.Entry entry = entryByName("backup");
+        assertEquals(CommandHelp.Gate.NONE, entry.gate());
+        assertFalse(entry.playerOnly(), "backup must be console-usable");
+        List<String> usages = MilestoneCommands.helpUsages(op, null, entry);
+        assertTrue(usages.stream().anyMatch(u -> u.contains("now")), () -> "usages: " + usages);
+        assertTrue(usages.stream().anyMatch(u -> u.contains("list")), () -> "usages: " + usages);
+        assertTrue(usages.stream().anyMatch(u -> u.contains("verify")), () -> "usages: " + usages);
+        assertFalse(MilestoneCommands.canUseHelpEntry(regular, null, entry));
+        assertTrue(MilestoneCommands.canUseHelpEntry(op, null, entry));
+
+        for (String line : List.of("milestonelog backup", "milestonelog backup now",
+                "milestonelog backup list", "milestonelog backup verify",
+                "milestonelog backup list page 2",
+                "milestonelog backup verify milestones-20261124-111530.dat")) {
+            assertTrue(regular.parse(line, null).getReader().canRead(),
+                    "non-privileged sources must not reach " + line);
+        }
     }
 
     @Test

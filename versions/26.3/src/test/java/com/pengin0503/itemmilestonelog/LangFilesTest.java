@@ -192,6 +192,35 @@ class LangFilesTest {
     }
 
     @Test
+    void pr4BackupKeysExistInBothBundledLanguagesWithTheExpectedSlots() throws Exception {
+        Map<String, String> en = read("en_us");
+        Map<String, String> ja = read("ja_jp");
+        Map<String, Integer> slots = Map.ofEntries(
+                Map.entry("message.itemmilestonelog.help.backup", 0),
+                Map.entry("message.itemmilestonelog.backup_now_success", 0),
+                Map.entry("message.itemmilestonelog.backup_now_failed", 0),
+                Map.entry("message.itemmilestonelog.backup_list_header", 1),
+                Map.entry("message.itemmilestonelog.backup_list_line", 3),
+                Map.entry("message.itemmilestonelog.backup_list_empty", 0),
+                Map.entry("message.itemmilestonelog.backup_list_more", 0),
+                Map.entry("message.itemmilestonelog.backup_verify_ok", 3),
+                Map.entry("message.itemmilestonelog.backup_verify_invalid_name", 0),
+                Map.entry("message.itemmilestonelog.backup_verify_not_found", 0),
+                Map.entry("message.itemmilestonelog.backup_verify_invalid_nbt", 0),
+                Map.entry("message.itemmilestonelog.backup_verify_incompatible_schema", 0),
+                Map.entry("message.itemmilestonelog.backup_verify_io_error", 0));
+        for (Map.Entry<String, Integer> expected : slots.entrySet()) {
+            String key = expected.getKey();
+            assertNotNull(en.get(key), "Missing en_us key: " + key);
+            assertFalse(en.get(key).isBlank(), "Blank en_us key: " + key);
+            assertNotNull(ja.get(key), "Missing ja_jp key: " + key);
+            assertFalse(ja.get(key).isBlank(), "Blank ja_jp key: " + key);
+            assertEquals(expected.getValue().intValue(), extractFormatSlots(key + " (en)", en.get(key)).size());
+            assertEquals(expected.getValue().intValue(), extractFormatSlots(key + " (ja)", ja.get(key)).size());
+        }
+    }
+
+    @Test
     void translationsKeepTheSameNumberOfPlaceholdersAndValidFormatSpecifiers() throws Exception {
         Map<String, String> en = read("en_us");
         for (Map.Entry<String, String> entry : en.entrySet()) {
