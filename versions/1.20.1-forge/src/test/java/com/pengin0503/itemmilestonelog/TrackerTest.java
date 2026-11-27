@@ -1607,6 +1607,41 @@ class TrackerTest {
         assertNull(data.playerOrNull(PLAYER_A));
     }
 
+    @Test
+    void recapReturnUsesThePreLoginLastSeenAfterTheLoginOverwrite() {
+        MilestoneData data = new MilestoneData();
+        UUID viewer = PLAYER_A;
+        UUID holder = PLAYER_B;
+        long beforeLogin = 1_795_000_000_000L;
+        long duringAbsence = beforeLogin + 60_000L;
+        long loginTime = beforeLogin + 120_000L;
+
+        MilestoneData.PlayerData viewerData = data.player(viewer);
+        viewerData.lastSeen = beforeLogin;
+        TargetKey key = TargetKey.of("minecraft:diamond");
+        assertTrue(data.recordWorldFirstIfAbsent(key, holder, "Bob",
+                new MilestoneRecord(100, 1, duringAbsence)));
+
+        // F52 captures the stored value before processPlayerLogin overwrites it; the command needs
+        // that same captured value, not the freshly written login time.
+        Tracker.rememberPreLoginLastSeen(viewer, viewerData.lastSeen);
+        Tracker.processPlayerLogin(data, viewer, "Alice", Set.of(), List.of(), true,
+                id -> true, false, false, null, loginTime);
+        assertEquals(loginTime, data.playerOrNull(viewer).lastSeen);
+        assertEquals(beforeLogin, Tracker.preLoginLastSeen(viewer));
+
+        CommandAnalysisModel.RecapResult recap = MilestoneCommands.recapResultFor(
+                data, viewer, CommandAnalysisModel.RecapKind.RETURN, loginTime + 1_000L);
+        assertEquals(1, recap.entries().size());
+        assertEquals(key.itemId(), recap.entries().get(0).itemId());
+        assertEquals("Bob", recap.entries().get(0).holderName());
+        // The old behaviour (using the overwritten lastSeen) would have lost the away first.
+        assertTrue(MilestoneCommands.recapResultFor(
+                data, viewer, CommandAnalysisModel.RecapKind.RETURN, beforeLogin + 1_000L)
+                .entries().isEmpty());
+        Tracker.rememberPreLoginLastSeen(viewer, 0L);
+    }
+
     // ------------------------------------------------------------------ F8b tag targets
 
     private static final TagIndex IRON_TAGS = TagIndex.of(Map.of(

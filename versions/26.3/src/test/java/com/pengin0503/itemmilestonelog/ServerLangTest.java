@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -294,5 +295,152 @@ class ServerLangTest {
         assertEquals("%s", ServerLang.formatTemplate("%s", (Object[]) null));
         assertEquals("plain text", ServerLang.formatTemplate("plain text", "unused"));
         assertEquals("", ServerLang.formatTemplate(null, "unused"));
+    }
+
+    @Test
+    void everyStaticTranslationCallSuppliesEveryTemplateSlot() throws IOException {
+        Pattern literalKey = Pattern.compile("\"(message\\.itemmilestonelog\\.[A-Za-z0-9_.]+)\"");
+        Pattern placeholder = Pattern.compile("%(?:(\\d+)\\$)?s");
+        int checked = 0;
+        List<String> problems = new ArrayList<>();
+        try (Stream<Path> files = javaSources()) {
+            for (Path file : files.toList()) {
+                String src = Files.readString(file);
+                int from = 0;
+                while (true) {
+                    int at = src.indexOf("ServerLang.tr(", from);
+                    if (at < 0) {
+                        break;
+                    }
+                    from = at + 1;
+                    int open = at + "ServerLang.tr".length();
+                    int close = matchingParen(src, open);
+                    if (close < 0) {
+                        continue;
+                    }
+                    String key = null;
+                    int args = 0;
+                    for (String part : splitTopLevel(src.substring(open + 1, close))) {
+                        Matcher m = literalKey.matcher(part.trim());
+                        if (key == null && m.find()) {
+                            key = m.group(1);
+                        } else if (!part.isBlank()) {
+                            args++;
+                        }
+                    }
+                    if (key == null) {
+                        continue;
+                    }
+                    String template = ServerLang.fallbacks().get(key);
+                    if (template == null) {
+                        continue;
+                    }
+                    int needed = 0;
+                    Matcher ph = placeholder.matcher(template);
+                    while (ph.find()) {
+                        needed = ph.group(1) != null
+                                ? Math.max(needed, Integer.parseInt(ph.group(1)))
+                                : needed + 1;
+                    }
+                    checked++;
+                    if (args < needed) {
+                        problems.add(file.getFileName() + " " + key + ": " + args
+                                + " args for " + needed + " slots");
+                    }
+                }
+            }
+        }
+        assertTrue(checked > 100, "expected to scan many translation call sites, scanned " + checked);
+        assertEquals(List.of(), problems, "translation call sites with too few arguments");
+    }
+
+    /** Index of the parenthesis matching {@code open}, ignoring string/char/text-block contents. */
+    private static int matchingParen(String src, int open) {
+        int depth = 0;
+        boolean inString = false;
+        boolean inChar = false;
+        for (int i = open; i < src.length(); i++) {
+            char c = src.charAt(i);
+            if (inString) {
+                if (c == '\\') {
+                    i++;
+                } else if (c == '"') {
+                    inString = false;
+                }
+                continue;
+            }
+            if (inChar) {
+                if (c == '\\') {
+                    i++;
+                } else if (c == '\'') {
+                    inChar = false;
+                }
+                continue;
+            }
+            if (c == '"') {
+                if (src.startsWith("\"\"\"", i)) {
+                    int end = src.indexOf("\"\"\"", i + 3);
+                    i = end < 0 ? src.length() : end + 2;
+                } else {
+                    inString = true;
+                }
+            } else if (c == '\'') {
+                inChar = true;
+            } else if (c == '(') {
+                depth++;
+            } else if (c == ')') {
+                if (--depth == 0) {
+                    return i;
+                }
+            }
+        }
+        return -1;
+    }
+
+    /** Splits a call body on top-level commas, ignoring nested brackets and quoted text. */
+    private static List<String> splitTopLevel(String body) {
+        List<String> parts = new ArrayList<>();
+        int depth = 0;
+        int start = 0;
+        boolean inString = false;
+        boolean inChar = false;
+        for (int i = 0; i < body.length(); i++) {
+            char c = body.charAt(i);
+            if (inString) {
+                if (c == '\\') {
+                    i++;
+                } else if (c == '"') {
+                    inString = false;
+                }
+                continue;
+            }
+            if (inChar) {
+                if (c == '\\') {
+                    i++;
+                } else if (c == '\'') {
+                    inChar = false;
+                }
+                continue;
+            }
+            if (c == '"') {
+                if (body.startsWith("\"\"\"", i)) {
+                    int end = body.indexOf("\"\"\"", i + 3);
+                    i = end < 0 ? body.length() : end + 2;
+                } else {
+                    inString = true;
+                }
+            } else if (c == '\'') {
+                inChar = true;
+            } else if (c == '(' || c == '[' || c == '{') {
+                depth++;
+            } else if (c == ')' || c == ']' || c == '}') {
+                depth--;
+            } else if (c == ',' && depth == 0) {
+                parts.add(body.substring(start, i));
+                start = i + 1;
+            }
+        }
+        parts.add(body.substring(start));
+        return parts;
     }
 }

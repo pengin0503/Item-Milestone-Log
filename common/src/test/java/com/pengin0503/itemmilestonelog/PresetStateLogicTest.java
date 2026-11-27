@@ -80,6 +80,17 @@ class PresetStateLogicTest {
     }
 
     @Test
+    void unlockThresholdStillFiresAfterTheVanillaPlayTimeIntWraps() {
+        // Stats.PLAY_TIME is an int: 2^31 ticks becomes Integer.MIN_VALUE, then counts up to -1.
+        double hoursAtWrap = Integer.toUnsignedLong(Integer.MIN_VALUE) / (double) 72_000;
+        assertTrue(PresetStateLogic.isUnlockDue(1.0d, Integer.MIN_VALUE));
+        assertTrue(PresetStateLogic.isUnlockDue(hoursAtWrap - 1.0d, Integer.MIN_VALUE));
+        assertFalse(PresetStateLogic.isUnlockDue(hoursAtWrap + 1.0d, Integer.MIN_VALUE));
+        assertTrue(PresetStateLogic.isUnlockDue(1.0d, -1));
+        assertFalse(PresetStateLogic.isUnlockDue(1.0d, 0));
+    }
+
+    @Test
     void versionNoticeIsDueOnlyForAnAlreadySeenOlderVersion() {
         assertTrue(PresetStateLogic.isVersionNoticeDue(2, new PresetState(false, 1)));
         assertFalse(PresetStateLogic.isVersionNoticeDue(2, new PresetState(false, 2)));
