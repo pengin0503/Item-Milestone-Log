@@ -37,7 +37,7 @@ class CommandHelpTest {
                 "copytargets", "sharetargets", "addsteps", "bulk", "pinned",
                 "export", "exporthtml", "exportcsv", "import",
                 "exportall", "exporthtmlall", "exportcsvall", "importall",
-                "admin", "prunedata", "renameitem", "renametag", "discordtest", "help"
+                "admin", "prunedata", "renameitem", "renametag", "discordtest", "doctor", "help"
         );
         List<String> actual = namesOf(CommandHelp.ENTRIES);
         assertEquals(expectedOrder, actual);
@@ -67,13 +67,15 @@ class CommandHelpTest {
                 "whohas", "whohastag", "lookup",
                 "compare", "timeline", "timelinetag", "modstats", "presetstats", "presetmatrix",
                 "exportall", "exporthtmlall", "exportcsvall", "importall",
-                "admin", "prunedata", "renameitem", "renametag", "discordtest", "help"
+                "admin", "prunedata", "renameitem", "renametag", "discordtest", "doctor", "help"
         ), visible);
 
         assertNull(CommandHelp.findVisible("summary", console, e -> true));
         assertNull(CommandHelp.findVisible("add", console, e -> true));
         assertNotNull(CommandHelp.findVisible("preset", console, e -> true));
         assertNotNull(CommandHelp.findVisible("admin", console, e -> true));
+        // F-150-52: doctor is console-runnable (playerOnly=false), so it stays visible here.
+        assertNotNull(CommandHelp.findVisible("doctor", console, e -> true));
     }
 
     @Test

@@ -117,10 +117,34 @@ class PermissionNodeMappingTest {
     }
 
     @Test
-    void newNodesAreRegisteredButNotYetUsedByExistingCommands() throws IOException {
+    void newNodesAreRegisteredAndDiagnosticsNodesGateTheirCommands() throws IOException {
         String commands = Files.readString(resolve(COMMANDS_REL));
         String service = Files.readString(resolve(SERVICE_REL));
-        for (String constant : new String[]{"DOCTOR", "DEBUG", "DISCORD_STATUS", "DISCORD_DIGEST",
+
+        // PR-2 consumes exactly two of the seven nodes registered in PR-1, on exactly the
+        // commands the spec assigns them: DOCTOR gates the standalone `doctor` literal
+        // (F-150-52) and DEBUG gates the `admin debug` child (F-150-53). Both keep the
+        // legacy admin check as the player-side OR branch (§1.2 rule 2).
+        assertTrue(commands.contains("MilestonePermissions.check(src, MilestonePermissions.DOCTOR, "
+                        + "adminRequirement.test(src))"),
+                "doctor must keep the F-150-52 DOCTOR gate with the legacy admin check");
+        assertTrue(commands.contains("MilestonePermissions.check(src, MilestonePermissions.DEBUG, "
+                        + "adminRequirement.test(src))"),
+                "admin debug must keep the F-150-53 DEBUG gate with the legacy admin check");
+        requiresWithin(commands, "doctor", "doctorRequirement");
+        requiresWithin(commands, "debug", "debugRequirement");
+        assertEqualsCountAtLeast(1, count(commands, ".requires(doctorRequirement)"),
+                "doctorRequirement must gate the doctor command");
+        assertEqualsCountAtLeast(1, count(commands, ".requires(debugRequirement)"),
+                "debugRequirement must gate the admin debug child");
+        assertFalse(service.contains("MilestonePermissions.DOCTOR"),
+                "the DOCTOR node belongs in the command gate, not in MilestoneService");
+        assertFalse(service.contains("MilestonePermissions.DEBUG"),
+                "the DEBUG node belongs in the command gate, not in MilestoneService");
+
+        // The other five nodes are registered by PR-1 but reserved for later PRs; they must
+        // still be unused by every existing command and service call site.
+        for (String constant : new String[]{"DISCORD_STATUS", "DISCORD_DIGEST",
                 "BACKUP_MANAGE", "BACKUP_VIEW", "AUDIT_VIEW"}) {
             assertFalse(commands.contains("MilestonePermissions." + constant),
                     constant + " must not replace an existing call site in PR-1");
