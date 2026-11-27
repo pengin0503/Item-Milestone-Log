@@ -147,4 +147,131 @@ class MilestoneCommandRunnerTest {
             MilestoneCommandRunner.clearPending();
         }
     }
+
+    @Test
+    void bothHookConfigsAreDisabledByDefaultAndWhileUnloaded() {
+        assertEquals("", Config.MILESTONE_COMMAND.getDefault());
+        assertEquals("", Config.PRESET_COMPLETE_COMMAND.getDefault());
+        assertEquals("", Config.WORLD_FIRST_COMMAND.getDefault());
+        assertEquals("", Config.milestoneCommand());
+        assertEquals("", Config.presetCompleteCommand());
+        assertEquals("", Config.worldFirstCommand());
+    }
+
+    @Test
+    void presetBatchRendersFourPlaceholdersAndSkipsInvalidPlayerOrPresetIds() {
+        List<MilestoneCommandRunner.QueuedPresetCommand> batch = List.of(
+                new MilestoneCommandRunner.QueuedPresetCommand(
+                        PLAYER_A, ".BedrockUser", "vanilla_endgame", true),
+                new MilestoneCommandRunner.QueuedPresetCommand(
+                        PLAYER_A, "@a", "custom_pack", false),
+                new MilestoneCommandRunner.QueuedPresetCommand(
+                        PLAYER_B, "Bob", "../escape", false),
+                new MilestoneCommandRunner.QueuedPresetCommand(
+                        PLAYER_B, "Bob", "list", false), // reserved command literal, never a preset ID
+                new MilestoneCommandRunner.QueuedPresetCommand(
+                        PLAYER_B, "Bob", "custom_pack", false));
+
+        List<String> executed = new ArrayList<>();
+        MilestoneCommandRunner.executePresetBatch(
+                batch, "say %player%|%uuid%|%preset%|%builtin%|%item%", executed::add);
+        assertEquals(List.of(
+                "say .BedrockUser|11111111-1111-1111-1111-111111111111|vanilla_endgame|true|%item%",
+                "say Bob|22222222-2222-2222-2222-222222222222|custom_pack|false|%item%"
+        ), executed);
+    }
+
+    @Test
+    void worldFirstBatchAlwaysSetsWorldFirstTrueAndIsolatesAnExecutorFailure() {
+        List<MilestoneCommandRunner.QueuedWorldFirstCommand> batch = List.of(
+                new MilestoneCommandRunner.QueuedWorldFirstCommand(
+                        PLAYER_A, "Alice", TargetKey.of("minecraft:diamond", 3), 1200),
+                new MilestoneCommandRunner.QueuedWorldFirstCommand(
+                        PLAYER_B, "Bob", TargetKey.of("#c:ingots/iron", 5), 2400));
+
+        List<String> executed = new ArrayList<>();
+        MilestoneCommandRunner.executeWorldFirstBatch(
+                batch, "tellraw @a %player%|%item%|%count%|%worldfirst%", cmd -> {
+                    executed.add(cmd);
+                    if (cmd.contains("Alice")) {
+                        throw new RuntimeException("boom");
+                    }
+                });
+        assertEquals(List.of(
+                "tellraw @a Alice|minecraft:diamond|3|true",
+                "tellraw @a Bob|#c:ingots/iron|5|true"
+        ), executed);
+    }
+
+    @Test
+    void threeQueuesAreIndependentCapAtTwentyEachAndDrainCompletelyAtStop() {
+        MilestoneCommandRunner.clearPending();
+        try {
+            for (int i = 25; i >= 1; i--) {
+                MilestoneCommandRunner.enqueueUnchecked(
+                        PLAYER_A, "Alice", TargetKey.of("minecraft:diamond", i), 100, false);
+                MilestoneCommandRunner.enqueuePresetUnchecked(
+                        PLAYER_A, "Alice", String.format("preset_%02d", i), i % 2 == 0);
+                MilestoneCommandRunner.enqueueWorldFirstUnchecked(
+                        PLAYER_A, "Alice", TargetKey.of("minecraft:emerald", i), 100);
+            }
+            assertEquals(25, MilestoneCommandRunner.pendingSize());
+            assertEquals(25, MilestoneCommandRunner.pendingPresetSize());
+            assertEquals(25, MilestoneCommandRunner.pendingWorldFirstSize());
+
+            // Each queue drains at most 20 per tick: 60 executions total, with 5 left in each queue.
+            int tick1 = MilestoneCommandRunner.drainForTick().size()
+                    + MilestoneCommandRunner.drainPresetForTick().size()
+                    + MilestoneCommandRunner.drainWorldFirstForTick().size();
+            assertEquals(60, tick1);
+            assertEquals(5, MilestoneCommandRunner.pendingSize());
+            assertEquals(5, MilestoneCommandRunner.pendingPresetSize());
+            assertEquals(5, MilestoneCommandRunner.pendingWorldFirstSize());
+            assertEquals(15, MilestoneCommandRunner.drainForTick().size()
+                    + MilestoneCommandRunner.drainPresetForTick().size()
+                    + MilestoneCommandRunner.drainWorldFirstForTick().size());
+            assertEquals(0, MilestoneCommandRunner.pendingSize());
+            assertEquals(0, MilestoneCommandRunner.pendingPresetSize());
+            assertEquals(0, MilestoneCommandRunner.pendingWorldFirstSize());
+
+            // Stop-time flush ignores the cap for all three queues and leaves nothing behind.
+            for (int i = 0; i < 25; i++) {
+                MilestoneCommandRunner.enqueueUnchecked(
+                        PLAYER_B, "Bob", TargetKey.of("minecraft:coal", i + 1), 100, false);
+                MilestoneCommandRunner.enqueuePresetUnchecked(
+                        PLAYER_B, "Bob", String.format("pack_%02d", i), false);
+                MilestoneCommandRunner.enqueueWorldFirstUnchecked(
+                        PLAYER_B, "Bob", TargetKey.of("minecraft:gold_ingot", i + 1), 100);
+            }
+            assertEquals(25, MilestoneCommandRunner.drainAllForStop().size());
+            assertEquals(25, MilestoneCommandRunner.drainPresetAllForStop().size());
+            assertEquals(25, MilestoneCommandRunner.drainWorldFirstAllForStop().size());
+            assertTrue(MilestoneCommandRunner.drainForTick().isEmpty());
+            assertTrue(MilestoneCommandRunner.drainPresetForTick().isEmpty());
+            assertTrue(MilestoneCommandRunner.drainWorldFirstForTick().isEmpty());
+            assertTrue(MilestoneCommandRunner.drainAllForStop().isEmpty());
+            assertTrue(MilestoneCommandRunner.drainPresetAllForStop().isEmpty());
+            assertTrue(MilestoneCommandRunner.drainWorldFirstAllForStop().isEmpty());
+        } finally {
+            MilestoneCommandRunner.clearPending();
+        }
+    }
+
+    @Test
+    void clearPendingDropsAllThreeQueuesAndNullServerDoesNotDrain() {
+        MilestoneCommandRunner.clearPending();
+        MilestoneCommandRunner.enqueueUnchecked(
+                PLAYER_A, "Alice", TargetKey.of("minecraft:diamond", 1), 100, false);
+        MilestoneCommandRunner.enqueuePresetUnchecked(PLAYER_A, "Alice", "custom_pack", false);
+        MilestoneCommandRunner.enqueueWorldFirstUnchecked(
+                PLAYER_A, "Alice", TargetKey.of("minecraft:diamond", 1), 100);
+        MilestoneCommandRunner.drainAndRun(null);
+        assertEquals(1, MilestoneCommandRunner.pendingSize());
+        assertEquals(1, MilestoneCommandRunner.pendingPresetSize());
+        assertEquals(1, MilestoneCommandRunner.pendingWorldFirstSize());
+        MilestoneCommandRunner.clearPending();
+        assertEquals(0, MilestoneCommandRunner.pendingSize()
+                + MilestoneCommandRunner.pendingPresetSize()
+                + MilestoneCommandRunner.pendingWorldFirstSize());
+    }
 }

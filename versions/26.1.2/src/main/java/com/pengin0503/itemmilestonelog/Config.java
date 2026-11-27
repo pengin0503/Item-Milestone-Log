@@ -181,6 +181,20 @@ public final class Config {
                     "%uuid% can also target the player, and %item% only ever contains validated item or tag IDs.")
             .define("milestoneCommand", "");
 
+    /** F-150-45 (N13): separate preset-completion command template (empty = disabled). */
+    public static final ModConfigSpec.ConfigValue<String> PRESET_COMPLETE_COMMAND = BUILDER
+            .comment("Optional server command to run when a player completes all targets of a preset (empty = disabled).",
+                    "Independent of milestoneCommand. Placeholders: %player%, %uuid%, %preset%, %builtin%.",
+                    "Security note: only server owners can edit this config file; player and preset IDs are validated before substitution.")
+            .define("presetCompleteCommand", "");
+
+    /** F-150-46 (N109): separate world-first command template (empty = disabled). */
+    public static final ModConfigSpec.ConfigValue<String> WORLD_FIRST_COMMAND = BUILDER
+            .comment("Optional server command to run when a player records a world-first milestone (empty = disabled).",
+                    "Independent of milestoneCommand; runs in addition to it. Same placeholders as milestoneCommand.",
+                    "Not gated by announceWorldFirst, muteBroadcasts, or Discord opt-out.")
+            .define("worldFirstCommand", "");
+
     /** F10: automatically back up MilestoneData on world save and server stop. */
     public static final ModConfigSpec.BooleanValue AUTO_BACKUP_ENABLED = BUILDER
             .comment("Automatically back up MilestoneData to <world>/itemmilestonelog/backups/ on world save (at most once per hour) and server stop.",
@@ -315,6 +329,32 @@ public final class Config {
     public static String milestoneCommand() {
         try {
             String cmd = MILESTONE_COMMAND.get();
+            return cmd != null ? cmd : "";
+        } catch (IllegalStateException notLoaded) {
+            return "";
+        }
+    }
+
+    /**
+     * F-150-45 (N13): {@link #PRESET_COMPLETE_COMMAND}, or {@code ""} while the config is not
+     * loaded yet (plain unit tests).
+     */
+    public static String presetCompleteCommand() {
+        try {
+            String cmd = PRESET_COMPLETE_COMMAND.get();
+            return cmd != null ? cmd : "";
+        } catch (IllegalStateException notLoaded) {
+            return "";
+        }
+    }
+
+    /**
+     * F-150-46 (N109): {@link #WORLD_FIRST_COMMAND}, or {@code ""} while the config is not loaded
+     * yet (plain unit tests).
+     */
+    public static String worldFirstCommand() {
+        try {
+            String cmd = WORLD_FIRST_COMMAND.get();
             return cmd != null ? cmd : "";
         } catch (IllegalStateException notLoaded) {
             return "";
