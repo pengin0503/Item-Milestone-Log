@@ -1,11 +1,14 @@
 package com.pengin0503.itemmilestonelog;
 
 import com.pengin0503.itemmilestonelog.api.TargetKey;
+import net.minecraft.SharedConstants;
 import net.minecraft.commands.CommandSource;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.network.chat.Component;
+import net.minecraft.server.Bootstrap;
 import net.minecraft.world.phys.Vec2;
 import net.minecraft.world.phys.Vec3;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.time.ZoneId;
@@ -24,6 +27,23 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class MilestoneCommandRenderTest {
     private static final ZoneId UTC = ZoneId.of("UTC");
+
+    // The render seams resolve display names through the item registry. On the Forge 1.20.1
+    // test JVM no other test bootstraps Minecraft when this class runs alone, so
+    // BuiltInRegistries.<clinit> rejects registry access with "Not bootstrapped".
+    @BeforeAll
+    static void bootstrapRegistries() {
+        SharedConstants.tryDetectVersion(); // DataFixers need a detected game version.
+        try {
+            Bootstrap.bootStrap();
+        } catch (LinkageError | RuntimeException e) {
+            // A plain JUnit JVM has no FML event-bus transformer: bootStrap() reaches
+            // NetworkHooks.init(), whose NetworkConstants.<clinit> needs a no-arg
+            // NetworkEvent constructor. Bootstrap sets its flag before that point; fail
+            // here only when the flag was not set, i.e. when registries really are closed.
+            Bootstrap.checkBootstrapCalled(() -> "MilestoneCommandRenderTest bootstrap");
+        }
+    }
 
     @Test
     void recapOverflowLineIsRenderedForReturnAndDaily() {
