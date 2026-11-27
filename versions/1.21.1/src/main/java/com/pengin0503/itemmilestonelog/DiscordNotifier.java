@@ -1091,8 +1091,9 @@ public final class DiscordNotifier {
     }
 
     /**
-     * PR-5 replaces this no-op sink with the {@code DISCORD_MANUAL_DIGEST} writer. It is invoked
-     * exactly once per completed manual attempt and never writes a file in this PR.
+     * Optional observer/test sink for one completed F-150-54 manual digest attempt. F-150-57
+     * writes {@code DISCORD_MANUAL_DIGEST} from the server-thread command handler, where the
+     * acting player's UUID is known; this sink itself stays a non-file-writing test seam.
      */
     @Nullable
     static Consumer<ManualDigestResult> manualDigestAuditSink;

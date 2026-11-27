@@ -1870,6 +1870,11 @@ public final class Tracker {
                 },
                 event -> NeoForge.EVENT_BUS.post(event));
         if (result.success()) {
+            if (result.key() != null) {
+                AuditLog.record(source, AuditEvent.Operation.ADMIN_TARGET_ADD, targetId.toString(),
+                        AuditEvent.detail("key", result.key().formatDisplayId(),
+                                "count", result.key().count()));
+            }
             ScoreboardSync.refreshScores(server, targetId);
             if (online != null) {
                 if (result.key() != null) {

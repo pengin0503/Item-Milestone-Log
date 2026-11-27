@@ -310,6 +310,8 @@ public final class MilestoneService {
         ActionResult result = adminAddTarget(data, targetId, targetName, source.getPlayer(), itemId, count,
                 MilestoneService::isKnownNonAirItem, MilestoneService::targetDisplayName);
         if (result.success()) {
+            AuditLog.record(source, AuditEvent.Operation.ADMIN_TARGET_ADD, targetId.toString(),
+                    AuditEvent.detail("key", itemId, "count", count));
             ServerPlayer online = server.getPlayerList().getPlayer(targetId);
             if (online != null) {
                 ensureLastKnownName(data, targetId, McCompat.player().profileName(online.getGameProfile()));
@@ -445,6 +447,8 @@ public final class MilestoneService {
                 itemId, count, MilestoneService::isValidItemId, MilestoneService::targetDisplayName);
         if (result.success()) {
             syncOnlinePlayerIfOpen(server, targetId);
+            AuditLog.record(source, AuditEvent.Operation.ADMIN_TARGET_REMOVE, targetId.toString(),
+                    AuditEvent.detail("key", itemId, "count", count));
         }
         return result;
     }
@@ -1974,6 +1978,9 @@ public final class MilestoneService {
                     "[ItemMilestoneLog] Admin {} renamed item {} -> {} ({} player(s): {} target(s), {} record(s), {} world first(s))",
                     source.getTextName(), outcome.oldId(), outcome.newId(),
                     counts.players(), counts.targets(), counts.records(), counts.worldFirsts());
+            AuditLog.record(source, AuditEvent.Operation.RENAME_ITEM, outcome.newId(),
+                    AuditEvent.detail("oldId", outcome.oldId(), "newId", outcome.newId(),
+                            "records", counts.records()));
             if (counts.hasChanges()) {
                 syncAllOnlineGuiPlayers(server, null);
                 // One full refresh instead of an all-players scan per affected player (O(P^2)).
@@ -2236,6 +2243,9 @@ public final class MilestoneService {
                     "[ItemMilestoneLog] Admin {} renamed tag {} -> {} ({} player(s): {} target(s), {} record(s), {} world first(s))",
                     source.getTextName(), outcome.oldTag(), outcome.newTag(),
                     counts.players(), counts.targets(), counts.records(), counts.worldFirsts());
+            AuditLog.record(source, AuditEvent.Operation.RENAME_TAG, outcome.newTag(),
+                    AuditEvent.detail("oldTag", outcome.oldTag(), "newTag", outcome.newTag(),
+                            "records", counts.records()));
             if (counts.hasChanges()) {
                 syncAllOnlineGuiPlayers(server, null);
                 // One full refresh instead of an all-players scan per affected player (O(P^2)).

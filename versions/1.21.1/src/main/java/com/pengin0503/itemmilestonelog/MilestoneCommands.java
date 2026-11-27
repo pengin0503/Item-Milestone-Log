@@ -12,6 +12,7 @@ import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
 import com.mojang.brigadier.suggestion.SuggestionsBuilder;
 import com.mojang.brigadier.tree.CommandNode;
+import com.pengin0503.itemmilestonelog.PresetShareLogic;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
 import com.pengin0503.itemmilestonelog.api.WorldFirstRecord;
@@ -3006,6 +3007,9 @@ public final class MilestoneCommands {
                 source, code != null ? code.trim() : null);
         if (result.success()) {
             MilestoneService.syncAllOnlineGuiPlayers(source.getServer(), null);
+            String presetId = code == null ? "" : PresetShareLogic.decode(code.trim(), null).id();
+            AuditLog.record(source, AuditEvent.Operation.PRESET_MUTATE, presetId,
+                    AuditEvent.detail("presetId", presetId, "action", "importcode"));
             return send(ctx, result.message());
         }
         return fail(ctx, result.message());
@@ -3064,6 +3068,9 @@ public final class MilestoneCommands {
         MilestoneService.ActionResult result = MilestoneService.savePreset(player, name);
         if (result.success()) {
             MilestoneService.syncAllOnlineGuiPlayers(player.level().getServer(), null);
+            AuditLog.record(player.level().getServer(), player.getUUID(),
+                    AuditEvent.Operation.PRESET_MUTATE, name,
+                    AuditEvent.detail("presetId", name, "action", "save"));
             return send(ctx, result.message());
         }
         return fail(ctx, result.message());
@@ -3076,6 +3083,8 @@ public final class MilestoneCommands {
             if (source.getServer() != null) {
                 MilestoneService.syncAllOnlineGuiPlayers(source.getServer(), null);
             }
+            AuditLog.record(source, AuditEvent.Operation.PRESET_MUTATE, name,
+                    AuditEvent.detail("presetId", name, "action", "delete"));
             return send(ctx, result.message());
         }
         return fail(ctx, result.message());
@@ -3151,6 +3160,8 @@ public final class MilestoneCommands {
         } catch (IOException | IllegalArgumentException e) {
             return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_save_failed", name));
         }
+        AuditLog.record(source, AuditEvent.Operation.PRESET_MUTATE, name,
+                AuditEvent.detail("presetId", name, "action", remove ? "edit_remove" : "edit_add"));
         if (source.getServer() != null) {
             MilestoneService.syncAllOnlineGuiPlayers(source.getServer(), null);
         }
@@ -3194,6 +3205,8 @@ public final class MilestoneCommands {
         } catch (IOException e) {
             return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_save_failed", name));
         }
+        AuditLog.record(source, AuditEvent.Operation.PRESET_MUTATE, name,
+                AuditEvent.detail("presetId", name, "action", protect ? "protect" : "unprotect"));
         if (source.getServer() != null) {
             MilestoneService.syncAllOnlineGuiPlayers(source.getServer(), null);
         }
@@ -3684,6 +3697,9 @@ public final class MilestoneCommands {
             if (removed != null) {
                 ScoreboardSync.refreshScores(source.getServer(), removed.playerUuid());
             }
+            AuditLog.record(source, AuditEvent.Operation.FIRSTS_RESET,
+                    removed == null ? null : removed.playerUuid().toString(),
+                    AuditEvent.detail("key", key.formatDisplayId()));
             return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.firsts_reset_done", MilestoneService.targetDisplayName(key)));
         }
         if (!MilestoneService.isValidItemId(key.itemId())) {
@@ -3698,6 +3714,8 @@ public final class MilestoneCommands {
         if (count > 0) {
             ScoreboardSync.refreshAll(source.getServer());
         }
+        AuditLog.record(source, AuditEvent.Operation.FIRSTS_RESET, null,
+                AuditEvent.detail("all", true, "count", count));
         return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.firsts_resetall_done", count));
     }
 
@@ -3772,6 +3790,10 @@ public final class MilestoneCommands {
             MilestoneExport.ImportMergeStats stats = MilestoneExport.mergeInto(data, player.getUUID(), payload);
             ScoreboardSync.refreshScores(player.level().getServer(), player.getUUID());
             MilestoneService.syncPlayerIfOpen(player);
+            AuditLog.record(source, AuditEvent.Operation.IMPORT_ALL,
+                    payload.ownerUuid() == null ? null : payload.ownerUuid().toString(),
+                    AuditEvent.detail("fileName", fileName, "added", stats.addedTargets(),
+                            "updated", stats.updatedRecords()));
             return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.import_done",
                     fileName, stats.addedTargets(), stats.updatedRecords()));
         } catch (IllegalArgumentException e) {
@@ -4064,6 +4086,8 @@ public final class MilestoneCommands {
         if (!result.attempted()) {
             return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.discordstatus_digest_failed"));
         }
+        AuditLog.record(source, AuditEvent.Operation.DISCORD_MANUAL_DIGEST, null,
+                AuditEvent.detail("entries", result.entries(), "success", result.sent()));
         String key = result.sent()
                 ? "message.itemmilestonelog.discordstatus_digest_sent"
                 : "message.itemmilestonelog.discordstatus_digest_empty";
@@ -4096,6 +4120,9 @@ public final class MilestoneCommands {
             source.sendFailure(ServerLang.tr(source, "message.itemmilestonelog.backup_now_failed"));
             return 0;
         }
+        String auditFileName = MilestoneBackup.lastBackupFileName(source.getServer());
+        AuditLog.record(source, AuditEvent.Operation.BACKUP_NOW, auditFileName,
+                AuditEvent.detail("fileName", auditFileName));
         source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.backup_now_success"), false);
         return 1;
     }
@@ -5244,6 +5271,8 @@ public final class MilestoneCommands {
             if (online != null) {
                 MilestoneService.syncPlayerIfOpen(online);
             }
+            AuditLog.record(source, AuditEvent.Operation.ADMIN_TARGET_REMOVE, target.getKey().toString(),
+                    AuditEvent.detail("key", key.formatDisplayId(), "count", key.count()));
             return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.admin_reset_done", name, MilestoneService.targetDisplayName(key)));
         }
         if (!MilestoneService.isValidItemId(key.itemId())) {
@@ -5271,6 +5300,8 @@ public final class MilestoneCommands {
                 MilestoneService.syncPlayerIfOpen(online);
             }
         }
+        AuditLog.record(source, AuditEvent.Operation.ADMIN_RECORD_RESET_ALL, target.getKey().toString(),
+                AuditEvent.detail("playersAffected", result.changed() ? 1 : 0, "records", count));
         return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.admin_resetall_done", count, name));
     }
 
@@ -5287,6 +5318,7 @@ public final class MilestoneCommands {
         if (data.purgePlayer(uuid)) {
             ItemMilestoneLog.LOGGER.info("[ItemMilestoneLog] Admin {} purged all milestone data for {} ({})",
                     source.getTextName(), name, uuid);
+            AuditLog.record(source, AuditEvent.Operation.ADMIN_PURGE, uuid.toString(), Map.of());
             ServerPlayer online = source.getServer().getPlayerList().getPlayer(uuid);
             if (online != null) {
                 MilestoneService.syncPlayerIfOpen(online);
@@ -5307,6 +5339,8 @@ public final class MilestoneCommands {
         }
         ItemMilestoneLog.LOGGER.info("[ItemMilestoneLog] Admin {} pruned data for {} player(s) (days={})",
                 source.getTextName(), count, days);
+        AuditLog.record(source, AuditEvent.Operation.PRUNE_DATA, null,
+                AuditEvent.detail("days", days, "removed", count));
         return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.prunedata_done", count));
     }
 
@@ -6175,6 +6209,8 @@ public final class MilestoneCommands {
                 applied++;
             }
         }
+        AuditLog.record(source, AuditEvent.Operation.ADMIN_COPY_FROM, target.getKey().toString(),
+                AuditEvent.detail("source", from.getKey().toString(), "targets", applied));
         send(ctx, ServerLang.tr(source, "message.itemmilestonelog.admin_copyfrom_done",
                 applied, Component.literal(fromName), Component.literal(targetName)));
         if (skipped > 0) {
@@ -6705,6 +6741,8 @@ public final class MilestoneCommands {
         if (online != null) {
             MilestoneService.syncPlayerIfOpen(online);
         }
+        AuditLog.record(source, AuditEvent.Operation.ADMIN_TARGET_ADD, target.getKey().toString(),
+                AuditEvent.detail("key", tag, "count", count));
         return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.admin_granted",
                 displayNameFor(target.getKey(), target.getValue()), MilestoneService.targetDisplayName(key)));
     }

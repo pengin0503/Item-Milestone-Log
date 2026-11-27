@@ -270,6 +270,9 @@ public final class MilestoneImportAll {
                     ? mergeActionForTest
                     : MilestoneExport::applyMergePlan;
             stats = action.apply(data, plan);
+            AuditLog.record(job.server, job.executorUuid, AuditEvent.Operation.IMPORT_ALL,
+                    job.fileName, AuditEvent.detail("fileName", job.fileName,
+                            "added", stats.addedTargets(), "updated", stats.updatedRecords()));
         } catch (Throwable t) {
             try {
                 snapshot.restore(data);
@@ -478,6 +481,11 @@ public final class MilestoneImportAll {
             MinecraftServer server = source.getServer();
             MilestoneData data = MilestoneData.get(server);
             MilestoneExport.ImportAllMergeStats stats = MilestoneExport.applyMergePlan(data, plan);
+            AuditLog.record(server,
+                    source.getPlayer() != null ? source.getPlayer().getUUID() : null,
+                    AuditEvent.Operation.IMPORT_ALL, fileName,
+                    AuditEvent.detail("fileName", fileName,
+                            "added", stats.addedTargets(), "updated", stats.updatedRecords()));
             ScoreboardSync.refreshAll(server);
             MilestoneService.syncAllOnlineGuiPlayers(server, null);
             source.sendSuccess(() -> ServerLang.tr(source,

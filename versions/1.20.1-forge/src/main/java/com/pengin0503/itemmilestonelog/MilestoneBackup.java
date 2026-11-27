@@ -88,6 +88,29 @@ public final class MilestoneBackup {
     }
 
     /**
+     * F-150-57: read-only helper that reports the newest pattern-matching backup file name after a
+     * successful {@code backup now}. It never reads NBT, writes or prunes anything; an empty string
+     * is returned when no matching file is visible. The existing boolean {@link #writeBackupNow}
+     * signature is unchanged.
+     */
+    public static String lastBackupFileName(@Nullable MinecraftServer server) {
+        if (server == null) {
+            return "";
+        }
+        Path dir = backupsDir(server);
+        if (!Files.isDirectory(dir)) {
+            return "";
+        }
+        try (Stream<Path> stream = Files.list(dir)) {
+            List<String> names = stream.map(path -> path.getFileName().toString()).toList();
+            List<String> newest = MilestoneBackupLogic.newestFirst(names, backupTimeZone());
+            return newest.isEmpty() ? "" : newest.get(0);
+        } catch (IOException | RuntimeException e) {
+            return "";
+        }
+    }
+
+    /**
      * Initializes the in-memory last-backup timestamp once at server start by reading existing
      * backup file names in {@code <world>/itemmilestonelog/backups/}.
      */
