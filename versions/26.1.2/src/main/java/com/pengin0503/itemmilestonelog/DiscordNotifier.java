@@ -154,6 +154,16 @@ public final class DiscordNotifier {
         return DROPPED_POSTS.get();
     }
 
+    /**
+     * F-150-53 (N147): read-only snapshot of the private bounded send queue for {@code admin debug}.
+     * Reads the existing executor's queue size only; no metric infrastructure, event subscription,
+     * enqueue, flush or state change is introduced. Returns 0 before the sender is started.
+     */
+    static int pendingSendCount() {
+        ExecutorService exec = executor;
+        return exec instanceof ThreadPoolExecutor pool ? pool.getQueue().size() : 0;
+    }
+
     static void resetDropCountForTest() {
         DROPPED_POSTS.set(0);
     }

@@ -8,6 +8,10 @@ The section for a version is used as it is for the GitHub Release (created when 
 ### Permissions
 - **Permission node subdivision (N89)**: Seven boolean permission nodes (`doctor`, `debug`, `discordstatus`, `discorddigest`, `backup.manage`, `backup.view`, `audit.view`) are registered alongside the existing nine, with human-readable names and descriptions in English and Japanese. The existing nodes, checks and command permissions are unchanged: a node can only add access, and console / RCON / command blocks still use the vanilla permission level. No command behaviour changes in this PR.
 
+### Diagnostics
+- **One-shot doctor summary (N47)**: `/milestonelog doctor` prints a read-only, at most 20-line summary of the world/server, saved-data counts, backup directory, Discord configuration state and the I/O queue. It reports counts and status names only: no player names, UUIDs or webhook URLs, and no automatic repair, save or schema change. Console and players can run it; both the legacy permission and the new `doctor` node grant access.
+- **Runtime statistics dump (N147)**: `/milestonelog admin debug` adds a read-only runtime dump beside `doctor` output: current thread, pending notification/Discord-send counts, dropped posts, dead-webhook and Discord-thread state, memory usage, and per-kind I/O queue depth. Optional APIs (average TPS) fall back to a fixed "unavailable" wording instead of crashing on any version. Read-only snapshot getters were added to the existing notification and Discord send queues; no tasks are submitted and no data is dirtied.
+
 ## 1.4.0
 
 This release adds saved-data versioning and recovery, extends presets with composition and automatic add-ons, and adds new inspection, sharing and administration commands, alongside a broad wave of fixes from review and pre-release audits. Every supported Minecraft edition ships with the same version number and feature set.

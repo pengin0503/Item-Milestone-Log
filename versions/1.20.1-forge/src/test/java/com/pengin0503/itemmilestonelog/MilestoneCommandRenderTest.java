@@ -1,5 +1,6 @@
 package com.pengin0503.itemmilestonelog;
 
+import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
 import net.minecraft.SharedConstants;
 import net.minecraft.commands.CommandSource;
@@ -16,9 +17,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -95,6 +98,88 @@ class MilestoneCommandRenderTest {
         MilestoneCommands.sendInfoRelatedTags(plain, null, relatedKeys, Map.of(), effective,
                 Set.of(), EMPTY_TAGS, Map.of(), UTC, false);
         assertEquals(1, countText(plain, baseHeader));
+    }
+
+    // ------------------------------------------ F-150-52 / F-150-53 diagnostics (PR-2)
+
+    private static DiagnosticsSnapshot.Snapshot diagnosticsSnapshot(
+            boolean dirExists, int negativeTicks, int unknownEpoch) {
+        return new DiagnosticsSnapshot.Snapshot("World", 2, 1234,
+                new DiagnosticsSnapshot.DataCounts(false, 3, 10, 8, 2, negativeTicks, unknownEpoch),
+                new DiagnosticsSnapshot.BackupState(dirExists, dirExists ? 4 : 0,
+                        dirExists ? "milestones-20261127-120000" : "none"),
+                new DiagnosticsSnapshot.DiscordState("RESOLVED", true, 7, 1234L),
+                new DiagnosticsSnapshot.IoState(true, true, 1, false, "BACKUP=1", "itemmilestonelog-io"),
+                new DiagnosticsSnapshot.RuntimeState(false, 0.0, "Server thread", true, 2,
+                        true, 0L, true, 3, true, false, true, true, 512L, 1024L));
+    }
+
+    @Test
+    void doctorRendersWithinCapForHealthyBrokenAndMissingBackupDir() {
+        String ok = ServerLang.trForLang("en_us", "message.itemmilestonelog.doctor_ok").getString();
+        String warnings = ServerLang.trForLang("en_us", "message.itemmilestonelog.doctor_warning_count", 1).getString();
+        List<boolean[]> cases = List.of(
+                new boolean[]{true, false},   // healthy
+                new boolean[]{true, true},    // negative/unknown-epoch records seeded
+                new boolean[]{false, false}); // backup directory missing
+        for (boolean[] flags : cases) {
+            FakeRenderSource source = new FakeRenderSource();
+            int negative = flags[1] ? 2 : 0;
+            int lines = MilestoneCommands.sendDoctorLines(source, diagnosticsSnapshot(flags[0], negative, negative));
+            assertEquals(lines, source.messages.size(), "one chat message per rendered line");
+            assertTrue(lines <= DiagnosticsSnapshot.MAX_LINES, "doctor rendered " + lines + " lines");
+            assertTrue(lines >= 15, "doctor summary must not silently drop sections");
+            for (Component message : source.messages) {
+                String text = message.getString();
+                assertFalse(text.contains("https://"), "no webhook URL in doctor output: " + text);
+                assertFalse(text.contains("discord.com/api/webhooks"), "no webhook token in doctor output");
+            }
+            if (flags[0] && !flags[1]) {
+                assertEquals(1, countText(source, ok), "healthy fixture prints doctor_ok");
+            } else {
+                assertTrue(hasText(source, warnings), "broken fixture prints warning count");
+            }
+        }
+    }
+
+    @Test
+    void adminDebugRendersWithinCapWithoutTracesOrUrls() {
+        FakeRenderSource source = new FakeRenderSource();
+        int lines = MilestoneCommands.sendAdminDebugLines(source, diagnosticsSnapshot(true, 0, 0));
+        assertEquals(lines, source.messages.size());
+        assertTrue(lines <= DiagnosticsSnapshot.MAX_LINES, "debug rendered " + lines + " lines");
+        String header = ServerLang.trForLang("en_us", "message.itemmilestonelog.admin_debug_header").getString();
+        assertTrue(hasText(source, header));
+        String unavailable = ServerLang.trForLang("en_us",
+                "message.itemmilestonelog.admin_debug_unavailable", "Average TPS").getString();
+        assertTrue(hasText(source, unavailable), "TPS API is absent in every version -> fixed wording");
+        for (Component message : source.messages) {
+            String text = message.getString();
+            assertFalse(text.contains("Exception"), "no exception trace in debug output: " + text);
+            assertFalse(text.contains("https://"), "no webhook URL in debug output: " + text);
+        }
+    }
+
+    @Test
+    void diagnosticsReadsNeverCreatePlayersOrDirtySavedData() {
+        MilestoneData data = new MilestoneData();
+        DiagnosticsSnapshot.DataCounts empty = MilestoneCommands.dataCountsFor(data);
+        assertEquals(0, empty.players());
+        assertEquals(0, empty.records());
+        assertTrue(empty.empty());
+        assertTrue(data.allPlayers().isEmpty(), "diagnostics must not insert PlayerData");
+        assertFalse(data.isDirty(), "diagnostics must not dirty a data-less set");
+
+        UUID playerId = UUID.fromString("77777777-7777-7777-7777-777777777777");
+        data.player(playerId).records.put(TargetKey.of("minecraft:diamond"), MilestoneRecord.legacy(-5));
+        boolean dirtyBefore = data.isDirty();
+        int playersBefore = data.allPlayers().size();
+        DiagnosticsSnapshot.DataCounts broken = MilestoneCommands.dataCountsFor(data);
+        assertEquals(1, broken.negativeTicks(), "negative ticks are counted, not repaired");
+        assertEquals(1, broken.unknownEpoch(), "unknown epoch is counted, not repaired");
+        assertEquals(1, broken.players());
+        assertEquals(dirtyBefore, data.isDirty(), "a read must not change the dirty flag");
+        assertEquals(playersBefore, data.allPlayers().size(), "a read must not create players");
     }
 
     private static final TagIndex EMPTY_TAGS = TagIndex.of(Map.of());
