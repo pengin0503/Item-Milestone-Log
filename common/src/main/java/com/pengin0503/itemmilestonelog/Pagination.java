@@ -261,4 +261,58 @@ public final class Pagination {
         Objects.requireNonNull(playerQuery, "playerQuery");
         return ROOT_COMMAND + " admin " + playerQuery + " targets";
     }
+
+    // ---------------------------------------------------------------- PR-2 analytics prefixes
+
+    /** F-150-11: {@code compare <player> [<page>]}. */
+    public static String compareCommandPrefix(String player) {
+        Objects.requireNonNull(player, "player");
+        return ROOT_COMMAND + " compare " + player;
+    }
+
+    /** F-150-33: {@code compare <player> <branch> [<page>]} with the branch before the page number. */
+    public static String compareCommandPrefix(String player, String branch) {
+        Objects.requireNonNull(branch, "branch");
+        return compareCommandPrefix(player) + " " + branch;
+    }
+
+    /** F-150-12: {@code timeline <item> [<count>] [<page>]}; a count of 1 omits the optional slot. */
+    public static String timelineCommandPrefix(String itemId, int count) {
+        Objects.requireNonNull(itemId, "itemId");
+        return ROOT_COMMAND + " timeline " + itemId + (count > 1 ? " " + count : "");
+    }
+
+    /** F-150-12: {@code timelinetag <tag> [<count>] [<page>]}. */
+    public static String timelinetagCommandPrefix(String tag, int count) {
+        Objects.requireNonNull(tag, "tag");
+        return ROOT_COMMAND + " timelinetag " + tag + (count > 1 ? " " + count : "");
+    }
+
+    /** F-150-18: the {@code session page <page>} link used when no explicit window was requested. */
+    public static String sessionCommandPrefix() {
+        return ROOT_COMMAND + " session page";
+    }
+
+    /** F-150-18: the {@code session hours <hours> page <page>} link. */
+    public static String sessionCommandPrefix(int hours) {
+        return ROOT_COMMAND + " session hours " + hours + " page";
+    }
+
+    /** F-150-15: {@code stats pace [<page>]} (optionally with the explicit scope literal). */
+    public static String paceCommandPrefix(String scope) {
+        return ROOT_COMMAND + " stats pace" + (scope == null ? "" : " scope " + scope);
+    }
+
+    /** F-150-24 / F-150-39 / F-150-20: simple top-level commands with an optional page. */
+    public static String modstatsCommandPrefix() {
+        return ROOT_COMMAND + " modstats";
+    }
+
+    public static String presetstatsCommandPrefix() {
+        return ROOT_COMMAND + " presetstats";
+    }
+
+    public static String presetmatrixCommandPrefix() {
+        return ROOT_COMMAND + " presetmatrix";
+    }
 }

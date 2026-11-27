@@ -168,6 +168,30 @@ class PaginationTest {
         assertEquals("/milestonelog trends days 7 2",
                 Pagination.pageCommand(Pagination.trendsCommandPrefix(7), 2));
         assertThrows(IllegalArgumentException.class, () -> Pagination.targetsNearCommandPrefix(0));
+
+        // PR-2: every new prefix keeps the opt-in literal before the page number (F-150-11/33/12/18).
+        assertEquals("/milestonelog compare Alex 2",
+                Pagination.pageCommand(Pagination.compareCommandPrefix("Alex"), 2));
+        assertEquals("/milestonelog compare Alex missing 2",
+                Pagination.pageCommand(Pagination.compareCommandPrefix("Alex", "missing"), 2));
+        assertEquals("/milestonelog timeline minecraft:diamond 3 2",
+                Pagination.pageCommand(Pagination.timelineCommandPrefix("minecraft:diamond", 3), 2));
+        assertEquals("/milestonelog timeline minecraft:diamond 2",
+                Pagination.pageCommand(Pagination.timelineCommandPrefix("minecraft:diamond", 1), 2));
+        assertEquals("/milestonelog timelinetag #c:ingots/iron 2 2",
+                Pagination.pageCommand(Pagination.timelinetagCommandPrefix("#c:ingots/iron", 2), 2));
+        assertEquals("/milestonelog session hours 6 page 2",
+                Pagination.pageCommand(Pagination.sessionCommandPrefix(6), 2));
+        assertEquals("/milestonelog session page 2",
+                Pagination.pageCommand(Pagination.sessionCommandPrefix(), 2));
+        assertEquals("/milestonelog stats pace scope presets 2",
+                Pagination.pageCommand(Pagination.paceCommandPrefix("presets"), 2));
+        assertEquals("/milestonelog modstats 2",
+                Pagination.pageCommand(Pagination.modstatsCommandPrefix(), 2));
+        assertEquals("/milestonelog presetstats 2",
+                Pagination.pageCommand(Pagination.presetstatsCommandPrefix(), 2));
+        assertEquals("/milestonelog presetmatrix 2",
+                Pagination.pageCommand(Pagination.presetmatrixCommandPrefix(), 2));
     }
 
     @Test

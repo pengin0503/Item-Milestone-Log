@@ -32,6 +32,8 @@ class CommandHelpTest {
                 "whohas", "whohastag", "lookup",
                 "privacy", "mutebroadcast", "muteprogress", "discordoptout",
                 "settings", "randomtarget", "trends", "recap",
+                "compare", "timeline", "timelinetag", "session",
+                "modstats", "presetstats", "presetmatrix",
                 "export", "exporthtml", "exportcsv", "import",
                 "exportall", "exporthtmlall", "exportcsvall", "importall",
                 "admin", "prunedata", "renameitem", "renametag", "discordtest", "help"
@@ -62,6 +64,7 @@ class CommandHelpTest {
         assertEquals(List.of(
                 "preset", "firsts", "top", "presettop", "toptag", "recent", "stats", "statstag",
                 "whohas", "whohastag", "lookup",
+                "compare", "timeline", "timelinetag", "modstats", "presetstats", "presetmatrix",
                 "exportall", "exporthtmlall", "exportcsvall", "importall",
                 "admin", "prunedata", "renameitem", "renametag", "discordtest", "help"
         ), visible);

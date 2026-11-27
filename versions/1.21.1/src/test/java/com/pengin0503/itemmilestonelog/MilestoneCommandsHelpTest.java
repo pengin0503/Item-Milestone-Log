@@ -382,8 +382,13 @@ class MilestoneCommandsHelpTest {
         CommandHelp.Entry entry = entryByName("presettop");
         assertFalse(entry.playerOnly(), "presettop must remain console-usable like top");
         assertEquals(CommandHelp.Gate.LOOKUP, entry.gate());
-        assertEquals(List.of("/milestonelog presettop <preset> [<page>]"),
-                MilestoneCommands.helpUsages(dispatcher, null, entry));
+        // PR-2 adds a trailing [axis] literal, which changes Brigadier smart usage; the legacy
+        // presettop <preset> [<page>] usage must still be offered.
+        assertTrue(MilestoneCommands.helpUsages(dispatcher, null, entry).stream()
+                        .anyMatch(u -> u.startsWith("/milestonelog presettop <preset> ")
+                                && u.contains("<page>")),
+                () -> "Expected presettop page usage: "
+                        + MilestoneCommands.helpUsages(dispatcher, null, entry));
         // A page link must be a fully parseable command with the preset preserved.
         for (String line : List.of("/milestonelog presettop demo 2")) {
             ParseResults<CommandSourceStack> parse = dispatcher.parse(line.substring(1), null);
@@ -515,7 +520,9 @@ class MilestoneCommandsHelpTest {
         CommandDispatcher<CommandSourceStack> dispatcher = buildDispatcher(src -> true);
         CommandNode<CommandSourceStack> stats = rootChild(dispatcher, "stats");
         assertNotNull(stats.getCommand(), "bare stats must still execute server statistics");
-        assertNull(stats.getChild("page"), "stats must not gain a page argument");
+        CommandNode<CommandSourceStack> statsPage = stats.getChild("page");
+        assertNotNull(statsPage, "PR-2 adds an opt-in stats page branch (F-150-29)");
+        assertNull(statsPage.getCommand(), "bare stats page must not change stats output");
         CommandNode<CommandSourceStack> item = stats.getChild("item");
         assertNotNull(item, "stats <item> must be registered (F-150-7)");
         assertTrue(item instanceof ArgumentCommandNode<CommandSourceStack, ?>);
@@ -727,6 +734,169 @@ class MilestoneCommandsHelpTest {
     }
 
     @Test
+    void pr2AnalyticsCommandsAreRegisteredAndParsed() {
+        CommandDispatcher<CommandSourceStack> op = buildDispatcher(src -> true);
+        CommandNode<CommandSourceStack> root = op.getRoot().getChild("milestonelog");
+        assertNotNull(root, "/milestonelog root must be registered");
+
+        // PR-2 top-level entries: gate and source flags (F-150-11/12/18/20/24/39).
+        for (String name : List.of("compare", "timeline", "timelinetag", "modstats",
+                "presetmatrix", "presetstats")) {
+            assertNotNull(root.getChild(name), name + " must be registered (PR-2)");
+            CommandHelp.Entry entry = entryByName(name);
+            assertEquals(CommandHelp.Gate.LOOKUP, entry.gate(), name + " must be lookup-gated");
+            assertFalse(entry.playerOnly(), name + " must stay console-usable");
+        }
+        assertNotNull(root.getChild("session"), "session must be registered (F-150-18)");
+        CommandHelp.Entry sessionEntry = entryByName("session");
+        assertEquals(CommandHelp.Gate.NONE, sessionEntry.gate(), "session must not be gated");
+        assertTrue(sessionEntry.playerOnly(), "session must be player-only (F-150-18)");
+
+        // F-150-11/33: compare <player> [missing|route|rival] [<page>].
+        CommandNode<CommandSourceStack> compare = rootChild(op, "compare");
+        assertNull(compare.getCommand(), "bare compare must not execute");
+        CommandNode<CommandSourceStack> comparePlayer = compare.getChild("player");
+        assertNotNull(comparePlayer, "compare must take <player>");
+        assertTrue(comparePlayer instanceof ArgumentCommandNode<?, ?>);
+        assertEquals(StringArgumentType.class,
+                ((ArgumentCommandNode<CommandSourceStack, ?>) comparePlayer).getType().getClass(),
+                "compare <player> must be a word argument");
+        assertNotNull(comparePlayer.getCommand(), "compare <player> must execute");
+        for (String branch : List.of("missing", "route", "rival")) {
+            assertNotNull(comparePlayer.getChild(branch), "compare <player> " + branch + " must exist");
+        }
+        CommandNode<CommandSourceStack> comparePage = comparePlayer.getChild("page");
+        assertNotNull(comparePage, "compare <player> [<page>] must be registered");
+        assertEquals(IntegerArgumentType.class,
+                ((ArgumentCommandNode<CommandSourceStack, ?>) comparePage).getType().getClass());
+        assertNotNull(comparePage.getCommand(), "compare <player> <page> must execute");
+
+        // F-150-12: timeline <item> [<count>] [<page>] and timelinetag <tag> [<count>] [<page>].
+        for (String[] command : List.of(
+                new String[] {"timeline", "item"}, new String[] {"timelinetag", "tag"})) {
+            CommandNode<CommandSourceStack> target = rootChild(op, command[0]).getChild(command[1]);
+            assertNotNull(target, command[0] + " must take <" + command[1] + ">");
+            for (String slot : List.of("count", "page")) {
+                CommandNode<CommandSourceStack> child = target.getChild(slot);
+                assertNotNull(child, command[0] + " <" + command[1] + "> <" + slot + "> must exist");
+                assertTrue(child instanceof ArgumentCommandNode<?, ?>);
+                assertEquals(IntegerArgumentType.class,
+                        ((ArgumentCommandNode<CommandSourceStack, ?>) child).getType().getClass());
+                assertNotNull(child.getCommand(),
+                        command[0] + " <" + command[1] + "> <" + slot + "> must execute");
+            }
+        }
+        CommandNode<CommandSourceStack> timelineItem = rootChild(op, "timeline").getChild("item");
+        assertNotNull(timelineItem.getChild("count"), "timeline <item> must take <count>");
+        assertNotNull(timelineItem.getChild("page"), "timeline <item> must take <page>");
+        assertNotNull(timelineItem.getChild("count").getChild("page"),
+                "timeline <item> <count> <page> must be registered");
+
+        // F-150-18: session [hours <window>] [page <page>] and session summary.
+        CommandNode<CommandSourceStack> session = rootChild(op, "session");
+        for (String child : List.of("summary", "hours", "page")) {
+            assertNotNull(session.getChild(child), "session " + child + " must be registered");
+        }
+        CommandNode<CommandSourceStack> hoursArg = session.getChild("hours").getChild("hours");
+        assertNotNull(hoursArg, "session hours must take <hours>");
+        assertEquals(StringArgumentType.class,
+                ((ArgumentCommandNode<CommandSourceStack, ?>) hoursArg).getType().getClass());
+        assertNotNull(hoursArg.getCommand(), "session hours <hours> must execute");
+        CommandNode<CommandSourceStack> hoursPageLiteral = hoursArg.getChild("page");
+        assertNotNull(hoursPageLiteral, "session hours <hours> page must be registered");
+        CommandNode<CommandSourceStack> hoursPage = hoursPageLiteral.getChild("page");
+        assertNotNull(hoursPage, "session hours <hours> page <page> must be registered");
+        assertEquals(IntegerArgumentType.class,
+                ((ArgumentCommandNode<CommandSourceStack, ?>) hoursPage).getType().getClass());
+        assertNotNull(hoursPage.getCommand(), "session hours <hours> page <page> must execute");
+        CommandNode<CommandSourceStack> sessionPage = session.getChild("page").getChild("page");
+        assertNotNull(sessionPage, "session page <page> must be registered");
+        assertEquals(IntegerArgumentType.class,
+                ((ArgumentCommandNode<CommandSourceStack, ?>) sessionPage).getType().getClass());
+        assertNotNull(sessionPage.getCommand(), "session page <page> must execute");
+
+        // F-150-24/39/20: paged top-level analytics plus presetstats predict <preset>.
+        for (String name : List.of("modstats", "presetmatrix", "presetstats")) {
+            CommandNode<CommandSourceStack> page = rootChild(op, name).getChild("page");
+            assertNotNull(page, name + " [<page>] must be registered");
+            assertEquals(IntegerArgumentType.class,
+                    ((ArgumentCommandNode<CommandSourceStack, ?>) page).getType().getClass());
+            assertNotNull(page.getCommand(), name + " <page> must execute");
+        }
+        CommandNode<CommandSourceStack> predict = rootChild(op, "presetstats").getChild("predict");
+        assertNotNull(predict, "presetstats predict must be registered (F-150-39)");
+        CommandNode<CommandSourceStack> predictPreset = predict.getChild("preset");
+        assertNotNull(predictPreset, "presetstats predict must take <preset>");
+        assertEquals(StringArgumentType.class,
+                ((ArgumentCommandNode<CommandSourceStack, ?>) predictPreset).getType().getClass());
+
+        // F-150-15/29: stats pace and the opt-in axis literals on top / stats / presettop.
+        CommandNode<CommandSourceStack> stats = rootChild(op, "stats");
+        CommandNode<CommandSourceStack> pace = stats.getChild("pace");
+        assertNotNull(pace, "stats pace must be registered (F-150-15)");
+        assertNotNull(pace.getCommand(), "bare stats pace must execute");
+        CommandNode<CommandSourceStack> pacePage = pace.getChild("page");
+        assertNotNull(pacePage, "stats pace [<page>] must be registered");
+        assertEquals(IntegerArgumentType.class,
+                ((ArgumentCommandNode<CommandSourceStack, ?>) pacePage).getType().getClass());
+        assertNotNull(pacePage.getCommand(), "stats pace <page> must execute");
+        CommandNode<CommandSourceStack> paceScopeLiteral = pace.getChild("scope");
+        assertNotNull(paceScopeLiteral, "stats pace scope <scope> must be registered");
+        CommandNode<CommandSourceStack> paceScope = paceScopeLiteral.getChild("scope");
+        assertNotNull(paceScope, "stats pace scope must take <scope>");
+        assertEquals(StringArgumentType.class,
+                ((ArgumentCommandNode<CommandSourceStack, ?>) paceScope).getType().getClass());
+
+        for (String name : List.of("top", "stats")) {
+            CommandNode<CommandSourceStack> axisLiteral = rootChild(op, name).getChild("axis");
+            assertNotNull(axisLiteral, name + " axis must be registered (F-150-29)");
+            CommandNode<CommandSourceStack> axis = axisLiteral.getChild("axis");
+            assertNotNull(axis, name + " axis must take <axis>");
+            assertEquals(StringArgumentType.class,
+                    ((ArgumentCommandNode<CommandSourceStack, ?>) axis).getType().getClass());
+        }
+        CommandNode<CommandSourceStack> preset = rootChild(op, "presettop").getChild("preset");
+        assertNotNull(preset, "presettop must take <preset>");
+        CommandNode<CommandSourceStack> presetAxisLiteral = preset.getChild("axis");
+        assertNotNull(presetAxisLiteral, "presettop <preset> axis must be registered");
+        CommandNode<CommandSourceStack> presetAxis = presetAxisLiteral.getChild("axis");
+        assertNotNull(presetAxis, "presettop <preset> axis must take <axis>");
+        assertEquals(StringArgumentType.class,
+                ((ArgumentCommandNode<CommandSourceStack, ?>) presetAxis).getType().getClass());
+
+        // Every documented PR-2 line must parse completely with an OP dispatcher.
+        for (String line : List.of(
+                "milestonelog compare SomePlayer",
+                "milestonelog compare SomePlayer missing",
+                "milestonelog compare SomePlayer route 2",
+                "milestonelog compare SomePlayer rival 2",
+                "milestonelog timeline minecraft:diamond",
+                "milestonelog timeline minecraft:diamond 3 2",
+                "milestonelog timelinetag c:ingots/iron",
+                "milestonelog session",
+                "milestonelog session hours 6",
+                "milestonelog session hours 6 page 2",
+                "milestonelog session summary",
+                "milestonelog modstats",
+                "milestonelog modstats 2",
+                "milestonelog presetmatrix",
+                "milestonelog presetmatrix 2",
+                "milestonelog presetstats",
+                "milestonelog presetstats predict vanilla_endgame",
+                "milestonelog stats pace",
+                "milestonelog stats pace scope presets",
+                "milestonelog top axis online",
+                "milestonelog top minecraft:diamond axis period days 7",
+                "milestonelog stats axis team",
+                "milestonelog presettop vanilla_endgame axis all")) {
+            ParseResults<CommandSourceStack> parse = op.parse(line, null);
+            assertFalse(parse.getReader().canRead(), "must fully parse: " + line);
+            assertTrue(parse.getExceptions().isEmpty(), line + ": " + parse.getExceptions());
+            assertNotNull(parse.getContext().getCommand(), line);
+        }
+    }
+
+    @Test
     void everyRegisteredSubcommandAppearsInHelpTableAndViceVersa() {
         CommandDispatcher<CommandSourceStack> dispatcher = buildDispatcher(src -> true);
         CommandNode<CommandSourceStack> root = dispatcher.getRoot().getChild("milestonelog");
@@ -791,14 +961,17 @@ class MilestoneCommandsHelpTest {
                 actualHelpKeys.add(key);
             }
         }
-        // F-150-21/27/32 define auxiliary opt-in descriptions that are not top-level ENTRIES.
+        // F-150-21/27/32 define auxiliary opt-in descriptions that are not top-level ENTRIES;
+        // PR-2 adds the axis and compare_branches auxiliary opt-in descriptions.
         Set<String> auxiliaryHelpKeys = Set.of(
+                "message.itemmilestonelog.help.axis",
+                "message.itemmilestonelog.help.compare_branches",
                 "message.itemmilestonelog.help.compact",
                 "message.itemmilestonelog.help.info_preview",
                 "message.itemmilestonelog.help.list_sort");
         actualHelpKeys.removeAll(auxiliaryHelpKeys);
         assertEquals(expectedHelpKeys, actualHelpKeys,
-                "en_us.json help.* keys must match CommandHelp.ENTRIES plus PR-1 auxiliary keys");
+                "en_us.json help.* keys must match CommandHelp.ENTRIES plus PR-1 and PR-2 auxiliary keys");
     }
 
     @Test
