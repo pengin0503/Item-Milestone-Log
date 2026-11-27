@@ -1,11 +1,10 @@
-name: Publish to CurseForge and Modrinth
+name: Publish to CurseForge
 
 # Manual-only publishing (spec docs/FEATURE_SPEC_1.1.0.md §4.1, candidate P53).
 # Publishing is hard to undo, so this workflow NEVER runs automatically:
 # no tag-push or release triggers, only workflow_dispatch with a release tag.
 #
 # Required repository secrets (registered by the repository owner):
-#   MODRINTH_TOKEN    - Modrinth personal access token (project A4mCJN2v)
 #   CURSEFORGE_TOKEN  - CurseForge API token (project 1822783)
 # Tokens are passed only via env and are never echoed.
 #
@@ -31,14 +30,13 @@ permissions:
 
 jobs:
   publish:
-    name: Upload the release jars to CurseForge and Modrinth
+    name: Upload the release jars to CurseForge
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       TAG: ${{ inputs.tag }}
-      MODRINTH_PROJECT_ID: A4mCJN2v
       CURSEFORGE_PROJECT_ID: "1822783"
     steps:
       - name: Download the jars, manifest and changelog for the tag
@@ -89,67 +87,6 @@ jobs:
             exit 1
           fi
           echo "VERSION=$version" >> "$GITHUB_ENV"
-
-      - name: Upload to Modrinth
-        env:
-          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [ -z "${MODRINTH_TOKEN:-}" ]; then
-            echo "::error::MODRINTH_TOKEN secret is not set"
-            exit 1
-          fi
-          changelog_json=$(jq -Rs . < changelog-section.md)
-          # Idempotency (DESIGN section 6, compare version + loader + game version
-          # sets): a version_numbers entry is only skipped for the loader it was
-          # uploaded for. This keeps a future Forge and NeoForge release on the same
-          # Minecraft version from hiding each other, and makes a re-run after a
-          # partial failure upload only the remaining game versions.
-          existing=$(curl -fsS "https://api.modrinth.com/v2/project/$MODRINTH_PROJECT_ID/version" \
-            -H "Authorization: $MODRINTH_TOKEN" \
-            -H "User-Agent: pengin0503/Item-Milestone-Log publish workflow" \
-            | jq -c --arg v "$VERSION" '[.[] | select(.version_number == $v) | {loaders: (.loaders // []), game_versions: .game_versions}]')
-          echo "Already on Modrinth for $VERSION: $existing"
-          while IFS= read -r entry <&3; do
-            jar="dist/$(jq -r '.file' <<< "$entry")"
-            base=$(basename "$jar")
-            # "neoforge" when the manifest entry has no loader field (older
-            # manifests); the Forge 1.20.1 entry carries "forge".
-            loader=$(jq -r '.loader // "neoforge"' <<< "$entry")
-            label=$(jq -r 'if (.game_versions | length) > 1
-                then "\(.game_versions[0])–\(.game_versions[-1])"
-                else .game_versions[0] end' <<< "$entry")
-            missing=$(jq -c --arg loader "$loader" --argjson have "$existing" \
-              '.game_versions - ([$have[] | select((.loaders // []) | index($loader)) | .game_versions[]] | unique)' \
-              <<< "$entry")
-            if [ "$(jq 'length' <<< "$missing")" -eq 0 ]; then
-              echo "Skipping $base: $VERSION for MC $label ($loader) is already on Modrinth"
-              continue
-            fi
-            jq -n \
-              --arg name "Item Milestone Log $VERSION (MC $label)" \
-              --arg version_number "$VERSION" \
-              --argjson changelog "$changelog_json" \
-              --arg project_id "$MODRINTH_PROJECT_ID" \
-              --argjson game_versions "$missing" \
-              --arg loader "$loader" \
-              '{name: $name, version_number: $version_number, changelog: $changelog,
-                dependencies: [], version_type: "release", loaders: [$loader],
-                featured: false, project_id: $project_id,
-                game_versions: $game_versions, file_parts: ["file"]}' > data.json
-            jq -e . data.json > /dev/null
-            echo "Uploading $base to Modrinth (loader $loader, game versions $missing)..."
-            code=$(curl -sS -X POST "https://api.modrinth.com/v2/version" \
-              -H "Authorization: $MODRINTH_TOKEN" \
-              -H "User-Agent: pengin0503/Item-Milestone-Log publish workflow" \
-              -F "data=@data.json;type=application/json" \
-              -F "file=@$jar" -o resp.json -w "%{http_code}")
-            cat resp.json
-            if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
-              echo "::error::Modrinth upload failed with HTTP $code"
-              exit 1
-            fi
-          done 3< <(jq -c '.files[]' "$MANIFEST")
 
       - name: Upload to CurseForge
         env:
