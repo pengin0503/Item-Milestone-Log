@@ -1655,4 +1655,88 @@ class MilestoneDataTest {
         assertEquals(0, after.loadReport().elementSkipCount());
     }
 
+
+    @Test
+    void soundFieldsMissingFromLegacyTagLoadAsFollowServerAndUnmuted() {
+        MilestoneData original = new MilestoneData();
+        MilestoneData.PlayerData pd = original.player(PLAYER_A);
+        TargetKey diamond = TargetKey.of("minecraft:diamond", 3);
+        pd.targets.add(diamond);
+        pd.lastKnownName = "Alice";
+        CompoundTag saved = original.save(new CompoundTag());
+        CompoundTag playerTag = McCompat.nbt().getCompound(
+                McCompat.nbt().getCompound(saved, "players"), PLAYER_A.toString());
+        assertFalse(playerTag.contains("soundVolume"), "the -1 default is never written");
+        assertFalse(playerTag.contains("muteNotificationSounds"), "the false default is never written");
+        MilestoneData loaded = MilestoneData.load(saved);
+        MilestoneData.PlayerData loadedPd = loaded.playerOrNull(PLAYER_A);
+        assertNotNull(loadedPd);
+        assertEquals(SoundVolumeLogic.FOLLOW_SERVER, loadedPd.soundVolume);
+        assertFalse(loadedPd.muteNotificationSounds);
+        assertEquals(pd.targets, loadedPd.targets);
+        assertEquals("Alice", loadedPd.lastKnownName);
+        assertEquals(original.schemaVersionForSave(), loaded.schemaVersionForSave());
+    }
+
+    @Test
+    void soundFieldsRoundTripAndOnlyWriteNonDefaults() {
+        MilestoneData original = new MilestoneData();
+        MilestoneData.PlayerData pd = original.player(PLAYER_A);
+        pd.soundVolume = 45;
+        pd.muteNotificationSounds = true;
+        CompoundTag saved = original.save(new CompoundTag());
+        CompoundTag playerTag = McCompat.nbt().getCompound(
+                McCompat.nbt().getCompound(saved, "players"), PLAYER_A.toString());
+        assertEquals(45, McCompat.nbt().getInt(playerTag, "soundVolume"));
+        assertTrue(McCompat.nbt().getBoolean(playerTag, "muteNotificationSounds"));
+        MilestoneData.PlayerData loadedPd = MilestoneData.load(saved).playerOrNull(PLAYER_A);
+        assertNotNull(loadedPd);
+        assertEquals(45, loadedPd.soundVolume);
+        assertTrue(loadedPd.muteNotificationSounds);
+
+        pd.soundVolume = SoundVolumeLogic.FOLLOW_SERVER;
+        pd.muteNotificationSounds = false;
+        CompoundTag defaults = original.save(new CompoundTag());
+        CompoundTag defaultTag = McCompat.nbt().getCompound(
+                McCompat.nbt().getCompound(defaults, "players"), PLAYER_A.toString());
+        assertFalse(defaultTag.contains("soundVolume"));
+        assertFalse(defaultTag.contains("muteNotificationSounds"));
+        MilestoneData.PlayerData after = MilestoneData.load(defaults).playerOrNull(PLAYER_A);
+        assertNotNull(after);
+        assertEquals(SoundVolumeLogic.FOLLOW_SERVER, after.soundVolume);
+        assertFalse(after.muteNotificationSounds);
+    }
+
+    @Test
+    void soundFieldsLoaderSkipsMalformedValuesAndKeepsSiblings() {
+        MilestoneData original = new MilestoneData();
+        MilestoneData.PlayerData pd = original.player(PLAYER_A);
+        TargetKey diamond = TargetKey.of("minecraft:diamond", 3);
+        pd.targets.add(diamond);
+        pd.lastKnownName = "Alice";
+        CompoundTag saved = original.save(new CompoundTag());
+        CompoundTag players = McCompat.nbt().getCompound(saved, "players");
+        CompoundTag playerTag = McCompat.nbt().getCompound(players, PLAYER_A.toString());
+        playerTag.put("soundVolume", StringTag.valueOf("garbage"));
+        playerTag.put("muteNotificationSounds", StringTag.valueOf("garbage"));
+        players.put(PLAYER_A.toString(), playerTag);
+        saved.put("players", players);
+        MilestoneData loaded = MilestoneData.load(saved);
+        MilestoneData.PlayerData loadedPd = loaded.playerOrNull(PLAYER_A);
+        assertNotNull(loadedPd);
+        assertEquals(SoundVolumeLogic.FOLLOW_SERVER, loadedPd.soundVolume);
+        assertFalse(loadedPd.muteNotificationSounds);
+        assertEquals(pd.targets, loadedPd.targets);
+        assertEquals("Alice", loadedPd.lastKnownName);
+        assertNotNull(loaded.loadReport());
+        assertTrue(loaded.loadReport().elementSkipCount() >= 2);
+
+        playerTag.putInt("soundVolume", 500);
+        players.put(PLAYER_A.toString(), playerTag);
+        saved.put("players", players);
+        MilestoneData outOfRange = MilestoneData.load(saved);
+        assertEquals(SoundVolumeLogic.FOLLOW_SERVER, outOfRange.playerOrNull(PLAYER_A).soundVolume);
+        assertEquals(pd.targets, outOfRange.playerOrNull(PLAYER_A).targets);
+    }
+
 }

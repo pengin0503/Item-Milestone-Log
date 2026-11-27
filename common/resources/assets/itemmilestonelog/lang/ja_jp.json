@@ -632,5 +632,22 @@
   "message.itemmilestonelog.pinned_empty": "ピン留めした目標はありません。",
   "message.itemmilestonelog.help.pinned": "ピン留めした目標を表示する",
   "message.itemmilestonelog.target_meta_query": "%s のメタデータ: 優先度 %s、ラベル \"%s\"、ピン %s。",
-  "message.itemmilestonelog.bulk_cleanup_preview": "達成済みの目標を %s 件削除します。[confirm] を付けると実行されます。"
+  "message.itemmilestonelog.bulk_cleanup_preview": "達成済みの目標を %s 件削除します。[confirm] を付けると実行されます。",
+  "itemmilestonelog.configuration.worldFirstSound": "世界初のサウンド",
+  "itemmilestonelog.configuration.worldFirstSound.tooltip": "世界初記録のサウンド ID（空 = milestoneSound を再利用）。",
+  "itemmilestonelog.configuration.presetCompleteSound": "プリセット達成サウンド",
+  "itemmilestonelog.configuration.presetCompleteSound.tooltip": "プリセット達成時のサウンド ID（空 = milestoneSound を再利用）。",
+  "itemmilestonelog.configuration.progressAlertSound": "進捗アラートのサウンド",
+  "itemmilestonelog.configuration.progressAlertSound.tooltip": "進捗アラートのサウンド ID（空 = 新しい音を鳴らさず、1.4.0 の挙動を維持）。",
+  "itemmilestonelog.configuration.announceWorldFirstSound": "世界初のアナウンスサウンド",
+  "itemmilestonelog.configuration.announceWorldFirstSound.tooltip": "世界初のアナウンスを受け取るプレイヤーにもサウンドを鳴らします。announceWorldFirst と受け手の muteBroadcasts に従います。",
+  "itemmilestonelog.configuration.notificationSoundVolume": "通知音の既定音量",
+  "itemmilestonelog.configuration.notificationSoundVolume.tooltip": "プレイヤーが個別設定を持たないときの音量（0〜100）。100 でバニラと同じ音量です。",
+  "message.itemmilestonelog.help.sound": "通知音の音量とミュートを表示・変更します。",
+  "message.itemmilestonelog.sound_volume_current": "通知音の音量: %s（サーバー既定: %s）",
+  "message.itemmilestonelog.sound_volume_set": "通知音の音量を %s に設定しました",
+  "message.itemmilestonelog.sound_mute_current": "通知音: %s",
+  "message.itemmilestonelog.sound_mute_set": "通知音を %s にしました",
+  "message.itemmilestonelog.sound_mute_toggled": "通知音を %s にしました（キー操作）",
+  "key.itemmilestonelog.mute_notification_sound": "通知音をミュート"
 }

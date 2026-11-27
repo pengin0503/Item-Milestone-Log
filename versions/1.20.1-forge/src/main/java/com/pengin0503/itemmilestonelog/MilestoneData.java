@@ -74,6 +74,11 @@ public class MilestoneData extends SavedData {
         /** F-150-44 (N116): personal destination enum name; FOLLOW_SERVER means "use the server default". */
         public String progressAlertDestination = "FOLLOW_SERVER";
 
+        /** F-150-49 (N114): personal 0..100 volume, or -1 to follow the server default. */
+        public int soundVolume = SoundVolumeLogic.FOLLOW_SERVER;
+        /** F-150-50 (N121): suppresses every notification sound packet (not chat/Discord). */
+        public boolean muteNotificationSounds = false;
+
         /** Whether this player hides their records from lookups by non-privileged other players (F14). */
         public boolean isHiddenFromLookup() {
             return hideFromLookup;
@@ -680,6 +685,23 @@ public class MilestoneData extends SavedData {
                 MilestoneLoadReport.recordElementSkip();
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed progressAlertDestination tag in SavedData");
             }
+            if (McCompat.nbt().containsTyped(entry, "soundVolume", NbtCompat.ANY_NUMERIC)) {
+                int storedVolume = McCompat.nbt().getInt(entry, "soundVolume");
+                int normalizedVolume = SoundVolumeLogic.normalizePersonal(storedVolume);
+                if (normalizedVolume != storedVolume) {
+                    MilestoneLoadReport.recordElementSkip();
+                }
+                pd.soundVolume = normalizedVolume;
+            } else if (McCompat.nbt().contains(entry, "soundVolume")) {
+                MilestoneLoadReport.recordElementSkip();
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed soundVolume tag in SavedData");
+            }
+            if (McCompat.nbt().containsTyped(entry, "muteNotificationSounds", NbtCompat.ANY_NUMERIC)) {
+                pd.muteNotificationSounds = McCompat.nbt().getBoolean(entry, "muteNotificationSounds");
+            } else if (McCompat.nbt().contains(entry, "muteNotificationSounds")) {
+                MilestoneLoadReport.recordElementSkip();
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed muteNotificationSounds tag in SavedData");
+            }
             data.players.put(uuid, pd);
         }
 
@@ -871,6 +893,13 @@ public class MilestoneData extends SavedData {
             if (NotificationDestinationLogic.isValidChoice(pd.progressAlertDestination)
                     && !"FOLLOW_SERVER".equals(pd.progressAlertDestination)) {
                 entry.putString("progressAlertDestination", pd.progressAlertDestination);
+            }
+            if (SoundVolumeLogic.isStoredPersonal(pd.soundVolume)
+                    && pd.soundVolume != SoundVolumeLogic.FOLLOW_SERVER) {
+                entry.putInt("soundVolume", pd.soundVolume);
+            }
+            if (pd.muteNotificationSounds) {
+                entry.putBoolean("muteNotificationSounds", true);
             }
             all.put(e.getKey().toString(), entry);
         }

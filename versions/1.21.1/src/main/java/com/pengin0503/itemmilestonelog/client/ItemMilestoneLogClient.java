@@ -3,6 +3,7 @@ package com.pengin0503.itemmilestonelog.client;
 import com.mojang.blaze3d.platform.InputConstants;
 import com.pengin0503.itemmilestonelog.Config;
 import com.pengin0503.itemmilestonelog.ItemMilestoneLog;
+import com.pengin0503.itemmilestonelog.network.MilestoneActionPayload;
 import com.pengin0503.itemmilestonelog.network.ModNetworking;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
@@ -41,6 +42,8 @@ public final class ItemMilestoneLogClient {
     public static final String KEY_CATEGORY = "key.categories." + ItemMilestoneLog.MOD_ID;
     public static final String KEY_OPEN_GUI = "key." + ItemMilestoneLog.MOD_ID + ".open_gui";
     public static final String KEY_ADD_HOVERED = "key." + ItemMilestoneLog.MOD_ID + ".add_hovered";
+    public static final String KEY_MUTE_NOTIFICATION_SOUND =
+            "key." + ItemMilestoneLog.MOD_ID + ".mute_notification_sound";
 
     // No default key: M, the obvious choice, is also the full-screen map key of FTB Chunks,
     // which All the Mods 10 includes (issue #17). Players pick a key under Controls.
@@ -56,6 +59,14 @@ public final class ItemMilestoneLogClient {
     public static final KeyMapping ADD_HOVERED_MAPPING = new KeyMapping(
             KEY_ADD_HOVERED,
             KeyConflictContext.GUI,
+            InputConstants.UNKNOWN,
+            KEY_CATEGORY
+    );
+
+    // F-150-50 (N121): third optional key, unbound by default like the existing two.
+    public static final KeyMapping MUTE_NOTIFICATION_SOUND_MAPPING = new KeyMapping(
+            KEY_MUTE_NOTIFICATION_SOUND,
+            KeyConflictContext.IN_GAME,
             InputConstants.UNKNOWN,
             KEY_CATEGORY
     );
@@ -112,9 +123,15 @@ public final class ItemMilestoneLogClient {
     private static void onRegisterKeyMappings(RegisterKeyMappingsEvent event) {
         event.register(OPEN_GUI_MAPPING);
         event.register(ADD_HOVERED_MAPPING);
+        event.register(MUTE_NOTIFICATION_SOUND_MAPPING);
     }
 
     private static void onClientTick(ClientTickEvent.Post event) {
+        while (MUTE_NOTIFICATION_SOUND_MAPPING.consumeClick()) {
+            // sendAction checks connection/channel and does nothing for vanilla-only peers.
+            ClientMilestoneHandler.sendAction(
+                    MilestoneActionPayload.Action.MUTE_NOTIFICATION_SOUND, "");
+        }
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.screen != null) {
             return;

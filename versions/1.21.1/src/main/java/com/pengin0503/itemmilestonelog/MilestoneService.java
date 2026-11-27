@@ -1592,6 +1592,54 @@ public final class MilestoneService {
         return new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.undo_done", restored.restoredRecords()));
     }
 
+
+    /**
+     * F-150-49 (N114): sets a personal sound volume (0..100) or {@code -1} to follow the
+     * server default. Invalid values are leniently normalised to {@code -1}.
+     */
+    public static ActionResult setSoundVolume(ServerPlayer player, int requestedVolume) {
+        return setSoundVolume(MilestoneData.get(player.level().getServer()),
+                player.getUUID(), player, requestedVolume);
+    }
+
+    static ActionResult setSoundVolume(MilestoneData data, UUID playerId,
+                                       @Nullable ServerPlayer player, int requestedVolume) {
+        int volume = SoundVolumeLogic.normalizePersonal(requestedVolume);
+        MilestoneData.PlayerData pd = data.player(playerId);
+        pd.soundVolume = volume;
+        data.setDirty();
+        String label = volume == SoundVolumeLogic.FOLLOW_SERVER
+                ? "server" : String.valueOf(volume);
+        return new ActionResult(true, ServerLang.tr(player,
+                "message.itemmilestonelog.sound_volume_set", label));
+    }
+
+    /** F-150-50 (N121): the key-toggle path; uses the "(key)" acknowledgement. */
+    public static ActionResult toggleMuteNotificationSounds(ServerPlayer player) {
+        return setMuteNotificationSounds(MilestoneData.get(player.level().getServer()),
+                player.getUUID(), player, null, true);
+    }
+
+    /** F-150-50: the command path; uses the non-key acknowledgement. */
+    public static ActionResult setMuteNotificationSounds(ServerPlayer player, boolean muted) {
+        return setMuteNotificationSounds(MilestoneData.get(player.level().getServer()),
+                player.getUUID(), player, muted, false);
+    }
+
+    static ActionResult setMuteNotificationSounds(MilestoneData data, UUID playerId,
+                                                  @Nullable ServerPlayer player,
+                                                  @Nullable Boolean desiredMuted, boolean fromKey) {
+        MilestoneData.PlayerData pd = data.player(playerId);
+        pd.muteNotificationSounds = desiredMuted != null ? desiredMuted : !pd.muteNotificationSounds;
+        data.setDirty();
+        String state = pd.muteNotificationSounds
+                ? ServerLang.tr(player, "message.itemmilestonelog.settings_on").getString()
+                : ServerLang.tr(player, "message.itemmilestonelog.settings_off").getString();
+        return new ActionResult(true, ServerLang.tr(player,
+                fromKey ? "message.itemmilestonelog.sound_mute_toggled"
+                        : "message.itemmilestonelog.sound_mute_set", state));
+    }
+
     public static ActionResult toggleDiscordOptOut(ServerPlayer player) {
         return toggleDiscordOptOut(MilestoneData.get(player.level().getServer()), player.getUUID(), player,
                 Config.ALLOW_DISCORD_OPT_OUT.get());

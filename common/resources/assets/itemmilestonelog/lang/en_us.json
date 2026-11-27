@@ -632,5 +632,22 @@
   "message.itemmilestonelog.pinned_empty": "You have no pinned targets.",
   "message.itemmilestonelog.help.pinned": "List your pinned targets",
   "message.itemmilestonelog.target_meta_query": "Metadata for %s: priority %s, label \"%s\", pin %s.",
-  "message.itemmilestonelog.bulk_cleanup_preview": "Would remove %s completed target(s). Add [confirm] to apply."
+  "message.itemmilestonelog.bulk_cleanup_preview": "Would remove %s completed target(s). Add [confirm] to apply.",
+  "itemmilestonelog.configuration.worldFirstSound": "World First Sound",
+  "itemmilestonelog.configuration.worldFirstSound.tooltip": "Sound event ID for world-first records (empty = reuse milestoneSound).",
+  "itemmilestonelog.configuration.presetCompleteSound": "Preset Completion Sound",
+  "itemmilestonelog.configuration.presetCompleteSound.tooltip": "Sound event ID for preset completions (empty = reuse milestoneSound).",
+  "itemmilestonelog.configuration.progressAlertSound": "Progress Alert Sound",
+  "itemmilestonelog.configuration.progressAlertSound.tooltip": "Sound event ID for progress alerts (empty = no new sound, preserving 1.4.0 behaviour).",
+  "itemmilestonelog.configuration.announceWorldFirstSound": "Announce World First Sound",
+  "itemmilestonelog.configuration.announceWorldFirstSound.tooltip": "Play the world-first sound to announcement recipients too. Follows announceWorldFirst and each recipient's muteBroadcasts.",
+  "itemmilestonelog.configuration.notificationSoundVolume": "Default Notification Volume",
+  "itemmilestonelog.configuration.notificationSoundVolume.tooltip": "Volume (0-100) used when a player has not set a personal value. 100 keeps vanilla loudness.",
+  "message.itemmilestonelog.help.sound": "Show or change notification sound volume and mute.",
+  "message.itemmilestonelog.sound_volume_current": "Notification volume: %s (server default: %s)",
+  "message.itemmilestonelog.sound_volume_set": "Notification volume set to: %s",
+  "message.itemmilestonelog.sound_mute_current": "Notification sounds: %s",
+  "message.itemmilestonelog.sound_mute_set": "Notification sounds %s",
+  "message.itemmilestonelog.sound_mute_toggled": "Notification sounds %s (key)",
+  "key.itemmilestonelog.mute_notification_sound": "Mute notification sounds"
 }

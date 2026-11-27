@@ -2712,4 +2712,39 @@ class MilestoneServiceTest {
         assertTrue(result.changed());
         assertTrue(pd.presetState.isEmpty());
     }
+
+    @Test
+    void soundVolumeAssignmentHonoursServerSentinelAndBoundaries() {
+        MilestoneData data = new MilestoneData();
+        assertTrue(MilestoneService.setSoundVolume(data, PLAYER_A, null, 50).success());
+        assertEquals(50, data.player(PLAYER_A).soundVolume);
+        assertEquals(50, SoundVolumeLogic.resolve(data.player(PLAYER_A).soundVolume, 100));
+        assertTrue(MilestoneService.setSoundVolume(data, PLAYER_A, null,
+                SoundVolumeLogic.FOLLOW_SERVER).success());
+        assertEquals(SoundVolumeLogic.FOLLOW_SERVER, data.player(PLAYER_A).soundVolume);
+        assertEquals(40, SoundVolumeLogic.resolve(data.player(PLAYER_A).soundVolume, 40));
+        assertTrue(MilestoneService.setSoundVolume(data, PLAYER_A, null, 0).success());
+        assertEquals(0, data.player(PLAYER_A).soundVolume);
+        assertTrue(MilestoneService.setSoundVolume(data, PLAYER_A, null, 101).success());
+        assertEquals(SoundVolumeLogic.FOLLOW_SERVER, data.player(PLAYER_A).soundVolume,
+                "out-of-range falls back to following the server");
+    }
+
+    @Test
+    void muteToggleViaServiceFlipsStateForBothCommandAndKeyPaths() {
+        MilestoneData data = new MilestoneData();
+        MilestoneService.ActionResult keyToggle =
+                MilestoneService.setMuteNotificationSounds(data, PLAYER_A, null, null, true);
+        assertTrue(keyToggle.success());
+        assertTrue(data.player(PLAYER_A).muteNotificationSounds);
+        assertTrue(MilestoneService.setMuteNotificationSounds(data, PLAYER_A, null, false, false).success());
+        assertFalse(data.player(PLAYER_A).muteNotificationSounds);
+        assertTrue(MilestoneService.setMuteNotificationSounds(data, PLAYER_A, null, true, false).success());
+        assertTrue(data.player(PLAYER_A).muteNotificationSounds);
+        MilestoneService.ActionResult keyToggleBack =
+                MilestoneService.setMuteNotificationSounds(data, PLAYER_A, null, null, true);
+        assertTrue(keyToggleBack.success());
+        assertFalse(data.player(PLAYER_A).muteNotificationSounds);
+    }
+
 }

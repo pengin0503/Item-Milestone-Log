@@ -157,6 +157,7 @@ public final class ModNetworking {
                 case RESET_ALL -> MilestoneService.resetAllRecords(player);
                 case SAVE_PRESET -> MilestoneService.savePreset(player, payload.argument());
                 case DELETE_PRESET -> MilestoneService.deletePreset(player, payload.argument());
+                case MUTE_NOTIFICATION_SOUND -> MilestoneService.toggleMuteNotificationSounds(player);
             };
             MilestoneService.sendSync(player, false, result.message());
             if (result.success() && (payload.action() == MilestoneActionPayload.Action.SAVE_PRESET

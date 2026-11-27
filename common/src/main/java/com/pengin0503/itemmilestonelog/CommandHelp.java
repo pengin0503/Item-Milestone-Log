@@ -128,6 +128,7 @@ public final class CommandHelp {
             new Entry("mutebroadcast", true, Gate.NONE),
             new Entry("muteprogress", true, Gate.NONE),
             new Entry("progressdest", true, Gate.NONE),
+            new Entry("sound", true, Gate.NONE),
             new Entry("discordoptout", true, Gate.DISCORD_OPT_OUT),
             new Entry("settings", true, Gate.NONE),
             new Entry("randomtarget", true, Gate.NONE),

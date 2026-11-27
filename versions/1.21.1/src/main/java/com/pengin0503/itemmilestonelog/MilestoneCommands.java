@@ -977,6 +977,21 @@ public final class MilestoneCommands {
                         .then(literal("both").executes(ctx -> progressDestSet(ctx, NotificationDestinationLogic.Choice.BOTH)))
                         .then(literal("off").executes(ctx -> progressDestSet(ctx, NotificationDestinationLogic.Choice.OFF)))
                         .then(literal("server").executes(ctx -> progressDestSet(ctx, NotificationDestinationLogic.Choice.FOLLOW_SERVER))))
+                // F-150-49/F-150-50 (N114/N121): one top-level sound tree, no settings slots taken.
+                .then(literal("sound")
+                        .executes(MilestoneCommands::soundQuery)
+                        .then(literal("volume")
+                                .executes(MilestoneCommands::soundVolumeQuery)
+                                .then(argument("volume", IntegerArgumentType.integer(
+                                        SoundVolumeLogic.MIN_VOLUME, SoundVolumeLogic.MAX_VOLUME))
+                                        .executes(ctx -> soundVolumeSet(ctx,
+                                                IntegerArgumentType.getInteger(ctx, "volume"))))
+                                .then(literal("server")
+                                        .executes(ctx -> soundVolumeSet(ctx, SoundVolumeLogic.FOLLOW_SERVER))))
+                        .then(literal("mute")
+                                .executes(MilestoneCommands::soundMuteQuery)
+                                .then(literal("on").executes(ctx -> soundMuteSet(ctx, true)))
+                                .then(literal("off").executes(ctx -> soundMuteSet(ctx, false)))))
                 .then(literal("discordoptout").executes(MilestoneCommands::discordOptOut))
                 .then(literal("privacy").executes(MilestoneCommands::privacy))
                 .then(literal("discordtest")
@@ -3663,6 +3678,54 @@ public final class MilestoneCommands {
     static NotificationDestinationLogic.Choice progressDestChoiceFor(MilestoneData data, UUID playerId) {
         MilestoneData.PlayerData pd = data.playerOrNull(playerId);
         return NotificationDestinationLogic.parseChoice(pd != null ? pd.progressAlertDestination : null);
+    }
+
+
+    // --------------------------------------------------------- F-150-49 / F-150-50 notification sound
+
+    /** Personal volume label; {@code -1} (or a data-less player) follows the server default. */
+    static String soundVolumeLabel(MilestoneData.PlayerData pd) {
+        return pd != null && SoundVolumeLogic.isStoredPersonal(pd.soundVolume)
+                && pd.soundVolume >= SoundVolumeLogic.MIN_VOLUME
+                ? String.valueOf(pd.soundVolume) : "server";
+    }
+
+    /** Bare {@code sound}: read-only volume + mute query, never creates PlayerData. */
+    private static int soundQuery(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+        ServerPlayer player = player(ctx);
+        MilestoneData.PlayerData pd = MilestoneData.get(player.level().getServer()).playerOrNull(player.getUUID());
+        send(ctx, ServerLang.tr(player, "message.itemmilestonelog.sound_volume_current",
+                soundVolumeLabel(pd), String.valueOf(Config.notificationSoundVolume())));
+        String state = pd != null && pd.muteNotificationSounds
+                ? "message.itemmilestonelog.settings_on" : "message.itemmilestonelog.settings_off";
+        return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.sound_mute_current",
+                ServerLang.tr(player, state)));
+    }
+
+    private static int soundVolumeQuery(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+        ServerPlayer player = player(ctx);
+        MilestoneData.PlayerData pd = MilestoneData.get(player.level().getServer()).playerOrNull(player.getUUID());
+        return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.sound_volume_current",
+                soundVolumeLabel(pd), String.valueOf(Config.notificationSoundVolume())));
+    }
+
+    private static int soundVolumeSet(CommandContext<CommandSourceStack> ctx, int volume)
+            throws CommandSyntaxException {
+        return respond(ctx, MilestoneService.setSoundVolume(player(ctx), volume));
+    }
+
+    private static int soundMuteQuery(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+        ServerPlayer player = player(ctx);
+        MilestoneData.PlayerData pd = MilestoneData.get(player.level().getServer()).playerOrNull(player.getUUID());
+        String state = pd != null && pd.muteNotificationSounds
+                ? "message.itemmilestonelog.settings_on" : "message.itemmilestonelog.settings_off";
+        return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.sound_mute_current",
+                ServerLang.tr(player, state)));
+    }
+
+    private static int soundMuteSet(CommandContext<CommandSourceStack> ctx, boolean muted)
+            throws CommandSyntaxException {
+        return respond(ctx, MilestoneService.setMuteNotificationSounds(player(ctx), muted));
     }
 
     // --------------------------------------------------------- F45 Discord opt-out
