@@ -706,5 +706,22 @@
   "message.itemmilestonelog.admin_debug_stat_data": "データ 人数/記録/ターゲット",
   "message.itemmilestonelog.admin_debug_stat_webhook": "Webhook状態",
   "message.itemmilestonelog.admin_debug_stat_backup": "バックアップ数",
-  "message.itemmilestonelog.admin_debug_stat_io_state": "I/Oキューあり"
+  "message.itemmilestonelog.admin_debug_stat_io_state": "I/Oキューあり",
+  "message.itemmilestonelog.help.discordstatus": "Discord の設定と接続状態を表示（管理者）",
+  "message.itemmilestonelog.discordtest_payload_header": "Discord テストペイロード（未送信）:",
+  "message.itemmilestonelog.discordtest_payload_truncated": "このプレビューから改行を除去しました。",
+  "message.itemmilestonelog.discordstatus_webhook": "Webhook状態: %s",
+  "message.itemmilestonelog.discordstatus_env": "環境変数名: %s",
+  "message.itemmilestonelog.discordstatus_embed": "埋め込みモード: %s",
+  "message.itemmilestonelog.discordstatus_scope": "通知スコープ: %s",
+  "message.itemmilestonelog.discordstatus_digest": "ダイジェスト有効: %s",
+  "message.itemmilestonelog.discordstatus_interval": "ダイジェスト間隔（日）: %s",
+  "message.itemmilestonelog.discordstatus_epoch": "最終ダイジェスト時刻（ms）: %s",
+  "message.itemmilestonelog.discordstatus_next": "次回ダイジェスト予定（ms）: %s",
+  "message.itemmilestonelog.discordstatus_pending": "保留Discord送信: %s",
+  "message.itemmilestonelog.discordstatus_pending_unavailable": "保留Discord送信: 利用不可",
+  "message.itemmilestonelog.discordstatus_digest_sent": "手動ダイジェストを %s 件、メインWebhookへ送信待ちにしました。",
+  "message.itemmilestonelog.discordstatus_digest_empty": "手動ダイジェストに新しい項目はありませんでした（%s 件確認）。",
+  "message.itemmilestonelog.discordstatus_digest_failed": "手動ダイジェストを送信できませんでした。Webhook設定を確認してください。",
+  "message.itemmilestonelog.discordstatus_denied": "Discord の状態を表示する権限がありません。"
 }

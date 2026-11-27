@@ -41,7 +41,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class MilestoneCommandsHelpTest {
     private static final Set<String> ADMIN_ONLY = Set.of(
             "exportall", "exporthtmlall", "exportcsvall", "importall",
-            "admin", "prunedata", "renameitem", "renametag", "discordtest", "doctor");
+            "admin", "prunedata", "renameitem", "renametag", "discordtest", "doctor", "discordstatus");
 
     private static CommandDispatcher<CommandSourceStack> buildDispatcher(Predicate<CommandSourceStack> adminRequirement) {
         CommandDispatcher<CommandSourceStack> dispatcher = new CommandDispatcher<>();
@@ -709,8 +709,10 @@ class MilestoneCommandsHelpTest {
         CommandNode<CommandSourceStack> worldFirst = discordTest.getChild("worldfirst");
         assertNotNull(worldFirst, "discordtest worldfirst must be registered (F49 1.2.0)");
         assertNotNull(worldFirst.getCommand(), "discordtest worldfirst must execute");
-        assertEquals(List.of("/milestonelog discordtest [worldfirst]"),
-                MilestoneCommands.helpUsages(op, null, entryByName("discordtest")));
+        assertEquals(List.of("/milestonelog discordtest [worldfirst] [payload]",
+                        "/milestonelog discordtest [payload]"),
+                MilestoneCommands.helpUsages(op, null, entryByName("discordtest")),
+                "PR-3 adds payload children; the bare executions themselves are unchanged");
         assertFalse(MilestoneCommands.canUseHelpEntry(regular, null, entryByName("discordtest")));
         assertTrue(MilestoneCommands.canUseHelpEntry(op, null, entryByName("discordtest")));
 
@@ -731,6 +733,74 @@ class MilestoneCommandsHelpTest {
                 "Non-admin must not match /milestonelog discordtest worldfirst");
         assertEquals(1, regularWorldFirst.getContext().getNodes().size(),
                 "Non-admin parse must stop at root milestonelog");
+    }
+
+    @Test
+    void discordTestPayloadBranchesShareTheExistingDiscordTestGate() {
+        CommandDispatcher<CommandSourceStack> regular = buildDispatcher(src -> false);
+        CommandDispatcher<CommandSourceStack> op = buildDispatcher(src -> true);
+        CommandNode<CommandSourceStack> root = op.getRoot().getChild("milestonelog");
+        assertNotNull(root);
+        CommandNode<CommandSourceStack> discordTest = root.getChild("discordtest");
+        assertNotNull(discordTest);
+        CommandNode<CommandSourceStack> payload = discordTest.getChild("payload");
+        assertNotNull(payload, "discordtest payload must be registered (F-150-56)");
+        assertNotNull(payload.getCommand(), "payload preview must execute with no arguments");
+        CommandNode<CommandSourceStack> worldFirst = discordTest.getChild("worldfirst");
+        assertNotNull(worldFirst);
+        CommandNode<CommandSourceStack> worldFirstPayload = worldFirst.getChild("payload");
+        assertNotNull(worldFirstPayload, "discordtest worldfirst payload must be registered");
+        assertNotNull(worldFirstPayload.getCommand(), "worldfirst payload preview must execute");
+        assertEquals(Set.of("worldfirst", "payload"),
+                discordTest.getChildren().stream().map(CommandNode::getName).collect(java.util.stream.Collectors.toSet()));
+        assertEquals(Set.of("payload"),
+                worldFirst.getChildren().stream().map(CommandNode::getName).collect(java.util.stream.Collectors.toSet()));
+
+        for (String line : List.of("milestonelog discordtest payload",
+                "milestonelog discordtest worldfirst payload")) {
+            ParseResults<CommandSourceStack> parse = op.parse(line, null);
+            assertFalse(parse.getReader().canRead(), "OP must fully parse: " + line);
+            assertTrue(parse.getExceptions().isEmpty(), line + ": " + parse.getExceptions());
+            assertNotNull(parse.getContext().getCommand(), line + " must resolve a command");
+        }
+        assertEquals(4, op.parse("milestonelog discordtest worldfirst payload", null)
+                .getContext().getNodes().size());
+        for (String line : List.of("milestonelog discordtest payload",
+                "milestonelog discordtest worldfirst payload")) {
+            ParseResults<CommandSourceStack> parse = regular.parse(line, null);
+            assertTrue(parse.getReader().canRead(), "non-admin must not match: " + line);
+            assertEquals(1, parse.getContext().getNodes().size(), "non-admin parse must stop at root");
+        }
+    }
+
+    @Test
+    void discordStatusAndItsDigestChildAreRegisteredWithSeparateNodes() {
+        CommandDispatcher<CommandSourceStack> regular = buildDispatcher(src -> false);
+        CommandDispatcher<CommandSourceStack> op = buildDispatcher(src -> true);
+        CommandNode<CommandSourceStack> root = op.getRoot().getChild("milestonelog");
+        assertNotNull(root);
+        CommandNode<CommandSourceStack> status = root.getChild("discordstatus");
+        assertNotNull(status, "discordstatus must be registered (F-150-54)");
+        assertNotNull(status.getCommand(), "discordstatus executes with no arguments");
+        CommandNode<CommandSourceStack> digest = status.getChild("digest");
+        assertNotNull(digest, "discordstatus digest must be a child literal");
+        assertNotNull(digest.getCommand(), "discordstatus digest must execute");
+        assertTrue(digest.getChildren().isEmpty(), "discordstatus digest takes no arguments");
+        assertEquals(CommandHelp.Gate.NONE, entryByName("discordstatus").gate());
+        assertFalse(entryByName("discordstatus").playerOnly(), "discordstatus must be console-usable");
+
+        for (String line : List.of("milestonelog discordstatus", "milestonelog discordstatus digest")) {
+            ParseResults<CommandSourceStack> parse = op.parse(line, null);
+            assertFalse(parse.getReader().canRead(), "OP must fully parse: " + line);
+            assertTrue(parse.getExceptions().isEmpty(), line + ": " + parse.getExceptions());
+            assertNotNull(parse.getContext().getCommand(), line);
+        }
+        assertTrue(regular.parse("milestonelog discordstatus", null).getReader().canRead(),
+                "non-admin must not match discordstatus");
+        assertTrue(regular.parse("milestonelog discordstatus digest", null).getReader().canRead(),
+                "non-admin must not match discordstatus digest");
+        assertFalse(MilestoneCommands.canUseHelpEntry(regular, null, entryByName("discordstatus")));
+        assertTrue(MilestoneCommands.canUseHelpEntry(op, null, entryByName("discordstatus")));
     }
 
     @Test

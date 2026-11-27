@@ -276,6 +276,10 @@ public final class MilestoneCommands {
                 throws CommandSyntaxException;
     }
 
+    /** Legacy admin gate from tree construction; only the PR-3 status handler needs it. */
+    @Nullable
+    private static Predicate<CommandSourceStack> step5LegacyAdminRequirement;
+
     /** PR-2 (F-150-33): one {@code compare <player> <branch> [<page>]} literal. */
     private static LiteralArgumentBuilder<CommandSourceStack> compareBranchNode(String branch) {
         return literal(branch)
@@ -313,6 +317,13 @@ public final class MilestoneCommands {
                 MilestonePermissions.check(src, MilestonePermissions.DOCTOR, adminRequirement.test(src));
         Predicate<CommandSourceStack> debugRequirement = src ->
                 MilestonePermissions.check(src, MilestonePermissions.DEBUG, adminRequirement.test(src));
+        Predicate<CommandSourceStack> discordStatusRequirement = src ->
+                MilestonePermissions.check(src, MilestonePermissions.DISCORD_STATUS, adminRequirement.test(src));
+        Predicate<CommandSourceStack> discordDigestRequirement = src ->
+                MilestonePermissions.check(src, MilestonePermissions.DISCORD_DIGEST, adminRequirement.test(src));
+        // The status-only handler re-checks its node when the parent gate was satisfied through
+        // the digest node alone (spec: either subcommand must work with only its own node).
+        step5LegacyAdminRequirement = adminRequirement;
 
         SuggestionProvider<CommandSourceStack> presetSuggestions = (ctx, builder) -> {
             if (!Config.PRESETS_ENABLED.get()) {
@@ -1009,7 +1020,20 @@ public final class MilestoneCommands {
                         .requires(discordTestRequirement)
                         .executes(ctx -> discordTest(ctx, DiscordRouting.Destination.MAIN))
                         .then(literal("worldfirst")
-                                .executes(ctx -> discordTest(ctx, DiscordRouting.Destination.WORLD_FIRST))))
+                                .executes(ctx -> discordTest(ctx, DiscordRouting.Destination.WORLD_FIRST))
+                                .then(literal("payload")
+                                        .executes(ctx -> discordTestPayload(ctx))))
+                        .then(literal("payload")
+                                .executes(ctx -> discordTestPayload(ctx))))
+                // PR-3 (F-150-54): the parent accepts either node so a digest-only operator can
+                // reach the child; the bare handler re-checks DISCORD_STATUS for its own gate.
+                .then(literal("discordstatus")
+                        .requires(src -> discordStatusRequirement.test(src)
+                                || discordDigestRequirement.test(src))
+                        .executes(MilestoneCommands::discordStatus)
+                        .then(literal("digest")
+                                .requires(discordDigestRequirement)
+                                .executes(MilestoneCommands::discordStatusDigest)))
                 .then(literal("lookup")
                         .then(argument("player", StringArgumentType.word())
                                 .suggests(lookupPlayerSuggestions)
@@ -3942,6 +3966,80 @@ public final class MilestoneCommands {
 
     private static int privacy(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
         return respond(ctx, MilestoneService.togglePrivacy(player(ctx)));
+    }
+
+    // ------------------------------- F-150-54 / F-150-56 Discord diagnostics (PR-3)
+
+    /** F-150-56: renders the existing builder's JSON as one line, with zero send/queue/HTTP. */
+    static int discordTestPayloadPreview(CommandSourceStack source, boolean useEmbeds, String language) {
+        String raw = DiscordNotifier.buildTestPayloadJson(useEmbeds, language, null);
+        String json = TextEscaping.removeLineBreaks(raw);
+        source.sendSuccess(() -> ServerLang.tr(source,
+                "message.itemmilestonelog.discordtest_payload_header"), false);
+        source.sendSuccess(() -> Component.literal(json), false);
+        if (!raw.equals(json)) {
+            source.sendSuccess(() -> ServerLang.tr(source,
+                    "message.itemmilestonelog.discordtest_payload_truncated"), false);
+            return 3;
+        }
+        return 2;
+    }
+
+    private static int discordTestPayload(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+        return discordTestPayloadPreview(source, Config.DISCORD_USE_EMBEDS.get(),
+                Config.DISCORD_LANGUAGE.get());
+    }
+
+    /** F-150-54: read-only state view. Status names and variable names only, never the URL. */
+    private static int discordStatus(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+        if (!MilestonePermissions.check(source, MilestonePermissions.DISCORD_STATUS,
+                step5LegacyAdminRequirement != null && step5LegacyAdminRequirement.test(source))) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.discordstatus_denied"));
+        }
+        MinecraftServer server = source.getServer();
+        DiscordWebhookUrl.Resolution resolution = DiscordWebhookUrl.resolve(
+                safeString(Config.DISCORD_WEBHOOK_URL::get), System::getenv);
+        long lastDigest = 0L;
+        if (server != null) {
+            try {
+                lastDigest = MilestoneData.get(server).lastDigestEpochMillis();
+            } catch (RuntimeException ignored) {
+                // Diagnostics stay available before the SavedData store is initialised.
+            }
+        }
+        DiscordStatusSnapshot snapshot = new DiscordStatusSnapshot(
+                resolution.status().name(), resolution.envVarName(),
+                Config.DISCORD_USE_EMBEDS.get(), Config.DISCORD_NOTIFY_SCOPE.get(),
+                Config.discordDigestEnabled(), Config.discordDigestIntervalDays(),
+                lastDigest, System.currentTimeMillis(), true, DiscordNotifier.pendingSendCount());
+        return sendDiscordStatusLines(source, snapshot);
+    }
+
+    static int sendDiscordStatusLines(CommandSourceStack source, DiscordStatusSnapshot snapshot) {
+        List<DiagnosticsSnapshot.Line> lines = snapshot.lines();
+        for (DiagnosticsSnapshot.Line line : lines) {
+            source.sendSuccess(() -> renderLine(source, line), false);
+        }
+        return lines.size();
+    }
+
+    /** F-150-54: explicit digest using the existing MAIN-webhook path, once per invocation. */
+    private static int discordStatusDigest(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+        MinecraftServer server = source.getServer();
+        if (server == null) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.discordstatus_digest_failed"));
+        }
+        DiscordNotifier.ManualDigestResult result = DiscordNotifier.sendManualDigest(server);
+        if (!result.attempted()) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.discordstatus_digest_failed"));
+        }
+        String key = result.sent()
+                ? "message.itemmilestonelog.discordstatus_digest_sent"
+                : "message.itemmilestonelog.discordstatus_digest_empty";
+        return send(ctx, ServerLang.tr(source, key, result.entries()));
     }
 
     // --------------------------------------------------------- F49 Discord test

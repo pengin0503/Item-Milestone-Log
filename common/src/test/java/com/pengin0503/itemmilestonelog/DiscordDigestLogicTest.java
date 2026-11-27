@@ -276,6 +276,55 @@ class DiscordDigestLogicTest {
     }
 
     @Test
+    void explicitDigestIgnoresEnabledAndIntervalButKeepsFirstRunWebhookAndNonPlayerGuards() {
+        // An explicit request skips the enabled/interval decision entirely.
+        assertEquals(DiscordDigestLogic.CheckAction.COLLECT_AND_SEND,
+                DiscordDigestLogic.decideActionForManual(true, BASE, BASE + 1L));
+        assertEquals(DiscordDigestLogic.CheckAction.COLLECT_AND_SEND,
+                DiscordDigestLogic.decideActionForManual(true, BASE, BASE + 30L * DiscordDigestLogic.MILLIS_PER_DAY));
+        // ... but not the webhook/clock/first-run rules that the existing sender relies on.
+        assertEquals(DiscordDigestLogic.CheckAction.SKIP,
+                DiscordDigestLogic.decideActionForManual(false, BASE, BASE + 1L));
+        assertEquals(DiscordDigestLogic.CheckAction.SKIP,
+                DiscordDigestLogic.decideActionForManual(true, BASE, 0L));
+        assertEquals(DiscordDigestLogic.CheckAction.INIT_TIMESTAMP_ONLY,
+                DiscordDigestLogic.decideActionForManual(true, 0L, BASE));
+        // The throttler belongs to the periodic path; the pure decision has no hidden state.
+        assertEquals(DiscordDigestLogic.CheckAction.COLLECT_AND_SEND,
+                DiscordDigestLogic.decideActionForManual(true, BASE, BASE + 1L));
+    }
+
+    @Test
+    void explicitDigestStillAppliesOptOutAndScopeDuringExtraction() {
+        long end = BASE + 1L;
+        DiscordDigestLogic.PlayerSnapshot optedOut = new DiscordDigestLogic.PlayerSnapshot(
+                ALICE, "OptOut", false, List.of());
+        DiscordDigestLogic.PlayerSnapshot bob = new DiscordDigestLogic.PlayerSnapshot(
+                BOB, "Bob", false, List.of(
+                        new DiscordDigestLogic.RecordSnapshot("minecraft:diamond", 1, 100, 1L, BASE + 1L)));
+        DiscordDigestLogic.WorldFirstSnapshot aliceWf = new DiscordDigestLogic.WorldFirstSnapshot(
+                "minecraft:emerald", 1, ALICE, "OptOut", 200, 1L, BASE + 1L);
+
+        List<DiscordDigestLogic.DigestEntry> allWithOptOut = DiscordDigestLogic.extractEntries(
+                List.of(new DiscordDigestLogic.PlayerSnapshot(ALICE, "OptOut", true, List.of()), bob),
+                List.of(aliceWf), BASE, end, "all", true);
+        assertEquals(1, allWithOptOut.size(), "opted-out player and their world-first must be excluded");
+        assertEquals("Bob", allWithOptOut.get(0).playerName());
+
+        // allowDiscordOptOut=false keeps the opted-out player, proving the gate is still active.
+        List<DiscordDigestLogic.DigestEntry> allWithoutGate = DiscordDigestLogic.extractEntries(
+                List.of(new DiscordDigestLogic.PlayerSnapshot(ALICE, "OptOut", true, List.of()), bob),
+                List.of(aliceWf), BASE, end, "all", false);
+        assertEquals(2, allWithoutGate.size());
+
+        List<DiscordDigestLogic.DigestEntry> worldFirstOnly = DiscordDigestLogic.extractEntries(
+                List.of(optedOut, bob), List.of(aliceWf), BASE, end, "world_first", true);
+        assertEquals(1, worldFirstOnly.size());
+        assertTrue(worldFirstOnly.get(0).worldFirst());
+        assertEquals("minecraft:emerald", worldFirstOnly.get(0).itemId());
+    }
+
+    @Test
     void tickThrottlerFiresOncePerIntervalAndResetsCleanly() {
         DiscordDigestLogic.TickThrottler throttler = new DiscordDigestLogic.TickThrottler(3);
         assertFalse(throttler.tick());

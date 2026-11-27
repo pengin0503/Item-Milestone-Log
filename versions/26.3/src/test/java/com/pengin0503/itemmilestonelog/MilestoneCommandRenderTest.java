@@ -163,6 +163,60 @@ class MilestoneCommandRenderTest {
         assertEquals(playersBefore, data.allPlayers().size(), "a read must not create players");
     }
 
+    @Test
+    void discordTestPayloadPreviewEqualsSenderConstructionWithoutSending() throws Exception {
+        for (boolean embeds : List.of(false, true)) {
+            for (String language : List.of("en_us", "ja_jp")) {
+                FakeRenderSource source = new FakeRenderSource();
+                assertEquals(2, MilestoneCommands.discordTestPayloadPreview(source, embeds, language));
+                assertEquals(2, source.messages.size(), "header and one JSON line only");
+                assertEquals(ServerLang.tr(source,
+                                "message.itemmilestonelog.discordtest_payload_header").getString(),
+                        source.messages.get(0).getString(),
+                        "the header follows the caller's language, not the configured payload language");
+                String preview = source.messages.get(1).getString();
+                assertFalse(preview.contains("\n"), "JSON preview must fit on one chat line");
+                assertFalse(preview.contains("https://"), "no URL in payload preview");
+                assertFalse(preview.contains("discordtest_sending"), "preview must not send");
+                assertFalse(preview.contains("discordtest_success"), "preview must not report a send result");
+
+                // Rebuild with the preview's own timestamp so Instant.now() is deterministic;
+                // the same builder means the preview keeps the sender's truncation rules.
+                com.google.gson.JsonObject body =
+                        com.google.gson.JsonParser.parseString(preview).getAsJsonObject();
+                java.time.Instant timestamp = embeds
+                        ? java.time.Instant.parse(body.getAsJsonArray("embeds")
+                                .get(0).getAsJsonObject().get("timestamp").getAsString())
+                        : null;
+                assertEquals(preview, TextEscaping.removeLineBreaks(
+                                DiscordNotifier.buildTestPayloadJson(embeds, language, timestamp)),
+                        "preview must be byte-equal to the sender's payload construction");
+            }
+        }
+        java.lang.reflect.Field inFlight = DiscordNotifier.class.getDeclaredField("TEST_IN_PROGRESS");
+        inFlight.setAccessible(true);
+        assertFalse(((java.util.concurrent.atomic.AtomicBoolean) inFlight.get(null)).get(),
+                "preview must not claim TEST_IN_PROGRESS");
+        assertEquals(0, DiscordNotifier.pendingSendCount(), "preview must not enqueue a send");
+    }
+
+    @Test
+    void discordStatusLinesRenderSnapshotFieldsWithoutSecrets() {
+        long now = 1_700_000_000_000L;
+        DiscordStatusSnapshot snapshot = new DiscordStatusSnapshot(
+                "RESOLVED", "DISCORD_WEBHOOK", true, "all", true, 7, now - 1_000L, now, true, 4);
+        FakeRenderSource source = new FakeRenderSource();
+        int lines = MilestoneCommands.sendDiscordStatusLines(source, snapshot);
+        assertEquals(snapshot.lines().size(), lines);
+        assertEquals(lines, source.messages.size());
+        assertTrue(source.messages.get(0).getString().contains("RESOLVED"));
+        assertTrue(source.messages.get(1).getString().contains("DISCORD_WEBHOOK"));
+        assertTrue(source.messages.stream().anyMatch(c -> c.getString().contains("7")));
+        for (Component message : source.messages) {
+            assertFalse(message.getString().contains("https://"), "no webhook URL in status output");
+        }
+    }
+
     private static final TagIndex EMPTY_TAGS = TagIndex.of(Map.of());
 
     private static int countText(FakeRenderSource source, String text) {

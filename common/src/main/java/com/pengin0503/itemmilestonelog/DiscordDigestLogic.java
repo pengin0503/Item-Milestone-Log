@@ -170,6 +170,26 @@ public final class DiscordDigestLogic {
     }
 
     /**
+     * F-150-54 (N32): scheduling decision for an explicitly requested digest. The caller's
+     * {@code enabled} flag and the interval are deliberately ignored, but the webhook
+     * configuration, the non-positive clock guard and the first-run behaviour remain exactly
+     * as in {@link #decideAction}. Opt-out and scope filtering happen later in
+     * {@link #extractEntries}, so they are still applied to a manual run.
+     */
+    public static CheckAction decideActionForManual(
+            boolean webhookConfigured,
+            long lastDigestEpoch,
+            long nowMillis) {
+        if (!webhookConfigured || nowMillis <= 0L) {
+            return CheckAction.SKIP;
+        }
+        if (lastDigestEpoch <= 0L) {
+            return CheckAction.INIT_TIMESTAMP_ONLY;
+        }
+        return CheckAction.COLLECT_AND_SEND;
+    }
+
+    /**
      * Returns {@code true} if {@code recordEpochMillis} is known ({@code > 0}) and falls in
      * the half-open digest window {@code (lastDigestEpoch, nowMillis]}.
      */
