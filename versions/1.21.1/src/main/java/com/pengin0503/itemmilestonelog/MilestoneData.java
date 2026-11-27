@@ -72,6 +72,8 @@ public class MilestoneData extends SavedData {
         public final Map<String, PresetState> presetState = new LinkedHashMap<>();
         /** F-150-31 (N155): optional per-target metadata, keyed by {@code TargetKey#toEncodedString()}. */
         public final Map<String, TargetMeta> targetMeta = new LinkedHashMap<>();
+        /** F-150-44 (N116): personal destination enum name; FOLLOW_SERVER means "use the server default". */
+        public String progressAlertDestination = "FOLLOW_SERVER";
 
         /** Whether this player hides their records from lookups by non-privileged other players (F14). */
         public boolean isHiddenFromLookup() {
@@ -669,6 +671,16 @@ public class MilestoneData extends SavedData {
                 MilestoneLoadReport.recordElementSkip();
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed targetMeta tag in SavedData");
             }
+            if (McCompat.nbt().containsTyped(entry, "progressAlertDestination", Tag.TAG_STRING)) {
+                String storedDestination = McCompat.nbt().getString(entry, "progressAlertDestination");
+                if (!NotificationDestinationLogic.isValidChoice(storedDestination)) {
+                    MilestoneLoadReport.recordElementSkip();
+                }
+                pd.progressAlertDestination = NotificationDestinationLogic.parseChoice(storedDestination).name();
+            } else if (McCompat.nbt().contains(entry, "progressAlertDestination")) {
+                MilestoneLoadReport.recordElementSkip();
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed progressAlertDestination tag in SavedData");
+            }
             data.players.put(uuid, pd);
         }
 
@@ -856,6 +868,10 @@ public class MilestoneData extends SavedData {
                     targetMetaTag.put(meta.getKey(), metaTag);
                 }
                 entry.put("targetMeta", targetMetaTag);
+            }
+            if (NotificationDestinationLogic.isValidChoice(pd.progressAlertDestination)
+                    && !"FOLLOW_SERVER".equals(pd.progressAlertDestination)) {
+                entry.putString("progressAlertDestination", pd.progressAlertDestination);
             }
             all.put(e.getKey().toString(), entry);
         }

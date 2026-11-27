@@ -971,6 +971,13 @@ public final class MilestoneCommands {
                                                 StringArgumentType.getString(ctx, "fileName"), true)))))
                 .then(literal("mutebroadcast").executes(MilestoneCommands::muteBroadcast))
                 .then(literal("muteprogress").executes(MilestoneCommands::muteProgress))
+                .then(literal("progressdest")
+                        .executes(MilestoneCommands::progressDestQuery)
+                        .then(literal("chat").executes(ctx -> progressDestSet(ctx, NotificationDestinationLogic.Choice.CHAT)))
+                        .then(literal("actionbar").executes(ctx -> progressDestSet(ctx, NotificationDestinationLogic.Choice.ACTION_BAR)))
+                        .then(literal("both").executes(ctx -> progressDestSet(ctx, NotificationDestinationLogic.Choice.BOTH)))
+                        .then(literal("off").executes(ctx -> progressDestSet(ctx, NotificationDestinationLogic.Choice.OFF)))
+                        .then(literal("server").executes(ctx -> progressDestSet(ctx, NotificationDestinationLogic.Choice.FOLLOW_SERVER))))
                 .then(literal("discordoptout").executes(MilestoneCommands::discordOptOut))
                 .then(literal("privacy").executes(MilestoneCommands::privacy))
                 .then(literal("discordtest")
@@ -3631,6 +3638,33 @@ public final class MilestoneCommands {
                 ? "message.itemmilestonelog.muteprogress_on"
                 : "message.itemmilestonelog.muteprogress_off";
         return send(ctx, ServerLang.tr(player, key));
+    }
+
+    /** N116: bare query is read-only; a data-less player follows the server default (SF-9/R2-SF-1). */
+    private static int progressDestQuery(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+        ServerPlayer player = player(ctx);
+        NotificationDestinationLogic.Choice choice = progressDestChoiceFor(
+                MilestoneData.get(player.level().getServer()), player.getUUID());
+        return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.progressdest_current",
+                NotificationDestinationLogic.label(choice),
+                NotificationDestinationLogic.label(Config.progressAlertDestination())));
+    }
+
+    private static int progressDestSet(CommandContext<CommandSourceStack> ctx,
+                                       NotificationDestinationLogic.Choice choice) throws CommandSyntaxException {
+        ServerPlayer player = player(ctx);
+        MilestoneData data = MilestoneData.get(player.level().getServer());
+        MilestoneData.PlayerData pd = data.player(player.getUUID());
+        pd.progressAlertDestination = choice.name();
+        data.setDirty();
+        return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.progressdest_set",
+                NotificationDestinationLogic.label(choice)));
+    }
+
+    /** Read-only view of a player's choice; never inserts or dirties an empty PlayerData. */
+    static NotificationDestinationLogic.Choice progressDestChoiceFor(MilestoneData data, UUID playerId) {
+        MilestoneData.PlayerData pd = data.playerOrNull(playerId);
+        return NotificationDestinationLogic.parseChoice(pd != null ? pd.progressAlertDestination : null);
     }
 
     // --------------------------------------------------------- F45 Discord opt-out

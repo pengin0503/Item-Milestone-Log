@@ -634,6 +634,97 @@ class TrackerTest {
     }
 
     @Test
+    void progressDestinationUsesServerDefaultUntilAPlayerChoosesOtherwise() {
+        MilestoneData.PlayerData pd = new MilestoneData.PlayerData();
+        assertEquals(NotificationDestinationLogic.Channel.CHAT, Tracker.progressChannelFor(null),
+                "missing data and an unloaded config keep the 1.4.0 chat default");
+        assertEquals(NotificationDestinationLogic.Channel.CHAT, Tracker.progressChannelFor(pd));
+        pd.progressAlertDestination = "ACTION_BAR";
+        assertEquals(NotificationDestinationLogic.Channel.ACTION_BAR, Tracker.progressChannelFor(pd));
+        pd.progressAlertDestination = "BOTH";
+        assertEquals(NotificationDestinationLogic.Channel.BOTH, Tracker.progressChannelFor(pd));
+        pd.progressAlertDestination = "OFF";
+        assertEquals(NotificationDestinationLogic.Channel.OFF, Tracker.progressChannelFor(pd));
+        pd.progressAlertDestination = "FOLLOW_SERVER";
+        assertEquals(NotificationDestinationLogic.Channel.CHAT, Tracker.progressChannelFor(pd));
+        pd.progressAlertDestination = "not_a_choice";
+        assertEquals(NotificationDestinationLogic.Channel.CHAT, Tracker.progressChannelFor(pd),
+                "an invalid stored choice falls back to the server default");
+    }
+
+    @Test
+    void progressAlertsRouteThroughChatAndVanillaOverlayByResolvedChannel() {
+        Tracker.ProgressAlertNotification alert = new Tracker.ProgressAlertNotification(
+                TargetKey.of("#c:gems/diamond", 100), 50, 100, 50);
+        NotificationGrouping.ChannelPlan<Tracker.ProgressAlertNotification> individual =
+                NotificationGrouping.planProgressChannel(List.of(alert));
+        List<Component> chat = new ArrayList<>();
+        List<Component> actionBar = new ArrayList<>();
+
+        Tracker.renderProgressAlerts(null, NotificationDestinationLogic.Channel.CHAT,
+                individual, chat::add, actionBar::add);
+        assertEquals(1, chat.size(), "default sends one system chat message");
+        assertTrue(actionBar.isEmpty());
+        assertEquals(ServerLang.formatForLang("en_us", "message.itemmilestonelog.progress_alert",
+                MilestoneService.targetDisplayName(alert.key()), 50, 100, 50), chat.get(0).getString());
+
+        chat.clear();
+        actionBar.clear();
+        Tracker.renderProgressAlerts(null, NotificationDestinationLogic.Channel.ACTION_BAR,
+                individual, chat::add, actionBar::add);
+        assertTrue(chat.isEmpty(), "actionbar sends no system chat message");
+        assertEquals(1, actionBar.size(), "actionbar sends one vanilla overlay message");
+        assertEquals(ServerLang.formatForLang("en_us", "message.itemmilestonelog.progress_alert_actionbar",
+                MilestoneService.targetDisplayName(alert.key()), 50, 100, "50%"), actionBar.get(0).getString());
+
+        chat.clear();
+        actionBar.clear();
+        Tracker.renderProgressAlerts(null, NotificationDestinationLogic.Channel.BOTH,
+                individual, chat::add, actionBar::add);
+        assertEquals(1, chat.size());
+        assertEquals(1, actionBar.size());
+
+        chat.clear();
+        actionBar.clear();
+        Tracker.renderProgressAlerts(null, NotificationDestinationLogic.Channel.OFF,
+                individual, chat::add, actionBar::add);
+        assertTrue(chat.isEmpty());
+        assertTrue(actionBar.isEmpty());
+    }
+
+    @Test
+    void groupedProgressAlertsSendOneMessagePerEnabledChannel() {
+        List<Tracker.ProgressAlertNotification> three = List.of(
+                new Tracker.ProgressAlertNotification(TargetKey.of("#c:gems/coal", 100), 50, 100, 50),
+                new Tracker.ProgressAlertNotification(TargetKey.of("#c:gems/diamond", 100), 90, 100, 90),
+                new Tracker.ProgressAlertNotification(TargetKey.of("#c:gems/emerald", 100), 50, 100, 50));
+        NotificationGrouping.ChannelPlan<Tracker.ProgressAlertNotification> grouped =
+                NotificationGrouping.planProgressChannel(three);
+        assertEquals(NotificationGrouping.SendMode.GROUPED, grouped.mode());
+        List<Component> chat = new ArrayList<>();
+        List<Component> actionBar = new ArrayList<>();
+        Tracker.renderProgressAlerts(null, NotificationDestinationLogic.Channel.BOTH,
+                grouped, chat::add, actionBar::add);
+        assertEquals(1, chat.size());
+        assertEquals(1, actionBar.size());
+        assertEquals(ServerLang.formatForLang("en_us", "message.itemmilestonelog.progress_alert_group_actionbar", 3),
+                actionBar.get(0).getString());
+    }
+
+    @Test
+    void personalChoiceOverridesTheServerDefaultBeforeSending() {
+        MilestoneData.PlayerData pd = new MilestoneData.PlayerData();
+        pd.progressAlertDestination = "ACTION_BAR";
+        List<Component> chat = new ArrayList<>();
+        List<Component> actionBar = new ArrayList<>();
+        Tracker.emitProgressAlerts(null, pd, NotificationGrouping.planProgressChannel(List.of(
+                new Tracker.ProgressAlertNotification(TargetKey.of("#c:gems/diamond", 100), 50, 100, 50))),
+                chat::add, actionBar::add);
+        assertTrue(chat.isEmpty(), "the personal actionbar choice overrides the chat server default");
+        assertEquals(1, actionBar.size());
+    }
+
+    @Test
     void flushPendingOnStopDrainsAWindowThatHasNotClosedYet() {
         Tracker.clearPendingNotifications();
         try {

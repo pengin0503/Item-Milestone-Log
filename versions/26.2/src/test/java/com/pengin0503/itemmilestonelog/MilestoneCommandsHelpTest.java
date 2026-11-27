@@ -1282,6 +1282,45 @@ class MilestoneCommandsHelpTest {
     }
 
     @Test
+    void progressdestIsAPlayerOnlyTopLevelCommandWithLiteralChoices() {
+        CommandDispatcher<CommandSourceStack> regular = buildDispatcher(src -> false);
+        CommandNode<CommandSourceStack> node = regular.getRoot().getChild("milestonelog").getChild("progressdest");
+        assertNotNull(node, "progressdest must be a top-level /milestonelog subcommand");
+        assertNotNull(node.getCommand(), "bare progressdest must query the current destination");
+        Set<String> choices = new TreeSet<>();
+        for (CommandNode<CommandSourceStack> child : node.getChildren()) {
+            assertFalse(child instanceof ArgumentCommandNode<CommandSourceStack, ?>,
+                    "every choice must be a vanilla literal, not a custom argument type");
+            choices.add(child.getName());
+        }
+        assertEquals(Set.of("chat", "actionbar", "both", "off", "server"), choices);
+        CommandHelp.Entry entry = entryByName("progressdest");
+        assertTrue(entry.playerOnly());
+        assertEquals(CommandHelp.Gate.NONE, entry.gate());
+        assertEquals("/milestonelog progressdest", entry.displayCommand());
+    }
+
+    @Test
+    void progressdestChoiceQueryIsReadOnlyAndSettingsKeepsFourLines() {
+        MilestoneData data = new MilestoneData();
+        UUID playerId = UUID.fromString("55555555-5555-5555-5555-555555555555");
+        assertEquals(NotificationDestinationLogic.Choice.FOLLOW_SERVER,
+                MilestoneCommands.progressDestChoiceFor(data, playerId));
+        assertEquals(4, MilestoneCommands.settingsLinesFor(data, playerId).size(),
+                "progressdest must not add a fifth settings toggle");
+        assertTrue(data.allPlayers().isEmpty(), "a read-only query must not insert PlayerData");
+        assertFalse(data.isDirty(), "a read-only query must not dirty the data set");
+
+        MilestoneData.PlayerData pd = data.player(playerId);
+        pd.progressAlertDestination = "BOTH";
+        assertEquals(NotificationDestinationLogic.Choice.BOTH,
+                MilestoneCommands.progressDestChoiceFor(data, playerId));
+        pd.progressAlertDestination = "not_a_choice";
+        assertEquals(NotificationDestinationLogic.Choice.FOLLOW_SERVER,
+                MilestoneCommands.progressDestChoiceFor(data, playerId));
+    }
+
+    @Test
     void readOnlyHandlersLeaveADataLessPlayerUntouched() {
         MilestoneData data = new MilestoneData();
         UUID playerId = UUID.fromString("33333333-3333-3333-3333-333333333333");

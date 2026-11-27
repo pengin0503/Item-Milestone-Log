@@ -565,7 +565,7 @@ public final class Tracker {
                     Config.progressAlertThresholds(),
                     Config.PROGRESS_ALERT_MIN_COUNT.get());
             if (!alerts.isEmpty()) {
-                submitProgressAlerts(player, alerts);
+                submitProgressAlerts(player, data.playerOrNull(player.getUUID()), alerts);
             }
         }
 
@@ -1152,7 +1152,7 @@ public final class Tracker {
                     Config.progressAlertThresholds(),
                     Config.PROGRESS_ALERT_MIN_COUNT.get());
             if (!alerts.isEmpty()) {
-                submitProgressAlerts(player, alerts);
+                submitProgressAlerts(player, data.playerOrNull(player.getUUID()), alerts);
             }
         }
     }
@@ -1193,7 +1193,7 @@ public final class Tracker {
                     Config.progressAlertThresholds(),
                     Config.PROGRESS_ALERT_MIN_COUNT.get());
             if (!alerts.isEmpty()) {
-                submitProgressAlerts(player, alerts);
+                submitProgressAlerts(player, data.playerOrNull(player.getUUID()), alerts);
             }
         }
     }
@@ -1260,30 +1260,95 @@ public final class Tracker {
         return notifications;
     }
 
-    private static void sendProgressAlerts(ServerPlayer player, List<ProgressAlertNotification> notifications) {
-        for (ProgressAlertNotification n : notifications) {
-            Component msg = ServerLang.tr(player, "message.itemmilestonelog.progress_alert",
-                    MilestoneService.targetDisplayName(n.key()),
-                    n.currentCount(),
-                    n.targetCount(),
-                    n.percent());
-            player.sendSystemMessage(msg);
+    /**
+     * F-150-44: the one resolution call per send. A data-less player (or FOLLOW_SERVER) inherits
+     * the server default; reading the saved choice never creates or dirties a PlayerData.
+     */
+    static NotificationDestinationLogic.Channel progressChannelFor(@Nullable MilestoneData.PlayerData pd) {
+        return NotificationDestinationLogic.resolve(Config.progressAlertDestination(),
+                NotificationDestinationLogic.parseChoice(pd != null ? pd.progressAlertDestination : null));
+    }
+
+    /** Production sender: vanilla chat for CHAT, the vanilla overlay packet for ACTION_BAR. */
+    private static void sendProgressAlerts(ServerPlayer player, @Nullable MilestoneData.PlayerData pd,
+                                           NotificationGrouping.ChannelPlan<ProgressAlertNotification> plan) {
+        if (plan.mode() == NotificationGrouping.SendMode.NONE) {
+            return;
+        }
+        emitProgressAlerts(player, pd, plan,
+                component -> player.sendSystemMessage(component),
+                component -> player.sendSystemMessage(component, true));
+    }
+
+    /** Resolves once, then renders into two sinks (unit-test seam for the routing decision). */
+    static void emitProgressAlerts(@Nullable ServerPlayer player, @Nullable MilestoneData.PlayerData pd,
+                                   NotificationGrouping.ChannelPlan<ProgressAlertNotification> plan,
+                                   Consumer<Component> chatSink, Consumer<Component> actionBarSink) {
+        if (plan.mode() == NotificationGrouping.SendMode.NONE || chatSink == null || actionBarSink == null) {
+            return;
+        }
+        renderProgressAlerts(player, progressChannelFor(pd), plan, chatSink, actionBarSink);
+    }
+
+    /** Rendering only; the channel was already resolved by {@link #progressChannelFor}. */
+    static void renderProgressAlerts(@Nullable ServerPlayer player,
+                                     NotificationDestinationLogic.Channel channel,
+                                     NotificationGrouping.ChannelPlan<ProgressAlertNotification> plan,
+                                     Consumer<Component> chatSink, Consumer<Component> actionBarSink) {
+        if (plan.mode() == NotificationGrouping.SendMode.NONE) {
+            return;
+        }
+        boolean chat = NotificationDestinationLogic.sendsChat(channel);
+        boolean overlay = NotificationDestinationLogic.sendsActionBar(channel);
+        if (!chat && !overlay) {
+            return;
+        }
+        if (plan.mode() == NotificationGrouping.SendMode.INDIVIDUAL) {
+            for (ProgressAlertNotification n : plan.items()) {
+                Component displayName = MilestoneService.targetDisplayName(n.key());
+                String percent = n.percent() + "%";
+                if (chat) {
+                    chatSink.accept(ServerLang.tr(player, "message.itemmilestonelog.progress_alert",
+                            displayName, n.currentCount(), n.targetCount(), n.percent()));
+                }
+                if (overlay) {
+                    actionBarSink.accept(ServerLang.tr(player, "message.itemmilestonelog.progress_alert_actionbar",
+                            displayName, n.currentCount(), n.targetCount(), percent));
+                }
+            }
+            return;
+        }
+        List<ProgressAlertNotification> alerts = plan.items();
+        List<TargetKey> keys = alerts.stream()
+                .map(ProgressAlertNotification::key)
+                .sorted()
+                .toList();
+        String language = player != null ? player.getLanguage() : null;
+        Component targetList = buildTargetListComponent(language, keys, MilestoneService::targetDisplayName);
+        if (chat) {
+            chatSink.accept(ServerLang.tr(player, "message.itemmilestonelog.progress_alert_group",
+                    alerts.size(), targetList));
+        }
+        if (overlay) {
+            actionBarSink.accept(ServerLang.tr(player, "message.itemmilestonelog.progress_alert_group_actionbar",
+                    alerts.size()));
         }
     }
 
     /**
-     * N63: progress alerts join the shared window as their own channel while grouping is enabled.
-     * With {@code groupSimultaneousRecords=false} they stay immediate and one-by-one (D-150-107);
-     * only the destination resolution belongs to a later PR, so the message key stays unchanged here.
+     * N63/D-150-107: queued alerts resolve their destination at flush time; the immediate path stays
+     * one-by-one but goes through the same resolution and vanilla delivery sinks.
      */
-    private static void submitProgressAlerts(ServerPlayer player, List<ProgressAlertNotification> alerts) {
+    private static void submitProgressAlerts(ServerPlayer player, @Nullable MilestoneData.PlayerData pd,
+                                             List<ProgressAlertNotification> alerts) {
         if (alerts == null || alerts.isEmpty()) {
             return;
         }
         if (Config.GROUP_SIMULTANEOUS_RECORDS.get()) {
             queueProgressAlerts(player.getUUID(), player.getDisplayName(), alerts);
         } else {
-            sendProgressAlerts(player, alerts);
+            sendProgressAlerts(player, pd,
+                    new NotificationGrouping.ChannelPlan<>(NotificationGrouping.SendMode.INDIVIDUAL, alerts));
         }
     }
 
@@ -1307,26 +1372,6 @@ public final class Tracker {
         pending.progressAlerts.addAll(alerts);
     }
 
-    /** Flush-time dispatch of the separate progress channel: 1-2 individual, 3+ one grouped message. */
-    private static void sendProgressAlerts(ServerPlayer player,
-                                           NotificationGrouping.ChannelPlan<ProgressAlertNotification> plan) {
-        if (plan.mode() == NotificationGrouping.SendMode.NONE) {
-            return;
-        }
-        if (plan.mode() == NotificationGrouping.SendMode.INDIVIDUAL) {
-            sendProgressAlerts(player, plan.items());
-            return;
-        }
-        List<ProgressAlertNotification> alerts = plan.items();
-        List<TargetKey> keys = alerts.stream()
-                .map(ProgressAlertNotification::key)
-                .sorted()
-                .toList();
-        String language = player.getLanguage();
-        Component targetList = buildTargetListComponent(language, keys, MilestoneService::targetDisplayName);
-        player.sendSystemMessage(ServerLang.tr(player, "message.itemmilestonelog.progress_alert_group",
-                alerts.size(), targetList));
-    }
 
     enum RecordOutcome {
         ALREADY_RECORDED,
@@ -2213,7 +2258,8 @@ public final class Tracker {
         // 1b. N63 progress alerts: a separate channel in the same window, chat only, inserted
         // immediately after the player's record chat so the F27 ordering below stays unchanged.
         if (onlineActor != null) {
-            sendProgressAlerts(onlineActor, NotificationGrouping.planProgressChannel(pending.progressAlerts));
+            sendProgressAlerts(onlineActor, actorPd,
+                    NotificationGrouping.planProgressChannel(pending.progressAlerts));
         }
 
         // 2. Broadcast to other online players

@@ -30,7 +30,7 @@ class CommandHelpTest {
                 "preset", "presetremove", "presetprogress", "reset", "resettag", "resetall", "undo",
                 "firsts", "firstshistorytag", "info", "top", "presettop", "toptag", "recent", "stats", "statstag",
                 "whohas", "whohastag", "lookup",
-                "privacy", "mutebroadcast", "muteprogress", "discordoptout",
+                "privacy", "mutebroadcast", "muteprogress", "progressdest", "discordoptout",
                 "settings", "randomtarget", "trends", "recap",
                 "compare", "timeline", "timelinetag", "session",
                 "modstats", "presetstats", "presetmatrix",

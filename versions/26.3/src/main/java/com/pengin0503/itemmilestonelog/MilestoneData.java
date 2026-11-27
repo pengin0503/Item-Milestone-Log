@@ -33,6 +33,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -64,6 +65,8 @@ public class MilestoneData extends SavedData {
         public final Map<String, PresetState> presetState = new LinkedHashMap<>();
         /** F-150-31 (N155): optional per-target metadata, keyed by {@code TargetKey#toEncodedString()}. */
         public final Map<String, TargetMeta> targetMeta = new LinkedHashMap<>();
+        /** F-150-44 (N116): personal destination enum name; FOLLOW_SERVER means "use the server default". */
+        public String progressAlertDestination = "FOLLOW_SERVER";
 
         /** Whether this player hides their records from lookups by non-privileged other players (F14). */
         public boolean isHiddenFromLookup() {
@@ -304,8 +307,13 @@ public class MilestoneData extends SavedData {
             lenient("targetMeta",
                     Codec.unboundedMap(Codec.STRING, LENIENT_TARGET_META_CODEC), Map.of())
                     .optionalFieldOf("targetMeta", Map.of())
-                    .forGetter(MilestoneData::encodeTargetMeta)
-    ).apply(instance, (targets, records, carriedFromCreative, lastKnownName, firstJoinHintShown, muteBroadcasts, muteProgressAlerts, excludeFromDiscord, hideFromLookup, lastSeen, progressNotified, completedPresets, presetState, targetMeta) -> {
+                    .forGetter(MilestoneData::encodeTargetMeta),
+            lenient("progressAlertDestination", Codec.STRING, "FOLLOW_SERVER")
+                    .optionalFieldOf("progressAlertDestination")
+                    .forGetter(pd -> NotificationDestinationLogic.isValidChoice(pd.progressAlertDestination)
+                            && !"FOLLOW_SERVER".equals(pd.progressAlertDestination)
+                            ? Optional.of(pd.progressAlertDestination) : Optional.empty())
+    ).apply(instance, (var targets, var records, var carriedFromCreative, var lastKnownName, var firstJoinHintShown, var muteBroadcasts, var muteProgressAlerts, var excludeFromDiscord, var hideFromLookup, var lastSeen, var progressNotified, var completedPresets, var presetState, var targetMeta, var progressAlertDestination) -> {
         PlayerData pd = new PlayerData();
         for (String raw : targets) {
             TargetKey parsed = TargetKey.tryParseEncoded(raw);
@@ -417,6 +425,11 @@ public class MilestoneData extends SavedData {
             }
             pd.targetMeta.put(encodedKey, meta);
         }
+        String storedDestination = progressAlertDestination.orElse("FOLLOW_SERVER");
+        if (!NotificationDestinationLogic.isValidChoice(storedDestination)) {
+            MilestoneLoadReport.recordElementSkip();
+        }
+        pd.progressAlertDestination = NotificationDestinationLogic.parseChoice(storedDestination).name();
         return pd;
     }));
 
