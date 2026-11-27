@@ -133,6 +133,12 @@ public final class Config {
             .defineInRange("notificationWindowTicks", 1,
                     NotificationGrouping.MIN_WINDOW_TICKS, NotificationGrouping.MAX_WINDOW_TICKS);
 
+    /** N64/N116: server default destination for progress alerts; personal choice can override it. */
+    public static final ForgeConfigSpec.ConfigValue<String> PROGRESS_ALERT_DESTINATION = BUILDER
+            .comment("Where progress alerts are shown: \"chat\" / \"actionbar\" / \"both\" / \"off\".",
+                    "Players can override this with /milestonelog progressdest; \"server\" is personal-only.")
+            .define("progressAlertDestination", "chat", Config::validateProgressAlertDestination);
+
     /** Send Discord milestone notifications as rich embeds instead of plain text. */
     public static final ForgeConfigSpec.BooleanValue DISCORD_USE_EMBEDS = BUILDER
             .comment("Send Discord milestone notifications as rich embeds instead of plain text.",
@@ -406,6 +412,18 @@ public final class Config {
     }
 
     /**
+     * N64: {@link #PROGRESS_ALERT_DESTINATION}, or the 1.4.0 chat default while the config is not
+     * loaded yet (plain unit tests). Invalid values fall back once with a warning in the parser.
+     */
+    public static NotificationDestinationLogic.Channel progressAlertDestination() {
+        try {
+            return NotificationDestinationLogic.parseChannel(PROGRESS_ALERT_DESTINATION.get());
+        } catch (IllegalStateException notLoaded) {
+            return NotificationDestinationLogic.Channel.CHAT;
+        }
+    }
+
+    /**
      * F46: {@link #DISCORD_WORLD_FIRST_WEBHOOK_URL}, or {@code ""} while the config is not loaded yet
      * (plain unit tests).
      */
@@ -484,6 +502,10 @@ public final class Config {
 
     private static boolean validateDiscordScope(Object obj) {
         return obj instanceof String s && ("all".equals(s) || "world_first".equals(s));
+    }
+
+    private static boolean validateProgressAlertDestination(Object obj) {
+        return obj instanceof String s && NotificationDestinationLogic.isValidChannel(s);
     }
 
     static boolean validateDiscordLanguage(Object obj) {

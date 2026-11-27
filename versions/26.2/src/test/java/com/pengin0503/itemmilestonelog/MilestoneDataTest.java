@@ -1521,6 +1521,141 @@ class MilestoneDataTest {
     }
 
     @Test
+    void progressAlertDestinationMissingFromLegacyTagLoadsFollowServerAndKeepsOtherFields() {
+        MilestoneData original = new MilestoneData();
+        MilestoneData.PlayerData pd = original.player(PLAYER_A);
+        TargetKey diamond = TargetKey.of("minecraft:diamond", 3);
+        MilestoneRecord record = new MilestoneRecord(1234, 5L, 1795600000000L);
+        pd.targets.add(diamond);
+        pd.records.put(diamond, record);
+        pd.lastKnownName = "Alice";
+        pd.completedPresets.add("vanilla_endgame");
+        pd.presetState.put("vanilla_endgame", new PresetState(true, 2));
+        original.recordWorldFirstIfAbsent(diamond, PLAYER_A, "Alice", record);
+
+        CompoundTag saved = encodeRoot(original);
+        CompoundTag players = saved.getCompoundOrEmpty("players");
+        CompoundTag playerTag = players.getCompoundOrEmpty(PLAYER_A.toString());
+        assertFalse(playerTag.contains("progressAlertDestination"), "the default is never written");
+        playerTag.remove("progressAlertDestination");
+        players.put(PLAYER_A.toString(), playerTag);
+        saved.put("players", players);
+
+        MilestoneData loaded = MilestoneData.CODEC.parse(NbtOps.INSTANCE, saved).getOrThrow();
+        MilestoneData.PlayerData loadedPd = loaded.playerOrNull(PLAYER_A);
+        assertNotNull(loadedPd);
+        assertEquals("FOLLOW_SERVER", loadedPd.progressAlertDestination);
+        assertEquals(pd.targets, loadedPd.targets);
+        assertEquals(pd.records, loadedPd.records);
+        assertEquals("Alice", loadedPd.lastKnownName);
+        assertEquals(pd.completedPresets, loadedPd.completedPresets);
+        assertEquals(pd.presetState, loadedPd.presetState);
+        assertEquals(original.worldFirsts(), loaded.worldFirsts());
+        assertEquals(original.schemaVersionForSave(), loaded.schemaVersionForSave());
+    }
+
+    @Test
+    void progressAlertDestinationRoundTripsAndOnlyWritesNonDefaults() {
+        MilestoneData original = new MilestoneData();
+        MilestoneData.PlayerData pd = original.player(PLAYER_A);
+        pd.progressAlertDestination = "BOTH";
+        CompoundTag saved = encodeRoot(original);
+        assertEquals("BOTH", saved.getCompoundOrEmpty("players")
+                .getCompoundOrEmpty(PLAYER_A.toString()).getStringOr("progressAlertDestination", "?"));
+        MilestoneData loaded = MilestoneData.CODEC.parse(NbtOps.INSTANCE, saved).getOrThrow();
+        assertEquals("BOTH", loaded.playerOrNull(PLAYER_A).progressAlertDestination);
+
+        pd.progressAlertDestination = "FOLLOW_SERVER";
+        CompoundTag defaultSaved = encodeRoot(original);
+        assertFalse(defaultSaved.getCompoundOrEmpty("players")
+                .getCompoundOrEmpty(PLAYER_A.toString()).contains("progressAlertDestination"));
+        assertEquals("FOLLOW_SERVER", MilestoneData.CODEC.parse(NbtOps.INSTANCE, defaultSaved)
+                .getOrThrow().playerOrNull(PLAYER_A).progressAlertDestination);
+    }
+
+    @Test
+    void progressAlertDestinationLoaderSkipsMalformedValuesAndKeepsSiblings() {
+        MilestoneData original = new MilestoneData();
+        MilestoneData.PlayerData pd = original.player(PLAYER_A);
+        TargetKey diamond = TargetKey.of("minecraft:diamond", 3);
+        MilestoneRecord record = new MilestoneRecord(4321, 7L, 1795600000000L);
+        pd.targets.add(diamond);
+        pd.records.put(diamond, record);
+        pd.lastKnownName = "Alice";
+        pd.presetState.put("vanilla_endgame", new PresetState(true, 4));
+
+        CompoundTag saved = encodeRoot(original);
+        CompoundTag players = saved.getCompoundOrEmpty("players");
+        CompoundTag playerTag = players.getCompoundOrEmpty(PLAYER_A.toString());
+        playerTag.put("progressAlertDestination", IntTag.valueOf(7));
+        players.put(PLAYER_A.toString(), playerTag);
+        saved.put("players", players);
+        MilestoneData loaded = MilestoneData.CODEC.parse(NbtOps.INSTANCE, saved).getOrThrow();
+        assertEquals("FOLLOW_SERVER", loaded.playerOrNull(PLAYER_A).progressAlertDestination);
+        assertNotNull(loaded.loadReport());
+        assertEquals(1, loaded.loadReport().elementSkipCount());
+        assertFalse(loaded.loadReport().totalFailure());
+        assertEquals(pd.targets, loaded.playerOrNull(PLAYER_A).targets);
+        assertEquals(pd.records, loaded.playerOrNull(PLAYER_A).records);
+        assertEquals("Alice", loaded.playerOrNull(PLAYER_A).lastKnownName);
+        assertEquals(pd.presetState, loaded.playerOrNull(PLAYER_A).presetState);
+
+        playerTag.putString("progressAlertDestination", "NOT_A_DESTINATION");
+        players.put(PLAYER_A.toString(), playerTag);
+        saved.put("players", players);
+        MilestoneData invalidName = MilestoneData.CODEC.parse(NbtOps.INSTANCE, saved).getOrThrow();
+        assertEquals("FOLLOW_SERVER", invalidName.playerOrNull(PLAYER_A).progressAlertDestination);
+        assertEquals(1, invalidName.loadReport().elementSkipCount());
+        assertEquals(pd.targets, invalidName.playerOrNull(PLAYER_A).targets);
+    }
+
+    @Test
+    void removingProgressAlertDestinationFromSavedTagIsANonDestructiveDowngrade() {
+        MilestoneData original = new MilestoneData();
+        MilestoneData.PlayerData pd = original.player(PLAYER_A);
+        TargetKey diamond = TargetKey.of("minecraft:diamond", 3);
+        MilestoneRecord record = new MilestoneRecord(5555, 9L, 1795600000000L);
+        pd.targets.add(diamond);
+        pd.records.put(diamond, record);
+        pd.progressNotified.put(diamond, 25);
+        pd.completedPresets.add("vanilla_endgame");
+        pd.presetState.put("vanilla_endgame", new PresetState(true, 2));
+        pd.lastKnownName = "Alice";
+        pd.lastSeen = 1795800000000L;
+        pd.progressAlertDestination = "ACTION_BAR";
+        original.recordWorldFirstIfAbsent(diamond, PLAYER_A, "Alice", record);
+
+        CompoundTag saved = encodeRoot(original);
+        MilestoneData before = MilestoneData.CODEC.parse(NbtOps.INSTANCE, saved).getOrThrow();
+        CompoundTag downgraded = saved.copy();
+        CompoundTag players = downgraded.getCompoundOrEmpty("players");
+        CompoundTag playerTag = players.getCompoundOrEmpty(PLAYER_A.toString());
+        assertTrue(playerTag.contains("progressAlertDestination"));
+        playerTag.remove("progressAlertDestination");
+        players.put(PLAYER_A.toString(), playerTag);
+        downgraded.put("players", players);
+
+        MilestoneData after = MilestoneData.CODEC.parse(NbtOps.INSTANCE, downgraded).getOrThrow();
+        MilestoneData.PlayerData beforePd = before.playerOrNull(PLAYER_A);
+        MilestoneData.PlayerData afterPd = after.playerOrNull(PLAYER_A);
+        assertNotNull(beforePd);
+        assertNotNull(afterPd);
+        assertEquals("ACTION_BAR", beforePd.progressAlertDestination);
+        assertEquals("FOLLOW_SERVER", afterPd.progressAlertDestination);
+        assertEquals(beforePd.targets, afterPd.targets);
+        assertEquals(beforePd.records, afterPd.records);
+        assertEquals(beforePd.progressNotified, afterPd.progressNotified);
+        assertEquals(beforePd.completedPresets, afterPd.completedPresets);
+        assertEquals(beforePd.presetState, afterPd.presetState);
+        assertEquals(beforePd.lastKnownName, afterPd.lastKnownName);
+        assertEquals(beforePd.lastSeen, afterPd.lastSeen);
+        assertEquals(before.worldFirsts(), after.worldFirsts());
+        assertEquals(before.retainedSchemaVersion(), after.retainedSchemaVersion());
+        assertNotNull(after.loadReport());
+        assertEquals(0, after.loadReport().elementSkipCount());
+    }
+
+    @Test
     void targetMetaMissingFromLegacyTagLoadsEmptyAndKeepsOtherFields() {
         MilestoneData original = new MilestoneData();
         MilestoneData.PlayerData pd = original.player(PLAYER_A);
