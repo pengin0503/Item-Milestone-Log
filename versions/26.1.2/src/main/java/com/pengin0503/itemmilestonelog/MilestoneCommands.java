@@ -47,6 +47,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
@@ -3031,22 +3032,89 @@ public final class MilestoneCommands {
 
     // --------------------------------------------------------- F49 Discord test
 
+    // MN-3 test seams; all null in production.
+    @Nullable
+    static Consumer<Runnable> discordTestSchedulerForTest;
+    @Nullable
+    static Boolean discordTestOnServerThreadForTest;
+    @Nullable
+    static Boolean discordExecutorAliveForTest;
+    @Nullable
+    static Consumer<DiscordTestResult> discordTestAbandonedForTest;
+
+    static void resetDiscordTestHooksForTest() {
+        discordTestSchedulerForTest = null;
+        discordTestOnServerThreadForTest = null;
+        discordExecutorAliveForTest = null;
+        discordTestAbandonedForTest = null;
+    }
+
     private static int discordTest(CommandContext<CommandSourceStack> ctx, DiscordRouting.Destination destination) {
         CommandSourceStack source = ctx.getSource();
         MinecraftServer server = source.getServer();
         ServerPlayer executorPlayer = source.getPlayer();
         UUID executorUuid = executorPlayer != null ? executorPlayer.getUUID() : null;
 
-        DiscordTestResult immediateError = DiscordNotifier.sendTestMessage(destination, result -> {
-            if (server == null) {
-                return;
-            }
-            server.execute(() -> deliverDiscordTestResult(server, source, executorPlayer, executorUuid, result));
-        });
+        DiscordTestResult immediateError = DiscordNotifier.sendTestMessage(
+                destination,
+                result -> handOffDiscordTestResult(server, source, executorPlayer, executorUuid, result),
+                result -> abandonDiscordTestResult(result, "Discord sender shut down before completion"));
         if (immediateError != null) {
             return fail(ctx, formatDiscordTestResult(source.getPlayer(), immediateError));
         }
         return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.discordtest_sending"));
+    }
+
+    /**
+     * MN-3: hand the completion to the server thread, never apply it inline on the Discord thread.
+     * {@code MinecraftServer.execute} runs a task inline during shutdown, so the runnable checks
+     * thread ownership before touching the player list or the command source. When no delivery is
+     * possible an explicit ABANDONED outcome is logged instead of dropping the result silently.
+     */
+    static void handOffDiscordTestResult(
+            @Nullable MinecraftServer server,
+            @Nullable CommandSourceStack source,
+            @Nullable ServerPlayer executorPlayer,
+            @Nullable UUID executorUuid,
+            DiscordTestResult result) {
+        boolean executorAlive = discordExecutorAliveForTest != null
+                ? discordExecutorAliveForTest
+                : DiscordNotifier.isExecutorAlive();
+        if ((server == null && discordTestSchedulerForTest == null) || !executorAlive) {
+            abandonDiscordTestResult(result, server == null ? "no server" : "Discord executor gone");
+            return;
+        }
+        Runnable delivery = () -> {
+            boolean onServerThread = discordTestOnServerThreadForTest != null
+                    ? discordTestOnServerThreadForTest
+                    : server != null && server.isSameThread();
+            if (!onServerThread) {
+                abandonDiscordTestResult(result, "inline execution off the server thread");
+                return;
+            }
+            deliverDiscordTestResult(server, source, executorPlayer, executorUuid, result);
+        };
+        try {
+            if (discordTestSchedulerForTest != null) {
+                discordTestSchedulerForTest.accept(delivery);
+            } else {
+                server.execute(delivery);
+            }
+        } catch (RuntimeException e) {
+            abandonDiscordTestResult(result, "server executor rejected delivery");
+        }
+    }
+
+    /** Logs an explicit abandoned outcome; never touches the source/player from this thread. */
+    static void abandonDiscordTestResult(DiscordTestResult result, String reason) {
+        DiscordTestResult abandoned = result.kind() == DiscordTestResult.Kind.ABANDONED
+                ? result
+                : DiscordTestResult.abandoned();
+        ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] discordtest result abandoned ({}): {} ({})",
+                reason, result.kind(), result.detail());
+        if (discordTestAbandonedForTest != null) {
+            discordTestAbandonedForTest.accept(abandoned);
+        }
     }
 
     private static void deliverDiscordTestResult(
@@ -3092,6 +3160,7 @@ public final class MilestoneCommands {
             case RATE_LIMITED -> ServerLang.tr(player, "message.itemmilestonelog.discordtest_rate_limited");
             case HTTP_ERROR -> ServerLang.tr(player, "message.itemmilestonelog.discordtest_http_error", result.detail());
             case NETWORK_ERROR -> ServerLang.tr(player, "message.itemmilestonelog.discordtest_network_error", result.detail());
+            case ABANDONED -> ServerLang.tr(player, "message.itemmilestonelog.discordtest_abandoned");
         };
     }
 

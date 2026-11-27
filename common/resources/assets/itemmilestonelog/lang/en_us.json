@@ -189,6 +189,7 @@
   "message.itemmilestonelog.discordtest_invalid_webhook": "Discord rejected the webhook (HTTP %s). The webhook may have been deleted or the URL is wrong.",
   "message.itemmilestonelog.discordtest_network_error": "Failed to reach Discord (%s).",
   "message.itemmilestonelog.discordtest_not_configured": "Discord webhook URL is not configured.",
+  "message.itemmilestonelog.discordtest_abandoned": "The Discord test result was abandoned because the server or Discord sender was shutting down.",
   "message.itemmilestonelog.discordtest_rate_limited": "Discord rate-limited the request (HTTP 429). Try again shortly.",
   "message.itemmilestonelog.discordtest_sending": "Sending a test message to Discord...",
   "message.itemmilestonelog.discordtest_success": "Discord test message sent (HTTP %s).",
