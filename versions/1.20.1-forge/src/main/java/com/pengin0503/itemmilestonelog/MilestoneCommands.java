@@ -1731,28 +1731,49 @@ public final class MilestoneCommands {
         if (!CommandAnalysisModel.settingsToggleAllowed(toggle, Config.ALLOW_DISCORD_OPT_OUT.get())) {
             return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.feature_disabled"));
         }
-        MilestoneData.PlayerData pd = MilestoneData.get(player.level().getServer()).player(player.getUUID());
+        // R2-SF-1: a missing PlayerData has all-off defaults. Read only here; the legacy handler
+        // creates the PlayerData when a value actually changes, never on a no-op.
+        boolean needsWrite = settingsToggleNeedsWrite(
+                MilestoneData.get(player.level().getServer()), player.getUUID(), toggle, desired);
         return switch (toggle) {
-            case BROADCAST -> pd.muteBroadcasts == desired
+            case BROADCAST -> !needsWrite
                     ? send(ctx, ServerLang.tr(player, desired
                             ? "message.itemmilestonelog.mutebroadcast_on"
                             : "message.itemmilestonelog.mutebroadcast_off"))
                     : muteBroadcast(ctx);
-            case PROGRESS -> pd.muteProgressAlerts == desired
+            case PROGRESS -> !needsWrite
                     ? send(ctx, ServerLang.tr(player, desired
                             ? "message.itemmilestonelog.muteprogress_on"
                             : "message.itemmilestonelog.muteprogress_off"))
                     : muteProgress(ctx);
-            case DISCORD -> pd.excludeFromDiscord == desired
+            case DISCORD -> !needsWrite
                     ? send(ctx, ServerLang.tr(player, desired
                             ? "message.itemmilestonelog.discordoptout_on"
                             : "message.itemmilestonelog.discordoptout_off"))
                     : respond(ctx, MilestoneService.toggleDiscordOptOut(player));
-            case PRIVACY -> pd.hideFromLookup == desired
+            case PRIVACY -> !needsWrite
                     ? send(ctx, ServerLang.tr(player, desired
                             ? "message.itemmilestonelog.privacy_on"
                             : "message.itemmilestonelog.privacy_off"))
                     : respond(ctx, MilestoneService.togglePrivacy(player));
+        };
+    }
+
+    /**
+     * R2-SF-1: read-only decision for a settings toggle. A data-less player has all flags {@code false};
+     * {@code true} therefore needs a write and {@code false} is an exact no-op.
+     */
+    static boolean settingsToggleNeedsWrite(MilestoneData data, UUID playerId,
+                                            CommandAnalysisModel.Toggle toggle, boolean desired) {
+        MilestoneData.PlayerData pd = data.playerOrNull(playerId);
+        if (pd == null) {
+            return desired;
+        }
+        return switch (toggle) {
+            case BROADCAST -> pd.muteBroadcasts != desired;
+            case PROGRESS -> pd.muteProgressAlerts != desired;
+            case DISCORD -> pd.excludeFromDiscord != desired;
+            case PRIVACY -> pd.hideFromLookup != desired;
         };
     }
 
@@ -1934,17 +1955,28 @@ public final class MilestoneCommands {
         if (result.entries().isEmpty()) {
             return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.recap_empty"));
         }
+        return sendRecapLines(ctx.getSource(), player, result, kind, zone);
+    }
+
+    /** R2-MN-1: renders capped recap rows and the overflow count for both return and daily. */
+    static int sendRecapLines(CommandSourceStack source, @Nullable ServerPlayer player,
+                             CommandAnalysisModel.RecapResult result,
+                             CommandAnalysisModel.RecapKind kind, ZoneId zone) {
         for (CommandAnalysisModel.RecapEntry entry : result.entries()) {
             Component detail = kind == CommandAnalysisModel.RecapKind.RETURN
                     ? Component.literal(entry.holderName() + " ")
                             .append(Component.literal(Playtime.formatDate(entry.epochMillis(), zone)))
                     : Component.literal(Playtime.formatDate(entry.epochMillis(), zone));
-            ctx.getSource().sendSuccess(() -> ServerLang.tr(player,
+            source.sendSuccess(() -> ServerLang.tr(player,
                     "message.itemmilestonelog.recap_entry",
                     MilestoneService.targetDisplayName(new TargetKey(entry.itemId(), entry.count())),
                     detail), false);
         }
-        return result.entries().size();
+        if (result.moreCount() > 0) {
+            source.sendSuccess(() -> ServerLang.tr(player, "message.itemmilestonelog.recap_more",
+                    result.moreCount()), false);
+        }
+        return result.entries().size() + (result.moreCount() > 0 ? 1 : 0);
     }
 
 
@@ -3056,7 +3088,8 @@ public final class MilestoneCommands {
         DiscordTestResult immediateError = DiscordNotifier.sendTestMessage(
                 destination,
                 result -> handOffDiscordTestResult(server, source, executorPlayer, executorUuid, result),
-                result -> abandonDiscordTestResult(result, "Discord sender shut down before completion"));
+                result -> abandonDiscordTestResult(server, source, executorPlayer, executorUuid,
+                        "Discord sender shut down before completion"));
         if (immediateError != null) {
             return fail(ctx, formatDiscordTestResult(source.getPlayer(), immediateError));
         }
@@ -3075,11 +3108,41 @@ public final class MilestoneCommands {
             @Nullable ServerPlayer executorPlayer,
             @Nullable UUID executorUuid,
             DiscordTestResult result) {
+        handOffDiscordTestResult(server, source, executorPlayer, executorUuid, result,
+                "completion could not be delivered");
+    }
+
+    /**
+     * R2-SF-2: the {@code onAbandoned} callback from the Discord sender. The abandoned result takes
+     * the same strictly server-thread handoff as every other result; when the source is gone the
+     * delivery runnable keeps the log-only path instead.
+     */
+    static void abandonDiscordTestResult(
+            @Nullable MinecraftServer server,
+            @Nullable CommandSourceStack source,
+            @Nullable ServerPlayer executorPlayer,
+            @Nullable UUID executorUuid,
+            String reason) {
+        handOffDiscordTestResult(server, source, executorPlayer, executorUuid,
+                DiscordTestResult.abandoned(), reason);
+    }
+
+    private static void handOffDiscordTestResult(
+            @Nullable MinecraftServer server,
+            @Nullable CommandSourceStack source,
+            @Nullable ServerPlayer executorPlayer,
+            @Nullable UUID executorUuid,
+            DiscordTestResult result,
+            String abandonReason) {
         boolean executorAlive = discordExecutorAliveForTest != null
                 ? discordExecutorAliveForTest
                 : DiscordNotifier.isExecutorAlive();
-        if ((server == null && discordTestSchedulerForTest == null) || !executorAlive) {
-            abandonDiscordTestResult(result, server == null ? "no server" : "Discord executor gone");
+        // An abandoned notice no longer needs the Discord sender: only a real server-thread
+        // delivery path matters, so a dead executor must not hide the message from the initiator.
+        boolean abandonedResult = result.kind() == DiscordTestResult.Kind.ABANDONED;
+        if ((server == null && discordTestSchedulerForTest == null)
+                || (!abandonedResult && !executorAlive)) {
+            logAbandonedDiscordTestResult(result, abandonReason);
             return;
         }
         Runnable delivery = () -> {
@@ -3087,7 +3150,7 @@ public final class MilestoneCommands {
                     ? discordTestOnServerThreadForTest
                     : server != null && server.isSameThread();
             if (!onServerThread) {
-                abandonDiscordTestResult(result, "inline execution off the server thread");
+                logAbandonedDiscordTestResult(result, "inline execution off the server thread");
                 return;
             }
             deliverDiscordTestResult(server, source, executorPlayer, executorUuid, result);
@@ -3099,12 +3162,12 @@ public final class MilestoneCommands {
                 server.execute(delivery);
             }
         } catch (RuntimeException e) {
-            abandonDiscordTestResult(result, "server executor rejected delivery");
+            logAbandonedDiscordTestResult(result, "server executor rejected delivery");
         }
     }
 
     /** Logs an explicit abandoned outcome; never touches the source/player from this thread. */
-    static void abandonDiscordTestResult(DiscordTestResult result, String reason) {
+    static void logAbandonedDiscordTestResult(DiscordTestResult result, String reason) {
         DiscordTestResult abandoned = result.kind() == DiscordTestResult.Kind.ABANDONED
                 ? result
                 : DiscordTestResult.abandoned();
@@ -3117,10 +3180,14 @@ public final class MilestoneCommands {
 
     private static void deliverDiscordTestResult(
             MinecraftServer server,
-            CommandSourceStack source,
+            @Nullable CommandSourceStack source,
             @Nullable ServerPlayer executorPlayer,
             @Nullable UUID executorUuid,
             DiscordTestResult result) {
+        if (result.kind() == DiscordTestResult.Kind.ABANDONED) {
+            deliverAbandonedDiscordTestResult(source, result);
+            return;
+        }
         if (executorUuid != null) {
             ServerPlayer online = server.getPlayerList().getPlayer(executorUuid);
             if (online == null) {
@@ -3144,6 +3211,16 @@ public final class MilestoneCommands {
         } else {
             source.sendFailure(msg);
         }
+    }
+
+    /** R2-SF-2: an abandoned result is a failure notice to the initiator, still on the server thread. */
+    private static void deliverAbandonedDiscordTestResult(
+            @Nullable CommandSourceStack source, DiscordTestResult result) {
+        if (source == null) {
+            logAbandonedDiscordTestResult(result, "command source no longer exists");
+            return;
+        }
+        source.sendFailure(formatDiscordTestResult(source.getPlayer(), result));
     }
 
     private static Component formatDiscordTestResult(@Nullable ServerPlayer player, DiscordTestResult result) {
@@ -3740,9 +3817,29 @@ public final class MilestoneCommands {
         }
 
         // 5. Related tag targets, at most 10 rows plus the overflow count.
+        lines += sendInfoRelatedTags(source, player, relatedKeys, records, effectiveTargets, carried,
+                tagIndex, possession, zone, preview);
+        return lines;
+    }
+
+    /**
+     * R2-MN-2(b): renders step 5 of {@code info}. This is the real handler seam: the base section is
+     * suppressed when preview is active, so the preview block is the only related-tag section then.
+     */
+    static int sendInfoRelatedTags(
+            CommandSourceStack source,
+            @Nullable ServerPlayer player,
+            List<TargetKey> relatedKeys,
+            Map<TargetKey, MilestoneRecord> records,
+            Set<TargetKey> effectiveTargets,
+            Set<String> carried,
+            TagIndex tagIndex,
+            Map<String, Integer> possession,
+            ZoneId zone,
+            boolean preview) {
         ItemInfoLogic.RelatedTags relatedTags = ItemInfoLogic.relatedTagEntries(
                 relatedKeys, records, effectiveTargets, carried, tagIndex, possession);
-        // When preview is active the preview block below renders this section with all keys.
+        int lines = 0;
         if (!relatedTags.isEmpty() && !preview) {
             source.sendSuccess(() -> ServerLang.tr(player, "message.itemmilestonelog.info_tag_header"), false);
             lines++;

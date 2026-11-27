@@ -408,6 +408,7 @@
   "message.itemmilestonelog.recap_entry": "%s — %s",
   "message.itemmilestonelog.recap_header": "Your recap (%s):",
   "message.itemmilestonelog.recap_legacy": "%s record(s) with unknown date; %s still tracked.",
+  "message.itemmilestonelog.recap_more": "...and %s more not shown.",
   "message.itemmilestonelog.recent_empty": "No dated milestones yet.",
   "message.itemmilestonelog.recent_entry": "%s — %s (%s)",
   "message.itemmilestonelog.recent_entry_world_first": "★ %s — %s (%s)",

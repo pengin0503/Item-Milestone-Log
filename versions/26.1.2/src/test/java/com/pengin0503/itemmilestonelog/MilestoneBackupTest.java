@@ -356,6 +356,37 @@ class MilestoneBackupTest {
     }
 
     @Test
+    void staleGenerationResultDoesNotReleaseACurrentInFlightSlot() {
+        Instant first = ZonedDateTime.of(2026, 11, 24, 11, 15, 30, 0, UTC).toInstant();
+        long staleGeneration = MilestoneBackup.autoBackupGenerationForTest();
+        assertTrue(MilestoneBackup.tryBeginAutoBackupForTest(true, false, first.toEpochMilli()));
+
+        // A different world/session starts: the generation is bumped and its own backup is pending.
+        MilestoneBackup.resetState();
+        long currentGeneration = MilestoneBackup.autoBackupGenerationForTest();
+        assertNotEquals(staleGeneration, currentGeneration);
+        Instant current = first.plusSeconds(10);
+        assertTrue(MilestoneBackup.tryBeginAutoBackupForTest(true, false, current.toEpochMilli()));
+        assertTrue(MilestoneBackup.isAutoBackupInFlightForTest());
+        long timestampBefore = MilestoneBackup.lastBackupMillis();
+
+        // The old I/O task publishes a stale result into the new session (R2-MN-3 race).
+        MilestoneBackup.publishStaleAutoBackupResultForTest(
+                staleGeneration, first.plusSeconds(20).toEpochMilli(), true);
+        MilestoneBackup.settleAutoBackupResultForTest();
+        assertTrue(MilestoneBackup.isAutoBackupInFlightForTest(),
+                "a stale result must not release the current generation's in-flight slot");
+        assertEquals(timestampBefore, MilestoneBackup.lastBackupMillis(),
+                "a stale result must not touch the rate-limit timestamp");
+
+        // The current generation's own result still settles normally.
+        MilestoneBackup.publishAutoBackupResultForTest(current.toEpochMilli(), true);
+        MilestoneBackup.settleAutoBackupResultForTest();
+        assertFalse(MilestoneBackup.isAutoBackupInFlightForTest());
+        assertEquals(current.toEpochMilli(), MilestoneBackup.lastBackupMillis());
+    }
+
+    @Test
     void concurrentSnapshotWritesAreSerializedAndNeverShareAFilename(@TempDir Path tempDir) throws Exception {
         Path backupDir = tempDir.resolve("backups");
         Instant ts = ZonedDateTime.of(2026, 11, 24, 11, 15, 30, 0, UTC).toInstant();

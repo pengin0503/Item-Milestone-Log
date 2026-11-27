@@ -1622,9 +1622,8 @@ class TrackerTest {
         assertTrue(data.recordWorldFirstIfAbsent(key, holder, "Bob",
                 new MilestoneRecord(100, 1, duringAbsence)));
 
-        // F52 captures the stored value before processPlayerLogin overwrites it; the command needs
-        // that same captured value, not the freshly written login time.
-        Tracker.rememberPreLoginLastSeen(viewer, viewerData.lastSeen);
+        // R2-MN-2(a): processPlayerLogin itself captures the stored value before overwriting it;
+        // the event handler routes through this same overload, so no manual capture is needed.
         Tracker.processPlayerLogin(data, viewer, "Alice", Set.of(), List.of(), true,
                 id -> true, false, false, null, loginTime);
         assertEquals(loginTime, data.playerOrNull(viewer).lastSeen);

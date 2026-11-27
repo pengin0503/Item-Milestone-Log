@@ -52,7 +52,7 @@ public final class MilestoneBackup {
     /** Server-thread owned: set at acceptance, cleared when the published result is settled. */
     private static volatile boolean autoBackupInFlight;
     /** Incremented on start/stop so a late I/O task cannot settle into a different world session. */
-    private static long autoBackupGeneration;
+    private static volatile long autoBackupGeneration;
     /**
      * Set for the whole {@code ServerStoppingEvent} sequence. Minecraft fires {@code LevelEvent.Save}
      * after that event too; without this flag the final backup would not update the rate-limit
@@ -290,8 +290,12 @@ public final class MilestoneBackup {
             return;
         }
         autoBackupResult = null;
+        // R2-MN-3: a stale result must not release the current generation's in-flight slot.
+        if (result.generation != autoBackupGeneration) {
+            return;
+        }
         autoBackupInFlight = false;
-        if (result.generation == autoBackupGeneration && result.written) {
+        if (result.written) {
             lastBackupMillis = result.timestampMillis;
         }
     }
@@ -558,6 +562,16 @@ public final class MilestoneBackup {
     /** Test hook: publishes an I/O-thread auto-backup outcome (SF-7). */
     static void publishAutoBackupResultForTest(long timestampMillis, boolean written) {
         publishAutoBackupResult(autoBackupGeneration, timestampMillis, written);
+    }
+
+    /** R2-MN-3 test hook: models a stale I/O thread observing an older generation before reset. */
+    static void publishStaleAutoBackupResultForTest(long generation, long timestampMillis, boolean written) {
+        autoBackupResult = new AutoBackupResult(generation, timestampMillis, written);
+    }
+
+    /** R2-MN-3 test hook: the generation a late I/O result could capture. */
+    static long autoBackupGenerationForTest() {
+        return autoBackupGeneration;
     }
 
     /** Test hook: server-thread settlement of a published outcome (SF-7). */

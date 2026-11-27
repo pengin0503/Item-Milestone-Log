@@ -1581,6 +1581,13 @@ public final class DiscordNotifier {
         }
     }
 
+    /** R2-SF-2 test seam: queue a test task directly, without claiming {@code TEST_IN_PROGRESS}. */
+    static void enqueueTestTaskForTest(Runnable action, @Nullable Consumer<DiscordTestResult> onAbandoned) {
+        synchronized (DiscordNotifier.class) {
+            ensureExecutor().execute(new TestSendTask(action, onAbandoned));
+        }
+    }
+
     private static void submitPost(ExecutorService exec, Runnable post) {
         try {
             exec.execute(post);
@@ -1832,6 +1839,11 @@ public final class DiscordNotifier {
                                 testTask.cancelDropped();
                             }
                             noteDropped("queue full, incoming post discarded", 1);
+                            // R2-SF-2: a discarded incoming test task must report ABANDONED to its
+                            // callback (and release TEST_IN_PROGRESS) instead of vanishing.
+                            if (r instanceof TestSendTask incomingTest) {
+                                incomingTest.cancelDropped();
+                            }
                             return;
                         }
                         if (dropped != null) {
