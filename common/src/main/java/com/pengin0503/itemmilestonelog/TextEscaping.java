@@ -81,6 +81,31 @@ public final class TextEscaping {
     }
 
     /**
+     * Replaces CR/LF with a single space so a JSON preview fits on one chat line. F-150-56
+     * uses this on the existing payload builder's output; no new length cap is applied.
+     */
+    public static String removeLineBreaks(String value) {
+        if (value == null || value.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder(value.length());
+        boolean pendingBreak = false;
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (c == '\r' || c == '\n') {
+                if (!pendingBreak) {
+                    sb.append(' ');
+                }
+                pendingBreak = true;
+            } else {
+                sb.append(c);
+                pendingBreak = false;
+            }
+        }
+        return sb.toString();
+    }
+
+    /**
      * Formats a single CSV text cell according to RFC 4180, neutralizing leading spreadsheet
      * formula characters ({@code =}, {@code +}, {@code -}, {@code @}, tab, CR) with a leading
      * single quote.

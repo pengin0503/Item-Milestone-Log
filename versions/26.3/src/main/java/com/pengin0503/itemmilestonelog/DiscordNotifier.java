@@ -1086,8 +1086,48 @@ public final class DiscordNotifier {
                 (uri, json) -> enqueueSend(DiscordRouting.Destination.MAIN, uri, json));
     }
 
+    /** Outcome of one F-150-54 manual digest attempt, also used by the future audit hook. */
+    public record ManualDigestResult(int entries, boolean sent, boolean attempted) {
+    }
+
     /**
-     * Testable F9 digest check and dispatch helper.
+     * PR-5 replaces this no-op sink with the {@code DISCORD_MANUAL_DIGEST} writer. It is invoked
+     * exactly once per completed manual attempt and never writes a file in this PR.
+     */
+    @Nullable
+    static Consumer<ManualDigestResult> manualDigestAuditSink;
+
+    /** F-150-54: one explicit digest check from the server thread; only enabled/interval are bypassed. */
+    static ManualDigestResult sendManualDigest(@Nullable MinecraftServer server) {
+        if (server == null) {
+            return new ManualDigestResult(0, false, false);
+        }
+        MilestoneData data = MilestoneData.get(server);
+        long now = System.currentTimeMillis();
+        ManualDigestResult result = checkAndSendDigestManual(
+                data,
+                false, // digestEnabled is deliberately ignored by the explicit decision
+                Config.discordDigestIntervalDays(),
+                Config.DISCORD_WEBHOOK_URL.get(),
+                System::getenv,
+                Config.DISCORD_NOTIFY_SCOPE.get(),
+                Config.ALLOW_DISCORD_OPT_OUT.get(),
+                Config.DISCORD_USE_EMBEDS.get(),
+                Config.DISCORD_LANGUAGE.get(),
+                Config.displayTimeZone(),
+                now,
+                DiscordNotifier::serverItemDisplayName,
+                msg -> ItemMilestoneLog.LOGGER.warn(msg),
+                (uri, json) -> enqueueSend(DiscordRouting.Destination.MAIN, uri, json));
+        Consumer<ManualDigestResult> audit = manualDigestAuditSink;
+        if (audit != null) {
+            audit.accept(result);
+        }
+        return result;
+    }
+
+    /**
+     * Testable F9 digest check and dispatch helper. Periodic behaviour is unchanged.
      *
      * @return {@code true} if a digest message was queued to {@code sender}, {@code false} otherwise
      */
@@ -1106,40 +1146,84 @@ public final class DiscordNotifier {
             @Nullable Function<TargetKey, String> itemDisplayNameResolver,
             Consumer<String> warnLogger,
             BiConsumer<URI, String> sender) {
+        return digestCheck(data, digestEnabled, intervalDays, configuredUrl, envLookup, notifyScope,
+                allowDiscordOptOut, useEmbeds, language, zone, nowMillis, itemDisplayNameResolver,
+                warnLogger, sender, false).sent();
+    }
+
+    /** F-150-54: same path as the periodic check, but the enabled/interval decision is bypassed. */
+    static ManualDigestResult checkAndSendDigestManual(
+            @Nullable MilestoneData data,
+            boolean digestEnabled,
+            int intervalDays,
+            @Nullable String configuredUrl,
+            Function<String, String> envLookup,
+            String notifyScope,
+            boolean allowDiscordOptOut,
+            boolean useEmbeds,
+            String language,
+            ZoneId zone,
+            long nowMillis,
+            @Nullable Function<TargetKey, String> itemDisplayNameResolver,
+            Consumer<String> warnLogger,
+            BiConsumer<URI, String> sender) {
+        return digestCheck(data, digestEnabled, intervalDays, configuredUrl, envLookup, notifyScope,
+                allowDiscordOptOut, useEmbeds, language, zone, nowMillis, itemDisplayNameResolver,
+                warnLogger, sender, true);
+    }
+
+    private static ManualDigestResult digestCheck(
+            @Nullable MilestoneData data,
+            boolean digestEnabled,
+            int intervalDays,
+            @Nullable String configuredUrl,
+            Function<String, String> envLookup,
+            String notifyScope,
+            boolean allowDiscordOptOut,
+            boolean useEmbeds,
+            String language,
+            ZoneId zone,
+            long nowMillis,
+            @Nullable Function<TargetKey, String> itemDisplayNameResolver,
+            Consumer<String> warnLogger,
+            BiConsumer<URI, String> sender,
+            boolean explicit) {
         if (data == null || nowMillis <= 0L) {
-            return false;
+            return new ManualDigestResult(0, false, false);
         }
         boolean hasConfiguredUrl = configuredUrl != null && !configuredUrl.isBlank();
         int clampedDays = DiscordDigestLogic.clampIntervalDays(intervalDays);
         long lastDigestEpoch = data.lastDigestEpochMillis();
-        DiscordDigestLogic.CheckAction action = DiscordDigestLogic.decideAction(
-                digestEnabled, hasConfiguredUrl, lastDigestEpoch, nowMillis, clampedDays);
+        DiscordDigestLogic.CheckAction action = explicit
+                ? DiscordDigestLogic.decideActionForManual(hasConfiguredUrl, lastDigestEpoch, nowMillis)
+                : DiscordDigestLogic.decideAction(
+                        digestEnabled, hasConfiguredUrl, lastDigestEpoch, nowMillis, clampedDays);
         if (action == DiscordDigestLogic.CheckAction.SKIP) {
-            return false;
+            return new ManualDigestResult(0, false, false);
         }
         URI uri = resolveWebhookUri(configuredUrl, envLookup, warnLogger);
         if (uri == null) {
-            return false;
+            return new ManualDigestResult(0, false, false);
         }
         if (action == DiscordDigestLogic.CheckAction.INIT_TIMESTAMP_ONLY) {
             data.setLastDigestEpochMillis(nowMillis);
-            return false;
+            return new ManualDigestResult(0, false, true);
         }
         List<DiscordDigestLogic.DigestEntry> entries = extractDigestEntries(
                 data, lastDigestEpoch, nowMillis, notifyScope, allowDiscordOptOut);
         if (entries.isEmpty()) {
             data.setLastDigestEpochMillis(nowMillis);
-            return false;
+            return new ManualDigestResult(0, false, true);
         }
         String json = buildDigestPayloadJson(
                 entries, clampedDays, zone, nowMillis, useEmbeds, language, itemDisplayNameResolver);
         if (json.isEmpty()) {
             data.setLastDigestEpochMillis(nowMillis);
-            return false;
+            return new ManualDigestResult(entries.size(), false, true);
         }
         sender.accept(uri, json);
         data.setLastDigestEpochMillis(nowMillis);
-        return true;
+        return new ManualDigestResult(entries.size(), true, true);
     }
 
     /**

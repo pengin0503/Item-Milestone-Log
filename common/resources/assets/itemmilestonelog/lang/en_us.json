@@ -706,5 +706,22 @@
   "message.itemmilestonelog.admin_debug_stat_data": "Data players/records/targets",
   "message.itemmilestonelog.admin_debug_stat_webhook": "Webhook status",
   "message.itemmilestonelog.admin_debug_stat_backup": "Backup files",
-  "message.itemmilestonelog.admin_debug_stat_io_state": "I/O queue present"
+  "message.itemmilestonelog.admin_debug_stat_io_state": "I/O queue present",
+  "message.itemmilestonelog.help.discordstatus": "Show Discord configuration and connection state (admin)",
+  "message.itemmilestonelog.discordtest_payload_header": "Discord test payload (not sent):",
+  "message.itemmilestonelog.discordtest_payload_truncated": "Line breaks were removed from this preview.",
+  "message.itemmilestonelog.discordstatus_webhook": "Webhook status: %s",
+  "message.itemmilestonelog.discordstatus_env": "Environment variable name: %s",
+  "message.itemmilestonelog.discordstatus_embed": "Embed mode: %s",
+  "message.itemmilestonelog.discordstatus_scope": "Notification scope: %s",
+  "message.itemmilestonelog.discordstatus_digest": "Digest enabled: %s",
+  "message.itemmilestonelog.discordstatus_interval": "Digest interval (days): %s",
+  "message.itemmilestonelog.discordstatus_epoch": "Last digest epoch (ms): %s",
+  "message.itemmilestonelog.discordstatus_next": "Next digest due (ms): %s",
+  "message.itemmilestonelog.discordstatus_pending": "Pending Discord sends: %s",
+  "message.itemmilestonelog.discordstatus_pending_unavailable": "Pending Discord sends: unavailable",
+  "message.itemmilestonelog.discordstatus_digest_sent": "Manual digest queued %s entries for the main webhook.",
+  "message.itemmilestonelog.discordstatus_digest_empty": "Manual digest found no new entries (%s checked).",
+  "message.itemmilestonelog.discordstatus_digest_failed": "Manual digest could not be sent. Check the webhook configuration.",
+  "message.itemmilestonelog.discordstatus_denied": "You do not have permission to view Discord status."
 }

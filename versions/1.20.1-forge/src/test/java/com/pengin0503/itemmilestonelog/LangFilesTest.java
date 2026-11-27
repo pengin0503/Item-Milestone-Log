@@ -291,6 +291,40 @@ class LangFilesTest {
         return slots;
     }
 
+    @Test
+    void pr3DiscordDiagnosticsKeysExistInBothBundledLanguages() throws Exception {
+        List<String> keys = List.of(
+                "message.itemmilestonelog.help.discordstatus",
+                "message.itemmilestonelog.discordtest_payload_header",
+                "message.itemmilestonelog.discordtest_payload_truncated",
+                "message.itemmilestonelog.discordstatus_webhook",
+                "message.itemmilestonelog.discordstatus_env",
+                "message.itemmilestonelog.discordstatus_embed",
+                "message.itemmilestonelog.discordstatus_scope",
+                "message.itemmilestonelog.discordstatus_digest",
+                "message.itemmilestonelog.discordstatus_interval",
+                "message.itemmilestonelog.discordstatus_epoch",
+                "message.itemmilestonelog.discordstatus_next",
+                "message.itemmilestonelog.discordstatus_pending",
+                "message.itemmilestonelog.discordstatus_pending_unavailable",
+                "message.itemmilestonelog.discordstatus_digest_sent",
+                "message.itemmilestonelog.discordstatus_digest_empty",
+                "message.itemmilestonelog.discordstatus_digest_failed",
+                "message.itemmilestonelog.discordstatus_denied");
+        Map<String, String> en = read("en_us");
+        Map<String, String> ja = read("ja_jp");
+        for (String key : keys) {
+            assertNotNull(en.get(key), "Missing en_us key: " + key);
+            assertNotNull(ja.get(key), "Missing ja_jp key: " + key);
+            assertFalse(en.get(key).isBlank(), "Blank en_us value: " + key);
+            assertFalse(ja.get(key).isBlank(), "Blank ja_jp value: " + key);
+            assertEquals(extractFormatSlots(key, en.get(key)), extractFormatSlots(key, ja.get(key)),
+                    "Placeholder mismatch: " + key);
+            assertFalse(en.get(key).contains("https://"), "No URL in en_us: " + key);
+            assertFalse(ja.get(key).contains("https://"), "No URL in ja_jp: " + key);
+        }
+    }
+
     private static Map<String, String> read(String language) throws Exception {
         String path = "/assets/" + ItemMilestoneLog.MOD_ID + "/lang/" + language + ".json";
         try (InputStream in = LangFilesTest.class.getResourceAsStream(path)) {

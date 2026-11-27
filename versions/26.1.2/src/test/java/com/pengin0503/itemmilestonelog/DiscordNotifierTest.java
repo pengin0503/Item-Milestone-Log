@@ -804,6 +804,89 @@ class DiscordNotifierTest {
     }
 
     @Test
+    void manualDigestBypassesOnlyEnabledAndIntervalKeepingOptOutScopeEpochAndSingleSend() {
+        UUID aliceId = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        UUID bobId = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        long t0 = EPOCH_2023_11_14;
+        String url = SECRET_WEBHOOK_1;
+        List<String> payloads = new ArrayList<>();
+        List<DiscordNotifier.ManualDigestResult> audits = new ArrayList<>();
+        DiscordNotifier.manualDigestAuditSink = audits::add;
+        try {
+            MilestoneData data = new MilestoneData();
+            MilestoneData.PlayerData alice = data.player(aliceId);
+            alice.lastKnownName = "Alice";
+            alice.records.put(TargetKey.of("minecraft:coal"), new MilestoneRecord(100, 1L, t0 - 1_000L));
+            java.util.function.Function<TargetKey, String> names = TargetKey::formatDisplayId;
+
+            // First run keeps the existing timestamp-only behaviour even for an explicit request.
+            DiscordNotifier.ManualDigestResult first = DiscordNotifier.checkAndSendDigestManual(
+                    data, false, 30, url, name -> null, "all", true, false, "en_us", ZoneOffset.UTC,
+                    t0, names, msg -> {
+                    }, (uri, json) -> payloads.add(json));
+            assertFalse(first.sent());
+            assertEquals(0, first.entries());
+            assertTrue(first.attempted());
+            assertEquals(t0, data.lastDigestEpochMillis());
+            assertTrue(payloads.isEmpty());
+
+            // With digestEnabled=false and an interval of 30 days, an explicit run still sends.
+            alice.records.put(TargetKey.of("minecraft:diamond"), new MilestoneRecord(200, 1L, t0 + 1L));
+            DiscordNotifier.ManualDigestResult sent = DiscordNotifier.checkAndSendDigestManual(
+                    data, false, 30, url, name -> null, "all", true, false, "en_us", ZoneOffset.UTC,
+                    t0 + 1L, names, msg -> {
+                    }, (uri, json) -> payloads.add(json));
+            assertTrue(sent.sent(), "manual digest must ignore both enabled and interval");
+            assertEquals(1, sent.entries());
+            assertEquals(1, payloads.size());
+            assertEquals(t0 + 1L, data.lastDigestEpochMillis());
+
+            // A second run without new records must not double-send, even with the gate bypassed.
+            DiscordNotifier.ManualDigestResult second = DiscordNotifier.checkAndSendDigestManual(
+                    data, false, 30, url, name -> null, "all", true, false, "en_us", ZoneOffset.UTC,
+                    t0 + 2L, names, msg -> {
+                    }, (uri, json) -> payloads.add(json));
+            assertFalse(second.sent());
+            assertEquals(0, second.entries());
+            assertEquals(1, payloads.size());
+            assertEquals(t0 + 2L, data.lastDigestEpochMillis());
+
+            // No webhook -> no attempt and no epoch advance.
+            DiscordNotifier.ManualDigestResult noUrl = DiscordNotifier.checkAndSendDigestManual(
+                    data, false, 30, "", name -> null, "all", true, false, "en_us", ZoneOffset.UTC,
+                    t0 + 3L, names, msg -> {
+                    }, (uri, json) -> payloads.add(json));
+            assertFalse(noUrl.attempted());
+            assertEquals(t0 + 2L, data.lastDigestEpochMillis());
+            assertEquals(1, payloads.size());
+
+            // Opt-out is still applied to an explicit run.
+            MilestoneData.PlayerData bob = data.player(bobId);
+            bob.lastKnownName = "OptOutBob";
+            bob.excludeFromDiscord = true;
+            bob.records.put(TargetKey.of("minecraft:emerald"), new MilestoneRecord(300, 1L, t0 + 4L));
+            DiscordNotifier.ManualDigestResult optedOut = DiscordNotifier.checkAndSendDigestManual(
+                    data, false, 30, url, name -> null, "all", true, false, "en_us", ZoneOffset.UTC,
+                    t0 + 4L, names, msg -> {
+                    }, (uri, json) -> payloads.add(json));
+            assertFalse(optedOut.sent());
+            assertEquals(0, optedOut.entries());
+            assertEquals(1, payloads.size(), "opted-out player must not be posted by a manual digest");
+            assertEquals(t0 + 4L, data.lastDigestEpochMillis());
+
+            // The periodic path still honours the interval after the manual run advanced the epoch.
+            assertFalse(DiscordNotifier.checkAndSendDigest(
+                    data, true, 30, url, name -> null, "all", true, false, "en_us", ZoneOffset.UTC,
+                    t0 + 5L, names, msg -> {
+                    }, (uri, json) -> payloads.add(json)));
+            assertEquals(t0 + 4L, data.lastDigestEpochMillis());
+            assertEquals(1, payloads.size());
+        } finally {
+            DiscordNotifier.manualDigestAuditSink = null;
+        }
+    }
+
+    @Test
     void testPayloadBuildsPlainTextAndEmbedForConfiguredLanguage() {
         Instant sendTime = Instant.ofEpochMilli(EPOCH_2023_11_14);
 

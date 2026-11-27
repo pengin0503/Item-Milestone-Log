@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -142,10 +143,29 @@ class PermissionNodeMappingTest {
         assertFalse(service.contains("MilestonePermissions.DEBUG"),
                 "the DEBUG node belongs in the command gate, not in MilestoneService");
 
-        // The other five nodes are registered by PR-1 but reserved for later PRs; they must
-        // still be unused by every existing command and service call site.
-        for (String constant : new String[]{"DISCORD_STATUS", "DISCORD_DIGEST",
-                "BACKUP_MANAGE", "BACKUP_VIEW", "AUDIT_VIEW"}) {
+        // PR-3 consumes exactly the two Discord nodes. The standalone status view is gated by
+        // DISCORD_STATUS and its digest child by DISCORD_DIGEST; the parent uses an OR of both
+        // because Brigadier gates a child through its parent, so either node alone can still
+        // reach its own subcommand. The bare handler re-checks DISCORD_STATUS (see below).
+        assertTrue(commands.contains("MilestonePermissions.check(src, MilestonePermissions.DISCORD_STATUS, "
+                        + "adminRequirement.test(src))"),
+                "discordstatus must keep the F-150-54 DISCORD_STATUS gate with the legacy admin check");
+        assertTrue(commands.contains("MilestonePermissions.check(src, MilestonePermissions.DISCORD_DIGEST, "
+                        + "adminRequirement.test(src))"),
+                "discordstatus digest must keep the F-150-54 DISCORD_DIGEST gate with the legacy admin check");
+        assertTrue(commands.contains(".requires(src -> discordStatusRequirement.test(src)"),
+                "the discordstatus parent must include the status-node check");
+        requiresWithin(commands, "digest", "discordDigestRequirement");
+        assertEqualsCountAtLeast(1, count(commands, ".requires(discordDigestRequirement)"),
+                "discordDigestRequirement must gate the digest child");
+        assertTrue(commands.contains("MilestonePermissions.check(source, MilestonePermissions.DISCORD_STATUS,"),
+                "the bare status handler must re-check its own node");
+        assertEquals(2, count(commands, "literal(\"payload\")"),
+                "discordtest payload and discordtest worldfirst payload share the existing DISCORDTEST gate");
+        requiresWithin(commands, "discordtest", "discordTestRequirement");
+
+        // The remaining three nodes are registered by PR-1 but reserved for later PRs.
+        for (String constant : new String[]{"BACKUP_MANAGE", "BACKUP_VIEW", "AUDIT_VIEW"}) {
             assertFalse(commands.contains("MilestonePermissions." + constant),
                     constant + " must not replace an existing call site in PR-1");
             assertFalse(service.contains("MilestonePermissions." + constant),
