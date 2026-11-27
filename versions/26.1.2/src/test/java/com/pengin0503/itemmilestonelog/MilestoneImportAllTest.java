@@ -170,6 +170,7 @@ class MilestoneImportAllTest {
                 Path.of("irrelevant.json"), "irrelevant.json", source);
         AtomicReference<Runnable> scheduled = new AtomicReference<>();
         AtomicReference<String> schedulerThread = new AtomicReference<>();
+        CountDownLatch handoffDone = new CountDownLatch(1);
         assertTrue(MilestoneImportAll.submitForTest(
                 job,
                 j -> {
@@ -177,8 +178,10 @@ class MilestoneImportAllTest {
                 runnable -> {
                     schedulerThread.set(Thread.currentThread().getName());
                     scheduled.set(runnable);
+                    handoffDone.countDown();
                 }));
         awaitParseDone(job);
+        awaitHandoff(handoffDone);
         assertTrue(scheduled.get() != null, "the apply step must be handed to the server scheduler");
         assertEquals(MilestoneIoQueue.THREAD_NAME, schedulerThread.get(),
                 "hand-off must happen on the I/O thread, not the caller");
@@ -363,6 +366,7 @@ class MilestoneImportAllTest {
         MilestoneExport.MergePlan plan = new MilestoneExport.MergePlan(List.of(), 0, null, 0);
         AtomicReference<Runnable> handedOff = new AtomicReference<>();
         AtomicReference<Thread> schedulerThread = new AtomicReference<>();
+        CountDownLatch handoffDone = new CountDownLatch(1);
         AtomicInteger merges = new AtomicInteger();
         MilestoneImportAll.MergeAction previous = MilestoneImportAll.mergeActionForTest;
         MilestoneImportAll.mergeActionForTest = (data, p) -> {
@@ -373,10 +377,12 @@ class MilestoneImportAllTest {
             assertTrue(MilestoneImportAll.submitForTest(job, j -> j.plan.set(plan), runnable -> {
                 schedulerThread.set(Thread.currentThread());
                 handedOff.set(runnable);
+                handoffDone.countDown();
                 // server.execute() runs the task inline on the caller thread during shutdown.
                 runnable.run();
             }));
             awaitParseDone(job);
+            awaitHandoff(handoffDone);
             assertEquals(MilestoneIoQueue.THREAD_NAME, schedulerThread.get().getName());
             assertEquals(0, merges.get(), "an inline run on the I/O thread must never apply the plan");
             assertTrue(MilestoneImportAll.activeForTest() == job, "the parsed plan must stay parked");
@@ -419,6 +425,7 @@ class MilestoneImportAllTest {
                 List.of(new MilestoneExport.PlayerMergePlan(uuid, List.of("before"), List.of(), List.of())),
                 0, null, 0);
         AtomicReference<Runnable> scheduled = new AtomicReference<>();
+        CountDownLatch handoffDone = new CountDownLatch(1);
         MilestoneImportAll.MergeAction previous = MilestoneImportAll.mergeActionForTest;
         MilestoneImportAll.mergeActionForTest = (d, p) -> {
             MilestoneData.PlayerData halfApplied = d.player(uuid);
@@ -427,8 +434,12 @@ class MilestoneImportAllTest {
             throw new AssertionError("Error during merge");
         };
         try {
-            assertTrue(MilestoneImportAll.submitForTest(job, j -> j.plan.set(plan), scheduled::set));
+            assertTrue(MilestoneImportAll.submitForTest(job, j -> j.plan.set(plan), runnable -> {
+                scheduled.set(runnable);
+                handoffDone.countDown();
+            }));
             awaitParseDone(job);
+            awaitHandoff(handoffDone);
             scheduled.get().run();
 
             MilestoneData.PlayerData restored = data.playerOrNull(uuid);
@@ -442,6 +453,15 @@ class MilestoneImportAllTest {
         } finally {
             MilestoneImportAll.mergeActionForTest = previous;
         }
+    }
+
+    /**
+     * {@code parseDone} is set on the I/O thread before the scheduler hand-off runs, so waiting
+     * for the parse alone is not enough before dereferencing a runnable captured by the scheduler.
+     */
+    private static void awaitHandoff(CountDownLatch handoff) throws InterruptedException {
+        assertTrue(handoff.await(10, TimeUnit.SECONDS),
+                "the apply step was not handed to the scheduler within 10 seconds");
     }
 
     private static void awaitParseDone(MilestoneImportAll.Job job) throws InterruptedException {

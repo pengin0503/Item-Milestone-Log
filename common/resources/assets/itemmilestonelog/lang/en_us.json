@@ -746,5 +746,12 @@
   "message.itemmilestonelog.backup_verify_not_found": "Backup file not found.",
   "message.itemmilestonelog.backup_verify_invalid_nbt": "Backup file is corrupt or not valid NBT.",
   "message.itemmilestonelog.backup_verify_incompatible_schema": "Backup schema version is not compatible with this release.",
-  "message.itemmilestonelog.backup_verify_io_error": "Backup could not be read."
+  "message.itemmilestonelog.backup_verify_io_error": "Backup could not be read.",
+  "itemmilestonelog.configuration.hoverModIntegration": "Hover Mod Integration",
+  "itemmilestonelog.configuration.hoverModIntegration.tooltip": "Let the hovered-item key use the last item shown in a tooltip from another mod (e.g. JEI/EMI/REI). Those mods are never required; local display behaviour only.",
+  "message.itemmilestonelog.hover_unavailable": "No hovered item is available for this shortcut.",
+  "message.itemmilestonelog.add_hovered_count": "Added %s to targets.",
+  "message.itemmilestonelog.remove_hovered": "Removed: %s",
+  "message.itemmilestonelog.shortcut_add_hand": "Added held stack: %s",
+  "message.itemmilestonelog.unbound_key_hint": "Open Milestone Log / Add hovered item / Copy recent record are all unbound. Assign keys under Controls."
 }

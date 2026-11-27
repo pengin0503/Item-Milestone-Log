@@ -343,6 +343,12 @@ public final class Config {
                     "Displayed information and button layout are unchanged; no server setting is affected.")
             .define("lowPowerMode", false);
 
+    /** F-150-59 (N29): use the last tooltip stack as a hover target in other mods' GUIs. */
+    public static final ForgeConfigSpec.BooleanValue HOVER_MOD_INTEGRATION = BUILDER
+            .comment("Allow the hovered-item key to use the last item shown in a tooltip from another mod (e.g. JEI/EMI/REI).",
+                    "Those mods are detected implicitly and are never required; local display behaviour only.")
+            .define("hoverModIntegration", true);
+
     static final ForgeConfigSpec SPEC = BUILDER.build();
 
     private record ThresholdsCache(List<? extends Integer> source, List<Integer> normalized) {
@@ -623,6 +629,18 @@ public final class Config {
     public static boolean itemTooltipStatus() {
         try {
             return ITEM_TOOLTIP_STATUS.get();
+        } catch (IllegalStateException notLoaded) {
+            return true;
+        }
+    }
+
+    /**
+     * F-150-59: {@link #HOVER_MOD_INTEGRATION}, or {@code true} while the config is not loaded yet
+     * (plain unit tests). This is a client-side preference and never reads a server value.
+     */
+    public static boolean hoverModIntegration() {
+        try {
+            return HOVER_MOD_INTEGRATION.get();
         } catch (IllegalStateException notLoaded) {
             return true;
         }

@@ -746,5 +746,12 @@
   "message.itemmilestonelog.backup_verify_not_found": "バックアップファイルが見つかりません。",
   "message.itemmilestonelog.backup_verify_invalid_nbt": "バックアップファイルが破損しているか、有効なNBTではありません。",
   "message.itemmilestonelog.backup_verify_incompatible_schema": "バックアップのschemaVersionがこのリリースと互換性がありません。",
-  "message.itemmilestonelog.backup_verify_io_error": "バックアップを読み込めませんでした。"
+  "message.itemmilestonelog.backup_verify_io_error": "バックアップを読み込めませんでした。",
+  "itemmilestonelog.configuration.hoverModIntegration": "ホバーMOD連携",
+  "itemmilestonelog.configuration.hoverModIntegration.tooltip": "他MOD（JEI/EMI/REI など）のツールチップに表示された最後のアイテムをホバーキーの対象にします。これらのMODは必須ではありません。クライアント表示のみに作用します。",
+  "message.itemmilestonelog.hover_unavailable": "このショートカットで使えるホバーアイテムがありません。",
+  "message.itemmilestonelog.add_hovered_count": "%s 個を目標に追加しました。",
+  "message.itemmilestonelog.remove_hovered": "削除: %s",
+  "message.itemmilestonelog.shortcut_add_hand": "手持ちスタックを追加: %s",
+  "message.itemmilestonelog.unbound_key_hint": "Open Milestone Log / Add hovered item / Copy recent record がすべて未割り当てです。Controls でキーを割り当ててください。"
 }
