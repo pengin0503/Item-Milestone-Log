@@ -45,6 +45,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -53,6 +54,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -321,6 +323,12 @@ public final class MilestoneCommands {
                 MilestonePermissions.check(src, MilestonePermissions.DISCORD_STATUS, adminRequirement.test(src));
         Predicate<CommandSourceStack> discordDigestRequirement = src ->
                 MilestonePermissions.check(src, MilestonePermissions.DISCORD_DIGEST, adminRequirement.test(src));
+        // PR-4 (F-150-55): backup.manage creates a file, backup.view only reads; both keep the
+        // unchanged legacy admin check as the player-side OR branch (§1.2 rule 2).
+        Predicate<CommandSourceStack> backupManageRequirement = src ->
+                MilestonePermissions.check(src, MilestonePermissions.BACKUP_MANAGE, adminRequirement.test(src));
+        Predicate<CommandSourceStack> backupViewRequirement = src ->
+                MilestonePermissions.check(src, MilestonePermissions.BACKUP_VIEW, adminRequirement.test(src));
         // The status-only handler re-checks its node when the parent gate was satisfied through
         // the digest node alone (spec: either subcommand must work with only its own node).
         step5LegacyAdminRequirement = adminRequirement;
@@ -1403,6 +1411,26 @@ public final class MilestoneCommands {
                 .then(literal("doctor")
                         .requires(doctorRequirement)
                         .executes(MilestoneCommands::doctor))
+                // PR-4 (F-150-55): the parent OR gate keeps help/tab completion hidden from
+                // non-privileged sources; each child still enforces its own node (§1.2 rule 2).
+                .then(literal("backup")
+                        .requires(src -> backupManageRequirement.test(src) || backupViewRequirement.test(src))
+                        .then(literal("now")
+                                .requires(backupManageRequirement)
+                                .executes(MilestoneCommands::backupNow))
+                        .then(literal("list")
+                                .requires(backupViewRequirement)
+                                .executes(ctx -> backupList(ctx, 1))
+                                .then(literal("page")
+                                        .then(argument("page", IntegerArgumentType.integer(1))
+                                                .executes(ctx -> backupList(ctx,
+                                                        IntegerArgumentType.getInteger(ctx, "page"))))))
+                        .then(literal("verify")
+                                .requires(backupViewRequirement)
+                                .executes(ctx -> backupVerify(ctx, null))
+                                .then(argument("fileName", StringArgumentType.word())
+                                        .executes(ctx -> backupVerify(ctx,
+                                                StringArgumentType.getString(ctx, "fileName"))))))
                 .then(literal("settings")
                         .executes(MilestoneCommands::settings)
                         .then(argument("toggle", StringArgumentType.word())
@@ -4040,6 +4068,128 @@ public final class MilestoneCommands {
                 ? "message.itemmilestonelog.discordstatus_digest_sent"
                 : "message.itemmilestonelog.discordstatus_digest_empty";
         return send(ctx, ServerLang.tr(source, key, result.entries()));
+    }
+
+    // ------------------------------------------------- F-150-55 backup operations (PR-4)
+
+    /** F-150-55: synchronous on-demand backup; refuses to extend the stop-time drain. */
+    private static int backupNow(CommandContext<CommandSourceStack> ctx) {
+        return backupNowForTest(ctx.getSource());
+    }
+
+    /** Null in production; lets tests exercise now's wording with a real backup on a fixture. */
+    @Nullable
+    static Supplier<Boolean> backupNowWriterForTest;
+
+    /** Test seam for the same now path; the stop guard needs no live server. */
+    static int backupNowForTest(CommandSourceStack source) {
+        if (MilestoneBackup.isStopping()) {
+            source.sendFailure(ServerLang.tr(source, "message.itemmilestonelog.backup_now_failed"));
+            return 0;
+        }
+        // writeBackupNow stays synchronous and ignores autoBackupEnabled / the rate limit; its
+        // snapshot lock already serializes disk writes with automatic/final backups (N45/N149).
+        boolean written = backupNowWriterForTest != null
+                ? backupNowWriterForTest.get()
+                : MilestoneBackup.writeBackupNow(source.getServer());
+        if (!written) {
+            source.sendFailure(ServerLang.tr(source, "message.itemmilestonelog.backup_now_failed"));
+            return 0;
+        }
+        source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.backup_now_success"), false);
+        return 1;
+    }
+
+    private static int backupList(CommandContext<CommandSourceStack> ctx, int page) {
+        CommandSourceStack source = ctx.getSource();
+        Path dir = null;
+        List<String> names = List.of();
+        try {
+            MinecraftServer server = source.getServer();
+            if (server != null) {
+                dir = MilestoneBackup.backupsDir(server);
+                if (Files.isDirectory(dir)) {
+                    List<String> found = new ArrayList<>();
+                    // One directory scan per invocation; pages re-open the same directory.
+                    try (Stream<Path> stream = Files.list(dir)) {
+                        stream.filter(Files::isRegularFile)
+                                .map(p -> p.getFileName().toString())
+                                .filter(MilestoneBackupLogic::isBackupFileName)
+                                .forEach(found::add);
+                    }
+                    names = found;
+                }
+            }
+        } catch (IOException | RuntimeException e) {
+            names = List.of();
+        }
+        return sendBackupListLines(source, names, dir, safeZone(), page);
+    }
+
+    /** Chat seam for list rendering; tests may pass a temp dir with real backup files. */
+    static int sendBackupListLines(CommandSourceStack source, List<String> names, @Nullable Path dir,
+                                   ZoneId zone, int page) {
+        List<String> sorted = MilestoneBackupLogic.newestFirst(names, zone);
+        Pagination.PageSlice<String> slice = Pagination.slice(sorted, page);
+        source.sendSuccess(() -> ServerLang.tr(source,
+                "message.itemmilestonelog.backup_list_header", slice.totalItems()), false);
+        int lines = 1;
+        if (slice.items().isEmpty()) {
+            source.sendSuccess(() -> ServerLang.tr(source,
+                    "message.itemmilestonelog.backup_list_empty"), false);
+            return lines + 1;
+        }
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss z", Locale.ROOT);
+        for (String name : slice.items()) {
+            long size = dir == null ? 0L : backupFileSize(dir.resolve(name));
+            long millis = MilestoneBackupLogic.parseTimestampMillis(name, zone);
+            String when = millis == MilestoneBackupLogic.NO_BACKUP_RECORDED
+                    ? "-" : formatter.format(Instant.ofEpochMilli(millis).atZone(zone));
+            source.sendSuccess(() -> ServerLang.tr(source,
+                    "message.itemmilestonelog.backup_list_line", name, size, when), false);
+            lines++;
+        }
+        if (slice.hasNext()) {
+            String next = Pagination.pageCommand("/milestonelog backup list page", slice.page() + 1);
+            MutableComponent more = clickablePageButton(source,
+                    "message.itemmilestonelog.backup_list_more", next);
+            source.sendSuccess(() -> more, false);
+            lines++;
+        }
+        return lines;
+    }
+
+    private static long backupFileSize(Path path) {
+        try {
+            return Files.size(path);
+        } catch (IOException | RuntimeException e) {
+            return 0L;
+        }
+    }
+
+    private static int backupVerify(CommandContext<CommandSourceStack> ctx, @Nullable String fileName) {
+        CommandSourceStack source = ctx.getSource();
+        BackupVerifyResult result;
+        try {
+            MinecraftServer server = source.getServer();
+            result = server == null
+                    ? BackupVerifyResult.failure(BackupVerifyResult.Status.NOT_FOUND)
+                    : MilestoneBackup.verifyBackup(MilestoneBackup.backupsDir(server), fileName,
+                            safeZone());
+        } catch (RuntimeException e) {
+            result = BackupVerifyResult.failure(BackupVerifyResult.Status.IO_ERROR);
+        }
+        return sendBackupVerifyResult(source, result);
+    }
+
+    /** Chat seam for the single fixed verify wording; no exception detail is ever rendered. */
+    static int sendBackupVerifyResult(CommandSourceStack source, BackupVerifyResult result) {
+        Component msg = result.isOk()
+                ? ServerLang.tr(source, result.messageKey(), result.players(), result.worldFirsts(),
+                        result.schemaVersion())
+                : ServerLang.tr(source, result.messageKey());
+        source.sendSuccess(() -> msg, false);
+        return result.isOk() ? 1 : 0;
     }
 
     // --------------------------------------------------------- F49 Discord test

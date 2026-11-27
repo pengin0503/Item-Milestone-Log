@@ -11,8 +11,14 @@ import net.minecraft.world.phys.Vec2;
 import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Instant;
 import java.time.ZoneId;
+import java.util.Locale;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -268,6 +274,114 @@ class MilestoneCommandRenderTest {
         @Override
         public void sendSuccess(Supplier<Component> message, boolean allowLogging) {
             messages.add(message.get());
+        }
+    }
+
+    // ---------------------------------------- F-150-55 backup command rendering
+
+    @Test
+    void backupListRendersEmptyAndPagesNewestFirst(@TempDir Path tempDir) throws IOException {
+        FakeRenderSource empty = new FakeRenderSource();
+        assertEquals(2, MilestoneCommands.sendBackupListLines(empty, List.of(), null, UTC, 1));
+        assertEquals(2, empty.messages.size());
+        assertEquals(ServerLang.trForLang("en_us", "message.itemmilestonelog.backup_list_header", 0).getString(),
+                empty.messages.get(0).getString());
+        assertEquals(ServerLang.trForLang("en_us", "message.itemmilestonelog.backup_list_empty").getString(),
+                empty.messages.get(1).getString());
+
+        List<String> names = new ArrayList<>();
+        for (int day = 1; day <= 16; day++) {
+            String name = String.format(Locale.ROOT, "milestones-202611%02d-111530.dat", day);
+            names.add(name);
+            Files.write(tempDir.resolve(name), new byte[]{1});
+        }
+        FakeRenderSource first = new FakeRenderSource();
+        assertEquals(17, MilestoneCommands.sendBackupListLines(first, names, tempDir, UTC, 1),
+                "header + 15 rows + next-page link");
+        assertEquals(17, first.messages.size());
+        assertEquals(ServerLang.trForLang("en_us", "message.itemmilestonelog.backup_list_header", 16).getString(),
+                first.messages.get(0).getString());
+        assertTrue(first.messages.get(1).getString().contains("milestones-20261116-111530.dat"),
+                "newest backup must be first");
+        assertEquals(0, countText(first, "milestones-20261101-111530.dat"), "oldest is on page 2");
+        String more = ServerLang.trForLang("en_us", "message.itemmilestonelog.backup_list_more").getString();
+        assertEquals(1, countText(first, more), "one clickable next-page line");
+
+        FakeRenderSource second = new FakeRenderSource();
+        assertEquals(2, MilestoneCommands.sendBackupListLines(second, names, tempDir, UTC, 2));
+        assertEquals(2, second.messages.size());
+        assertTrue(second.messages.get(1).getString().contains("milestones-20261101-111530.dat"));
+        assertEquals(0, countText(second, more), "no next-page link on the last page");
+    }
+
+    @Test
+    void backupVerifyRendersOnlyFixedWordingForEveryStatus() {
+        for (BackupVerifyResult.Status status : BackupVerifyResult.Status.values()) {
+            BackupVerifyResult result = status == BackupVerifyResult.Status.OK
+                    ? BackupVerifyResult.ok(2, 1, SchemaVersionLogic.CURRENT_SCHEMA_VERSION)
+                    : BackupVerifyResult.failure(status);
+            FakeRenderSource source = new FakeRenderSource();
+            int rc = MilestoneCommands.sendBackupVerifyResult(source, result);
+            assertEquals(status == BackupVerifyResult.Status.OK ? 1 : 0, rc);
+            assertEquals(1, source.messages.size());
+            String expected = status == BackupVerifyResult.Status.OK
+                    ? ServerLang.trForLang("en_us", result.messageKey(), 2, 1,
+                            SchemaVersionLogic.CURRENT_SCHEMA_VERSION).getString()
+                    : ServerLang.trForLang("en_us", result.messageKey()).getString();
+            assertEquals(expected, source.messages.get(0).getString());
+        }
+    }
+
+    @Test
+    void backupNowWritesAHealthyBackupAndReportsBothOutcomes(@TempDir Path tempDir) throws IOException {
+        MilestoneBackup.resetState();
+        MilestoneData live = new MilestoneData();
+        live.player(UUID.fromString("33333333-3333-3333-3333-333333333333"))
+                .targets.add(TargetKey.of("minecraft:diamond"));
+        Instant ts = Instant.parse("2026-11-24T11:15:30Z");
+
+        FakeRenderSource okSource = new FakeRenderSource();
+        MilestoneCommands.backupNowWriterForTest = () -> MilestoneBackup.writeBackup(
+                tempDir, live, ts, UTC, 5);
+        try {
+            assertEquals(1, MilestoneCommands.backupNowForTest(okSource));
+            assertEquals(1, okSource.messages.size());
+            assertEquals(ServerLang.trForLang("en_us",
+                    "message.itemmilestonelog.backup_now_success").getString(),
+                    okSource.messages.get(0).getString());
+            assertTrue(Files.isRegularFile(tempDir.resolve("milestones-20261124-111530.dat")),
+                    "backup now must leave the backup on disk");
+            assertTrue(live.isDirty(), "backup now must not clear the live dirty flag");
+        } finally {
+            MilestoneCommands.backupNowWriterForTest = null;
+            MilestoneBackup.resetState();
+        }
+
+        FakeRenderSource failedSource = new FakeRenderSource();
+        MilestoneCommands.backupNowWriterForTest = () -> false;
+        try {
+            assertEquals(0, MilestoneCommands.backupNowForTest(failedSource));
+            assertEquals(ServerLang.trForLang("en_us",
+                    "message.itemmilestonelog.backup_now_failed").getString(),
+                    failedSource.messages.get(0).getString());
+        } finally {
+            MilestoneCommands.backupNowWriterForTest = null;
+        }
+    }
+
+    @Test
+    void backupNowIsRejectedDuringServerStopWithoutTouchingData() {
+        MilestoneBackup.resetState();
+        FakeRenderSource source = new FakeRenderSource();
+        MilestoneBackup.beginStopping();
+        try {
+            assertEquals(0, MilestoneCommands.backupNowForTest(source));
+            assertEquals(1, source.messages.size());
+            assertEquals(ServerLang.trForLang("en_us",
+                    "message.itemmilestonelog.backup_now_failed").getString(),
+                    source.messages.get(0).getString());
+        } finally {
+            MilestoneBackup.resetState();
         }
     }
 }

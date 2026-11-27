@@ -139,6 +139,35 @@ public final class MilestoneBackupLogic {
     }
 
     /**
+     * F-150-55: filters to backup-pattern files and orders them newest first for {@code backup list}.
+     * The encoded timestamp from {@link #parseTimestampMillis(String, ZoneId)} is the primary key
+     * (same value the listing prints); {@link #BACKUP_NAME_ORDER} breaks ties deterministically,
+     * including same-second {@code -1/-2} suffixes. Files outside {@link #BACKUP_FILE_PATTERN} are
+     * never returned, so a user's hand-made files stay out of the listing; an unparseable date
+     * sorts last rather than being silently dropped.
+     */
+    public static List<String> newestFirst(Collection<String> fileNames, ZoneId zone) {
+        if (fileNames == null || fileNames.isEmpty()) {
+            return List.of();
+        }
+        List<String> matching = new ArrayList<>();
+        for (String name : fileNames) {
+            if (isBackupFileName(name)) {
+                matching.add(name);
+            }
+        }
+        matching.sort((a, b) -> {
+            long timeA = parseTimestampMillis(a, zone);
+            long timeB = parseTimestampMillis(b, zone);
+            if (timeA != timeB) {
+                return Long.compare(timeB, timeA);
+            }
+            return BACKUP_NAME_ORDER.compare(b, a);
+        });
+        return List.copyOf(matching);
+    }
+
+    /**
      * Returns whether an automatic save-triggered backup is permitted by the 1-hour rate limit.
      * Always returns {@code true} when {@code lastBackupMillis == NO_BACKUP_RECORDED}.
      */

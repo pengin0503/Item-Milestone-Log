@@ -485,4 +485,81 @@ class MilestoneBackupTest {
         assertFalse(Files.exists(backupDir));
         assertFalse(MilestoneBackup.isFinalBackupWritten());
     }
+
+    // ------------------------------------- F-150-55 backup now / list / verify regression
+
+    private static BackupVerifyResult verify(Path dir, String name) {
+        return MilestoneBackup.verifyBackup(dir, name, UTC, null);
+    }
+
+    private static CompoundTag dataCompound(CompoundTag root) {
+        return root.getCompound("data").orElseThrow();
+    }
+
+    @Test
+    void verifyAcceptsHealthyBackupWithoutTouchingLiveData(@TempDir Path tempDir) throws IOException {
+        Path dir = tempDir.resolve("backups");
+        MilestoneData live = sampleData();
+        Instant ts = ZonedDateTime.of(2026, 11, 24, 11, 15, 30, 0, UTC).toInstant();
+        assertTrue(MilestoneBackup.writeBackup(dir, live, null, ts, UTC, 5));
+        String name = "milestones-20261124-111530.dat";
+        boolean dirtyBefore = live.isDirty();
+        int playersBefore = live.allPlayers().size();
+        int worldFirstsBefore = live.worldFirsts().size();
+
+        BackupVerifyResult result = verify(dir, name);
+        assertTrue(result.isOk(), () -> "status=" + result.status());
+        assertEquals(playersBefore, result.players());
+        assertEquals(worldFirstsBefore, result.worldFirsts());
+        assertEquals(SchemaVersionLogic.CURRENT_SCHEMA_VERSION, result.schemaVersion());
+        assertEquals("message.itemmilestonelog.backup_verify_ok", result.messageKey());
+        assertEquals(dirtyBefore, live.isDirty(), "verify must not clear the live dirty flag");
+        assertEquals(playersBefore, live.allPlayers().size());
+        assertEquals(worldFirstsBefore, live.worldFirsts().size());
+        assertEquals(Set.of(name), listFileNames(dir), "verify must never prune or rewrite files");
+        assertEquals(BackupVerifyResult.Status.OK, verify(dir, null).status(), "newest-file selection");
+    }
+
+    @Test
+    void verifyDetectsTruncationCorruptionAndFutureSchema(@TempDir Path tempDir) throws IOException {
+        Path dir = tempDir.resolve("backups");
+        Files.createDirectories(dir);
+        String name = "milestones-20261124-111530.dat";
+        Path file = dir.resolve(name);
+        MilestoneData live = sampleData();
+        int playersBefore = live.allPlayers().size();
+        int worldFirstsBefore = live.worldFirsts().size();
+        Instant ts = ZonedDateTime.of(2026, 11, 24, 11, 15, 30, 0, UTC).toInstant();
+        assertTrue(MilestoneBackup.writeBackup(dir, live, null, ts, UTC, 5));
+        byte[] good = Files.readAllBytes(file);
+        assertTrue(good.length > 16);
+
+        Files.write(file, java.util.Arrays.copyOf(good, good.length / 2));
+        assertEquals(BackupVerifyResult.Status.INVALID_NBT, verify(dir, name).status(), "truncated gzip");
+        Files.write(file, new byte[]{0, 1, 2, 3, 4, 5, 6, 7, 8, 9});
+        assertEquals(BackupVerifyResult.Status.INVALID_NBT, verify(dir, name).status(), "garbage bytes");
+
+        CompoundTag root = live.toSavedDataFileTag(null);
+        CompoundTag inner = dataCompound(root);
+        inner.putInt("schemaVersion", SchemaVersionLogic.CURRENT_SCHEMA_VERSION + 5);
+        NbtIo.writeCompressed(root, file);
+        assertEquals(BackupVerifyResult.Status.INCOMPATIBLE_SCHEMA, verify(dir, name).status(), "future schema");
+
+        // Reporting a bad backup never partially restores or mutates the live snapshot.
+        assertEquals(playersBefore, live.allPlayers().size());
+        assertEquals(worldFirstsBefore, live.worldFirsts().size());
+    }
+
+    @Test
+    void verifyRejectsInvalidNamesMissingFilesAndEmptyDirectories(@TempDir Path tempDir) throws IOException {
+        Path dir = tempDir.resolve("backups");
+        assertEquals(BackupVerifyResult.Status.NOT_FOUND, verify(dir, null).status(), "missing directory");
+        Files.createDirectories(dir);
+        assertEquals(BackupVerifyResult.Status.NOT_FOUND, verify(dir, null).status(), "empty directory");
+        assertEquals(BackupVerifyResult.Status.INVALID_NAME, verify(dir, "notes.txt").status());
+        assertEquals(BackupVerifyResult.Status.INVALID_NAME, verify(dir, "../milestones-20261124-111530.dat").status());
+        assertEquals(BackupVerifyResult.Status.NOT_FOUND, verify(dir, "milestones-20261124-111530.dat").status());
+        Files.write(dir.resolve("notes.txt"), new byte[]{1});
+        assertEquals(BackupVerifyResult.Status.NOT_FOUND, verify(dir, null).status(), "user files are not backups");
+    }
 }

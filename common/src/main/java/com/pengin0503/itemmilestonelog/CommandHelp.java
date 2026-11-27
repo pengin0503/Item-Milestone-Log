@@ -166,6 +166,9 @@ public final class CommandHelp {
             // PR-2 (F-150-52): standalone read-only diagnostics. `admin debug` is a child of
             // `admin`, so it deliberately has no separate help entry (spec §1.2 rule 6).
             new Entry("doctor", false, Gate.NONE),
+            // PR-4 (F-150-55): `backup now/list/verify` are children, so only the top-level
+            // `backup` literal gets a help entry (spec §1.2 rule 6).
+            new Entry("backup", false, Gate.NONE),
             new Entry("help", false, Gate.NONE)
     );
 
