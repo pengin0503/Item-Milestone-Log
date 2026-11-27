@@ -1,6 +1,10 @@
 package com.pengin0503.itemmilestonelog.client;
 
 import com.pengin0503.itemmilestonelog.AddTargetFeedbackWindow;
+import com.pengin0503.itemmilestonelog.Config;
+import com.pengin0503.itemmilestonelog.HoverCountPolicy;
+import com.pengin0503.itemmilestonelog.HoverItemCache;
+import com.pengin0503.itemmilestonelog.HoverShortcutPolicy;
 import com.pengin0503.itemmilestonelog.ItemTooltipLogic;
 import com.pengin0503.itemmilestonelog.Playtime;
 import com.pengin0503.itemmilestonelog.TagTargets;
@@ -39,6 +43,7 @@ public final class ClientMilestoneHandler {
     private static final String TOOLTIP_MORE_KEY = "gui.itemmilestonelog.item_tooltip.more";
 
     private static final AddTargetFeedbackWindow ADD_TARGET_FEEDBACK = new AddTargetFeedbackWindow();
+    private static final HoverItemCache HOVER_CACHE = new HoverItemCache();
     private static volatile SyncExtraPayload extraData = SyncExtraPayload.EMPTY;
     // F42: the latest sync and the precomputed itemId -> tooltip status index. Tooltips only
     // read these immutable snapshots; they never walk the payload or the tag registry.
@@ -56,6 +61,7 @@ public final class ClientMilestoneHandler {
     public static void clearExtraData() {
         extraData = SyncExtraPayload.EMPTY;
         ADD_TARGET_FEEDBACK.clear();
+        HOVER_CACHE.clear();
     }
 
     /** F42: discards the sync snapshot and tooltip index when the client disconnects. */
@@ -103,15 +109,101 @@ public final class ClientMilestoneHandler {
         ClientPacketDistributor.sendToServer(new RequestSyncPayload());
     }
 
-    /**
-     * Sends the F41 "add hovered item" action for {@code stack} and opens the feedback window.
-     * Does nothing when the server does not have the mod installed, showing the same action
-     * bar message as the GUI-open key.
-     */
+    /** F41: add the hovered stack with the existing count-one ADD_TARGET action. */
     public static void addHoveredTarget(ItemStack stack) {
-        if (stack == null || stack.isEmpty()) {
+        HoverItemCache.Entry entry = entryFrom(stack);
+        addHoveredTarget(entry, 1);
+    }
+
+    /** F-150-59: remembers a copied tooltip stack for other mods' GUIs (500 ms window). */
+    public static void rememberTooltipStack(ItemStack stack) {
+        if (!Config.hoverModIntegration()) {
             return;
         }
+        if (stack == null || stack.isEmpty()) {
+            HOVER_CACHE.clear();
+            return;
+        }
+        ItemStack copy = stack.copy();
+        String itemId = BuiltInRegistries.ITEM.getKey(copy.getItem()).toString();
+        HOVER_CACHE.capture(new CopiedHoverStack(itemId, copy.getCount()), System.currentTimeMillis());
+    }
+
+    private record CopiedHoverStack(String itemId, int count) implements HoverItemCache.StackView {
+    }
+
+    /** Reads a real slot stack directly; works even when hover-mod integration is disabled. */
+    public static HoverItemCache.Entry entryFrom(ItemStack stack) {
+        if (stack == null || stack.isEmpty()) {
+            return null;
+        }
+        return new HoverItemCache.Entry(BuiltInRegistries.ITEM.getKey(stack.getItem()).toString(),
+                stack.getCount());
+    }
+
+    /** Returns the short-lived tooltip stack, or null when none is usable. */
+    public static HoverItemCache.Entry hoveredStack() {
+        return HOVER_CACHE.get(System.currentTimeMillis());
+    }
+
+    public static void clearHoverCache() {
+        HOVER_CACHE.clear();
+    }
+
+    /**
+     * F-150-61 / F-150-78: resolves each shortcut to an existing action. No Action ordinal is
+     * added; the version-tree dispatch test pins the mapping against the real enum.
+     */
+    public static MilestoneActionPayload.Action actionFor(HoverShortcutPolicy.Operation operation) {
+        return switch (operation) {
+            case ADD_COUNT_ONE, ADD_STACK_COUNT -> MilestoneActionPayload.Action.ADD_TARGET;
+            case REMOVE_TARGET -> MilestoneActionPayload.Action.REMOVE_TARGET;
+            case ADD_HAND -> MilestoneActionPayload.Action.ADD_HAND;
+        };
+    }
+
+    /** F-150-60: Shift adds the hovered stack count through the same ADD_TARGET ordinal. */
+    public static void addHoveredTarget(HoverItemCache.Entry hovered, int count) {
+        if (hovered == null || hovered.isEmpty()) {
+            return;
+        }
+        sendHoverAction(MilestoneActionPayload.Action.ADD_TARGET, hovered.itemId(), count);
+        if (count > 1) {
+            showOverlay(Component.translatable("message.itemmilestonelog.add_hovered_count", count));
+        }
+    }
+
+    /** F-150-61: Alt removes the hovered item through the existing REMOVE_TARGET ordinal. */
+    public static void removeHoveredTarget(HoverItemCache.Entry hovered) {
+        if (hovered == null || hovered.isEmpty()) {
+            return;
+        }
+        showOverlay(Component.translatable("message.itemmilestonelog.remove_hovered", hovered.itemId()));
+        sendHoverAction(MilestoneActionPayload.Action.REMOVE_TARGET, hovered.itemId(), hovered.count());
+    }
+
+    /** F-150-78: Ctrl adds the held stack through the existing ADD_HAND ordinal. */
+    public static void addHandTarget(ItemStack hand) {
+        if (hand == null || hand.isEmpty()) {
+            return;
+        }
+        int count = HoverCountPolicy.clamp(hand.getCount());
+        String itemId = BuiltInRegistries.ITEM.getKey(hand.getItem()).toString();
+        showOverlay(Component.translatable("message.itemmilestonelog.shortcut_add_hand", count));
+        sendHoverAction(MilestoneActionPayload.Action.ADD_HAND, itemId, count);
+    }
+
+    /** F-150-59: an expired or empty hover cache must never add a stale item. */
+    public static void showHoverUnavailable() {
+        showOverlay(Component.translatable("message.itemmilestonelog.hover_unavailable"));
+    }
+
+    /**
+     * Sends a hover-shortcut action. Unlike the silent {@link #sendAction} path used for the mute
+     * key, server-dependent hover operations report a vanilla/old server and arm the existing
+     * two-second feedback window (spec 1.3-5).
+     */
+    private static void sendHoverAction(MilestoneActionPayload.Action action, String argument, int count) {
         Minecraft mc = Minecraft.getInstance();
         ClientPacketListener connection = mc.getConnection();
         if (connection == null) {
@@ -121,17 +213,26 @@ public final class ClientMilestoneHandler {
             showServerNotInstalled(mc);
             return;
         }
-        String itemId = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
         ADD_TARGET_FEEDBACK.markSent(System.currentTimeMillis());
-        ClientPacketDistributor.sendToServer(new MilestoneActionPayload(
-                MilestoneActionPayload.Action.ADD_TARGET, itemId, 1));
+        MilestoneActionPayload payload = new MilestoneActionPayload(
+                action, argument == null ? "" : argument, count);
+        ClientPacketDistributor.sendToServer(payload);
+    }
+
+    private static void showOverlay(Component message) {
+        showOverlayOn(Minecraft.getInstance(), message);
+    }
+
+    private static void showOverlayOn(Minecraft mc, Component message) {
+        if (mc.player == null) {
+            return;
+        }
+        mc.player.sendOverlayMessage(message);
     }
 
     private static void showServerNotInstalled(Minecraft mc) {
-        if (mc.player != null) {
-            mc.player.sendOverlayMessage(
-                    Component.translatable("message.itemmilestonelog.server_not_installed"));
-        }
+        HOVER_CACHE.clear();
+        showOverlayOn(mc, Component.translatable("message.itemmilestonelog.server_not_installed"));
     }
 
     public static void sendAction(MilestoneActionPayload.Action action, String argument) {

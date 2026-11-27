@@ -1,10 +1,17 @@
 package com.pengin0503.itemmilestonelog.client;
 
 import com.mojang.blaze3d.platform.InputConstants;
+import com.pengin0503.itemmilestonelog.ClientPrefsStore;
 import com.pengin0503.itemmilestonelog.Config;
+import com.pengin0503.itemmilestonelog.HoverCountPolicy;
+import com.pengin0503.itemmilestonelog.HoverItemCache;
+import com.pengin0503.itemmilestonelog.HoverShortcutPolicy;
+import com.pengin0503.itemmilestonelog.UnboundKeyHintPolicy;
 import com.pengin0503.itemmilestonelog.ItemMilestoneLog;
 import com.pengin0503.itemmilestonelog.network.MilestoneActionPayload;
 import com.pengin0503.itemmilestonelog.network.ModNetworking;
+import net.minecraftforge.fml.ModList;
+import net.minecraftforge.fml.loading.FMLPaths;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
@@ -69,6 +76,14 @@ public final class ItemMilestoneLogClient {
             KEY_CATEGORY
     );
 
+    // F-150-77: one-time, delayed local hint. The copy key from F-150-71 arrives in a later PR;
+    // until then it is treated as unbound (fourth flag in unboundKeys()).
+    private static final UnboundKeyHintPolicy UNBOUND_HINT = new UnboundKeyHintPolicy();
+    private static boolean unboundHintStored;
+    // F-150-59: soft integration only. No JEI/EMI/REI class or API is referenced; when none of
+    // the three is loaded, the tooltip cache is never populated (a pure no-op).
+    private static boolean hoverModsPresent;
+
     private ItemMilestoneLogClient() {
     }
 
@@ -78,6 +93,12 @@ public final class ItemMilestoneLogClient {
      * constructor only on {@code Dist.CLIENT}.
      */
     public static void init() {
+        try {
+            ModList list = ModList.get();
+            hoverModsPresent = list.isLoaded("jei") || list.isLoaded("emi") || list.isLoaded("rei");
+        } catch (RuntimeException | LinkageError ignored) {
+            hoverModsPresent = false;
+        }
         ModNetworking.setClientSyncHandler(ClientMilestoneHandler::onSyncReceived);
         ModNetworking.setClientSyncExtraHandler(ClientMilestoneHandler::onSyncExtraReceived);
         FMLJavaModLoadingContext.get().getModEventBus()
@@ -89,11 +110,33 @@ public final class ItemMilestoneLogClient {
         MinecraftForge.EVENT_BUS.addListener(EventPriority.LOW, ItemMilestoneLogClient::onTagsUpdated);
         MinecraftForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onItemTooltip);
         MinecraftForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onClientLoggingOut);
+        MinecraftForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onClientLoggingIn);
     }
 
     private static void onClientLoggingOut(ClientPlayerNetworkEvent.LoggingOut event) {
         ClientMilestoneHandler.clearExtraData();
         ClientMilestoneHandler.clearTooltipData();
+        ClientMilestoneHandler.clearHoverCache();
+        UNBOUND_HINT.clear();
+    }
+
+    /** F-150-77: schedule the once-only hint on login; the tick handler applies the 2 s delay. */
+    private static void onClientLoggingIn(ClientPlayerNetworkEvent.LoggingIn event) {
+        try {
+            unboundHintStored = ClientPrefsStore.unboundHintShown(FMLPaths.CONFIGDIR.get());
+        } catch (RuntimeException | LinkageError e) {
+            // If local preferences cannot be read, do not show a hint that could repeat.
+            unboundHintStored = true;
+        }
+        UNBOUND_HINT.schedule(System.currentTimeMillis());
+    }
+
+    private static UnboundKeyHintPolicy.Keys unboundKeys() {
+        return new UnboundKeyHintPolicy.Keys(
+                OPEN_GUI_MAPPING.getKey() == InputConstants.UNKNOWN,
+                ADD_HOVERED_MAPPING.getKey() == InputConstants.UNKNOWN,
+                MUTE_NOTIFICATION_SOUND_MAPPING.getKey() == InputConstants.UNKNOWN,
+                true); // F-150-71's copy key is not registered until PR-7: still unbound here.
     }
 
     /**
@@ -101,6 +144,9 @@ public final class ItemMilestoneLogClient {
      * this client bootstrap, so the event is never handled on a dedicated server.
      */
     private static void onItemTooltip(ItemTooltipEvent event) {
+        if (hoverModsPresent) {
+            ClientMilestoneHandler.rememberTooltipStack(event.getItemStack());
+        }
         if (!Config.itemTooltipStatus()) {
             return;
         }
@@ -137,6 +183,19 @@ public final class ItemMilestoneLogClient {
         while (OPEN_GUI_MAPPING.consumeClick()) {
             ClientMilestoneHandler.requestOpenGui();
         }
+        if (UNBOUND_HINT.shouldShow(System.currentTimeMillis(), unboundKeys(), unboundHintStored)) {
+            Minecraft mcHint = Minecraft.getInstance();
+            if (mcHint.player != null) {
+                mcHint.player.displayClientMessage(Component.translatable("message.itemmilestonelog.unbound_key_hint"), true);
+                UNBOUND_HINT.markShown();
+                unboundHintStored = true;
+                try {
+                    ClientPrefsStore.markUnboundHintShown(FMLPaths.CONFIGDIR.get());
+                } catch (RuntimeException | LinkageError ignored) {
+                    // Local preference write failure must never interrupt the game.
+                }
+            }
+        }
     }
 
     /**
@@ -148,7 +207,8 @@ public final class ItemMilestoneLogClient {
                 InputConstants.getKey(event.getKeyCode(), event.getScanCode()))) {
             return;
         }
-        addHoveredFromScreen(event.getScreen());
+        handleHoverShortcut(event.getScreen(),
+                HoverShortcutPolicy.Modifiers.fromGlfw(event.getModifiers()));
     }
 
     /**
@@ -161,18 +221,47 @@ public final class ItemMilestoneLogClient {
                 InputConstants.Type.MOUSE.getOrCreate(event.getButton()))) {
             return;
         }
-        addHoveredFromScreen(event.getScreen());
+        // Older ScreenEvent mouse events expose no modifiers; treat those as "no modifier"
+        // instead of reading an unavailable API (spec F-150-60-5).
+        handleHoverShortcut(event.getScreen(),
+                HoverShortcutPolicy.Modifiers.fromGlfw(0));
     }
 
-    private static void addHoveredFromScreen(Screen screen) {
-        if (!(screen instanceof AbstractContainerScreen<?> container)) {
+    /**
+     * F-150-59/60/61/78: resolves the hover target (slot first, short-lived tooltip cache second)
+     * and sends one of the existing ADD_TARGET / REMOVE_TARGET / ADD_HAND actions. No new key,
+     * button, screen or Action ordinal is involved (FL-4/FL-7).
+     */
+    private static void handleHoverShortcut(Screen screen, HoverShortcutPolicy.Modifiers modifiers) {
+        HoverShortcutPolicy.Operation operation = HoverShortcutPolicy.choose(modifiers);
+        if (operation == HoverShortcutPolicy.Operation.ADD_HAND) {
+            Minecraft mc = Minecraft.getInstance();
+            ClientMilestoneHandler.addHandTarget(mc.player == null ? null : mc.player.getMainHandItem());
             return;
         }
-        Slot slot = container.getSlotUnderMouse();
-        if (slot == null || !slot.hasItem()) {
+        HoverItemCache.Entry target = null;
+        if (screen instanceof AbstractContainerScreen<?> container) {
+            Slot slot = container.getSlotUnderMouse();
+            if (slot != null && slot.hasItem()) {
+                target = ClientMilestoneHandler.entryFrom(slot.getItem());
+            }
+        }
+        if (target == null && hoverModsPresent && Config.hoverModIntegration()) {
+            target = ClientMilestoneHandler.hoveredStack();
+        }
+        if (target == null || target.isEmpty()) {
+            if (hoverModsPresent && Config.hoverModIntegration()) {
+                ClientMilestoneHandler.showHoverUnavailable();
+            }
             return;
         }
-        ClientMilestoneHandler.addHoveredTarget(slot.getItem());
+        switch (operation) {
+            case ADD_COUNT_ONE -> ClientMilestoneHandler.addHoveredTarget(target, 1);
+            case ADD_STACK_COUNT -> ClientMilestoneHandler.addHoveredTarget(target,
+                    HoverCountPolicy.forStack(true, target.count()));
+            case REMOVE_TARGET -> ClientMilestoneHandler.removeHoveredTarget(target);
+            case ADD_HAND -> { /* handled before resolving the hover target */ }
+        }
     }
 
     /** F42: rebuild the tooltip index after the client's tag-packet update. */

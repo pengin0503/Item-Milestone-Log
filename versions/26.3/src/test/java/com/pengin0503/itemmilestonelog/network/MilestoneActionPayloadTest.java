@@ -8,6 +8,8 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import java.util.Arrays;
+import java.util.List;
 
 class MilestoneActionPayloadTest {
     private static final int MAX_ARGUMENT_LENGTH = 256;
@@ -126,6 +128,29 @@ class MilestoneActionPayloadTest {
                 MilestoneActionPayload.Action.MUTE_NOTIFICATION_SOUND, "");
         assertEquals(mute, roundTrip(mute));
         assertEquals(1, mute.count(), "the optional action needs no new payload fields");
+    }
+
+
+    @Test
+    void actionOrdinalListIsPinnedExactly() {
+        assertEquals(List.of("ADD_TARGET", "ADD_HAND", "REMOVE_TARGET", "APPLY_PRESET",
+                        "RESET_RECORD", "RESET_ALL", "SAVE_PRESET", "DELETE_PRESET",
+                        "MUTE_NOTIFICATION_SOUND"),
+                Arrays.stream(MilestoneActionPayload.Action.values())
+                        .map(MilestoneActionPayload.Action::name).toList());
+        assertEquals(9, MilestoneActionPayload.Action.values().length);
+    }
+
+    @Test
+    void hoverCountsAndShortcutActionsReuseExistingOrdinals() {
+        for (int count : new int[] {1, 64, 1_000_000}) {
+            assertEquals(0, new MilestoneActionPayload(
+                    MilestoneActionPayload.Action.ADD_TARGET, "minecraft:diamond", count)
+                    .action().ordinal());
+        }
+        assertEquals(2, MilestoneActionPayload.Action.REMOVE_TARGET.ordinal());
+        assertEquals(1, MilestoneActionPayload.Action.ADD_HAND.ordinal());
+        assertEquals(9, MilestoneActionPayload.Action.values().length);
     }
 
 }
