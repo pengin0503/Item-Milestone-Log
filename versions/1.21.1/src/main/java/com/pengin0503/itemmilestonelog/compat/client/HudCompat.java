@@ -2,7 +2,10 @@ package com.pengin0503.itemmilestonelog.compat.client;
 
 import com.pengin0503.itemmilestonelog.TagTargets;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
+import com.pengin0503.itemmilestonelog.compat.McCompat;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.ChatScreen;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -25,6 +28,18 @@ public final class HudCompat {
     /** Standard narration through the built-in narrator (no new dependency). */
     public static void narrate(Minecraft mc, Component text) {
         mc.getNarrator().say(text);
+    }
+
+    /**
+     * Draws one HUD line. {@code GuiGraphics.drawString} changed its return descriptor from
+     * {@code int} to {@code void} at MC 1.21.6, so shared code must never reference it
+     * directly. {@link McCompat#text()} selects the per-profile {@code TextCompatImpl}
+     * compiled against the running version; {@code true} preserves the drop shadow of the
+     * five-argument {@code drawString(Font, Component, int, int, int)} overload.
+     */
+    public static void drawString(GuiGraphics graphics, Font font, Component text,
+                                  int x, int y, int color) {
+        McCompat.text().drawString(graphics, font, text, x, y, color, true);
     }
 
     public static Screen screen(Minecraft mc) {

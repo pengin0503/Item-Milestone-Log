@@ -259,7 +259,7 @@ public final class MilestoneHudOverlay {
         int color = (alpha << 24) | TEXT_COLOR;
         int y = at.y() + PADDING;
         for (RenderRow row : current) {
-            graphics.drawString(mc.font, row.text(), at.x() + PADDING, y, color);
+            HudCompat.drawString(graphics, mc.font, row.text(), at.x() + PADDING, y, color);
             y += rowHeight;
         }
     }
