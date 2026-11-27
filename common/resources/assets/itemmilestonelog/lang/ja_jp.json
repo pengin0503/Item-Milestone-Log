@@ -649,5 +649,19 @@
   "message.itemmilestonelog.sound_mute_current": "通知音: %s",
   "message.itemmilestonelog.sound_mute_set": "通知音を %s にしました",
   "message.itemmilestonelog.sound_mute_toggled": "通知音を %s にしました（キー操作）",
-  "key.itemmilestonelog.mute_notification_sound": "通知音をミュート"
+  "key.itemmilestonelog.mute_notification_sound": "通知音をミュート",
+  "permission.name.itemmilestonelog.doctor": "サーバー診断",
+  "permission.desc.itemmilestonelog.doctor": "読み取り専用のサーバー診断 (/milestonelog doctor)",
+  "permission.name.itemmilestonelog.debug": "ランタイム統計",
+  "permission.desc.itemmilestonelog.debug": "読み取り専用のランタイム統計 (/milestonelog admin debug)",
+  "permission.name.itemmilestonelog.discordstatus": "Discord 状態確認",
+  "permission.desc.itemmilestonelog.discordstatus": "読み取り専用の Discord 状態確認 (/milestonelog discordstatus)",
+  "permission.name.itemmilestonelog.discorddigest": "Discord ダイジェスト手動送信",
+  "permission.desc.itemmilestonelog.discorddigest": "Discord ダイジェストを手動送信 (/milestonelog discordstatus digest)",
+  "permission.name.itemmilestonelog.backup.manage": "バックアップ作成",
+  "permission.desc.itemmilestonelog.backup.manage": "バックアップを今すぐ作成 (/milestonelog backup now)",
+  "permission.name.itemmilestonelog.backup.view": "バックアップ閲覧",
+  "permission.desc.itemmilestonelog.backup.view": "バックアップの一覧・検証 (/milestonelog backup list / verify)",
+  "permission.name.itemmilestonelog.audit.view": "監査ログ閲覧",
+  "permission.desc.itemmilestonelog.audit.view": "管理者監査ログの閲覧用に予約（閲覧コマンドは未出荷）"
 }

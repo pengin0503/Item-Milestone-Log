@@ -2,6 +2,7 @@ package com.pengin0503.itemmilestonelog;
 
 import com.pengin0503.itemmilestonelog.compat.McCompat;
 import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.neoforge.server.permission.PermissionAPI;
 import net.neoforged.neoforge.server.permission.events.PermissionGatherEvent;
@@ -41,7 +42,17 @@ public final class MilestonePermissions {
     public static final PermissionNode<Boolean> PRESETS_MANAGE = node(MilestonePermissionLogic.PRESETS_MANAGE);
     public static final PermissionNode<Boolean> VIEWHIDDEN = node(MilestonePermissionLogic.VIEWHIDDEN);
 
-    /** Every node this mod registers, in the F43 table order. */
+    // F-150-51 (N89): seven step-5 nodes appended after the nine F43 nodes. The declarations above
+    // are byte-for-byte unchanged, and the default resolver below is shared by all sixteen nodes.
+    public static final PermissionNode<Boolean> DOCTOR = documentedNode(MilestonePermissionLogic.DOCTOR);
+    public static final PermissionNode<Boolean> DEBUG = documentedNode(MilestonePermissionLogic.DEBUG);
+    public static final PermissionNode<Boolean> DISCORD_STATUS = documentedNode(MilestonePermissionLogic.DISCORD_STATUS);
+    public static final PermissionNode<Boolean> DISCORD_DIGEST = documentedNode(MilestonePermissionLogic.DISCORD_DIGEST);
+    public static final PermissionNode<Boolean> BACKUP_MANAGE = documentedNode(MilestonePermissionLogic.BACKUP_MANAGE);
+    public static final PermissionNode<Boolean> BACKUP_VIEW = documentedNode(MilestonePermissionLogic.BACKUP_VIEW);
+    public static final PermissionNode<Boolean> AUDIT_VIEW = documentedNode(MilestonePermissionLogic.AUDIT_VIEW);
+
+    /** Every node this mod registers: the nine F43 nodes, then the seven F-150-51 nodes. */
     public static final List<PermissionNode<?>> NODES = List.of(
             ADMIN,
             FIRSTS_RESET,
@@ -51,7 +62,14 @@ public final class MilestonePermissions {
             RENAMEITEM,
             DISCORDTEST,
             PRESETS_MANAGE,
-            VIEWHIDDEN);
+            VIEWHIDDEN,
+            DOCTOR,
+            DEBUG,
+            DISCORD_STATUS,
+            DISCORD_DIGEST,
+            BACKUP_MANAGE,
+            BACKUP_VIEW,
+            AUDIT_VIEW);
 
     private MilestonePermissions() {
     }
@@ -60,6 +78,14 @@ public final class MilestonePermissions {
         int dot = fullName.indexOf('.');
         return new PermissionNode<>(fullName.substring(0, dot), fullName.substring(dot + 1),
                 PermissionTypes.BOOLEAN, DEFAULT_RESOLVER);
+    }
+
+    /** Gives a new node the human-readable name/description keys recommended by the permission API. */
+    @SuppressWarnings("unchecked")
+    private static PermissionNode<Boolean> documentedNode(String fullName) {
+        return (PermissionNode<Boolean>) node(fullName).setInformation(
+                Component.translatable("permission.name." + fullName),
+                Component.translatable("permission.desc." + fullName));
     }
 
     /** Registers every F43 node; called from the event bus during permission API initialization. */
