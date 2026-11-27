@@ -103,3 +103,36 @@ registers the tests, so the harness matches production here.
   dedicated-server play.
 - **Production launcher setup.** The dev client (moddev `runClient`, dev user, Mojang
   mappings) is used, not the production launcher with an MS account.
+
+## Manual server smoke checklist — 1.5.0 step 5
+
+The checks below need a live world (and a permission mod for the first one); the headless
+client hook above does not exercise server-side commands, file output or HTTP behaviour.
+Run them once per supported Minecraft version before a release and tick each box. Expected
+results are the user-facing behaviour documented in [README.md](../README.md) and
+[CHANGELOG.md](../CHANGELOG.md).
+
+- [ ] **Permission-mod grant.** Set NeoForge's `permissionHandler` to a permission mod
+      (for example LuckPerms) and grant a non-OP player only some of the step-5 nodes,
+      such as `itemmilestonelog.doctor` and `itemmilestonelog.backup.view`. Confirm the
+      granted commands run, a step-5 command whose node was not granted (for example
+      `backup now`) is denied, and an OP / permission-level-2 player still runs everything
+      — nodes add access and never take it away. If tab completion is stale after a grant,
+      rejoin; execution is checked immediately.
+- [ ] **Manual backup on a live world.** Run `/milestonelog backup now`, then
+      `backup list` and `backup verify` (both with and without a file name). Confirm a new
+      `milestones-YYYYMMDD-HHmmss.dat` appears under
+      `<world>/itemmilestonelog/backups/`, that `now` also works with
+      `autoBackupEnabled = false`, that `now` is refused while the server is stopping, and
+      that `verify` reports `OK` with counts without changing live data.
+- [ ] **Audit lines after an admin op.** After a successful admin operation (for example
+      `admin <player> grant`), inspect `<world>/itemmilestonelog/audit.log`: expect one
+      JSONL line with a fixed `op`, a UTC `ts`, the actor UUID (or `#nonplayer` when run from
+      console) and `result: success`. Confirm no line is written for a preview/dry-run or a
+      failed operation, and that the file rotates into `audit.1.log` … `audit.5.log` once it
+      passes 1 MiB. A deliberate write failure should leave the operation successful with
+      only a WARN in the server log.
+- [ ] **`discordtest payload` sends nothing.** Run `discordtest payload` and
+      `discordtest worldfirst payload`. Confirm a single line of JSON is printed, no test
+      message arrives in Discord (no HTTP POST), no normal `discordtest` result/state line
+      appears, and no webhook URL is shown.
