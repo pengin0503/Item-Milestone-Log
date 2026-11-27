@@ -745,6 +745,54 @@ public final class MilestoneCommands {
                         .then(literal("importcode")
                                 .then(argument("code", StringArgumentType.greedyString())
                                         .executes(ctx -> presetImportCode(ctx, StringArgumentType.getString(ctx, "code")))))
+                        // F-150-40 (N178): literals, not preset IDs (D-150-97 adds them to
+                        // Presets.RESERVED_IDS). Permission is checked in the handler like the
+                        // existing preset save/delete/reload branches.
+                        .then(literal("edit")
+                                .then(argument("name", StringArgumentType.word())
+                                        .suggests(customPresetSuggestions)
+                                        .then(literal("add")
+                                                .then(argument("item", IdentifierArgument.id())
+                                                        .executes(ctx -> presetEdit(ctx,
+                                                                StringArgumentType.getString(ctx, "name"),
+                                                                IdentifierArgument.getId(ctx, "item").toString(),
+                                                                TargetKey.MIN_COUNT, false))
+                                                        .then(argument("count", IntegerArgumentType.integer(
+                                                                TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                                                .executes(ctx -> presetEdit(ctx,
+                                                                        StringArgumentType.getString(ctx, "name"),
+                                                                        IdentifierArgument.getId(ctx, "item").toString(),
+                                                                        IntegerArgumentType.getInteger(ctx, "count"),
+                                                                        false)))))
+                                        .then(literal("remove")
+                                                .then(argument("item", IdentifierArgument.id())
+                                                        .executes(ctx -> presetEdit(ctx,
+                                                                StringArgumentType.getString(ctx, "name"),
+                                                                IdentifierArgument.getId(ctx, "item").toString(),
+                                                                TargetKey.MIN_COUNT, true))
+                                                        .then(argument("count", IntegerArgumentType.integer(
+                                                                TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                                                .executes(ctx -> presetEdit(ctx,
+                                                                        StringArgumentType.getString(ctx, "name"),
+                                                                        IdentifierArgument.getId(ctx, "item").toString(),
+                                                                        IntegerArgumentType.getInteger(ctx, "count"),
+                                                                        true)))))))
+                        .then(literal("protect")
+                                .then(argument("name", StringArgumentType.word())
+                                        .suggests(customPresetSuggestions)
+                                        .executes(ctx -> presetProtect(ctx,
+                                                StringArgumentType.getString(ctx, "name"), true, false))
+                                        .then(literal("confirm")
+                                                .executes(ctx -> presetProtect(ctx,
+                                                        StringArgumentType.getString(ctx, "name"), true, true)))))
+                        .then(literal("unprotect")
+                                .then(argument("name", StringArgumentType.word())
+                                        .suggests(customPresetSuggestions)
+                                        .executes(ctx -> presetProtect(ctx,
+                                                StringArgumentType.getString(ctx, "name"), false, false))
+                                        .then(literal("confirm")
+                                                .executes(ctx -> presetProtect(ctx,
+                                                        StringArgumentType.getString(ctx, "name"), false, true)))))
                         .then(argument("name", StringArgumentType.word())
                                 .suggests(presetSuggestions)
                                 .executes(ctx -> preset(ctx, StringArgumentType.getString(ctx, "name")))))
@@ -784,6 +832,32 @@ public final class MilestoneCommands {
                                 .executes(ctx -> firstsClose(ctx, null))
                                 .then(argument("page", IntegerArgumentType.integer(1))
                                         .executes(ctx -> firstsClose(ctx, IntegerArgumentType.getInteger(ctx, "page")))))
+                        // F-150-38 (N167): history rows are personal records (Gate.LOOKUP), but the
+                        // parent `firsts` entry stays public (D-150-93). Do NOT inherit the reset
+                        // requirement from the sibling reset/resettag/resetall branches.
+                        .then(literal("history")
+                                .requires(MilestoneCommands::canUseRankingsForTree)
+                                .then(argument("item", IdentifierArgument.id())
+                                        .suggests(worldFirstSuggestions)
+                                        .executes(ctx -> firstsHistory(ctx,
+                                                IdentifierArgument.getId(ctx, "item").toString(),
+                                                TargetKey.MIN_COUNT, null))
+                                        .then(argument("count", IntegerArgumentType.integer(
+                                                TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                                .suggests(worldFirstCountSuggestions)
+                                                .executes(ctx -> firstsHistory(ctx,
+                                                        IdentifierArgument.getId(ctx, "item").toString(),
+                                                        IntegerArgumentType.getInteger(ctx, "count"), null))
+                                                .then(argument("page", IntegerArgumentType.integer(1))
+                                                        .executes(ctx -> firstsHistory(ctx,
+                                                                IdentifierArgument.getId(ctx, "item").toString(),
+                                                                IntegerArgumentType.getInteger(ctx, "count"),
+                                                                IntegerArgumentType.getInteger(ctx, "page")))))
+                                        .then(argument("page", IntegerArgumentType.integer(1))
+                                                .executes(ctx -> firstsHistory(ctx,
+                                                        IdentifierArgument.getId(ctx, "item").toString(),
+                                                        TargetKey.MIN_COUNT,
+                                                        IntegerArgumentType.getInteger(ctx, "page"))))))
                         .then(literal("unclaimed")
                                 .executes(ctx -> firstsUnclaimed(ctx, null, null))
                                 .then(literal("scope")
@@ -819,6 +893,25 @@ public final class MilestoneCommands {
                         .then(literal("resetall")
                                 .requires(firstsResetRequirement)
                                 .executes(MilestoneCommands::firstsResetAll)))
+                // F-150-38 (N167): same rules as `firsts history`, with a tag argument that is
+                // stored with its leading '#'. New top-level entry (Gate.LOOKUP).
+                .then(literal("firstshistorytag")
+                        .requires(MilestoneCommands::canUseRankingsForTree)
+                        .then(argument("tag", tagArgumentType())
+                                .suggests(worldFirstTagSuggestions)
+                                .executes(ctx -> firstsHistory(ctx, tagArg(ctx), TargetKey.MIN_COUNT, null))
+                                .then(argument("count", IntegerArgumentType.integer(
+                                        TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                        .suggests(worldFirstTagCountSuggestions)
+                                        .executes(ctx -> firstsHistory(ctx, tagArg(ctx),
+                                                IntegerArgumentType.getInteger(ctx, "count"), null))
+                                        .then(argument("page", IntegerArgumentType.integer(1))
+                                                .executes(ctx -> firstsHistory(ctx, tagArg(ctx),
+                                                        IntegerArgumentType.getInteger(ctx, "count"),
+                                                        IntegerArgumentType.getInteger(ctx, "page")))))
+                                .then(argument("page", IntegerArgumentType.integer(1))
+                                        .executes(ctx -> firstsHistory(ctx, tagArg(ctx), TargetKey.MIN_COUNT,
+                                                IntegerArgumentType.getInteger(ctx, "page"))))))
                 .then(literal("presettop")
                         .then(argument("preset", StringArgumentType.word())
                                 .suggests(presetSuggestions)
@@ -2726,6 +2819,112 @@ public final class MilestoneCommands {
         return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_reloaded", Presets.names().size(), custom));
     }
 
+    /**
+     * F-150-40 (N178): add/remove one item of a config-folder preset. Only custom (file) presets
+     * can be edited, and a protected one refuses every edit. The existing strict validation runs
+     * unchanged inside {@link Presets#saveCustom}; no GUI or permission node is introduced.
+     */
+    private static int presetEdit(CommandContext<CommandSourceStack> ctx, String name, String itemId,
+                                  int count, boolean remove) {
+        CommandSourceStack source = ctx.getSource();
+        if (!Config.PRESETS_ENABLED.get()) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.feature_disabled"));
+        }
+        if (!MilestoneService.canManagePresets(source)) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_no_permission"));
+        }
+        Presets.PresetDefinition preset = Presets.get(name);
+        if (preset == null) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_unknown",
+                    name, String.join(", ", Presets.names())));
+        }
+        if (preset.kind() == Presets.PresetKind.BUILTIN) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_edit_builtin"));
+        }
+        if (preset.kind() == Presets.PresetKind.DATAPACK) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_datapack_protected", name));
+        }
+        if (!PresetEditLogic.canEdit(PresetEditLogic.Kind.FILE, preset.isProtected())) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_protected", name));
+        }
+        TargetKey key = TargetKey.of(itemId, count);
+        if (key == null || !MilestoneService.isValidItemId(key.itemId())) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_unknown",
+                    itemId, String.join(", ", Presets.names())));
+        }
+        List<String> encoded = new ArrayList<>();
+        for (TargetKey existing : preset.items()) {
+            encoded.add(existing.toEncodedString());
+        }
+        String target = key.toEncodedString();
+        List<String> updated = remove
+                ? (count > TargetKey.MIN_COUNT
+                        ? PresetEditLogic.removeEncoded(encoded, target)
+                        : PresetEditLogic.removeItemId(encoded, key.itemId()))
+                : PresetEditLogic.addEncoded(encoded, target);
+        List<TargetKey> items = new ArrayList<>();
+        for (String raw : updated) {
+            TargetKey parsed = TargetKey.tryParseEncoded(raw);
+            if (parsed != null) {
+                items.add(parsed);
+            }
+        }
+        try {
+            Presets.saveCustom(name, items);
+        } catch (IOException | IllegalArgumentException e) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_save_failed", name));
+        }
+        if (source.getServer() != null) {
+            MilestoneService.syncAllOnlineGuiPlayers(source.getServer(), null);
+        }
+        Component display = MilestoneService.presetDisplayName(source.getPlayer(),
+                Presets.get(name) != null ? Presets.get(name) : preset);
+        return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_edit_done",
+                display, items.size()));
+    }
+
+    /** F-150-40 (N178): two-step protect/unprotect of a config-folder preset. */
+    private static int presetProtect(CommandContext<CommandSourceStack> ctx, String name,
+                                     boolean protect, boolean confirm) {
+        CommandSourceStack source = ctx.getSource();
+        if (!Config.PRESETS_ENABLED.get()) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.feature_disabled"));
+        }
+        if (!MilestoneService.canManagePresets(source)) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_no_permission"));
+        }
+        Presets.PresetDefinition preset = Presets.get(name);
+        if (preset == null) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_unknown",
+                    name, String.join(", ", Presets.names())));
+        }
+        if (preset.kind() == Presets.PresetKind.BUILTIN) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_builtin_protected", name));
+        }
+        if (preset.kind() == Presets.PresetKind.DATAPACK) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_datapack_protected", name));
+        }
+        Component display = MilestoneService.presetDisplayName(source.getPlayer(), preset);
+        // F-150-40: `protect` applies immediately; only `unprotect` is two-step (confirm).
+        if (!protect && !confirm) {
+            return send(ctx, ServerLang.tr(source,
+                    "message.itemmilestonelog.preset_unprotect_confirm", display));
+        }
+        try {
+            if (!Presets.setProtected(Presets.presetsDir(), name, protect)) {
+                return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_save_failed", name));
+            }
+        } catch (IOException e) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_save_failed", name));
+        }
+        if (source.getServer() != null) {
+            MilestoneService.syncAllOnlineGuiPlayers(source.getServer(), null);
+        }
+        return send(ctx, ServerLang.tr(source, protect
+                ? "message.itemmilestonelog.preset_protect_done"
+                : "message.itemmilestonelog.preset_unprotect_done", display));
+    }
+
     private static int reset(CommandContext<CommandSourceStack> ctx, String itemId, int count) throws CommandSyntaxException {
         return respondWithUndoHint(ctx, MilestoneService.resetRecord(player(ctx), itemId, count));
     }
@@ -2931,6 +3130,93 @@ public final class MilestoneCommands {
         }
         if (slice != null) {
             sendPageFooter(source, slice, Pagination.firstsTopCommandPrefix());
+        }
+        return displayed.size();
+    }
+
+    /**
+     * F-150-38 (N167): past holders of one world-first target, newest first. The Brigadier branch
+     * already applies {@code Gate.LOOKUP}; the handler repeats the gate so direct calls and future
+     * aliases cannot leak another player's personal record. Hidden players are excluded exactly
+     * as in {@link MilestoneRankings#isVisible}.
+     */
+    private static int firstsHistory(CommandContext<CommandSourceStack> ctx, String itemId, int count,
+                                     @Nullable Integer page) {
+        CommandSourceStack source = ctx.getSource();
+        if (!canUseRankings(source)) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.feature_disabled"));
+        }
+        TargetKey key = TargetKey.of(itemId, count);
+        if (key == null) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.firsts_not_recorded", itemId));
+        }
+        String encodedKey = key.toEncodedString();
+        MilestoneData data = MilestoneData.get(source.getServer());
+        MilestoneRankings.Viewer viewer = rankingViewer(source);
+        List<HolderEntry> visible = new ArrayList<>();
+        for (HolderEntry entry : FirstsHolderHistory.newestFirst(data.holderHistory(encodedKey))) {
+            UUID uuid;
+            try {
+                uuid = UUID.fromString(entry.uuid());
+            } catch (IllegalArgumentException ignored) {
+                continue;
+            }
+            MilestoneData.PlayerData holder = data.playerOrNull(uuid);
+            if (holder != null && !MilestoneRankings.isVisible(viewer, uuid, holder)) {
+                continue;
+            }
+            visible.add(entry);
+        }
+
+        Component label = MilestoneService.targetDisplayName(key);
+        if (visible.isEmpty()) {
+            source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.firsts_history_header",
+                    label, 0), false);
+            send(ctx, ServerLang.tr(source, "message.itemmilestonelog.firsts_history_empty", label));
+            send(ctx, ServerLang.tr(source, "message.itemmilestonelog.firsts_history_hint"));
+            return 1;
+        }
+
+        Pagination.PageSlice<HolderEntry> slice = null;
+        List<HolderEntry> displayed;
+        if (page != null) {
+            slice = Pagination.slice(visible, page);
+            if (slice.isOutOfRange()) {
+                return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.page_out_of_range",
+                        page, slice.totalPages()));
+            }
+            displayed = slice.items();
+        } else {
+            displayed = visible.subList(0, Math.min(MilestoneRankings.TOP_LIMIT, visible.size()));
+        }
+
+        source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.firsts_history_header",
+                label, visible.size()), false);
+        // D-150-93: point at the already-implemented race analysis instead of duplicating N95.
+        send(ctx, ServerLang.tr(source, "message.itemmilestonelog.firsts_history_hint"));
+        ZoneId zone = Config.displayTimeZone();
+        int firstRank = page == null ? 1 : (page - 1) * Pagination.DEFAULT_PAGE_SIZE + 1;
+        for (int i = 0; i < displayed.size(); i++) {
+            HolderEntry entry = displayed.get(i);
+            UUID uuid = UUID.fromString(entry.uuid());
+            MilestoneData.PlayerData holder = data.playerOrNull(uuid);
+            WorldFirstNames.Choice choice = WorldFirstNames.choose(uuid, entry.name(),
+                    holder != null, holder != null ? holder.lastKnownName : null);
+            Component name = choice.renamed()
+                    ? ServerLang.tr(source, "message.itemmilestonelog.firsts_name_renamed",
+                            Component.literal(choice.name()), Component.literal(choice.recordedName()))
+                    : Component.literal(choice.name());
+            MilestoneRecord record = new MilestoneRecord(entry.playTicks(),
+                    MilestoneRecord.UNKNOWN_DAY, entry.epochMillis());
+            int rank = firstRank + i;
+            source.sendSuccess(() -> ServerLang.tr(source, "message.itemmilestonelog.firsts_history_entry",
+                    rank, name, Playtime.formatRecordComponent(source, record, zone)), false);
+        }
+        if (slice != null) {
+            String prefix = TargetKey.isTagId(itemId)
+                    ? Pagination.firstsHistoryTagCommandPrefix(itemId.substring(1), count)
+                    : Pagination.firstsHistoryCommandPrefix(itemId, count);
+            sendPageFooter(source, slice, prefix);
         }
         return displayed.size();
     }

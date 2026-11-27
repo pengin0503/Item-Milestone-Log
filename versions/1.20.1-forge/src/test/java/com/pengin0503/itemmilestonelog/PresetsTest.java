@@ -438,6 +438,9 @@ class PresetsTest {
                 "diff", "{ \"items\": [\"minecraft:dirt\"] }",
                 "share", "{ \"items\": [\"minecraft:dirt\"] }",
                 "importcode", "{ \"items\": [\"minecraft:dirt\"] }",
+                "edit", "{ \"items\": [\"minecraft:dirt\"] }",
+                "protect", "{ \"items\": [\"minecraft:dirt\"] }",
+                "unprotect", "{ \"items\": [\"minecraft:dirt\"] }",
                 "way_too_long_preset_id_name_over_32_chars", "{ \"items\": [\"minecraft:dirt\"] }"));
         // Built-in IDs never lose to a datapack file
         files.put("builtin_mod", Map.of("atm_star", "{ \"items\": [\"minecraft:dirt\"] }"));

@@ -150,6 +150,23 @@ public class MilestoneData extends SavedData {
     private static final Codec<WorldFirstEntry> LENIENT_WORLD_FIRST_CODEC = WORLD_FIRST_CODEC.orElse(
             new WorldFirstEntry("", "", -1, MilestoneRecord.UNKNOWN_DAY, MilestoneRecord.UNKNOWN_EPOCH));
 
+    /** F-150-38 (N167): one past world-first holder ({@code uuid, name, playTicks, epochMillis}). */
+    private static final Codec<HolderEntry> HOLDER_ENTRY_CODEC = RecordCodecBuilder.create(instance -> instance.group(
+            Codec.STRING.fieldOf("uuid").forGetter(HolderEntry::uuid),
+            Codec.STRING.optionalFieldOf("name", "").forGetter(HolderEntry::name),
+            Codec.INT.fieldOf("playTicks").forGetter(HolderEntry::playTicks),
+            Codec.LONG.optionalFieldOf("epochMillis", 0L).forGetter(HolderEntry::epochMillis)
+    ).apply(instance, HolderEntry::new));
+
+    /** Lenient per-element wrapper: a malformed holder decodes to INVALID and is skipped by the factory. */
+    private static final Codec<HolderEntry> LENIENT_HOLDER_ENTRY_CODEC =
+            HOLDER_ENTRY_CODEC.orElse(HolderEntry.INVALID);
+
+    /** F-150-38 (N167): emit the optional history map directly, including empty maps. */
+    private static Map<String, List<HolderEntry>> encodeFirstsHolderHistory(MilestoneData data) {
+        return new LinkedHashMap<>(data.firstsHolderHistory);
+    }
+
     /**
      * Decodes both early 1.0.1 worldFirsts (itemId -> entry, count = 1)
      * and quantity worldFirsts (itemId -> { "<count>": entry, ... }).
@@ -422,7 +439,13 @@ public class MilestoneData extends SavedData {
             // F-140-1 (N88): always written; never downgrade a value loaded from a newer release.
             LENIENT_SCHEMA_VERSION_CODEC
                     .optionalFieldOf("schemaVersion", SchemaVersionLogic.ABSENT_SCHEMA_VERSION)
-                    .forGetter(MilestoneData::schemaVersionForSave)
+                    .forGetter(MilestoneData::schemaVersionForSave),
+            // F-150-38 (N167): optional root field; missing = empty map, no schemaVersion bump,
+            // and the export/import JSON and backup formats are left untouched.
+            lenient("firstsHolderHistory",
+                    Codec.unboundedMap(Codec.STRING, Codec.list(LENIENT_HOLDER_ENTRY_CODEC)), Map.of())
+                    .optionalFieldOf("firstsHolderHistory", Map.of())
+                    .forGetter(MilestoneData::encodeFirstsHolderHistory)
     ).apply(instance, MilestoneData::fromCodec));
 
     /**
@@ -491,6 +514,8 @@ public class MilestoneData extends SavedData {
 
     private final Map<UUID, PlayerData> players = new LinkedHashMap<>();
     private final Map<TargetKey, WorldFirstRecord> worldFirsts = new LinkedHashMap<>();
+    /** F-150-38 (N167): past world-first holders per encoded target key, oldest first. */
+    private final Map<String, List<HolderEntry>> firstsHolderHistory = new LinkedHashMap<>();
     /** Epoch millis of the last Discord digest (0 = never initialized/sent, F9). */
     private long lastDigestEpochMillis = 0L;
     /** Schema version retained from the last load; 0 when the field was missing or invalid (F-140-1). */
@@ -650,7 +675,43 @@ public class MilestoneData extends SavedData {
         return true;
     }
 
+    /** F-150-38 (N167): past holders for one encoded target key (oldest first). */
+    public List<HolderEntry> holderHistory(String encodedKey) {
+        List<HolderEntry> stored = firstsHolderHistory.get(encodedKey);
+        return stored == null ? List.of() : Collections.unmodifiableList(stored);
+    }
+
+    /** F-150-38 (N167): the whole optional history map (encoded target key -> oldest-first list). */
+    public Map<String, List<HolderEntry>> firstsHolderHistory() {
+        return Collections.unmodifiableMap(firstsHolderHistory);
+    }
+
+    /**
+     * F-150-38 (N167): appends the outgoing holder when a world first is removed or cleared.
+     * This is the only holder-change path: normal records are first-writer-wins and never
+     * replace the holder (D-150-92 / pitfall 12).
+     */
+    private void appendPastHolder(TargetKey key, WorldFirstRecord outgoing) {
+        if (key == null || outgoing == null) {
+            return;
+        }
+        HolderEntry entry = HolderEntry.of(
+                outgoing.playerUuid().toString(), outgoing.playerName(),
+                outgoing.playTicks(), outgoing.epochMillis());
+        if (!entry.isValid()) {
+            return;
+        }
+        String encodedKey = key.toEncodedString();
+        firstsHolderHistory.put(encodedKey,
+                FirstsHolderHistory.append(firstsHolderHistory.get(encodedKey), entry));
+        setDirty();
+    }
+
     public boolean removeWorldFirst(TargetKey key) {
+        WorldFirstRecord outgoing = worldFirsts.get(key);
+        if (outgoing != null) {
+            appendPastHolder(key, outgoing);
+        }
         if (worldFirsts.remove(key) != null) {
             setDirty();
             return true;
@@ -661,6 +722,9 @@ public class MilestoneData extends SavedData {
     public int clearWorldFirsts() {
         int count = worldFirsts.size();
         if (count > 0) {
+            for (Map.Entry<TargetKey, WorldFirstRecord> e : worldFirsts.entrySet()) {
+                appendPastHolder(e.getKey(), e.getValue());
+            }
             worldFirsts.clear();
             setDirty();
         }
@@ -711,7 +775,8 @@ public class MilestoneData extends SavedData {
     private static MilestoneData fromCodec(Map<String, PlayerData> rawPlayers,
                                            Map<String, Map<String, WorldFirstEntry>> rawFirsts,
                                            long lastDigestEpoch,
-                                           int rawSchemaVersion) {
+                                           int rawSchemaVersion,
+                                           Map<String, List<HolderEntry>> rawHolderHistory) {
         MilestoneData data = new MilestoneData();
         // F-140-1 (N88): missing = legacy data (0); future versions are preserved on save.
         SchemaVersionLogic.LoadResult schemaVersion = SchemaVersionLogic.fromStoredVersion(rawSchemaVersion);
@@ -781,6 +846,40 @@ public class MilestoneData extends SavedData {
                 TargetKey key = new TargetKey(itemId, count);
                 data.worldFirsts.put(key, new WorldFirstRecord(
                         itemId, count, uuid, wf.name(), wf.ticks(), wf.day(), wf.epoch()));
+            }
+        }
+        // F-150-38 (N167): lenient per-element decode. Invalid UUIDs / negative ticks were
+        // mapped to the INVALID sentinel by LENIENT_HOLDER_ENTRY_CODEC and are skipped here so
+        // one bad entry never fails its key or its sibling keys.
+        for (Map.Entry<String, List<HolderEntry>> historyEntry : rawHolderHistory.entrySet()) {
+            String encodedKey = historyEntry.getKey();
+            List<HolderEntry> rawList = historyEntry.getValue();
+            if (rawList == null || TargetKey.tryParseEncoded(encodedKey) == null) {
+                if (rawList != null) {
+                    MilestoneLoadReport.recordElementSkip();
+                    ItemMilestoneLog.LOGGER.warn(
+                            "[ItemMilestoneLog] Skipping invalid firstsHolderHistory key '{}' in SavedData", encodedKey);
+                }
+                continue;
+            }
+            List<HolderEntry> accepted = new ArrayList<>();
+            for (HolderEntry stored : rawList) {
+                HolderEntry entry = stored == null ? HolderEntry.INVALID : HolderEntry.of(
+                        stored.uuid(), stored.name(), stored.playTicks(), stored.epochMillis());
+                if (!entry.isValid()) {
+                    MilestoneLoadReport.recordElementSkip();
+                    ItemMilestoneLog.LOGGER.warn(
+                            "[ItemMilestoneLog] Skipping invalid firstsHolderHistory element for '{}' in SavedData",
+                            encodedKey);
+                    continue;
+                }
+                accepted.add(entry);
+                if (accepted.size() >= FirstsHolderHistory.HISTORY_LIMIT) {
+                    break;
+                }
+            }
+            if (!accepted.isEmpty()) {
+                data.firstsHolderHistory.put(encodedKey, List.copyOf(accepted));
             }
         }
         return data;

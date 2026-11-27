@@ -84,7 +84,8 @@ public final class Presets {
             List<PresetGroup> groups,
             List<String> nextPresets,
             @Nullable Double unlockAfterHours,
-            List<String> problems) {
+            List<String> problems,
+            boolean isProtected) {
 
         public PresetDefinition {
             items = items == null ? List.of() : List.copyOf(items);
@@ -106,7 +107,7 @@ public final class Presets {
                                 List<PresetGroup> groups, List<String> nextPresets,
                                 @Nullable Double unlockAfterHours) {
             this(id, name, items, kind, includes, description, category, order, version, requiredMods,
-                    groups, nextPresets, unlockAfterHours, List.of());
+                    groups, nextPresets, unlockAfterHours, List.of(), false);
         }
 
         /**
@@ -130,7 +131,7 @@ public final class Presets {
         /** Returns a copy of this definition with a different source kind (F21 priority handling). */
         public PresetDefinition withKind(PresetKind newKind) {
             return new PresetDefinition(id, name, items, newKind, includes, description, category, order,
-                    version, requiredMods, groups, nextPresets, unlockAfterHours, problems);
+                    version, requiredMods, groups, nextPresets, unlockAfterHours, problems, isProtected);
         }
 
         /** Returns a copy with the includes-expanded items and validated groups. */
@@ -143,7 +144,7 @@ public final class Presets {
                                                            List<PresetGroup> resolvedGroups,
                                                            List<String> collectedProblems) {
             return new PresetDefinition(id, name, resolvedItems, kind, includes, description, category, order,
-                    version, requiredMods, resolvedGroups, nextPresets, unlockAfterHours, collectedProblems);
+                    version, requiredMods, resolvedGroups, nextPresets, unlockAfterHours, collectedProblems, isProtected);
         }
 
         /**
@@ -185,7 +186,9 @@ public final class Presets {
     private static final Pattern VALID_ID_PATTERN = Pattern.compile("^[a-z0-9_-]{1,32}$");
     /** Command literals under /milestone preset; IDs equal to these could never be applied from chat. */
     private static final Set<String> RESERVED_IDS = Set.of(
-            "list", "save", "delete", "reload", "show", "diff", "share", "importcode");
+            "list", "save", "delete", "reload", "show", "diff", "share", "importcode",
+            // F-150-40 (N178): these are command literals, never preset IDs (D-150-97).
+            "edit", "protect", "unprotect");
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
     /**
@@ -660,9 +663,10 @@ public final class Presets {
             List<String> requiredMods,
             List<PresetGroup> groups,
             List<String> nextPresets,
-            @Nullable Double unlockAfterHours) {
+            @Nullable Double unlockAfterHours,
+            boolean isProtected) {
         private static final ExtraFields EMPTY = new ExtraFields(
-                List.of(), PresetName.absent(), null, 0, null, List.of(), List.of(), List.of(), null);
+                List.of(), PresetName.absent(), null, 0, null, List.of(), List.of(), List.of(), null, false);
     }
 
     /** G2/F54 + F-140-11: everything a rewrite carries over from an existing preset file. */
@@ -874,8 +878,20 @@ public final class Presets {
             }
         }
 
+        // F-150-40 (N178): optional protection flag; a missing or wrong-typed value is leniently
+        // treated as false, matching the existing per-field rules (D-150-96).
+        boolean isProtected = false;
+        if (root.has("protected")) {
+            JsonElement protectedEl = root.get("protected");
+            if (protectedEl.isJsonPrimitive() && protectedEl.getAsJsonPrimitive().isBoolean()) {
+                isProtected = protectedEl.getAsBoolean();
+            } else {
+                problems.warn("Preset file {} has a non-boolean 'protected'; ignoring it", sourceLabel);
+            }
+        }
+
         return new ExtraFields(includes, description, category, order, version, requiredMods, groups,
-                nextPresets, unlockAfterHours);
+                nextPresets, unlockAfterHours, isProtected);
     }
 
     /**
@@ -987,7 +1003,7 @@ public final class Presets {
 
         return new PresetDefinition(id, name, ownItems, kind, extra.includes(), extra.description(),
                 extra.category(), extra.order(), extra.version(), extra.requiredMods(), extra.groups(),
-                extra.nextPresets(), extra.unlockAfterHours(), problems.list());
+                extra.nextPresets(), extra.unlockAfterHours(), problems.list(), extra.isProtected());
     }
 
     /** F-140-5: parses the standard item element format (shared by {@code items} and group items). */
@@ -1074,6 +1090,11 @@ public final class Presets {
         ExistingFields existing = existed
                 ? readExistingFields(target)
                 : new ExistingFields(PresetName.absent(), ExtraFields.EMPTY);
+        // F-150-40 (N178): a protected custom preset refuses every overwrite path (save, edit,
+        // and the GUI save that also funnels through here). D-150-96.
+        if (existing.extra().isProtected()) {
+            throw new IllegalArgumentException("Preset is protected: " + id);
+        }
         PresetName name = existing.name();
         if (!name.present()) {
             name = PresetName.ofPlain(id);
@@ -1105,7 +1126,8 @@ public final class Presets {
         // and groups again for the in-memory table.
         next.put(id, new PresetDefinition(id, name, deduped, PresetKind.FILE,
                 extra.includes(), extra.description(), extra.category(), extra.order(), extra.version(),
-                extra.requiredMods(), groups, extra.nextPresets(), extra.unlockAfterHours()));
+                extra.requiredMods(), groups, extra.nextPresets(), extra.unlockAfterHours(),
+                List.of(), extra.isProtected()));
         filePresets = Collections.unmodifiableMap(new LinkedHashMap<>(next));
         rebuildLoadedPresets();
         return existed;
@@ -1148,7 +1170,8 @@ public final class Presets {
         }
         ExtraFields extra = new ExtraFields(definition.includes(), definition.description(),
                 definition.category(), definition.order(), definition.version(), definition.requiredMods(),
-                definition.groups(), definition.nextPresets(), definition.unlockAfterHours());
+                definition.groups(), definition.nextPresets(), definition.unlockAfterHours(),
+                definition.isProtected());
         // Same re-validation as saveCustomTo so the written file matches the next reload.
         SaveExpansion expansion = expandItemsForSave(id, deduped, extra.includes());
         List<TargetKey> finalItems = expansion.items();
@@ -1167,7 +1190,8 @@ public final class Presets {
         Map<String, PresetDefinition> next = new TreeMap<>(filePresets);
         next.put(id, new PresetDefinition(id, definition.name(), deduped, PresetKind.FILE,
                 extra.includes(), extra.description(), extra.category(), extra.order(), extra.version(),
-                extra.requiredMods(), groups, extra.nextPresets(), extra.unlockAfterHours()));
+                extra.requiredMods(), groups, extra.nextPresets(), extra.unlockAfterHours(),
+                List.of(), extra.isProtected()));
         filePresets = Collections.unmodifiableMap(new LinkedHashMap<>(next));
         rebuildLoadedPresets();
         return false;
@@ -1314,6 +1338,11 @@ public final class Presets {
         if (extra.unlockAfterHours() != null) {
             json.addProperty("unlockAfterHours", extra.unlockAfterHours());
         }
+        // F-150-40 (N178): only a protected preset carries the optional flag. Share codes and
+        // export/import JSON never include it (their formats are unchanged).
+        if (extra.isProtected()) {
+            json.addProperty("protected", true);
+        }
     }
 
     private static JsonArray stringArray(List<String> values) {
@@ -1354,6 +1383,10 @@ public final class Presets {
             return false;
         }
         Path target = dir.resolve(id + ".json");
+        // F-150-40 (N178): a protected custom preset cannot be deleted from chat.
+        if (Files.isRegularFile(target) && readExistingFields(target).extra().isProtected()) {
+            return false;
+        }
         boolean deleted = Files.deleteIfExists(target);
         boolean removedFromMemory = filePresets.containsKey(id);
         if (removedFromMemory) {
@@ -1367,6 +1400,46 @@ public final class Presets {
 
     public static PresetDefinition get(String id) {
         return id != null ? loadedPresets.get(id) : null;
+    }
+
+    /** F-150-40 (N178): protection state of a loaded preset; a missing JSON field means false. */
+    public static boolean isProtected(String id) {
+        PresetDefinition preset = get(id);
+        return preset != null && preset.isProtected();
+    }
+
+    /**
+     * F-150-40 (N178): writes the optional {@code protected} flag of a custom preset file and
+     * refreshes the in-memory table. Built-in / datapack / unknown IDs are left untouched.
+     * Unlike {@link #saveCustomTo}, this path deliberately works on a protected preset so that
+     * {@code unprotect} can release it again.
+     */
+    public static synchronized boolean setProtected(Path dir, String id, boolean value) throws IOException {
+        if (!isValidId(id) || isBuiltin(id) || isDatapack(id)) {
+            return false;
+        }
+        Path target = dir.resolve(id + ".json");
+        PresetDefinition current = filePresets.get(id);
+        if (!Files.isRegularFile(target) || current == null) {
+            return false;
+        }
+        ExistingFields existing = readExistingFields(target);
+        PresetName name = existing.name().present() ? existing.name() : PresetName.ofPlain(id);
+        ExtraFields oldExtra = existing.extra();
+        ExtraFields extra = new ExtraFields(oldExtra.includes(), oldExtra.description(), oldExtra.category(),
+                oldExtra.order(), oldExtra.version(), oldExtra.requiredMods(), oldExtra.groups(),
+                oldExtra.nextPresets(), oldExtra.unlockAfterHours(), value);
+        List<TargetKey> items = current.items();
+        writePresetFile(dir, id, name, extra, oldExtra.groups(), items);
+
+        Map<String, PresetDefinition> next = new TreeMap<>(filePresets);
+        next.put(id, new PresetDefinition(id, name, items, PresetKind.FILE,
+                extra.includes(), extra.description(), extra.category(), extra.order(), extra.version(),
+                extra.requiredMods(), oldExtra.groups(), extra.nextPresets(), extra.unlockAfterHours(),
+                List.of(), value));
+        filePresets = Collections.unmodifiableMap(new LinkedHashMap<>(next));
+        rebuildLoadedPresets();
+        return true;
     }
 
     public static List<PresetDefinition> all() {
