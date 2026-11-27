@@ -2459,6 +2459,28 @@ class MilestoneServiceTest {
     }
 
     @Test
+    void unlockAfterHoursStillAppliesAfterThePlayTimeIntWraps(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("wrapped_unlock.json"), """
+                {
+                  "name": "Wrapped Unlock",
+                  "unlockAfterHours": 1.0,
+                  "items": ["minecraft:gold_ingot"]
+                }
+                """);
+        assertEquals(1, Presets.reloadFrom(dir));
+
+        MilestoneData data = new MilestoneData();
+        data.player(PLAYER_A);
+        Set<String> knownItems = Set.of("minecraft:gold_ingot");
+        // A wrapped vanilla PLAY_TIME reads as a negative int; the threshold must still fire.
+        List<MilestoneService.NextPresetAddition> added = MilestoneService.applyUnlockAfterHours(
+                data, PLAYER_A, -1, knownItems::contains, true, id -> true);
+        assertEquals(1, added.size());
+        assertEquals("wrapped_unlock", added.get(0).preset().id());
+        assertEquals(Set.of(TargetKey.of("minecraft:gold_ingot")), data.playerOrNull(PLAYER_A).targets);
+    }
+
+    @Test
     void unlockAfterHoursSkipsMissingModsWithoutRecordingAndHonorsThePresetSwitch(@TempDir Path dir) throws Exception {
         Files.writeString(dir.resolve("locked_pack.json"), """
                 {

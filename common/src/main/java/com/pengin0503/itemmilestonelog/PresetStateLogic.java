@@ -77,17 +77,18 @@ public final class PresetStateLogic {
     /**
      * F-140-14 threshold check: the player's cumulative playtime has reached
      * {@code unlockAfterHours}. A missing threshold ({@code null}) never unlocks; the boundary is
-     * inclusive ({@code playtime >= threshold}).
+     * inclusive ({@code playtime >= threshold}). {@code Stats.PLAY_TIME} is an {@code int}: after
+     * ~2^31 ticks it wraps negative, so the stat is interpreted as an unsigned 32-bit count to keep
+     * the unlock due across the wrap (until the counter wraps a second time).
      */
     public static boolean isUnlockDue(Double unlockAfterHours, int playTicks) {
         if (unlockAfterHours == null
                 || unlockAfterHours.isNaN()
                 || unlockAfterHours.isInfinite()
-                || unlockAfterHours < 0.0d
-                || playTicks < 0) {
+                || unlockAfterHours < 0.0d) {
             return false;
         }
-        return ticksToHours(playTicks) >= unlockAfterHours;
+        return Integer.toUnsignedLong(playTicks) / (double) TICKS_PER_HOUR >= unlockAfterHours;
     }
 
     /**

@@ -1125,7 +1125,7 @@ public final class MilestoneCommands {
     // ------------------------------------------------- F-150-1 / F-150-2 filtering foundation
 
     /** Parsed (and validated) filter criteria shared by the targets/list handlers. */
-    private record FilterCriteria(List<String> tokens,
+    record FilterCriteria(List<String> tokens,
                                   @Nullable TargetFilterModel.Kind kind,
                                   @Nullable String rawQuery,
                                   @Nullable String kindArg) {
@@ -1147,7 +1147,7 @@ public final class MilestoneCommands {
             }
             StringBuilder suffix = new StringBuilder();
             if (rawQuery != null) {
-                suffix.append("filter \"").append(rawQuery).append('"');
+                suffix.append("filter \"").append(Pagination.escapeQuotedArgument(rawQuery)).append('"');
             }
             if (kindArg != null) {
                 if (suffix.length() > 0) {
@@ -1159,7 +1159,7 @@ public final class MilestoneCommands {
         }
 
         String listSuffix() {
-            return rawQuery == null ? "" : "filter \"" + rawQuery + '"';
+            return rawQuery == null ? "" : "filter \"" + Pagination.escapeQuotedArgument(rawQuery) + '"';
         }
     }
 
@@ -1694,9 +1694,8 @@ public final class MilestoneCommands {
     /** Read-only view of the four existing personal flags; never writes anything. */
     private static int settings(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
         ServerPlayer player = player(ctx);
-        MilestoneData.PlayerData pd = MilestoneData.get(player.level().getServer()).player(player.getUUID());
-        List<CommandAnalysisModel.SettingLine> lines = CommandAnalysisModel.settingsSnapshot(
-                pd.muteBroadcasts, pd.muteProgressAlerts, pd.excludeFromDiscord, pd.hideFromLookup);
+        List<CommandAnalysisModel.SettingLine> lines = settingsLinesFor(
+                MilestoneData.get(player.level().getServer()), player.getUUID());
         ctx.getSource().sendSuccess(() -> ServerLang.tr(player,
                 "message.itemmilestonelog.settings_header"), false);
         for (CommandAnalysisModel.SettingLine line : lines) {
@@ -1707,6 +1706,16 @@ public final class MilestoneCommands {
                     "message.itemmilestonelog.settings_line", Component.literal(line.name()), state), false);
         }
         return lines.size() + 1;
+    }
+
+    /** SF-9: read-only settings view; a data-less player gets all-off defaults and no PlayerData. */
+    static List<CommandAnalysisModel.SettingLine> settingsLinesFor(MilestoneData data, UUID playerId) {
+        MilestoneData.PlayerData pd = data.playerOrNull(playerId);
+        return CommandAnalysisModel.settingsSnapshot(
+                pd != null && pd.muteBroadcasts,
+                pd != null && pd.muteProgressAlerts,
+                pd != null && pd.excludeFromDiscord,
+                pd != null && pd.hideFromLookup);
     }
 
     /** Sets one existing flag through the legacy handlers; an already-equal value is a no-op. */
@@ -1852,6 +1861,56 @@ public final class MilestoneCommands {
 
     // --------------------------------------------------------- PR-1 F-150-36 recap
 
+    /**
+     * SF-9/RB-2: computes the result from existing data only. RETURN uses the pre-login
+     * {@code lastSeen} captured by Tracker, falling back to the stored value when no login was seen
+     * in this JVM. A data-less player never creates or dirties a PlayerData.
+     */
+    static CommandAnalysisModel.RecapResult recapResultFor(MilestoneData data, UUID playerId,
+                                                           CommandAnalysisModel.RecapKind kind,
+                                                           long nowMillis) {
+        MilestoneData.PlayerData pd = data.playerOrNull(playerId);
+        Map<TargetKey, MilestoneRecord> records = pd != null ? pd.records : Map.of();
+        if (kind == CommandAnalysisModel.RecapKind.RETURN) {
+            long since = Tracker.preLoginLastSeen(playerId);
+            if (since <= 0L && pd != null) {
+                since = pd.lastSeen;
+            }
+            LoginWorldFirstSummaryLogic.Selection selection = LoginWorldFirstSummaryLogic.select(
+                    data.worldFirsts(), playerId, since, nowMillis);
+            List<CommandAnalysisModel.ReturnCandidate> candidates = new ArrayList<>();
+            for (WorldFirstRecord worldFirst : selection.entries()) {
+                MilestoneData.PlayerData holder = data.playerOrNull(worldFirst.playerUuid());
+                String name = WorldFirstNames.choose(worldFirst.playerUuid(), worldFirst.playerName(),
+                        holder != null, holder != null ? holder.lastKnownName : null).name();
+                candidates.add(new CommandAnalysisModel.ReturnCandidate(
+                        worldFirst.itemId(), worldFirst.count(), name, worldFirst.epochMillis()));
+            }
+            return CommandAnalysisModel.recapReturn(candidates);
+        }
+        if (kind == CommandAnalysisModel.RecapKind.DAILY) {
+            List<CommandAnalysisModel.RecordValue> values = new ArrayList<>();
+            for (Map.Entry<TargetKey, MilestoneRecord> e : records.entrySet()) {
+                MilestoneRecord r = e.getValue();
+                values.add(new CommandAnalysisModel.RecordValue(e.getKey().itemId(), e.getKey().count(),
+                        r.playTicks(), r.day(), r.epochMillis()));
+            }
+            return CommandAnalysisModel.recapDaily(values, nowMillis);
+        }
+        Set<TargetKey> effective = Tracker.effectiveTargets(pd);
+        int unknown = 0;
+        int stillTracked = 0;
+        for (Map.Entry<TargetKey, MilestoneRecord> e : records.entrySet()) {
+            if (e.getValue().epochMillis() == 0L) {
+                unknown++;
+                if (effective.contains(e.getKey())) {
+                    stillTracked++;
+                }
+            }
+        }
+        return CommandAnalysisModel.recapLegacy(unknown, stillTracked);
+    }
+
     private static int recap(CommandContext<CommandSourceStack> ctx, @Nullable String rawKind)
             throws CommandSyntaxException {
         ServerPlayer player = player(ctx);
@@ -1861,43 +1920,9 @@ public final class MilestoneCommands {
             kind = CommandAnalysisModel.RecapKind.RETURN;
         }
         MilestoneData data = MilestoneData.get(player.level().getServer());
-        MilestoneData.PlayerData pd = data.player(player.getUUID());
         ZoneId zone = Config.displayTimeZone();
-        CommandAnalysisModel.RecapResult result;
-        if (kind == CommandAnalysisModel.RecapKind.RETURN) {
-            LoginWorldFirstSummaryLogic.Selection selection = LoginWorldFirstSummaryLogic.select(
-                    data.worldFirsts(), player.getUUID(), pd.lastSeen, System.currentTimeMillis());
-            List<CommandAnalysisModel.ReturnCandidate> candidates = new ArrayList<>();
-            for (WorldFirstRecord worldFirst : selection.entries()) {
-                MilestoneData.PlayerData holder = data.playerOrNull(worldFirst.playerUuid());
-                String name = WorldFirstNames.choose(worldFirst.playerUuid(), worldFirst.playerName(),
-                        holder != null, holder != null ? holder.lastKnownName : null).name();
-                candidates.add(new CommandAnalysisModel.ReturnCandidate(
-                        worldFirst.itemId(), worldFirst.count(), name, worldFirst.epochMillis()));
-            }
-            result = CommandAnalysisModel.recapReturn(candidates);
-        } else if (kind == CommandAnalysisModel.RecapKind.DAILY) {
-            List<CommandAnalysisModel.RecordValue> values = new ArrayList<>();
-            for (Map.Entry<TargetKey, MilestoneRecord> e : pd.records.entrySet()) {
-                MilestoneRecord r = e.getValue();
-                values.add(new CommandAnalysisModel.RecordValue(e.getKey().itemId(), e.getKey().count(),
-                        r.playTicks(), r.day(), r.epochMillis()));
-            }
-            result = CommandAnalysisModel.recapDaily(values, System.currentTimeMillis());
-        } else {
-            Set<TargetKey> effective = Tracker.effectiveTargets(pd);
-            int unknown = 0;
-            int stillTracked = 0;
-            for (Map.Entry<TargetKey, MilestoneRecord> e : pd.records.entrySet()) {
-                if (e.getValue().epochMillis() == 0L) {
-                    unknown++;
-                    if (effective.contains(e.getKey())) {
-                        stillTracked++;
-                    }
-                }
-            }
-            result = CommandAnalysisModel.recapLegacy(unknown, stillTracked);
-        }
+        CommandAnalysisModel.RecapResult result =
+                recapResultFor(data, player.getUUID(), kind, System.currentTimeMillis());
         final CommandAnalysisModel.RecapKind effectiveKind = kind;
         ctx.getSource().sendSuccess(() -> ServerLang.tr(player,
                 "message.itemmilestonelog.recap_header", effectiveKind.commandValue()), false);
@@ -3528,7 +3553,7 @@ public final class MilestoneCommands {
                 source.sendSuccess(() -> ServerLang.tr(source,
                         "message.itemmilestonelog.whohas_recorded_entry",
                         e.rank(), Component.literal(e.name()),
-                        Playtime.format((int) e.playTicks())), false);
+                        Playtime.format((int) e.playTicks()), e.rank()), false);
             } else {
                 source.sendSuccess(() -> ServerLang.tr(source,
                         "message.itemmilestonelog.whohas_targeting_entry",
@@ -3648,7 +3673,8 @@ public final class MilestoneCommands {
         // 5. Related tag targets, at most 10 rows plus the overflow count.
         ItemInfoLogic.RelatedTags relatedTags = ItemInfoLogic.relatedTagEntries(
                 relatedKeys, records, effectiveTargets, carried, tagIndex, possession);
-        if (!relatedTags.isEmpty()) {
+        // When preview is active the preview block below renders this section with all keys.
+        if (!relatedTags.isEmpty() && !preview) {
             source.sendSuccess(() -> ServerLang.tr(player, "message.itemmilestonelog.info_tag_header"), false);
             lines++;
             for (ItemInfoLogic.TagEntry entry : relatedTags.entries()) {
@@ -3666,22 +3692,13 @@ public final class MilestoneCommands {
         }
         if (preview) {
             Map<TargetKey, ItemInfoLogic.TagEntry> byKey = new HashMap<>();
-            Map<CommandAnalysisModel.TargetRef, CommandAnalysisModel.PreviewState> states = new HashMap<>();
             for (ItemInfoLogic.TagEntry entry : relatedTags.entries()) {
                 byKey.put(entry.key(), entry);
-                String statusKey = switch (entry.status().kind()) {
-                    case RECORDED -> "recorded";
-                    case TARGET -> "target";
-                    case TARGET_PROGRESS -> "target_progress";
-                    case NONE -> "none";
-                };
-                states.put(new CommandAnalysisModel.TargetRef(entry.key().itemId(), entry.key().count()),
-                        new CommandAnalysisModel.PreviewState(statusKey, entry.status().current(),
-                                entry.status().goal(), entry.status().record() != null
-                                ? entry.status().record().playTicks() : 0L));
             }
             List<CommandAnalysisModel.TargetRef> relatedRefs = relatedKeys.stream()
                     .map(k -> new CommandAnalysisModel.TargetRef(k.itemId(), k.count())).toList();
+            Map<CommandAnalysisModel.TargetRef, CommandAnalysisModel.PreviewState> states =
+                    infoPreviewStates(relatedRefs, relatedTags.entries());
             CommandAnalysisModel.PreviewResult result = CommandAnalysisModel.infoPreview(relatedRefs, states);
             source.sendSuccess(() -> ServerLang.tr(player, "message.itemmilestonelog.info_preview_header",
                     result.entries().size() + result.moreCount()), false);
@@ -3703,6 +3720,31 @@ public final class MilestoneCommands {
             }
         }
         return lines;
+    }
+
+    /**
+     * SF-8: preview states for every related key. Untracked keys get a NONE state so they appear in
+     * the preview; displayed entries override the default with their real status by key.
+     */
+    static Map<CommandAnalysisModel.TargetRef, CommandAnalysisModel.PreviewState> infoPreviewStates(
+            List<CommandAnalysisModel.TargetRef> relatedRefs, List<ItemInfoLogic.TagEntry> displayedEntries) {
+        Map<CommandAnalysisModel.TargetRef, CommandAnalysisModel.PreviewState> states = new HashMap<>();
+        for (CommandAnalysisModel.TargetRef ref : relatedRefs) {
+            states.put(ref, new CommandAnalysisModel.PreviewState("none", 0, 0, 0L));
+        }
+        for (ItemInfoLogic.TagEntry entry : displayedEntries) {
+            String statusKey = switch (entry.status().kind()) {
+                case RECORDED -> "recorded";
+                case TARGET -> "target";
+                case TARGET_PROGRESS -> "target_progress";
+                case NONE -> "none";
+            };
+            states.put(new CommandAnalysisModel.TargetRef(entry.key().itemId(), entry.key().count()),
+                    new CommandAnalysisModel.PreviewState(statusKey, entry.status().current(),
+                            entry.status().goal(), entry.status().record() != null
+                            ? entry.status().record().playTicks() : 0L));
+        }
+        return states;
     }
 
     /**

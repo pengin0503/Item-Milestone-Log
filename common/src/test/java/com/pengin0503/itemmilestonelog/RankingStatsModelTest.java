@@ -387,23 +387,19 @@ class RankingStatsModelTest {
     }
 
     @Test
-    void firstsCloseDropsHiddenRunnersNoRunnerKeysAndNegativeGaps() {
+    void firstsCloseUsesEveryProvidedRunnerAndDropsNoRunnerKeysAndNegativeGaps() {
         List<RankingStatsModel.CloseWorldFirst> worldFirsts = List.of(
                 first(1, U1, "Alice", 100),
                 first(2, U2, "Bob", 500));
-        // U6 has a faster key-1 record but is hidden, so the tree never passes it to the model:
-        // neither the chosen runner-up nor the reported gap may leak that record.
-        List<RankingStatsModel.WhoHasPlayer> visiblePlayers = List.of(
+        // U6 has the faster key-1 record. Visibility filtering belongs to the caller, so this case
+        // passes every player through the model (including U6) instead of silently pre-slicing it.
+        List<RankingStatsModel.WhoHasPlayer> players = List.of(
                 visible(U3, "Carol", rec(1, 150, 10), rec(2, 400, 20)),
                 visible(U6, "Aaron", rec(1, 110, 30)));
-        List<RankingStatsModel.CloseEntry> entries =
-                RankingStatsModel.firstsClose(worldFirsts, visiblePlayers.subList(0, 1));
         assertEquals(List.of(new RankingStatsModel.CloseEntry(
-                "minecraft:item_1", 1, "Alice", "Carol", 50L)), entries);
-        // Visibility is the caller's responsibility (as in PR-1/PR-2): only the filtered list
-        // reaches the model, so a hidden player's ticks cannot become a gap baseline.
-        assertEquals(50L, RankingStatsModel.firstsClose(worldFirsts, visiblePlayers.subList(0, 1))
-                .get(0).gapTicks());
+                "minecraft:item_1", 1, "Alice", "Aaron", 10L)),
+                RankingStatsModel.firstsClose(worldFirsts, players));
+        // A key with no runner, and a negative gap, produce no row.
         assertEquals(List.of(), RankingStatsModel.firstsClose(List.of(first(2, U2, "Bob", 500)),
                 List.of(visible(U3, "Carol", rec(2, 400, 20)))));
     }
