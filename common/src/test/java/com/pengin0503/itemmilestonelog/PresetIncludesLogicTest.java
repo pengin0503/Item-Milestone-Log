@@ -338,4 +338,43 @@ class PresetIncludesLogicTest {
         assertTrue(elapsedMillis < 5_000L,
                 () -> "cyclic diamond resolve took " + elapsedMillis + " ms");
     }
+
+    // ---- SF-5: dense strongly connected graphs ----------------------------------------
+
+    @Test
+    void denseFullyConnectedGraphExpandsInBoundedTimeWithTheExactOrderedItems() {
+        int size = 12; // each simple DFS path is a distinct memo key with the old algorithm
+        Map<String, List<TargetKey>> items = new LinkedHashMap<>();
+        Map<String, List<String>> includes = new LinkedHashMap<>();
+        List<String> allIds = new ArrayList<>();
+        for (int i = 0; i < size; i++) {
+            allIds.add("n" + i);
+        }
+        for (int i = 0; i < size; i++) {
+            // Every preset includes itself and every other preset.
+            items.put("n" + i, List.of(key("minecraft:item" + i)));
+            includes.put("n" + i, new ArrayList<>(allIds));
+        }
+
+        long start = System.nanoTime();
+        PresetIncludesLogic.Result result = assertTimeoutPreemptively(Duration.ofSeconds(5),
+                () -> PresetIncludesLogic.resolve(items, includes));
+        long elapsedMillis = (System.nanoTime() - start) / 1_000_000L;
+
+        // Every include that is already being expanded is cut, so each root keeps its own item
+        // once, after all the other items in the post-order of the first DFS that reaches them.
+        for (int root = 0; root < size; root++) {
+            List<TargetKey> expected = new ArrayList<>();
+            for (int i = size - 1; i >= 0; i--) {
+                if (i != root) {
+                    expected.add(key("minecraft:item" + i));
+                }
+            }
+            expected.add(key("minecraft:item" + root));
+            assertEquals(expected, result.items("n" + root), "unexpected items for n" + root);
+            assertEquals(size, result.items("n" + root).size());
+        }
+        assertTrue(elapsedMillis < 5_000L,
+                () -> "dense fully connected resolve took " + elapsedMillis + " ms");
+    }
 }

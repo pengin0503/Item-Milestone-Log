@@ -278,14 +278,70 @@ class MilestoneBackupTest {
         CompoundTag root = data.toSavedDataFileTag();
 
         assertEquals(MilestoneBackupLogic.NO_BACKUP_RECORDED, MilestoneBackup.lastBackupMillis());
-        // The I/O-thread entry point must never mutate the rate-limit timestamp (review 1-1).
+        // SF-7: the I/O-thread entry point must never mutate the rate-limit timestamp (review 1-1).
+        assertTrue(MilestoneBackup.tryBeginAutoBackupForTest(true, false, ts.toEpochMilli()));
         assertTrue(MilestoneBackup.writeBackupSnapshot(backupDir, root, ts, UTC, 5));
         assertEquals(MilestoneBackupLogic.NO_BACKUP_RECORDED, MilestoneBackup.lastBackupMillis());
+        // Publishing a successful result is still not an ownership transfer: the timestamp is
+        // committed only when the server thread settles that result on a later save.
+        MilestoneBackup.publishAutoBackupResultForTest(ts.toEpochMilli(), true);
+        assertEquals(MilestoneBackupLogic.NO_BACKUP_RECORDED, MilestoneBackup.lastBackupMillis());
+        MilestoneBackup.settleAutoBackupResultForTest();
+        assertEquals(ts.toEpochMilli(), MilestoneBackup.lastBackupMillis());
 
-        // The synchronous wrapper owns the timestamp on its caller's (server) thread.
+        // The synchronous wrapper still owns the timestamp on its caller's (server) thread.
+        MilestoneBackup.resetState();
         Instant later = ts.plusSeconds(30);
         assertTrue(MilestoneBackup.writeBackup(backupDir, data, later, UTC, 5));
         assertEquals(later.toEpochMilli(), MilestoneBackup.lastBackupMillis());
+    }
+
+    @Test
+    void failedAutoBackupWriteIsRetriedOnTheNextSave(@TempDir Path tempDir) throws IOException {
+        Path blockedPath = tempDir.resolve("not-a-directory");
+        Files.writeString(blockedPath, "blocker");
+        Path backupDir = tempDir.resolve("backups");
+        MilestoneData data = sampleData();
+        CompoundTag root = data.toSavedDataFileTag();
+        Instant first = ZonedDateTime.of(2026, 11, 24, 11, 15, 30, 0, UTC).toInstant();
+
+        // First save accepts a backup, but the I/O-thread write fails (full/read-only path).
+        assertTrue(MilestoneBackup.tryBeginAutoBackupForTest(true, false, first.toEpochMilli()));
+        assertFalse(MilestoneBackup.writeBackupSnapshot(blockedPath, root, first, UTC, 5));
+        MilestoneBackup.publishAutoBackupResultForTest(first.toEpochMilli(), false);
+        assertEquals(MilestoneBackupLogic.NO_BACKUP_RECORDED, MilestoneBackup.lastBackupMillis());
+
+        // SF-7: a failed write must not consume the hourly rate limit; the very next save re-queues.
+        Instant retry = first.plusSeconds(30);
+        assertTrue(MilestoneBackup.tryBeginAutoBackupForTest(true, false, retry.toEpochMilli()));
+        assertTrue(MilestoneBackup.isAutoBackupInFlightForTest());
+        assertTrue(MilestoneBackup.writeBackupSnapshot(backupDir, root, retry, UTC, 5));
+        MilestoneBackup.publishAutoBackupResultForTest(retry.toEpochMilli(), true);
+        MilestoneBackup.settleAutoBackupResultForTest();
+        assertEquals(retry.toEpochMilli(), MilestoneBackup.lastBackupMillis());
+        assertTrue(Files.isRegularFile(backupDir.resolve("milestones-20261124-111600.dat")));
+    }
+
+    @Test
+    void secondSaveDoesNotQueueAnotherBackupWhileOneIsPending() {
+        Instant first = ZonedDateTime.of(2026, 11, 24, 11, 15, 30, 0, UTC).toInstant();
+        assertTrue(MilestoneBackup.tryBeginAutoBackupForTest(true, false, first.toEpochMilli()));
+        assertTrue(MilestoneBackup.isAutoBackupInFlightForTest());
+        assertEquals(MilestoneBackupLogic.NO_BACKUP_RECORDED, MilestoneBackup.lastBackupMillis());
+
+        // The write is still pending: a later save must not accept a duplicate.
+        assertFalse(MilestoneBackup.tryBeginAutoBackupForTest(
+                true, false, first.plusSeconds(10).toEpochMilli()));
+        assertTrue(MilestoneBackup.isAutoBackupInFlightForTest());
+        assertEquals(MilestoneBackupLogic.NO_BACKUP_RECORDED, MilestoneBackup.lastBackupMillis());
+
+        // Publishing alone does not release the slot; the server-thread settlement does.
+        MilestoneBackup.publishAutoBackupResultForTest(first.toEpochMilli(), true);
+        assertTrue(MilestoneBackup.isAutoBackupInFlightForTest());
+        Instant later = first.plusSeconds(3600);
+        assertTrue(MilestoneBackup.tryBeginAutoBackupForTest(true, false, later.toEpochMilli()));
+        assertEquals(first.toEpochMilli(), MilestoneBackup.lastBackupMillis());
+        assertTrue(MilestoneBackup.isAutoBackupInFlightForTest());
     }
 
     @Test

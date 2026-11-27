@@ -86,6 +86,24 @@ public final class PresetIncludesLogic {
     }
 
     /**
+     * SF-5: diagnostic paths are stack-relative and can be exponential in a strongly connected
+     * component, so their generation is bounded separately from item expansion. Item expansion
+     * itself is iterative and visits each node at most once, so it needs no bound.
+     */
+    private static final int MAX_DIAGNOSTIC_STATES = 4_000;
+    private static final int MAX_DIAGNOSTIC_DEPTH = 4096;
+    /** A bounded diagnostic tree can still describe exponentially many distinct paths. */
+    private static final int MAX_RENDERED_MESSAGES = 2_000;
+    private static final String TRUNCATION_MESSAGE =
+            "preset include diagnostics truncated (state limit)";
+
+    /** Mutable budget for stack-relative diagnostics within one {@link #resolve} call. */
+    private static final class DiagnosticBudget {
+        int states;
+        boolean truncated;
+    }
+
+    /**
      * Expands every preset in {@code rawItemsById}.
      *
      * @param rawItemsById  preset ID to the preset's own (not yet expanded) items; iteration order
@@ -113,7 +131,7 @@ public final class PresetIncludesLogic {
             }
         }
 
-        // #149: a node's expansion only depends on the ancestors it can actually reach. Precompute
+        // #149: a node's diagnostics only depend on the ancestors it can actually reach. Precompute
         // that reachability once so a node whose subtree contains a cycle can still be memoized
         // under the (usually empty) relevant-ancestor key instead of disabling memoization for
         // every ancestor of a diamond with a cycle at the bottom.
@@ -122,10 +140,25 @@ public final class PresetIncludesLogic {
         Map<String, List<TargetKey>> expanded = new LinkedHashMap<>();
         List<DiagnosticRoot> allRoots = new ArrayList<>();
         Map<String, List<String>> problemsByPreset = new LinkedHashMap<>();
+        DiagnosticBudget budget = new DiagnosticBudget();
         for (String id : rawItems.keySet()) {
-            Map<MemoKey, Expansion> memo = new HashMap<>();
-            Expansion root = expandNode(id, rawItems, includes, new LinkedHashSet<>(), memo, reachable);
-            expanded.put(id, root.items());
+            // SF-5: items are a stack-free post-order walk of the include graph; only diagnostics
+            // remain stack-relative, and they are bounded by DiagnosticBudget.
+            List<TargetKey> items = expandItems(id, rawItems, includes);
+            // The budget is per root: a deep but sparse chain visited once per root must not
+            // accumulate toward the dense-graph cap (existing depth-200/256 tests).
+            budget.states = 0;
+            budget.truncated = false;
+            Expansion root = expandDiagnostics(id, rawItems, includes, new LinkedHashSet<>(),
+                    new HashMap<>(), reachable, budget);
+            if (budget.truncated) {
+                List<DiagNode> nodes = new ArrayList<>(root.diagnostics());
+                // Put the notice first: rendering is itself bounded, so a late notice might
+                // never be reached when a dense graph describes many cycle paths.
+                nodes.add(0, new MessageNode(Diagnostic.fixed(TRUNCATION_MESSAGE)));
+                root = Expansion.of(List.copyOf(nodes));
+            }
+            expanded.put(id, items);
             DiagnosticRoot diagnosticRoot = new DiagnosticRoot(root, List.of());
             allRoots.add(diagnosticRoot);
             if (root.hasDiagnostics()) {
@@ -172,9 +205,11 @@ public final class PresetIncludesLogic {
         }
     }
 
-    /** Items of one node plus the stack-relative diagnostics of its subtree. */
-    private record Expansion(List<TargetKey> items, List<DiagNode> diagnostics, boolean hasDiagnostics) {
-        static Expansion of(List<TargetKey> items, List<DiagNode> diagnostics) {
+    /** Stack-relative diagnostic subtree of one node; items are computed by {@link #expandItems}. */
+    private record Expansion(List<DiagNode> diagnostics, boolean hasDiagnostics) {
+        private static final Expansion EMPTY = Expansion.of(List.of());
+
+        static Expansion of(List<DiagNode> diagnostics) {
             boolean present = false;
             for (DiagNode node : diagnostics) {
                 if (node instanceof MessageNode || ((ChildNode) node).child().hasDiagnostics()) {
@@ -182,7 +217,7 @@ public final class PresetIncludesLogic {
                     break;
                 }
             }
-            return new Expansion(items, diagnostics, present);
+            return new Expansion(diagnostics, present);
         }
     }
 
@@ -246,17 +281,88 @@ public final class PresetIncludesLogic {
     private record DiagnosticRoot(Expansion expansion, List<String> callerStack) {
     }
 
+    /** An item-DFS frame: node id, its unique include children, and the next child to visit. */
+    private static final class ItemFrame {
+        final String id;
+        final List<String> children;
+        int next;
+
+        ItemFrame(String id, List<String> children) {
+            this.id = id;
+            this.children = children;
+        }
+    }
+
     /**
-     * Depth-first expansion of one preset. {@code stack} holds the currently expanding IDs so a
-     * repeated ID is a cycle and its branch is cut.
+     * SF-5: stack-free item expansion for one root. The old algorithm emitted a node's own items
+     * when its DFS call completed, cut nodes already on the stack, and de-duplicated by first
+     * occurrence. Marking a node as visited when it is first pushed — whether it is still on the
+     * stack or already completed — produces exactly the same first-occurrence order: a re-visit
+     * can only re-emit items the first visit already emitted. Each node is pushed at most once, so
+     * this is O(V + E), iterative, and completely independent of the DFS stack.
      */
-    private static Expansion expandNode(
+    private static List<TargetKey> expandItems(
+            String root, Map<String, List<TargetKey>> rawItems, Map<String, List<String>> includes) {
+        LinkedHashSet<TargetKey> resolved = new LinkedHashSet<>();
+        Set<String> visited = new HashSet<>();
+        Deque<ItemFrame> stack = new ArrayDeque<>();
+        pushItemFrame(root, includes, visited, stack);
+        while (!stack.isEmpty()) {
+            ItemFrame frame = stack.peek();
+            if (frame.next < frame.children.size()) {
+                String child = frame.children.get(frame.next++);
+                if (!visited.contains(child) && rawItems.containsKey(child)) {
+                    pushItemFrame(child, includes, visited, stack);
+                }
+            } else {
+                for (TargetKey item : rawItems.get(frame.id)) {
+                    if (item != null) {
+                        resolved.add(item);
+                    }
+                }
+                stack.pop();
+            }
+        }
+        return List.copyOf(resolved);
+    }
+
+    private static void pushItemFrame(String id, Map<String, List<String>> includes,
+                                      Set<String> visited, Deque<ItemFrame> stack) {
+        visited.add(id);
+        stack.push(new ItemFrame(id, uniqueChildren(includes.getOrDefault(id, List.of()))));
+    }
+
+    /** Trimmed, non-blank include IDs in declaration order, with repeats removed (#102). */
+    private static List<String> uniqueChildren(List<String> includes) {
+        Set<String> seen = new LinkedHashSet<>();
+        for (String child : includes) {
+            if (child != null && !child.isBlank()) {
+                seen.add(child.trim());
+            }
+        }
+        return List.copyOf(seen);
+    }
+
+    /**
+     * Depth-first generation of stack-relative diagnostics only. The memo key still distinguishes
+     * the ancestors reachable from a node, so a sparse diamond shares one diagnostic tree across
+     * all paths, but the work is bounded by {@link DiagnosticBudget}: in a dense strongly connected
+     * component every node reaches every ancestor, so the old key made one expansion per simple
+     * path (factorial) even though item expansion is linear.
+     */
+    private static Expansion expandDiagnostics(
             String id,
             Map<String, List<TargetKey>> rawItems,
             Map<String, List<String>> includes,
             Set<String> stack,
             Map<MemoKey, Expansion> memo,
-            Map<String, Set<String>> reachable) {
+            Map<String, Set<String>> reachable,
+            DiagnosticBudget budget) {
+        if (stack.size() >= MAX_DIAGNOSTIC_DEPTH || budget.states >= MAX_DIAGNOSTIC_STATES) {
+            budget.truncated = true;
+            return Expansion.EMPTY;
+        }
+
         List<String> ancestors = new ArrayList<>(stack);
         List<String> relevant = new ArrayList<>();
         Set<String> fromHere = reachable.getOrDefault(id, Set.of());
@@ -270,21 +376,19 @@ public final class PresetIncludesLogic {
         if (cached != null) {
             return cached;
         }
+        budget.states++;
 
         if (!rawItems.containsKey(id)) {
-            return Expansion.of(List.of(), List.of(new MessageNode(
+            return Expansion.of(List.of(new MessageNode(
                     Diagnostic.fixed("unknown preset include '" + id + "' (skipped)"))));
         }
         if (stack.contains(id)) {
-            return Expansion.of(List.of(), List.of(new MessageNode(Diagnostic.cycle(id))));
+            return Expansion.of(List.of(new MessageNode(Diagnostic.cycle(id))));
         }
 
         List<String> path = new ArrayList<>(ancestors);
         path.add(id);
-        Set<TargetKey> resolved = new LinkedHashSet<>();
         List<DiagNode> diagnostics = new ArrayList<>();
-        // #102: a repeated include ID adds nothing to the ordered set; expanding it once keeps
-        // item order/dedup identical while making duplicated include lists linear.
         Set<String> seenIncludes = new LinkedHashSet<>();
         for (String rawIncludeId : includes.getOrDefault(id, List.of())) {
             if (rawIncludeId == null || rawIncludeId.isBlank()) {
@@ -296,16 +400,11 @@ public final class PresetIncludesLogic {
             if (!seenIncludes.add(includeId)) {
                 continue;
             }
-            Expansion child = expandNode(includeId, rawItems, includes, stackAsSet(path), memo, reachable);
-            resolved.addAll(child.items());
+            Expansion child = expandDiagnostics(includeId, rawItems, includes, stackAsSet(path),
+                    memo, reachable, budget);
             diagnostics.add(new ChildNode(child, id));
         }
-        for (TargetKey keyItem : rawItems.get(id)) {
-            if (keyItem != null) {
-                resolved.add(keyItem);
-            }
-        }
-        Expansion result = Expansion.of(List.copyOf(resolved), List.copyOf(diagnostics));
+        Expansion result = Expansion.of(List.copyOf(diagnostics));
         memo.put(key, result);
         return result;
     }
@@ -395,12 +494,18 @@ public final class PresetIncludesLogic {
                 private Set<String> seen = new HashSet<>();
                 private String next;
                 private boolean done;
+                private int emitted;
 
                 private void advance() {
                     while (next == null && !done) {
-                        if (current.hasNext()) {
+                        if (emitted >= MAX_RENDERED_MESSAGES) {
+                            // SF-5: a bounded tree can still encode exponentially many paths;
+                            // callers (e.g. Presets.reloadFrom) iterate every warning.
+                            done = true;
+                        } else if (current.hasNext()) {
                             String message = current.next();
                             if (seen.add(message)) {
+                                emitted++;
                                 next = message;
                             }
                         } else if (rootIndex < roots.size()) {

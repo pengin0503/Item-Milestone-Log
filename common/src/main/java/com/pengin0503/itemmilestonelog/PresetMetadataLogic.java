@@ -1,5 +1,6 @@
 package com.pengin0503.itemmilestonelog;
 
+import java.math.BigDecimal;
 import java.util.regex.Pattern;
 
 /**
@@ -85,28 +86,28 @@ public final class PresetMetadataLogic {
         return MOD_ID_PATTERN.matcher(modId).matches();
     }
 
-    /** A plain decimal integer (optional leading {@code -}), or {@code null} when invalid/overflow. */
-    private static Integer parseStrictInt(String raw) {
+    /**
+     * An integral JSON number text (optional leading {@code -}), or {@code null} when invalid,
+     * fractional or out of int range. Draft 2020-12 treats integral decimals and exponents such
+     * as {@code 1.0} and {@code 1e0} as integers, so they are accepted here as well as plain
+     * decimal integers (SF-6). Non-finite values and pathological exponents are rejected.
+     */
+    static Integer parseStrictInt(String raw) {
         if (raw == null) {
             return null;
         }
         String value = raw.trim();
-        if (value.isEmpty()) {
+        if (value.isEmpty() || value.charAt(0) == '+') {
             return null;
-        }
-        int start = value.charAt(0) == '-' ? 1 : 0;
-        if (start == value.length()) {
-            return null;
-        }
-        for (int i = start; i < value.length(); i++) {
-            char c = value.charAt(i);
-            if (c < '0' || c > '9') {
-                return null;
-            }
         }
         try {
-            return Integer.parseInt(value);
-        } catch (NumberFormatException e) {
+            BigDecimal number = new BigDecimal(value);
+            // Bound the scale before intValueExact materializes any large power of ten.
+            if (number.scale() < -10 || number.scale() > 10) {
+                return null;
+            }
+            return number.intValueExact();
+        } catch (NumberFormatException | ArithmeticException e) {
             return null;
         }
     }
