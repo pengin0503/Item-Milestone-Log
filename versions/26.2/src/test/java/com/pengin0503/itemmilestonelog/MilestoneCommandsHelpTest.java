@@ -41,7 +41,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class MilestoneCommandsHelpTest {
     private static final Set<String> ADMIN_ONLY = Set.of(
             "exportall", "exporthtmlall", "exportcsvall", "importall",
-            "admin", "prunedata", "renameitem", "renametag", "discordtest");
+            "admin", "prunedata", "renameitem", "renametag", "discordtest", "doctor");
 
     private static CommandDispatcher<CommandSourceStack> buildDispatcher(Predicate<CommandSourceStack> adminRequirement) {
         CommandDispatcher<CommandSourceStack> dispatcher = new CommandDispatcher<>();
@@ -1055,6 +1055,46 @@ class MilestoneCommandsHelpTest {
         actualHelpKeys.removeAll(auxiliaryHelpKeys);
         assertEquals(expectedHelpKeys, actualHelpKeys,
                 "en_us.json help.* keys must match CommandHelp.ENTRIES plus PR-1 and PR-2 auxiliary keys");
+    }
+
+    @Test
+    void doctorAndAdminDebugAreRegisteredWithStep5Nodes() {
+        CommandDispatcher<CommandSourceStack> regular = buildDispatcher(src -> false);
+        CommandDispatcher<CommandSourceStack> op = buildDispatcher(src -> true);
+        CommandNode<CommandSourceStack> root = op.getRoot().getChild("milestonelog");
+        assertNotNull(root);
+
+        CommandNode<CommandSourceStack> doctor = root.getChild("doctor");
+        assertNotNull(doctor, "doctor must be registered (F-150-52)");
+        assertNotNull(doctor.getCommand(), "doctor executes with no arguments");
+        assertTrue(doctor.getChildren().isEmpty(), "doctor takes no arguments");
+        assertEquals(CommandHelp.Gate.NONE, entryByName("doctor").gate());
+        assertFalse(entryByName("doctor").playerOnly(), "doctor must be console-usable");
+        assertEquals(List.of("/milestonelog doctor"), MilestoneCommands.helpUsages(op, null, entryByName("doctor")));
+        assertFalse(MilestoneCommands.canUseHelpEntry(regular, null, entryByName("doctor")));
+        assertTrue(MilestoneCommands.canUseHelpEntry(op, null, entryByName("doctor")));
+
+        CommandNode<CommandSourceStack> admin = root.getChild("admin");
+        assertNotNull(admin);
+        CommandNode<CommandSourceStack> debug = admin.getChild("debug");
+        assertNotNull(debug, "admin debug must be a sibling of players (F-150-53)");
+        assertNotNull(debug.getCommand(), "admin debug executes with no arguments");
+        assertTrue(debug.getChildren().isEmpty(), "admin debug takes no arguments");
+        assertNotNull(admin.getChild("players"), "admin players must be unchanged");
+        assertNotNull(admin.getChild("player"), "admin <player> argument slot must be unchanged");
+        assertNull(debug.getChild("player"), "admin debug must not steal the <player> slot");
+
+        for (String line : List.of("milestonelog doctor", "milestonelog admin debug")) {
+            ParseResults<CommandSourceStack> parse = op.parse(line, null);
+            assertFalse(parse.getReader().canRead(), "OP must fully parse: " + line);
+            assertTrue(parse.getExceptions().isEmpty(), line + ": " + parse.getExceptions());
+            assertNotNull(parse.getContext().getCommand(), line);
+        }
+        assertTrue(regular.parse("milestonelog doctor", null).getReader().canRead(),
+                "non-admin must not match doctor");
+        assertTrue(regular.parse("milestonelog admin debug", null).getReader().canRead(),
+                "non-admin must not match admin debug");
+        assertNull(root.getChild("debug"), "admin debug must not add a new top-level help entry");
     }
 
     @Test

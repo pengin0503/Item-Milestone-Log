@@ -161,6 +161,9 @@ public final class CommandHelp {
             new Entry("renameitem", false, Gate.NONE),
             new Entry("renametag", false, Gate.NONE),
             new Entry("discordtest", false, Gate.NONE),
+            // PR-2 (F-150-52): standalone read-only diagnostics. `admin debug` is a child of
+            // `admin`, so it deliberately has no separate help entry (spec §1.2 rule 6).
+            new Entry("doctor", false, Gate.NONE),
             new Entry("help", false, Gate.NONE)
     );
 

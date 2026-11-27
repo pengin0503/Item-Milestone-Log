@@ -202,6 +202,14 @@ public final class Tracker {
     /** Tick last observed at Post; enqueues during the following tick inherit its window. Server thread only. */
     private static volatile long lastObservedServerTick = 0L;
 
+    /**
+     * F-150-53 (N147): read-only count of queued notification batches for {@code admin debug}.
+     * Does not copy, clear or otherwise touch the queue, and exposes no player names or UUIDs.
+     */
+    static int pendingNotificationCount() {
+        return PENDING_NOTIFICATIONS.size();
+    }
+
     private Tracker() {
     }
 

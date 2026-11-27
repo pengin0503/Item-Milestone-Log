@@ -15,6 +15,7 @@ import com.mojang.brigadier.tree.CommandNode;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
 import com.pengin0503.itemmilestonelog.api.WorldFirstRecord;
+import net.minecraft.ChatFormatting;
 import net.minecraft.commands.CommandBuildContext;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
@@ -42,6 +43,7 @@ import com.google.gson.JsonParser;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.time.ZoneId;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.ArrayList;
@@ -53,7 +55,9 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.UUID;
+import java.util.stream.Stream;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
@@ -303,6 +307,12 @@ public final class MilestoneCommands {
                 MilestonePermissions.check(src, MilestonePermissions.RENAMEITEM, adminRequirement.test(src));
         Predicate<CommandSourceStack> discordTestRequirement = src ->
                 MilestonePermissions.check(src, MilestonePermissions.DISCORDTEST, adminRequirement.test(src));
+        // PR-2 (F-150-52/53): new step-5 nodes follow spec §1.2 - legacy OR node for players,
+        // legacy only for non-players, through the shared MilestonePermissions.check wrapper.
+        Predicate<CommandSourceStack> doctorRequirement = src ->
+                MilestonePermissions.check(src, MilestonePermissions.DOCTOR, adminRequirement.test(src));
+        Predicate<CommandSourceStack> debugRequirement = src ->
+                MilestonePermissions.check(src, MilestonePermissions.DEBUG, adminRequirement.test(src));
 
         SuggestionProvider<CommandSourceStack> presetSuggestions = (ctx, builder) -> {
             if (!Config.PRESETS_ENABLED.get()) {
@@ -1262,6 +1272,11 @@ public final class MilestoneCommands {
                 .then(literal("pinned").executes(MilestoneCommands::pinned))
                 .then(literal("admin")
                         .requires(adminRequirementWithNode)
+                        // F-150-53: debug is a sibling of players, so the existing <player> argument
+                        // slot is untouched. The child also requires the new debug node (spec §1.2).
+                        .then(literal("debug")
+                                .requires(debugRequirement)
+                                .executes(MilestoneCommands::adminDebug))
                         .then(literal("players")
                                 .executes(ctx -> adminPlayers(ctx, null))
                                 .then(argument("page", IntegerArgumentType.integer(1))
@@ -1360,6 +1375,10 @@ public final class MilestoneCommands {
                                                                 tagArg(ctx), IntegerArgumentType.getInteger(ctx, "count"))))))
                                 .then(literal("resetall").executes(ctx -> adminResetAll(ctx, StringArgumentType.getString(ctx, "player"))))
                                 .then(literal("purge").executes(ctx -> adminPurge(ctx, StringArgumentType.getString(ctx, "player"))))))
+                // F-150-52: standalone read-only diagnostics, usable from console or a player.
+                .then(literal("doctor")
+                        .requires(doctorRequirement)
+                        .executes(MilestoneCommands::doctor))
                 .then(literal("settings")
                         .executes(MilestoneCommands::settings)
                         .then(argument("toggle", StringArgumentType.word())
@@ -1401,6 +1420,190 @@ public final class MilestoneCommands {
                         .then(argument("subcommand", StringArgumentType.word())
                                 .suggests(helpSubcommandSuggestions)
                                 .executes(ctx -> helpCommand(ctx, dispatcher, StringArgumentType.getString(ctx, "subcommand")))));
+    }
+
+    // ---------------------------------------- F-150-52 / F-150-53 diagnostics (PR-2)
+
+    /** F-150-52: one-shot read-only diagnostics; reads SavedData but never saves or creates it. */
+    private static int doctor(CommandContext<CommandSourceStack> ctx) {
+        return sendDoctorLines(ctx.getSource(), collectSnapshot(ctx.getSource().getServer(), false));
+    }
+
+    /** F-150-53: read-only runtime dump; submits nothing to the I/O queue and never dirties data. */
+    private static int adminDebug(CommandContext<CommandSourceStack> ctx) {
+        return sendAdminDebugLines(ctx.getSource(), collectSnapshot(ctx.getSource().getServer(), true));
+    }
+
+    /** Pure read-only count seam pinned by the regression tests (no PlayerData creation). */
+    static DiagnosticsSnapshot.DataCounts dataCountsFor(MilestoneData data) {
+        int players = 0;
+        int records = 0;
+        int targets = 0;
+        int negativeTicks = 0;
+        int unknownEpoch = 0;
+        for (MilestoneData.PlayerData pd : data.allPlayers().values()) {
+            players++;
+            targets += pd.targets.size();
+            records += pd.records.size();
+            for (MilestoneRecord rec : pd.records.values()) {
+                if (rec.playTicks() < 0) {
+                    negativeTicks++;
+                }
+                if (!rec.hasEpoch()) {
+                    unknownEpoch++;
+                }
+            }
+        }
+        return new DiagnosticsSnapshot.DataCounts(data.isEmpty(), players, records, targets,
+                data.worldFirsts().size(), negativeTicks, unknownEpoch);
+    }
+
+    /** Reads every diagnostics source once, without mutation. */
+    static DiagnosticsSnapshot.Snapshot collectSnapshot(MinecraftServer server, boolean includeRuntime) {
+        DiagnosticsSnapshot.DataCounts counts = dataCountsFor(MilestoneData.get(server));
+        DiagnosticsSnapshot.BackupState backup = backupState(server);
+
+        DiscordWebhookUrl.Resolution webhook = DiscordWebhookUrl.resolve(
+                safeString(Config.DISCORD_WEBHOOK_URL::get), System::getenv);
+        long lastDigest = 0L;
+        try {
+            lastDigest = MilestoneData.get(server).lastDigestEpochMillis();
+        } catch (RuntimeException ignored) {
+            // Diagnostics stay available even before the SavedData store is initialised.
+        }
+        DiagnosticsSnapshot.DiscordState discord = new DiagnosticsSnapshot.DiscordState(
+                webhook.status().name(), Config.discordDigestEnabled(),
+                Config.discordDigestIntervalDays(), lastDigest);
+
+        MilestoneIoQueue queue = MilestoneIo.current();
+        Map<MilestoneIoLogic.TaskKind, Integer> byKind = queue != null
+                ? queue.pendingByKindSnapshot() : Map.of();
+        TreeMap<String, Integer> sorted = new TreeMap<>();
+        for (Map.Entry<MilestoneIoLogic.TaskKind, Integer> e : byKind.entrySet()) {
+            sorted.put(e.getKey().name(), e.getValue());
+        }
+        StringBuilder kinds = new StringBuilder();
+        for (Map.Entry<String, Integer> e : sorted.entrySet()) {
+            if (kinds.length() > 0) {
+                kinds.append(',');
+            }
+            kinds.append(e.getKey()).append('=').append(e.getValue());
+        }
+        DiagnosticsSnapshot.IoState io = new DiagnosticsSnapshot.IoState(
+                queue != null, MilestoneIo.isAccepting(),
+                queue != null ? queue.pendingTaskCount() : 0,
+                MilestoneIo.isImportInFlight(),
+                kinds.length() == 0 ? "-" : kinds.toString(),
+                queue != null ? String.join(",", queue.threadNamesNow()) : "");
+
+        DiagnosticsSnapshot.RuntimeState runtimeState = includeRuntime
+                ? new DiagnosticsSnapshot.RuntimeState(
+                        false, 0.0, Thread.currentThread().getName(),
+                        true, Tracker.pendingNotificationCount(),
+                        true, DiscordNotifier.droppedPostCount(),
+                        true, DiscordNotifier.pendingSendCount(),
+                        true, deadWebhookState(),
+                        true, DiscordNotifier.isExecutorAlive(),
+                        Runtime.getRuntime().totalMemory() / (1024L * 1024L),
+                        Runtime.getRuntime().maxMemory() / (1024L * 1024L))
+                : new DiagnosticsSnapshot.RuntimeState(
+                        false, 0.0, Thread.currentThread().getName(),
+                        false, 0, false, 0L, false, 0, false, false, false, false, 0L, 0L);
+
+        return new DiagnosticsSnapshot.Snapshot(
+                server.getWorldData().getLevelName(), server.getPlayerCount(), server.getTickCount(),
+                counts, backup, discord, io, runtimeState);
+    }
+
+    private static DiagnosticsSnapshot.BackupState backupState(MinecraftServer server) {
+        Path dir;
+        try {
+            dir = MilestoneBackup.backupsDir(server);
+        } catch (RuntimeException ignored) {
+            return new DiagnosticsSnapshot.BackupState(false, 0, "none");
+        }
+        if (!Files.isDirectory(dir)) {
+            return new DiagnosticsSnapshot.BackupState(false, 0, "none");
+        }
+        List<String> names = new ArrayList<>();
+        try (Stream<Path> paths = Files.list(dir)) {
+            for (Path path : paths.toList()) {
+                String name = path.getFileName().toString();
+                if (Files.isRegularFile(path) && MilestoneBackupLogic.isBackupFileName(name)) {
+                    names.add(name);
+                }
+            }
+        } catch (IOException ignored) {
+            return new DiagnosticsSnapshot.BackupState(true, names.size(), "none");
+        }
+        ZoneId zone = safeZone();
+        long newest = MilestoneBackupLogic.findNewestBackupTimeMillis(names, zone);
+        String text = newest == MilestoneBackupLogic.NO_BACKUP_RECORDED
+                ? "none" : MilestoneBackupLogic.formatBaseName(Instant.ofEpochMilli(newest), zone);
+        return new DiagnosticsSnapshot.BackupState(true, names.size(), text);
+    }
+
+    private static boolean deadWebhookState() {
+        DiscordWebhookUrl.Resolution main = DiscordWebhookUrl.resolve(
+                safeString(Config.DISCORD_WEBHOOK_URL::get), System::getenv);
+        DiscordWebhookUrl.Resolution worldFirst = DiscordWebhookUrl.resolve(
+                Config.discordWorldFirstWebhookUrl(), System::getenv);
+        return DiscordNotifier.isDeadWebhook(DiscordRouting.Destination.MAIN, main.resolvedUrl())
+                || DiscordNotifier.isDeadWebhook(DiscordRouting.Destination.WORLD_FIRST,
+                        worldFirst.resolvedUrl());
+    }
+
+    private static ZoneId safeZone() {
+        try {
+            return Config.displayTimeZone();
+        } catch (RuntimeException ignored) {
+            return ZoneId.systemDefault();
+        }
+    }
+
+    private static String safeString(Supplier<String> supplier) {
+        try {
+            String value = supplier.get();
+            return value != null ? value : "";
+        } catch (RuntimeException ignored) {
+            return "";
+        }
+    }
+
+    /** Renders a doctor snapshot through the real chat seam used by the render tests. */
+    static int sendDoctorLines(CommandSourceStack source, DiagnosticsSnapshot.Snapshot snapshot) {
+        List<DiagnosticsSnapshot.Line> lines = DiagnosticsSnapshot.doctorLines(snapshot);
+        for (DiagnosticsSnapshot.Line line : lines) {
+            source.sendSuccess(() -> renderLine(source, line), false);
+        }
+        return lines.size();
+    }
+
+    /** Renders an admin debug snapshot through the real chat seam used by the render tests. */
+    static int sendAdminDebugLines(CommandSourceStack source, DiagnosticsSnapshot.Snapshot snapshot) {
+        List<DiagnosticsSnapshot.Line> lines = DiagnosticsSnapshot.adminDebugLines(snapshot);
+        for (DiagnosticsSnapshot.Line line : lines) {
+            source.sendSuccess(() -> renderLine(source, line), false);
+        }
+        return lines.size();
+    }
+
+    private static MutableComponent renderLine(CommandSourceStack source, DiagnosticsSnapshot.Line line) {
+        Object[] args = new Object[line.args().size()];
+        for (int i = 0; i < args.length; i++) {
+            Object arg = line.args().get(i);
+            if (i == 0 && line.translateFirstArg()) {
+                args[i] = ServerLang.tr(source, (String) arg);
+            } else if (arg instanceof Boolean bool) {
+                args[i] = ServerLang.tr(source, bool
+                        ? "message.itemmilestonelog.doctor_yes"
+                        : "message.itemmilestonelog.doctor_no");
+            } else {
+                args[i] = arg;
+            }
+        }
+        MutableComponent component = ServerLang.tr(source, line.key(), args);
+        return line.warning() ? component.withStyle(ChatFormatting.YELLOW) : component;
     }
 
     // ------------------------------------------------------------- helpers
