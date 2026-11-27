@@ -189,6 +189,7 @@
   "message.itemmilestonelog.discordtest_invalid_webhook": "Discord に拒否されました（HTTP %s）。Webhook が削除されたか、URL が誤っている可能性があります。",
   "message.itemmilestonelog.discordtest_network_error": "Discord への通信に失敗しました（%s）。",
   "message.itemmilestonelog.discordtest_not_configured": "Discord の Webhook URL が設定されていません。",
+  "message.itemmilestonelog.discordtest_abandoned": "サーバーまたは Discord 送信機が停止中のため、テスト送信結果は破棄されました。",
   "message.itemmilestonelog.discordtest_rate_limited": "Discord のレート制限に達しました（HTTP 429）。少し待ってから試してください。",
   "message.itemmilestonelog.discordtest_sending": "Discord へテスト送信しています…",
   "message.itemmilestonelog.discordtest_success": "Discord へテスト送信しました（HTTP %s）。",

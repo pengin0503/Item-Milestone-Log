@@ -28,6 +28,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -43,6 +44,14 @@ import java.util.function.IntFunction;
 public final class DiscordNotifier {
     private static final Duration TIMEOUT = Duration.ofSeconds(10);
     private static final int QUEUE_CAPACITY = 100;
+    /**
+     * SF-10: bounded window given to the stop-time flush before {@code shutdownNow}. Keeping this
+     * in seconds preserves the order of magnitude of the old 2 s termination wait.
+     */
+    static final long STOP_DELIVERY_WINDOW_MILLIS = 5_000L;
+
+    /** SF-10: every rejected or discarded post is counted so drops are observable. */
+    private static final AtomicLong DROPPED_POSTS = new AtomicLong();
 
     static final int COLOR_NORMAL = 0x3498DB;
     static final int COLOR_WORLD_FIRST = 0xF1C40F;
@@ -133,10 +142,35 @@ public final class DiscordNotifier {
     private static final DiscordDigestLogic.TickThrottler DIGEST_THROTTLER =
             new DiscordDigestLogic.TickThrottler();
 
-    private static ExecutorService executor;
+    /** Volatile so completion callbacks can check liveness without contending with shutdown(). */
+    private static volatile ExecutorService executor;
     private static HttpClient httpClient;
 
     private DiscordNotifier() {
+    }
+
+    /** SF-10: total posts rejected or discarded since the last test reset. */
+    static long droppedPostCount() {
+        return DROPPED_POSTS.get();
+    }
+
+    static void resetDropCountForTest() {
+        DROPPED_POSTS.set(0);
+    }
+
+    private static void noteDropped(String reason, int count) {
+        if (count <= 0) {
+            return;
+        }
+        long total = DROPPED_POSTS.addAndGet(count);
+        ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Discord dropped {} post(s) ({}; total dropped: {})",
+                count, reason, total);
+    }
+
+    /** MN-3: false once the sender has been shut down (or was never started). */
+    static boolean isExecutorAlive() {
+        ExecutorService exec = executor;
+        return exec != null && !exec.isShutdown() && !exec.isTerminated();
     }
 
     static DestinationState stateFor(DiscordRouting.Destination destination) {
@@ -1249,6 +1283,18 @@ public final class DiscordNotifier {
     public static DiscordTestResult sendTestMessage(
             DiscordRouting.Destination destination,
             Consumer<DiscordTestResult> onComplete) {
+        return sendTestMessage(destination, onComplete, null);
+    }
+
+    /**
+     * MN-3: same as above, but {@code onAbandoned} is invoked when the queued test task is discarded
+     * (executor shut down or queue full) and no completion can ever be delivered.
+     */
+    @Nullable
+    public static DiscordTestResult sendTestMessage(
+            DiscordRouting.Destination destination,
+            Consumer<DiscordTestResult> onComplete,
+            @Nullable Consumer<DiscordTestResult> onAbandoned) {
         String configuredUrl = destination == DiscordRouting.Destination.WORLD_FIRST
                 ? Config.discordWorldFirstWebhookUrl()
                 : Config.DISCORD_WEBHOOK_URL.get();
@@ -1259,7 +1305,8 @@ public final class DiscordNotifier {
                 Config.DISCORD_USE_EMBEDS.get(),
                 Config.DISCORD_LANGUAGE.get(),
                 Instant.now(),
-                onComplete);
+                onComplete,
+                onAbandoned);
     }
 
     @Nullable
@@ -1283,6 +1330,20 @@ public final class DiscordNotifier {
             String language,
             Instant timestamp,
             Consumer<DiscordTestResult> onComplete) {
+        return sendTestMessage(destination, configuredUrl, envLookup, useEmbeds, language, timestamp,
+                onComplete, null);
+    }
+
+    @Nullable
+    static DiscordTestResult sendTestMessage(
+            DiscordRouting.Destination destination,
+            @Nullable String configuredUrl,
+            Function<String, String> envLookup,
+            boolean useEmbeds,
+            String language,
+            Instant timestamp,
+            Consumer<DiscordTestResult> onComplete,
+            @Nullable Consumer<DiscordTestResult> onAbandoned) {
         if (TEST_IN_PROGRESS.get()) {
             return DiscordTestResult.inProgress();
         }
@@ -1298,7 +1359,7 @@ public final class DiscordNotifier {
         try {
             URI uri = resolution.uri();
             String json = buildTestPayloadJson(useEmbeds, language, timestamp);
-            enqueueTestSend(destination, uri, json, onComplete);
+            enqueueTestSend(destination, uri, json, onComplete, onAbandoned);
             handedOff = true;
             return null;
         } finally {
@@ -1359,7 +1420,7 @@ public final class DiscordNotifier {
                 if (result != null && onComplete != null) {
                     onComplete.accept(result);
                 }
-            });
+            }, null);
             try {
                 targetExecutor.execute(task);
             } catch (RuntimeException e) {
@@ -1509,10 +1570,22 @@ public final class DiscordNotifier {
         synchronized (DiscordNotifier.class) {
             ExecutorService exec = ensureExecutor();
             HttpClient client = ensureClient();
-            try {
-                exec.execute(() -> send(client, destination, uri, json));
-            } catch (RejectedExecutionException ignored) {
-            }
+            submitPost(exec, () -> send(client, destination, uri, json));
+        }
+    }
+
+    /** SF-10 test seam: enqueue a no-network post with the same accounting as a real notification. */
+    static void submitPostForTest(Runnable post) {
+        synchronized (DiscordNotifier.class) {
+            submitPost(ensureExecutor(), post);
+        }
+    }
+
+    private static void submitPost(ExecutorService exec, Runnable post) {
+        try {
+            exec.execute(post);
+        } catch (RejectedExecutionException e) {
+            noteDropped("queue rejected a post", 1);
         }
     }
 
@@ -1521,6 +1594,15 @@ public final class DiscordNotifier {
             URI uri,
             String json,
             Consumer<DiscordTestResult> onComplete) {
+        enqueueTestSend(destination, uri, json, onComplete, null);
+    }
+
+    private static void enqueueTestSend(
+            DiscordRouting.Destination destination,
+            URI uri,
+            String json,
+            Consumer<DiscordTestResult> onComplete,
+            @Nullable Consumer<DiscordTestResult> onAbandoned) {
         synchronized (DiscordNotifier.class) {
             ExecutorService exec = ensureExecutor();
             HttpClient client = ensureClient();
@@ -1535,7 +1617,7 @@ public final class DiscordNotifier {
                 if (result != null && onComplete != null) {
                     onComplete.accept(result);
                 }
-            });
+            }, onAbandoned);
             try {
                 exec.execute(task);
             } catch (RuntimeException e) {
@@ -1547,10 +1629,13 @@ public final class DiscordNotifier {
 
     private static final class TestSendTask implements Runnable {
         private final Runnable action;
+        @Nullable
+        private final Consumer<DiscordTestResult> onAbandoned;
         private final AtomicBoolean released = new AtomicBoolean(false);
 
-        private TestSendTask(Runnable action) {
+        private TestSendTask(Runnable action, @Nullable Consumer<DiscordTestResult> onAbandoned) {
             this.action = action;
+            this.onAbandoned = onAbandoned;
         }
 
         @Override
@@ -1563,7 +1648,12 @@ public final class DiscordNotifier {
         }
 
         void cancelDropped() {
-            release();
+            if (released.compareAndSet(false, true)) {
+                TEST_IN_PROGRESS.set(false);
+                if (onAbandoned != null) {
+                    onAbandoned.accept(DiscordTestResult.abandoned());
+                }
+            }
         }
 
         private void release() {
@@ -1724,19 +1814,37 @@ public final class DiscordNotifier {
                     },
                     (r, e) -> {
                         if (e.isShutdown()) {
+                            noteDropped("executor shut down", 1);
                             if (r instanceof TestSendTask testTask) {
                                 testTask.cancelDropped();
                             }
                             return;
                         }
+                        // Bounded queue full: make room by discarding the oldest post, and count
+                        // every post we throw away instead of dropping it silently (SF-10).
                         Runnable dropped = e.getQueue().poll();
                         if (dropped instanceof TestSendTask testTask) {
+                            // Keep the single in-flight discordtest handoff alive; the incoming
+                            // post is the one that gets dropped in this branch. The re-queued test
+                            // task was not discarded, so it must not be counted as a drop.
                             if (!e.getQueue().offer(testTask)) {
+                                noteDropped("queue full, test result discarded", 1);
                                 testTask.cancelDropped();
                             }
+                            noteDropped("queue full, incoming post discarded", 1);
                             return;
                         }
-                        e.execute(r);
+                        if (dropped != null) {
+                            noteDropped("queue full, oldest discarded", 1);
+                        }
+                        try {
+                            e.execute(r);
+                        } catch (RejectedExecutionException rejected) {
+                            noteDropped("queue full, incoming post rejected", 1);
+                            if (r instanceof TestSendTask testTask) {
+                                testTask.cancelDropped();
+                            }
+                        }
                     });
         }
         return executor;
@@ -1752,14 +1860,23 @@ public final class DiscordNotifier {
     }
 
     public static synchronized void shutdown() {
+        shutdown(STOP_DELIVERY_WINDOW_MILLIS);
+    }
+
+    /**
+     * SF-10: gives the stop-time flushed batch a bounded window to actually deliver before the
+     * remaining queued posts are cancelled. The window is finite, so server stop still completes
+     * promptly; every undelivered post is counted and logged.
+     */
+    static synchronized void shutdown(long windowMillis) {
         if (executor != null) {
             executor.shutdown();
             try {
-                if (!executor.awaitTermination(2, TimeUnit.SECONDS)) {
-                    executor.shutdownNow();
+                if (!executor.awaitTermination(Math.max(0L, windowMillis), TimeUnit.MILLISECONDS)) {
+                    discardUndelivered(executor.shutdownNow());
                 }
             } catch (InterruptedException e) {
-                executor.shutdownNow();
+                discardUndelivered(executor.shutdownNow());
                 Thread.currentThread().interrupt();
             }
             executor = null;
@@ -1776,5 +1893,14 @@ public final class DiscordNotifier {
         WORLD_FIRST_STATE.reset();
         TEST_IN_PROGRESS.set(false);
         DIGEST_THROTTLER.reset();
+    }
+
+    private static void discardUndelivered(List<Runnable> undelivered) {
+        noteDropped("server stop, undelivered posts cancelled", undelivered.size());
+        for (Runnable post : undelivered) {
+            if (post instanceof TestSendTask testTask) {
+                testTask.cancelDropped();
+            }
+        }
     }
 }

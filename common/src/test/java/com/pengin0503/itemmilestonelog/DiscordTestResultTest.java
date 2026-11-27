@@ -159,6 +159,18 @@ class DiscordTestResultTest {
         assertEquals("message.itemmilestonelog.discordtest_in_progress", res.messageKey());
     }
 
+    // MN-3: the explicit abandoned outcome must be a failure with no detail or URL/token leak.
+    @Test
+    void abandonedOutcomeHasNoDetailAndIsNotASuccess() {
+        DiscordTestResult res = DiscordTestResult.abandoned();
+        assertEquals(DiscordTestResult.Kind.ABANDONED, res.kind());
+        assertFalse(res.isSuccess());
+        assertFalse(res.hasDetail());
+        assertNull(res.detail());
+        assertEquals("message.itemmilestonelog.discordtest_abandoned", res.messageKey());
+        assertNoUrlLeak(res);
+    }
+
     private static void assertNoUrlLeak(DiscordTestResult result) {
         String rendered = result.toString();
         assertFalse(rendered.contains(SECRET_URL), "must never leak SECRET_URL: " + rendered);

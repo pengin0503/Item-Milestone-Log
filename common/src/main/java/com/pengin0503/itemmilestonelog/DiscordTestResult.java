@@ -22,7 +22,9 @@ public record DiscordTestResult(Kind kind, String detail) {
         INVALID_WEBHOOK("message.itemmilestonelog.discordtest_invalid_webhook", false),
         RATE_LIMITED("message.itemmilestonelog.discordtest_rate_limited", false),
         HTTP_ERROR("message.itemmilestonelog.discordtest_http_error", false),
-        NETWORK_ERROR("message.itemmilestonelog.discordtest_network_error", false);
+        NETWORK_ERROR("message.itemmilestonelog.discordtest_network_error", false),
+        /** MN-3: the result could not be delivered (executor gone / inline shutdown handoff). */
+        ABANDONED("message.itemmilestonelog.discordtest_abandoned", false);
 
         private final String messageKey;
         private final boolean success;
@@ -81,6 +83,15 @@ public record DiscordTestResult(Kind kind, String detail) {
     /** Returns the synchronous result when another {@code discordtest} is already in flight. */
     public static DiscordTestResult inProgress() {
         return new DiscordTestResult(Kind.IN_PROGRESS, null);
+    }
+
+    /**
+     * MN-3: explicit outcome used when a completion cannot be handed to the server thread (the
+     * server or Discord executor is gone, or {@code server.execute} ran inline during shutdown).
+     * Never carries a URL or an exception message.
+     */
+    public static DiscordTestResult abandoned() {
+        return new DiscordTestResult(Kind.ABANDONED, null);
     }
 
     /**

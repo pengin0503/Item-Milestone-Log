@@ -1,5 +1,8 @@
 package com.pengin0503.itemmilestonelog;
 
+import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
+import com.pengin0503.itemmilestonelog.api.TargetKey;
+import com.pengin0503.itemmilestonelog.api.WorldFirstRecord;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
@@ -9,6 +12,11 @@ import javax.annotation.Nullable;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -102,12 +110,15 @@ public final class MilestoneImportAll {
                 job.parseDone.set(true);
             }
             try {
-                scheduler.accept(() -> apply(job));
+                // RB-3: never apply from the I/O thread. server.execute() runs the task inline when
+                // scheduling is disabled during shutdown, so the handed-off runnable refuses to
+                // apply unless it is really executing on the server thread; a refused runnable
+                // leaves the plan parked for applyPendingOnStop.
+                scheduler.accept(serverThreadApply(job));
             } catch (Throwable t) {
-                // server.execute() does not reject during shutdown: BlockableEventLoop runs the
-                // task inline when scheduling is disabled. This catch is only a defensive guard
-                // for unexpected Throwables (e.g. OutOfMemoryError); it must release the in-flight
-                // state without touching the CommandSourceStack from this I/O thread (#107/#133).
+                // Defensive guard for unexpected Throwables (e.g. OutOfMemoryError) while handing
+                // off. It must release the in-flight state without touching the CommandSourceStack
+                // from this I/O thread (#107/#133).
                 releaseFailedHandOff(job, t);
             }
         });
@@ -115,6 +126,33 @@ public final class MilestoneImportAll {
             ACTIVE.compareAndSet(job, null);
         }
         return accepted;
+    }
+
+    /**
+     * RB-3 handoff: the I/O thread may enqueue this runnable, but it must never mutate game state.
+     * {@code MinecraftServer.execute} runs a task inline on the caller thread once scheduling is
+     * disabled during shutdown; in that case the runnable does nothing and the parsed plan stays
+     * parked until the server-thread-only {@link #applyPendingOnStop} picks it up.
+     */
+    private static Runnable serverThreadApply(Job job) {
+        return () -> {
+            if (!isOnServerThread(job)) {
+                ItemMilestoneLog.LOGGER.info(
+                        "[ItemMilestoneLog] importall {} parse finished off the server thread; "
+                                + "deferring the apply to the server stop path",
+                        job.fileName);
+                return;
+            }
+            apply(job);
+        };
+    }
+
+    private static boolean isOnServerThread(Job job) {
+        if (job.applyThreadForTest != null) {
+            return Thread.currentThread() == job.applyThreadForTest;
+        }
+        // Tests without a MinecraftServer use a plain inline scheduler and stay unrestricted.
+        return job.server == null || job.server.isSameThread();
     }
 
     private static void parseJob(Job job) throws IOException {
@@ -164,7 +202,7 @@ public final class MilestoneImportAll {
         return ACTIVE.get();
     }
 
-    /** Applies a fully parsed importall result; safe to call twice. */
+    /** Applies a fully parsed importall result; safe to call twice. Must run on the server thread. */
     private static void apply(Job job) {
         if (!job.applied.compareAndSet(false, true)) {
             return;
@@ -183,10 +221,75 @@ public final class MilestoneImportAll {
                 sendFailure(job, new IllegalStateException("missing importall merge plan"));
                 return;
             }
-            MilestoneData data = MilestoneData.get(job.server);
-            MilestoneExport.ImportAllMergeStats stats = MilestoneExport.applyMergePlan(data, plan);
-            ScoreboardSync.refreshAll(job.server);
-            MilestoneService.syncAllOnlineGuiPlayers(job.server, null);
+            MilestoneData data = job.dataForTest != null
+                    ? job.dataForTest
+                    : MilestoneData.get(job.server);
+            applyResult(job, data, plan);
+        } catch (Throwable t) {
+            // RB-3: Errors (OOM, StackOverflowError, ...) must be logged and surfaced, never
+            // silently swallowed with a half-applied data set. applyResult already rolls back a
+            // failed merge; this covers failures outside that boundary.
+            ItemMilestoneLog.LOGGER.error("[ItemMilestoneLog] Applying importall {} failed", job.fileName, t);
+            sendFailure(job, t);
+        } finally {
+            ACTIVE.compareAndSet(job, null);
+            MilestoneIo.endImport();
+        }
+    }
+
+    @FunctionalInterface
+    interface MergeAction {
+        MilestoneExport.ImportAllMergeStats apply(MilestoneData data, MilestoneExport.MergePlan plan);
+    }
+
+    /** Test seam for the merge step; null in production. */
+    @Nullable
+    static MergeAction mergeActionForTest;
+
+    /**
+     * Merges a parsed plan into the supplied data and reports the outcome. The merge is
+     * transactional: if the merge throws (including an {@link Error}), the pre-import state is
+     * restored before the failure is surfaced, so a final backup cannot persist a half-applied
+     * dataset (RB-3). Server-thread only.
+     */
+    static void applyResult(Job job, MilestoneData data, MilestoneExport.MergePlan plan) {
+        ImportSnapshot snapshot;
+        try {
+            snapshot = new ImportSnapshot(data, plan.players());
+        } catch (Throwable t) {
+            ItemMilestoneLog.LOGGER.error(
+                    "[ItemMilestoneLog] Could not snapshot pre-import state for {}; importall skipped",
+                    job.fileName, t);
+            sendFailure(job, t);
+            return;
+        }
+
+        MilestoneExport.ImportAllMergeStats stats;
+        try {
+            MergeAction action = mergeActionForTest != null
+                    ? mergeActionForTest
+                    : MilestoneExport::applyMergePlan;
+            stats = action.apply(data, plan);
+        } catch (Throwable t) {
+            try {
+                snapshot.restore(data);
+            } catch (Throwable restoreFailure) {
+                ItemMilestoneLog.LOGGER.error(
+                        "[ItemMilestoneLog] Could not fully restore pre-import state for {}",
+                        job.fileName, restoreFailure);
+            }
+            ItemMilestoneLog.LOGGER.error(
+                    "[ItemMilestoneLog] Applying importall {} failed; pre-import data restored",
+                    job.fileName, t);
+            sendFailure(job, t);
+            return;
+        }
+
+        try {
+            if (job.server != null) {
+                ScoreboardSync.refreshAll(job.server);
+                MilestoneService.syncAllOnlineGuiPlayers(job.server, null);
+            }
             ServerPlayer onlineExecutor = resolveOnlineExecutor(job);
             Component done = onlineExecutor != null
                     ? ServerLang.tr(onlineExecutor,
@@ -206,12 +309,67 @@ public final class MilestoneImportAll {
                             stats.updatedWorldFirsts(),
                             stats.skippedEntries());
             sendSuccess(job, onlineExecutor, done);
-        } catch (RuntimeException e) {
-            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Applying importall {} failed", job.fileName, e);
-            sendFailure(job, e);
-        } finally {
-            ACTIVE.compareAndSet(job, null);
-            MilestoneIo.endImport();
+        } catch (Throwable t) {
+            ItemMilestoneLog.LOGGER.error(
+                    "[ItemMilestoneLog] importall {} was applied but its feedback failed",
+                    job.fileName, t);
+            sendFailure(job, t);
+        }
+    }
+
+    /** The mutable pieces of {@link MilestoneData} that an importall merge can touch. */
+    private static final class ImportSnapshot {
+        private final Map<UUID, PlayerSnapshot> players = new LinkedHashMap<>();
+        private final Map<TargetKey, WorldFirstRecord> worldFirsts;
+
+        ImportSnapshot(MilestoneData data, List<MilestoneExport.PlayerMergePlan> plans) {
+            for (MilestoneExport.PlayerMergePlan plan : plans) {
+                UUID uuid = plan.uuid();
+                if (players.containsKey(uuid)) {
+                    continue;
+                }
+                MilestoneData.PlayerData pd = data.playerOrNull(uuid);
+                players.put(uuid, pd == null ? null : new PlayerSnapshot(pd));
+            }
+            worldFirsts = new LinkedHashMap<>(data.worldFirsts());
+        }
+
+        void restore(MilestoneData data) {
+            for (Map.Entry<UUID, PlayerSnapshot> entry : players.entrySet()) {
+                PlayerSnapshot saved = entry.getValue();
+                if (saved == null) {
+                    data.purgePlayer(entry.getKey());
+                } else {
+                    saved.restore(data.player(entry.getKey()));
+                }
+            }
+            // replaceWorldFirsts marks dirty even when the map is identical; an extra save of
+            // unchanged data is preferable to keeping a half-merged world-first set.
+            data.replaceWorldFirsts(worldFirsts);
+        }
+    }
+
+    private static final class PlayerSnapshot {
+        private final String lastKnownName;
+        private final Set<TargetKey> targets;
+        private final Map<TargetKey, MilestoneRecord> records;
+        private final Map<TargetKey, Integer> progressNotified;
+
+        PlayerSnapshot(MilestoneData.PlayerData pd) {
+            lastKnownName = pd.lastKnownName;
+            targets = new LinkedHashSet<>(pd.targets);
+            records = new LinkedHashMap<>(pd.records);
+            progressNotified = new LinkedHashMap<>(pd.progressNotified);
+        }
+
+        void restore(MilestoneData.PlayerData pd) {
+            pd.lastKnownName = lastKnownName;
+            pd.targets.clear();
+            pd.targets.addAll(targets);
+            pd.records.clear();
+            pd.records.putAll(records);
+            pd.progressNotified.clear();
+            pd.progressNotified.putAll(progressNotified);
         }
     }
 
@@ -411,6 +569,12 @@ public final class MilestoneImportAll {
         /** #157 test seam; null in production (the real player list is used there). */
         @Nullable
         java.util.function.Function<UUID, ServerPlayer> onlineLookupForTest;
+        /** RB-3 test seam: the guarded handoff applies only on this thread. Null in production. */
+        @Nullable
+        Thread applyThreadForTest;
+        /** RB-3 test seam: data to merge into instead of {@code MilestoneData.get(server)}. */
+        @Nullable
+        MilestoneData dataForTest;
 
         Job(MinecraftServer server, Path file, String fileName, CommandSourceStack source) {
             this(server, file, fileName, source,
