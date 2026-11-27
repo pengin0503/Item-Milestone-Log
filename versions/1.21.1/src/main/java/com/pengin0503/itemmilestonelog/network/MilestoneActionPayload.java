@@ -22,7 +22,9 @@ public record MilestoneActionPayload(Action action, String argument, int count) 
         RESET_RECORD,
         RESET_ALL,
         SAVE_PRESET,
-        DELETE_PRESET
+        DELETE_PRESET,
+        // F-150-50 (N121): tail-only optional action; old ordinals are unchanged.
+        MUTE_NOTIFICATION_SOUND
     }
 
     public static final Type<MilestoneActionPayload> TYPE = new Type<>(

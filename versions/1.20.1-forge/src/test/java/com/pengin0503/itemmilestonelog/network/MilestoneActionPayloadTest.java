@@ -97,4 +97,35 @@ class MilestoneActionPayloadTest {
             }
         }
     }
+
+    @Test
+    void muteActionIsTailAppendedWithoutReorderingExistingOrdinals() {
+        MilestoneActionPayload.Action[] values = MilestoneActionPayload.Action.values();
+        assertEquals(9, values.length);
+        assertEquals(MilestoneActionPayload.Action.ADD_TARGET, values[0]);
+        assertEquals(MilestoneActionPayload.Action.DELETE_PRESET, values[7]);
+        assertEquals(MilestoneActionPayload.Action.MUTE_NOTIFICATION_SOUND, values[8]);
+        assertEquals(8, MilestoneActionPayload.Action.MUTE_NOTIFICATION_SOUND.ordinal());
+    }
+
+    @Test
+    void oldPayloadBytesStillDecodeAndTheNewTailActionRoundTrips() {
+        FriendlyByteBuf old = new FriendlyByteBuf(Unpooled.buffer());
+        try {
+            old.writeEnum(MilestoneActionPayload.Action.DELETE_PRESET);
+            old.writeUtf("minecraft:diamond");
+            old.writeVarInt(3);
+            assertEquals(new MilestoneActionPayload(
+                    MilestoneActionPayload.Action.DELETE_PRESET, "minecraft:diamond", 3),
+                    MilestoneActionPayload.decode(old));
+            assertEquals(0, old.readableBytes());
+        } finally {
+            old.release();
+        }
+        MilestoneActionPayload mute = new MilestoneActionPayload(
+                MilestoneActionPayload.Action.MUTE_NOTIFICATION_SOUND, "");
+        assertEquals(mute, roundTrip(mute));
+        assertEquals(1, mute.count(), "the optional action needs no new payload fields");
+    }
+
 }

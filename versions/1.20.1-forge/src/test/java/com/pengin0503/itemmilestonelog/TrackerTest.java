@@ -2076,4 +2076,32 @@ class TrackerTest {
             MilestoneCommandRunner.clearPending();
         }
     }
+
+    @Test
+    void soundSinkCapturesResolvedRequestsWithoutAServer() {
+        List<NotificationSoundLogic.SoundRequest> captured = new ArrayList<>();
+        NotificationSoundLogic.SoundRequest request = new NotificationSoundLogic.SoundRequest(
+                UUID.fromString("33333333-3333-3333-3333-333333333333"),
+                NotificationSoundLogic.Event.RECORD,
+                "minecraft:ui.toast.challenge_complete", 50, false);
+        Tracker.setSoundSinkForTests(captured::add);
+        try {
+            Tracker.emitSounds(null, List.of(request));
+            assertEquals(List.of(request), captured);
+            Tracker.emitSounds(null, List.of());
+            assertEquals(1, captured.size(), "an empty plan emits nothing");
+        } finally {
+            Tracker.setSoundSinkForTests(null);
+        }
+    }
+
+
+    @Test
+    void soundPacketVolumeAndPitchKeepVanillaDefaultsAtBoundaryValues() {
+        assertEquals(1.0F, Tracker.soundPacketVolume(100), "default 100 keeps vanilla loudness");
+        assertEquals(0.5F, Tracker.soundPacketVolume(50));
+        assertEquals(0.0F, Tracker.soundPacketVolume(0), "0 sends a volume-0 packet, not a mute");
+        assertEquals(1.0F, Tracker.SOUND_PITCH, "pitch is unchanged from 1.4.0");
+    }
+
 }

@@ -68,6 +68,11 @@ public class MilestoneData extends SavedData {
         /** F-150-44 (N116): personal destination enum name; FOLLOW_SERVER means "use the server default". */
         public String progressAlertDestination = "FOLLOW_SERVER";
 
+        /** F-150-49 (N114): personal 0..100 volume, or -1 to follow the server default. */
+        public int soundVolume = SoundVolumeLogic.FOLLOW_SERVER;
+        /** F-150-50 (N121): suppresses every notification sound packet (not chat/Discord). */
+        public boolean muteNotificationSounds = false;
+
         /** Whether this player hides their records from lookups by non-privileged other players (F14). */
         public boolean isHiddenFromLookup() {
             return hideFromLookup;
@@ -262,7 +267,7 @@ public class MilestoneData extends SavedData {
         return encoded;
     }
 
-    private static final Codec<PlayerData> PLAYER_DATA_CODEC = RecordCodecBuilder.create(instance -> instance.group(
+    private static final Codec<PlayerData> PLAYER_DATA_BASE_CODEC = RecordCodecBuilder.create(instance -> instance.group(
             lenient("targets", Codec.list(LENIENT_STRING_CODEC), List.of())
                     .optionalFieldOf("targets", List.of())
                     .forGetter(MilestoneData::encodeTargets),
@@ -432,6 +437,64 @@ public class MilestoneData extends SavedData {
         pd.progressAlertDestination = NotificationDestinationLogic.parseChoice(storedDestination).name();
         return pd;
     }));
+
+    /**
+     * F-150-49/F-150-50: two optional, lenient player fields added as a thin wrapper instead of
+     * growing {@code RecordCodecBuilder.group} past its 16-field limit. The on-disk shape is still
+     * two plain keys on the player compound, and no schemaVersion change is needed.
+     */
+    private static <T> int readSoundVolume(DynamicOps<T> ops, T input) {
+        DataResult<T> raw = ops.get(input, "soundVolume");
+        if (raw.result().isEmpty()) {
+            return SoundVolumeLogic.FOLLOW_SERVER;
+        }
+        Integer value = raw.flatMap(v -> Codec.INT.parse(ops, v)).result().orElse(null);
+        if (value == null || !SoundVolumeLogic.isStoredPersonal(value)) {
+            MilestoneLoadReport.recordElementSkip();
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed soundVolume in SavedData");
+            return SoundVolumeLogic.FOLLOW_SERVER;
+        }
+        return value;
+    }
+
+    private static <T> boolean readMuteNotificationSounds(DynamicOps<T> ops, T input) {
+        DataResult<T> raw = ops.get(input, "muteNotificationSounds");
+        if (raw.result().isEmpty()) {
+            return false;
+        }
+        Boolean value = raw.flatMap(v -> Codec.BOOL.parse(ops, v)).result().orElse(null);
+        if (value == null) {
+            MilestoneLoadReport.recordElementSkip();
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed muteNotificationSounds in SavedData");
+            return false;
+        }
+        return value;
+    }
+
+    private static final Codec<PlayerData> PLAYER_DATA_CODEC = new Codec<>() {
+        @Override
+        public <T> DataResult<Pair<PlayerData, T>> decode(DynamicOps<T> ops, T input) {
+            return PLAYER_DATA_BASE_CODEC.decode(ops, input).map(decoded -> {
+                PlayerData pd = decoded.getFirst();
+                pd.soundVolume = readSoundVolume(ops, input);
+                pd.muteNotificationSounds = readMuteNotificationSounds(ops, input);
+                return decoded;
+            });
+        }
+
+        @Override
+        public <T> DataResult<T> encode(PlayerData pd, DynamicOps<T> ops, T prefix) {
+            T base = PLAYER_DATA_BASE_CODEC.encode(pd, ops, prefix).result().orElse(prefix);
+            if (SoundVolumeLogic.isStoredPersonal(pd.soundVolume)
+                    && pd.soundVolume != SoundVolumeLogic.FOLLOW_SERVER) {
+                base = ops.set(base, "soundVolume", ops.createInt(pd.soundVolume));
+            }
+            if (pd.muteNotificationSounds) {
+                base = ops.set(base, "muteNotificationSounds", ops.createBoolean(true));
+            }
+            return DataResult.success(base);
+        }
+    };
 
     /**
      * Lenient {@code schemaVersion} decoding (F-140-1): a present but non-numeric value decodes to

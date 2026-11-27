@@ -1372,4 +1372,29 @@ class MilestoneCommandsHelpTest {
         // R2-MN-2(b): the duplicate-section pin is now a rendered-output assertion through
         // MilestoneCommands.sendInfoRelatedTags in the version-local MilestoneCommandRenderTest.
     }
+
+    @Test
+    void soundIsOnePlayerOnlyTopLevelEntryWithVolumeAndMuteBranches() {
+        CommandDispatcher<CommandSourceStack> dispatcher = buildDispatcher(src -> true);
+        CommandNode<CommandSourceStack> root = dispatcher.getRoot().getChild("milestonelog");
+        assertNotNull(root);
+        CommandNode<CommandSourceStack> sound = root.getChild("sound");
+        assertNotNull(sound, "sound must be a top-level subcommand");
+        assertNotNull(sound.getCommand(), "bare sound must query volume and mute");
+        assertNotNull(sound.getChild("volume"));
+        assertNotNull(sound.getChild("volume").getChild("server"));
+        assertNotNull(sound.getChild("mute"));
+        assertNotNull(sound.getChild("mute").getChild("on"));
+        assertNotNull(sound.getChild("mute").getChild("off"));
+        CommandHelp.Entry entry = entryByName("sound");
+        assertTrue(entry.playerOnly());
+        assertEquals(CommandHelp.Gate.NONE, entry.gate());
+        assertEquals("/milestonelog sound", entry.displayCommand());
+        assertEquals(1, CommandHelp.ENTRIES.stream().filter(e -> e.name().equals("sound")).count());
+        MilestoneData data = new MilestoneData();
+        UUID playerId = UUID.fromString("55555555-5555-5555-5555-555555555555");
+        assertEquals(4, MilestoneCommands.settingsLinesFor(data, playerId).size(),
+                "sound must not add a fifth settings toggle");
+    }
+
 }

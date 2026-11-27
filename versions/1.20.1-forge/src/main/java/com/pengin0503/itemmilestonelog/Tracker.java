@@ -62,6 +62,95 @@ import java.util.function.Supplier;
  */
 public final class Tracker {
     private static volatile String lastWarnedSoundId = null;
+
+    /** Test seam: intercepts resolved sound requests instead of sending vanilla packets. */
+    private static volatile Consumer<NotificationSoundLogic.SoundRequest> soundSink = null;
+
+    static void setSoundSinkForTests(@Nullable Consumer<NotificationSoundLogic.SoundRequest> sink) {
+        soundSink = sink;
+    }
+
+    /**
+     * F-150-47/48: builds the one precedence snapshot for a window and resolves every packet.
+     * The actor's single sound plus (opted-in) world-first announcement sounds share this call.
+     */
+    private static List<NotificationSoundLogic.SoundRequest> planSoundsForWindow(
+            MinecraftServer server,
+            MilestoneData data,
+            UUID actorId,
+            boolean hasRecord,
+            boolean hasWorldFirst,
+            boolean hasPresetComplete,
+            boolean hasProgressAlert) {
+        MilestoneData.PlayerData actorPd = data.playerOrNull(actorId);
+        List<UUID> worldFirstRecipients = new ArrayList<>();
+        Set<UUID> mutedBroadcast = new HashSet<>();
+        Set<UUID> mutedSound = new HashSet<>();
+        Map<UUID, Integer> personalVolumes = new HashMap<>();
+        for (ServerPlayer recipient : server.getPlayerList().getPlayers()) {
+            UUID id = recipient.getUUID();
+            MilestoneData.PlayerData pd = data.playerOrNull(id);
+            if (pd != null) {
+                if (pd.muteBroadcasts) {
+                    mutedBroadcast.add(id);
+                }
+                if (pd.muteNotificationSounds) {
+                    mutedSound.add(id);
+                }
+                personalVolumes.put(id, pd.soundVolume);
+            }
+            // Identical filter to sendWorldFirstChannel: everybody, including the actor,
+            // except other players who muted broadcasts.
+            if (id.equals(actorId) || pd == null || !pd.muteBroadcasts) {
+                worldFirstRecipients.add(id);
+            }
+        }
+        return NotificationSoundLogic.plan(new NotificationSoundLogic.SoundContext(
+                actorId,
+                Config.MILESTONE_SOUND_ENABLED.get(),
+                actorPd != null && actorPd.muteNotificationSounds,
+                hasRecord,
+                hasWorldFirst,
+                hasPresetComplete,
+                hasProgressAlert,
+                Config.PROGRESS_ALERTS.get(),
+                actorPd != null && actorPd.muteProgressAlerts,
+                Config.ANNOUNCE_WORLD_FIRST.get(),
+                Config.announceWorldFirstSound(),
+                worldFirstRecipients,
+                mutedBroadcast,
+                mutedSound,
+                personalVolumes,
+                Config.MILESTONE_SOUND.get(),
+                Config.worldFirstSound(),
+                Config.presetCompleteSound(),
+                Config.progressAlertSound(),
+                Config.notificationSoundVolume()));
+    }
+
+    /** Sends (or, under test, captures) every resolved sound request for one window. */
+    static void emitSounds(@Nullable MinecraftServer server,
+                           List<NotificationSoundLogic.SoundRequest> requests) {
+        if (requests == null || requests.isEmpty()) {
+            return;
+        }
+        Consumer<NotificationSoundLogic.SoundRequest> sink = soundSink;
+        if (sink != null) {
+            for (NotificationSoundLogic.SoundRequest request : requests) {
+                sink.accept(request);
+            }
+            return;
+        }
+        if (server == null) {
+            return;
+        }
+        for (NotificationSoundLogic.SoundRequest request : requests) {
+            ServerPlayer recipient = server.getPlayerList().getPlayer(request.recipient());
+            if (recipient != null) {
+                sendSound(recipient, request.soundId(), request.volume());
+            }
+        }
+    }
     private static final Set<String> WARNED_DEFAULT_TARGETS = ConcurrentHashMap.newKeySet();
     /** Immutable snapshot of the config list a parse was derived from and its result; published atomically. */
     private record DefaultTargetsCache(List<? extends String> source, Set<TargetKey> targets) {
@@ -1983,7 +2072,7 @@ public final class Tracker {
             }
             postRecordEvents(player, key, rec, outcome, completedPresets, cause, event -> MinecraftForge.EVENT_BUS.post(event));
         } else {
-            sendImmediateNotifications(server, data, player, key, ticks, worldFirst, rec, zone);
+            sendImmediateNotifications(server, data, player, key, ticks, worldFirst, !completedPresets.isEmpty(), rec, zone);
             for (Presets.PresetDefinition preset : completedPresets) {
                 sendPresetCompletionChat(
                         server,
@@ -2191,6 +2280,7 @@ public final class Tracker {
             TargetKey key,
             int ticks,
             boolean worldFirst,
+            boolean presetComplete,
             MilestoneRecord rec,
             ZoneId zone) {
         Component displayName = MilestoneService.targetDisplayName(key);
@@ -2223,9 +2313,10 @@ public final class Tracker {
                         player.getDisplayName(), displayName, Playtime.formatRecordComponent(recipient, rec, zone)));
             }
         }
-        if (Config.MILESTONE_SOUND_ENABLED.get()) {
-            playMilestoneSound(player);
-        }
+        // N15/N16/N114: one resolved plan covers record, world-first, preset-completion and
+        // progress-alert sounds; the default plan keeps the single legacy record sound.
+        emitSounds(server, planSoundsForWindow(
+                server, data, player.getUUID(), true, worldFirst, presetComplete, false));
     }
 
     private static void flushPendingNotifications(MinecraftServer server, List<PendingNotifications> batch) {
@@ -2313,10 +2404,15 @@ public final class Tracker {
         // 3. World-first announcement to online players
         sendWorldFirstChannel(server, data, pending.playerId, actorDisplayName, plan.worldFirstChat(), zone);
 
-        // Sound: at most once per player per tick (skip if offline)
-        if (onlineActor != null && plan.playSound()) {
-            playMilestoneSound(onlineActor);
-        }
+        // Sound: one per player per window, plus the opt-in world-first announcement sound.
+        // The resolved requests are emitted here (never inside the world-first chat loop) so a
+        // player who does not receive the announcement chat never receives its sound alone.
+        emitSounds(server, planSoundsForWindow(
+                server, data, pending.playerId,
+                !pending.records.isEmpty(),
+                !pending.records.isEmpty() && plan.worldFirstChat().mode() != NotificationGrouping.SendMode.NONE,
+                !pending.presetCompletions.isEmpty(),
+                !pending.progressAlerts.isEmpty()));
 
         // 4. F5 preset completion chat notifications (sent per preset, never grouped)
         if (!pending.presetCompletions.isEmpty()) {
@@ -2514,19 +2610,26 @@ public final class Tracker {
         return list;
     }
 
-    private static void playMilestoneSound(ServerPlayer player) {
-        String soundId = Config.MILESTONE_SOUND.get();
-        ResourceLocation rl = soundId != null ? ResourceLocation.tryParse(soundId) : null;
-        if (rl == null || !BuiltInRegistries.SOUND_EVENT.containsKey(rl)) {
+    /** F-150-49: test seam for the volume embedded in the vanilla sound packet. */
+    static final float SOUND_PITCH = 1.0F;
+
+    static float soundPacketVolume(int volume) {
+        return SoundVolumeLogic.packetVolume(volume);
+    }
+
+    private static void sendSound(ServerPlayer player, String soundId, int volume) {
+        ResourceLocation id = soundId != null ? ResourceLocation.tryParse(soundId) : null;
+        if (id == null || !BuiltInRegistries.SOUND_EVENT.containsKey(id)) {
             if (!Objects.equals(lastWarnedSoundId, soundId)) {
                 lastWarnedSoundId = soundId;
-                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Unknown milestoneSound '{}'; skipping sound", soundId);
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Unknown notification sound '{}'; skipping sound", soundId);
             }
             return;
         }
-        SoundEvent event = McCompat.registries().soundOrNull(rl);
+        SoundEvent event = McCompat.registries().soundOrNull(id);
         if (event != null) {
-            McCompat.player().playNotifySound(player, event, SoundSource.PLAYERS, 1.0F, 1.0F);
+            McCompat.player().playNotifySound(player, event, SoundSource.PLAYERS,
+                    soundPacketVolume(volume), SOUND_PITCH);
         }
     }
 }
