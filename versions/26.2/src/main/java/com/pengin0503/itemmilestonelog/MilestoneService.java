@@ -393,8 +393,10 @@ public final class MilestoneService {
             TargetKey rawKey = !normalizedId.equals(itemId) ? new TargetKey(itemId, count) : null;
             if (pd.targets.remove(key) || (rawKey != null && pd.targets.remove(rawKey))) {
                 pd.progressNotified.remove(key);
+                pd.targetMeta.remove(key.toEncodedString());
                 if (rawKey != null) {
                     pd.progressNotified.remove(rawKey);
+                    pd.targetMeta.remove(rawKey.toEncodedString());
                 }
                 data.setDirty();
                 return new RemoveTargetOutcome(RemoveTargetStatus.REMOVED, key);
@@ -1092,11 +1094,13 @@ public final class MilestoneService {
                     it.remove();
                     removedTargets.add(existing);
                     Integer prev = pd.progressNotified.remove(existing);
+                    pd.targetMeta.remove(existing.toEncodedString());
                     if (prev != null) {
                         removedProgress.put(existing, prev);
                     }
                     if (normExisting != null && !normExisting.equals(existing)) {
                         Integer normPrev = pd.progressNotified.remove(normExisting);
+                        pd.targetMeta.remove(normExisting.toEncodedString());
                         if (normPrev != null) {
                             removedProgress.put(normExisting, normPrev);
                         }
@@ -1143,6 +1147,7 @@ public final class MilestoneService {
         Map<TargetKey, Integer> removedProgress = new LinkedHashMap<>();
         for (TargetKey removed : removedTargets) {
             Integer prev = pd.progressNotified.remove(removed);
+            pd.targetMeta.remove(removed.toEncodedString());
             if (prev != null) {
                 removedProgress.put(removed, prev);
             }
@@ -1517,12 +1522,42 @@ public final class MilestoneService {
         return result;
     }
 
+    /** F-150-25: undo a numbered generation (1 = newest) while keeping plain {@code undo} unchanged. */
+    public static ActionResult undo(ServerPlayer player, int generation) {
+        MinecraftServer server = player.level().getServer();
+        ActionResult result = undo(MilestoneData.get(server), player.getUUID(), player,
+                UNDO_SNAPSHOTS, System.nanoTime(), generation);
+        if (result.success()) {
+            ScoreboardSync.refreshScores(server, player.getUUID());
+            syncPlayerIfOpen(player);
+        }
+        return result;
+    }
+
     static ActionResult undo(MilestoneData data, UUID playerId, @Nullable ServerPlayer player,
                              UndoLogic.Store<TargetKey, MilestoneRecord> undoStore, long nowNanos) {
-        UndoLogic.Snapshot<TargetKey, MilestoneRecord> snapshot = undoStore.peekValid(playerId, nowNanos);
+        return undo(data, playerId, player, undoStore, nowNanos, 1);
+    }
+
+    /**
+     * @param generation 1-based history slot (1 = newest, as in {@code undo list}); generations
+     *                   beyond 1 also invalidate every newer snapshot through {@code Store.consume}.
+     */
+    static ActionResult undo(MilestoneData data, UUID playerId, @Nullable ServerPlayer player,
+                             UndoLogic.Store<TargetKey, MilestoneRecord> undoStore, long nowNanos,
+                             int generation) {
+        UndoLogic.Snapshot<TargetKey, MilestoneRecord> snapshot = generation <= 1
+                ? undoStore.peekValid(playerId, nowNanos)
+                : undoStore.get(playerId, generation, nowNanos);
         if (snapshot == null) {
             return new ActionResult(false, ServerLang.tr(player, "message.itemmilestonelog.undo_nothing"));
         }
+        return applyUndo(data, playerId, player, undoStore, snapshot);
+    }
+
+    private static ActionResult applyUndo(MilestoneData data, UUID playerId, @Nullable ServerPlayer player,
+                                          UndoLogic.Store<TargetKey, MilestoneRecord> undoStore,
+                                          UndoLogic.Snapshot<TargetKey, MilestoneRecord> snapshot) {
         MilestoneData.PlayerData pd = data.player(playerId);
         UndoLogic.Result<TargetKey, MilestoneRecord> restored = UndoLogic.restore(snapshot,
                 pd.records, pd.completedPresets, pd.progressNotified, pd.presetState, pd.targets,

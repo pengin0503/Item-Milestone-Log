@@ -34,6 +34,11 @@ import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.event.RegisterCommandsEvent;
 
 import javax.annotation.Nullable;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -43,6 +48,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -758,7 +764,12 @@ public final class MilestoneCommands {
                                         .executes(ctx -> reset(ctx, ResourceLocationArgument.getId(ctx, "item").toString(),
                                                 IntegerArgumentType.getInteger(ctx, "count"))))))
                 .then(literal("resetall").executes(MilestoneCommands::resetAll))
-                .then(literal("undo").executes(MilestoneCommands::undo))
+                .then(literal("undo")
+                        .executes(MilestoneCommands::undo)
+                        .then(literal("list").executes(MilestoneCommands::undoList))
+                        .then(argument("generation", IntegerArgumentType.integer(1, UndoLogic.UNDO_HISTORY_DEPTH))
+                                .executes(ctx -> undoGeneration(ctx,
+                                        IntegerArgumentType.getInteger(ctx, "generation")))))
                 .then(literal("firsts")
                         .executes(ctx -> firstsList(ctx, null))
                         .then(argument("page", IntegerArgumentType.integer(1))
@@ -843,7 +854,10 @@ public final class MilestoneCommands {
                 .then(literal("import")
                         .then(argument("fileName", StringArgumentType.word())
                                 .suggests(exportFileSuggestions)
-                                .executes(ctx -> importSelf(ctx, StringArgumentType.getString(ctx, "fileName")))))
+                                .executes(ctx -> importSelf(ctx, StringArgumentType.getString(ctx, "fileName"), false))
+                                .then(literal("dryrun")
+                                        .executes(ctx -> importSelf(ctx,
+                                                StringArgumentType.getString(ctx, "fileName"), true)))))
                 .then(literal("exportall")
                         .requires(exportAllRequirement)
                         .executes(MilestoneCommands::exportAll))
@@ -857,7 +871,10 @@ public final class MilestoneCommands {
                         .requires(importAllRequirement)
                         .then(argument("fileName", StringArgumentType.word())
                                 .suggests(exportFileSuggestions)
-                                .executes(ctx -> importAll(ctx, StringArgumentType.getString(ctx, "fileName")))))
+                                .executes(ctx -> importAll(ctx, StringArgumentType.getString(ctx, "fileName"), false))
+                                .then(literal("dryrun")
+                                        .executes(ctx -> importAll(ctx,
+                                                StringArgumentType.getString(ctx, "fileName"), true)))))
                 .then(literal("mutebroadcast").executes(MilestoneCommands::muteBroadcast))
                 .then(literal("muteprogress").executes(MilestoneCommands::muteProgress))
                 .then(literal("discordoptout").executes(MilestoneCommands::discordOptOut))
@@ -1060,6 +1077,73 @@ public final class MilestoneCommands {
                         .then(argument("tags", StringArgumentType.greedyString())
                                 .suggests(renameTagSuggestions)
                                 .executes(MilestoneCommands::renameTag)))
+                // PR-3 write operations: opt-in literals; existing syntax untouched.
+                .then(literal("copytargets")
+                        .requires(MilestoneCommands::canUseRankingsForTree)
+                        .then(argument("player", StringArgumentType.word())
+                                .suggests(lookupPlayerSuggestions)
+                                .executes(ctx -> copyTargets(ctx, StringArgumentType.getString(ctx, "player"), false))
+                                .then(literal("confirm")
+                                        .executes(ctx -> copyTargets(ctx, StringArgumentType.getString(ctx, "player"), true)))))
+                .then(literal("sharetargets")
+                        .then(literal("offer")
+                                .requires(MilestoneCommands::canUseRankingsForTree)
+                                .then(argument("player", StringArgumentType.word())
+                                        .suggests(lookupPlayerSuggestions)
+                                        .executes(ctx -> shareTargetsOffer(ctx, StringArgumentType.getString(ctx, "player")))))
+                        .then(literal("accept")
+                                .then(argument("code", StringArgumentType.string())
+                                        .executes(ctx -> shareTargetsAccept(ctx, StringArgumentType.getString(ctx, "code"), false))
+                                        .then(literal("confirm")
+                                                .executes(ctx -> shareTargetsAccept(ctx,
+                                                        StringArgumentType.getString(ctx, "code"), true)))))
+                        .then(literal("revoke").executes(MilestoneCommands::shareTargetsRevoke)))
+                .then(literal("addsteps")
+                        .then(literal("tag")
+                                .then(argument("tag", tagArgumentType())
+                                        .suggests(allTagSuggestions)
+                                        .then(argument("steps", StringArgumentType.string())
+                                                .executes(ctx -> addSteps(ctx, tagArg(ctx),
+                                                        StringArgumentType.getString(ctx, "steps"), false, false))
+                                                .then(literal("confirm")
+                                                        .executes(ctx -> addSteps(ctx, tagArg(ctx),
+                                                                StringArgumentType.getString(ctx, "steps"), true, false))))))
+                        .then(argument("item", itemResourceLocationArgumentType())
+                                .then(argument("steps", StringArgumentType.string())
+                                        .executes(ctx -> addSteps(ctx, itemIdentifierArg(ctx, "item"),
+                                                StringArgumentType.getString(ctx, "steps"), false, false))
+                                        .then(literal("confirm")
+                                                .executes(ctx -> addSteps(ctx, itemIdentifierArg(ctx, "item"),
+                                                        StringArgumentType.getString(ctx, "steps"), true, false))))))
+                .then(literal("bulk")
+                        .then(literal("preview").executes(MilestoneCommands::bulkPreview))
+                        .then(literal("addsteps")
+                                .then(literal("tag")
+                                        .then(argument("tag", tagArgumentType())
+                                                .suggests(allTagSuggestions)
+                                                .then(argument("steps", StringArgumentType.string())
+                                                        .executes(ctx -> addSteps(ctx, tagArg(ctx),
+                                                                StringArgumentType.getString(ctx, "steps"), false, true))
+                                                        .then(literal("confirm")
+                                                                .executes(ctx -> addSteps(ctx, tagArg(ctx),
+                                                                        StringArgumentType.getString(ctx, "steps"), true, true))))))
+                                .then(argument("item", itemResourceLocationArgumentType())
+                                        .then(argument("steps", StringArgumentType.string())
+                                                .executes(ctx -> addSteps(ctx, itemIdentifierArg(ctx, "item"),
+                                                        StringArgumentType.getString(ctx, "steps"), false, true))
+                                                .then(literal("confirm")
+                                                        .executes(ctx -> addSteps(ctx, itemIdentifierArg(ctx, "item"),
+                                                                StringArgumentType.getString(ctx, "steps"), true, true))))))
+                        .then(literal("expandtag")
+                                .then(argument("tag", tagArgumentType())
+                                        .suggests(allTagSuggestions)
+                                        .executes(ctx -> bulkExpandTag(ctx, tagArg(ctx), false))
+                                        .then(literal("confirm")
+                                                .executes(ctx -> bulkExpandTag(ctx, tagArg(ctx), true)))))
+                        .then(literal("cleanup")
+                                .executes(ctx -> bulkCleanup(ctx, false))
+                                .then(literal("confirm").executes(ctx -> bulkCleanup(ctx, true)))))
+                .then(literal("pinned").executes(MilestoneCommands::pinned))
                 .then(literal("admin")
                         .requires(adminRequirementWithNode)
                         .then(literal("players")
@@ -1100,6 +1184,38 @@ public final class MilestoneCommands {
                                                 .suggests(presetSuggestions)
                                                 .executes(ctx -> adminPreset(ctx, StringArgumentType.getString(ctx, "player"),
                                                         StringArgumentType.getString(ctx, "name")))))
+                                .then(literal("copyfrom")
+                                        .then(argument("source", StringArgumentType.word())
+                                                .suggests(lookupPlayerSuggestions)
+                                                .executes(ctx -> adminCopyFrom(ctx, StringArgumentType.getString(ctx, "player"),
+                                                        StringArgumentType.getString(ctx, "source"), false))
+                                                .then(literal("confirm")
+                                                        .executes(ctx -> adminCopyFrom(ctx, StringArgumentType.getString(ctx, "player"),
+                                                                StringArgumentType.getString(ctx, "source"), true)))))
+                                .then(literal("addtag")
+                                        .then(argument("tag", tagArgumentType())
+                                                .suggests(allTagSuggestions)
+                                                .executes(ctx -> adminAdd(ctx, StringArgumentType.getString(ctx, "player"),
+                                                        tagArg(ctx), TargetKey.MIN_COUNT))
+                                                .then(argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                                        .executes(ctx -> adminAdd(ctx, StringArgumentType.getString(ctx, "player"),
+                                                                tagArg(ctx), IntegerArgumentType.getInteger(ctx, "count"))))))
+                                .then(literal("removetag")
+                                        .then(argument("tag", tagArgumentType())
+                                                .suggests(allTagSuggestions)
+                                                .executes(ctx -> adminRemove(ctx, StringArgumentType.getString(ctx, "player"),
+                                                        tagArg(ctx), TargetKey.MIN_COUNT))
+                                                .then(argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                                        .executes(ctx -> adminRemove(ctx, StringArgumentType.getString(ctx, "player"),
+                                                                tagArg(ctx), IntegerArgumentType.getInteger(ctx, "count"))))))
+                                .then(literal("granttag")
+                                        .then(argument("tag", tagArgumentType())
+                                                .suggests(allTagSuggestions)
+                                                .executes(ctx -> adminGrantTag(ctx, StringArgumentType.getString(ctx, "player"),
+                                                        tagArg(ctx), TargetKey.MIN_COUNT))
+                                                .then(argument("count", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                                        .executes(ctx -> adminGrantTag(ctx, StringArgumentType.getString(ctx, "player"),
+                                                                tagArg(ctx), IntegerArgumentType.getInteger(ctx, "count"))))))
                                 .then(literal("grant")
                                         .then(argument("item", itemArg.get())
                                                 .executes(ctx -> adminGrant(ctx, StringArgumentType.getString(ctx, "player"),
@@ -1377,6 +1493,7 @@ public final class MilestoneCommands {
                 .then(argument("page", IntegerArgumentType.integer(1))
                         .executes(ctx -> targetsNear(ctx, CommandAnalysisModel.DEFAULT_NEAR_THRESHOLD,
                                 IntegerArgumentType.getInteger(ctx, "page")))));
+        node.then(targetMetaNode());
         return node;
     }
 
@@ -3040,7 +3157,7 @@ public final class MilestoneCommands {
         }
     }
 
-    private static int importSelf(CommandContext<CommandSourceStack> ctx, String fileName) throws CommandSyntaxException {
+    private static int importSelf(CommandContext<CommandSourceStack> ctx, String fileName, boolean dryrun) throws CommandSyntaxException {
         ServerPlayer player = player(ctx);
         if (!Config.EXPORT_IMPORT_ENABLED.get()) {
             return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.feature_disabled"));
@@ -3065,6 +3182,29 @@ public final class MilestoneCommands {
                 return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.import_not_owner", fileName));
             }
             MilestoneData data = MilestoneData.get(player.level().getServer());
+            if (dryrun) {
+                MilestoneData.PlayerData pd = data.playerOrNull(player.getUUID());
+                Map<CommandAnalysisModel.TargetRef, Integer> currentRecords = new LinkedHashMap<>();
+                Map<CommandAnalysisModel.TargetRef, Integer> importedRecords = new LinkedHashMap<>();
+                if (pd != null) {
+                    for (Map.Entry<TargetKey, MilestoneRecord> e : pd.records.entrySet()) {
+                        currentRecords.put(new CommandAnalysisModel.TargetRef(e.getKey().itemId(), e.getKey().count()),
+                                e.getValue().playTicks());
+                    }
+                }
+                for (Map.Entry<TargetKey, MilestoneRecord> e : payload.records().entrySet()) {
+                    importedRecords.put(new CommandAnalysisModel.TargetRef(e.getKey().itemId(), e.getKey().count()),
+                            e.getValue().playTicks());
+                }
+                List<CommandAnalysisModel.TargetRef> importedTargets = new ArrayList<>();
+                for (TargetKey key : payload.targets()) {
+                    importedTargets.add(new CommandAnalysisModel.TargetRef(key.itemId(), key.count()));
+                }
+                Set<CommandAnalysisModel.TargetRef> importedFirsts = new LinkedHashSet<>();
+                return sendDryRun(ctx, fileName, CommandAnalysisModel.importPreview(
+                        personalRefs(pd), importedTargets, currentRecords, importedRecords,
+                        Set.of(), importedFirsts, MilestoneService.MAX_PERSONAL_TARGETS));
+            }
             MilestoneExport.ImportMergeStats stats = MilestoneExport.mergeInto(data, player.getUUID(), payload);
             ScoreboardSync.refreshScores(player.level().getServer(), player.getUUID());
             MilestoneService.syncPlayerIfOpen(player);
@@ -3096,7 +3236,10 @@ public final class MilestoneCommands {
         }
     }
 
-    private static int importAll(CommandContext<CommandSourceStack> ctx, String fileName) {
+    private static int importAll(CommandContext<CommandSourceStack> ctx, String fileName, boolean dryrun) {
+        if (dryrun) {
+            return importAllDryRun(ctx, fileName);
+        }
         // F-140-3 (N45): validation and two-stage feedback live in MilestoneImportAll; parsing and
         // merge-plan construction run on the I/O executor, application on the server thread.
         return MilestoneImportAll.run(ctx.getSource(), fileName);
@@ -5074,5 +5217,660 @@ public final class MilestoneCommands {
         }
         return renderAndPage(ctx, lines, page, Pagination.presetmatrixCommandPrefix(),
                 result.moreCount(), "message.itemmilestonelog.presetmatrix_more").size();
+    }
+
+    // ---------------------------------------- PR-3: write operations (9 items)
+
+    /** Offered share codes live in memory only (D-150-90); a server restart clears them. */
+    private static final Map<UUID, String> PENDING_SHARE_CODES = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final String TARGET_SHARE_ID = "targetshare";
+
+    private static List<CommandAnalysisModel.TargetRef> personalRefs(@Nullable MilestoneData.PlayerData pd) {
+        List<CommandAnalysisModel.TargetRef> refs = new ArrayList<>();
+        if (pd != null) {
+            for (TargetKey key : pd.targets) {
+                refs.add(new CommandAnalysisModel.TargetRef(key.itemId(), key.count()));
+            }
+        }
+        return refs;
+    }
+
+    /** Narrow overflow count (already-present keys are not counted as target-limit skips). */
+    private static int copyLimitSkipped(Collection<CommandAnalysisModel.TargetRef> source,
+                                        @Nullable MilestoneData.PlayerData mine) {
+        Set<String> existing = new LinkedHashSet<>();
+        if (mine != null) {
+            for (TargetKey key : mine.targets) {
+                existing.add(key.toEncodedString());
+            }
+        }
+        int capacity = Math.max(0, MilestoneService.MAX_PERSONAL_TARGETS
+                - (mine != null ? mine.targets.size() : 0));
+        Set<String> seen = new LinkedHashSet<>();
+        int skipped = 0;
+        for (CommandAnalysisModel.TargetRef ref : source) {
+            if (ref == null) {
+                continue;
+            }
+            TargetKey key = TargetKey.normalize(ref.itemId(), ref.count());
+            if (key == null || existing.contains(key.toEncodedString()) || !seen.add(key.toEncodedString())) {
+                continue;
+            }
+            if (seen.size() > capacity) {
+                skipped++;
+            }
+        }
+        return skipped;
+    }
+
+    /** F-150-13: copy another player's PERSONAL targets only; two-step, no undo, target may be offline. */
+    private static int copyTargets(CommandContext<CommandSourceStack> ctx, String query, boolean confirm)
+            throws CommandSyntaxException {
+        ServerPlayer me = player(ctx);
+        CommandSourceStack source = ctx.getSource();
+        if (!canUseRankings(source)) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.feature_disabled"));
+        }
+        Map.Entry<UUID, MilestoneData.PlayerData> other = resolveOrReport(source, query);
+        if (other == null) {
+            return 0;
+        }
+        String otherName = displayNameFor(other.getKey(), other.getValue());
+        if (!canViewHidden(source) && other.getValue().isHiddenFromLookup()) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.lookup_hidden",
+                    Component.literal(otherName)));
+        }
+        MilestoneData.PlayerData mine = dataOrNull(me);
+        List<CommandAnalysisModel.TargetRef> sourceKeys = personalRefs(other.getValue());
+        CommandAnalysisModel.CopyPlan plan = CommandAnalysisModel.copyTargets(
+                personalRefs(mine), sourceKeys, MilestoneService.MAX_PERSONAL_TARGETS);
+        int skipped = copyLimitSkipped(sourceKeys, mine);
+        if (!confirm) {
+            send(ctx, ServerLang.tr(source, "message.itemmilestonelog.copytargets_preview",
+                    plan.copied(), Component.literal(otherName)));
+            if (skipped > 0) {
+                send(ctx, ServerLang.tr(source, "message.itemmilestonelog.copytargets_skipped", skipped));
+            }
+            return 1;
+        }
+        int applied = 0;
+        for (CommandAnalysisModel.TargetRef ref : plan.missing()) {
+            if (MilestoneService.addTarget(me, ref.itemId(), ref.count()).success()) {
+                applied++;
+            }
+        }
+        send(ctx, ServerLang.tr(source, "message.itemmilestonelog.copytargets_done",
+                applied, Component.literal(otherName)));
+        if (skipped > 0) {
+            send(ctx, ServerLang.tr(source, "message.itemmilestonelog.copytargets_skipped", skipped));
+        }
+        return applied;
+    }
+
+    /** F-150-14: admin copies one player's targets to another, reusing the N08 model (no new node). */
+    private static int adminCopyFrom(CommandContext<CommandSourceStack> ctx, String targetQuery,
+                                     String sourceQuery, boolean confirm) {
+        CommandSourceStack source = ctx.getSource();
+        Map.Entry<UUID, MilestoneData.PlayerData> target = resolveOrReport(source, targetQuery);
+        if (target == null) {
+            return 0;
+        }
+        Map.Entry<UUID, MilestoneData.PlayerData> from = resolveOrReport(source, sourceQuery);
+        if (from == null) {
+            return 0;
+        }
+        String targetName = displayNameFor(target.getKey(), target.getValue());
+        String fromName = displayNameFor(from.getKey(), from.getValue());
+        List<CommandAnalysisModel.TargetRef> sourceKeys = personalRefs(from.getValue());
+        CommandAnalysisModel.CopyPlan plan = CommandAnalysisModel.copyTargets(
+                personalRefs(target.getValue()), sourceKeys, MilestoneService.MAX_PERSONAL_TARGETS);
+        int skipped = copyLimitSkipped(sourceKeys, target.getValue());
+        if (!confirm) {
+            send(ctx, ServerLang.tr(source, "message.itemmilestonelog.admin_copyfrom_preview",
+                    plan.copied(), Component.literal(fromName), Component.literal(targetName)));
+            if (skipped > 0) {
+                send(ctx, ServerLang.tr(source, "message.itemmilestonelog.copytargets_skipped", skipped));
+            }
+            return 1;
+        }
+        int applied = 0;
+        for (CommandAnalysisModel.TargetRef ref : plan.missing()) {
+            if (MilestoneService.adminAddTarget(source.getServer(), source, target.getKey(), targetName,
+                    ref.itemId(), ref.count()).success()) {
+                applied++;
+            }
+        }
+        send(ctx, ServerLang.tr(source, "message.itemmilestonelog.admin_copyfrom_done",
+                applied, Component.literal(fromName), Component.literal(targetName)));
+        if (skipped > 0) {
+            send(ctx, ServerLang.tr(source, "message.itemmilestonelog.copytargets_skipped", skipped));
+        }
+        return applied;
+    }
+
+    /** F-150-37: reuse the preset-share code format for a one-off personal target list. */
+    private static int shareTargetsOffer(CommandContext<CommandSourceStack> ctx, String query)
+            throws CommandSyntaxException {
+        ServerPlayer me = player(ctx);
+        CommandSourceStack source = ctx.getSource();
+        if (!canUseRankings(source)) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.feature_disabled"));
+        }
+        Map.Entry<UUID, MilestoneData.PlayerData> other = resolveOrReport(source, query);
+        if (other == null) {
+            return 0;
+        }
+        String otherName = displayNameFor(other.getKey(), other.getValue());
+        if (!canViewHidden(source) && other.getValue().isHiddenFromLookup()) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.lookup_hidden",
+                    Component.literal(otherName)));
+        }
+        List<TargetKey> items = new ArrayList<>(other.getValue().targets);
+        if (items.isEmpty() || items.size() > PresetShareLogic.MAX_ITEMS) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.sharetargets_invalid"));
+        }
+        String code = PresetShareLogic.encode(new PresetShareLogic.ShareData(
+                TARGET_SHARE_ID, PresetName.absent(), items, PresetName.absent(),
+                null, 0, null, List.of(), List.of(), List.of(), null));
+        if (code.length() > PresetShareLogic.MAX_CODE_CHARS) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.sharetargets_invalid"));
+        }
+        PENDING_SHARE_CODES.put(me.getUUID(), code);
+        MutableComponent message = ServerLang.tr(source, "message.itemmilestonelog.sharetargets_offer",
+                Component.literal(otherName), Component.literal(code).withStyle(style -> style
+                        .withUnderlined(true).withClickEvent(copyToClipboardEvent(code))));
+        return send(ctx, message);
+    }
+
+    /** Decodes only {@code targetshare} codes; item entries use the preset-share JSON shape. */
+    private static List<CommandAnalysisModel.TargetRef> decodeSharedTargets(String json) {
+        List<CommandAnalysisModel.TargetRef> refs = new ArrayList<>();
+        JsonArray items = JsonParser.parseString(json).getAsJsonObject().getAsJsonArray("items");
+        if (items == null) {
+            return refs;
+        }
+        for (JsonElement element : items) {
+            TargetKey key = null;
+            if (element.isJsonPrimitive() && element.getAsJsonPrimitive().isString()) {
+                key = TargetKey.tryParseEncoded(element.getAsString());
+            } else if (element.isJsonObject()) {
+                JsonObject object = element.getAsJsonObject();
+                JsonElement id = object.get("item");
+                if (id != null && id.isJsonPrimitive()) {
+                    JsonElement count = object.get("count");
+                    int n = count != null && count.isJsonPrimitive() ? count.getAsInt() : TargetKey.MIN_COUNT;
+                    key = TargetKey.normalize(id.getAsString(), n);
+                }
+            }
+            if (key != null) {
+                refs.add(new CommandAnalysisModel.TargetRef(key.itemId(), key.count()));
+            }
+        }
+        return refs;
+    }
+
+    /** F-150-37: accept applies the same N08 set math, with the same two-step confirm. */
+    private static int shareTargetsAccept(CommandContext<CommandSourceStack> ctx, String rawCode, boolean confirm)
+            throws CommandSyntaxException {
+        ServerPlayer me = player(ctx);
+        CommandSourceStack source = ctx.getSource();
+        PresetShareLogic.Decoded decoded = PresetShareLogic.decode(rawCode != null ? rawCode.trim() : null, null);
+        if (decoded.status() != PresetShareLogic.Status.OK || !TARGET_SHARE_ID.equals(decoded.id())
+                || decoded.json() == null) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.sharetargets_invalid"));
+        }
+        List<CommandAnalysisModel.TargetRef> shared = decodeSharedTargets(decoded.json());
+        MilestoneData.PlayerData mine = dataOrNull(me);
+        CommandAnalysisModel.CopyPlan plan = CommandAnalysisModel.sharePlan(
+                personalRefs(mine), shared, MilestoneService.MAX_PERSONAL_TARGETS);
+        if (!confirm) {
+            send(ctx, ServerLang.tr(source, "message.itemmilestonelog.copytargets_preview",
+                    plan.copied(), Component.literal(TARGET_SHARE_ID)));
+            return 1;
+        }
+        int applied = 0;
+        for (CommandAnalysisModel.TargetRef ref : plan.missing()) {
+            if (MilestoneService.addTarget(me, ref.itemId(), ref.count()).success()) {
+                applied++;
+            }
+        }
+        return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.sharetargets_accepted", applied));
+    }
+
+    /** F-150-37: drop pending codes only; already-accepted targets are unaffected. */
+    private static int shareTargetsRevoke(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+        PENDING_SHARE_CODES.remove(player(ctx).getUUID());
+        return send(ctx, ServerLang.tr(ctx.getSource(), "message.itemmilestonelog.sharetargets_revoked"));
+    }
+
+    /** F-150-17 / F-150-30: one staged-quantity parser shared by addsteps and bulk addsteps. */
+    private static int addSteps(CommandContext<CommandSourceStack> ctx, String itemId, String raw,
+                                boolean confirm, boolean fromBulk) throws CommandSyntaxException {
+        ServerPlayer me = player(ctx);
+        CommandSourceStack source = ctx.getSource();
+        List<Integer> counts = CommandAnalysisModel.parseSteps(raw);
+        if (counts == null) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.addsteps_invalid_steps",
+                    CommandAnalysisModel.MIN_COUNT, CommandAnalysisModel.MAX_COUNT));
+        }
+        CommandAnalysisModel.StepsPlan plan = CommandAnalysisModel.stepsFor(itemId, counts,
+                personalRefs(dataOrNull(me)), MilestoneService.MAX_PERSONAL_TARGETS);
+        Component label = Component.literal(itemId);
+        if (!confirm) {
+            send(ctx, ServerLang.tr(source, "message.itemmilestonelog.addsteps_preview",
+                    plan.keys().size(), label));
+            if (plan.skipped() > 0) {
+                send(ctx, ServerLang.tr(source, "message.itemmilestonelog.addsteps_skipped", plan.skipped()));
+            }
+            return 1;
+        }
+        int applied = 0;
+        for (CommandAnalysisModel.TargetRef ref : plan.keys()) {
+            if (MilestoneService.addTarget(me, ref.itemId(), ref.count()).success()) {
+                applied++;
+            }
+        }
+        send(ctx, ServerLang.tr(source, "message.itemmilestonelog.addsteps_done", applied, label));
+        if (plan.skipped() > 0) {
+            send(ctx, ServerLang.tr(source, "message.itemmilestonelog.addsteps_skipped", plan.skipped()));
+        }
+        return applied;
+    }
+
+    /** F-150-30: read-only count preview of the three bulk actions. */
+    private static int bulkPreview(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+        ServerPlayer me = player(ctx);
+        MilestoneData.PlayerData pd = dataOrNull(me);
+        Set<CommandAnalysisModel.TargetRef> recorded = new LinkedHashSet<>();
+        Set<CommandAnalysisModel.TargetRef> tagItems = new LinkedHashSet<>();
+        if (pd != null) {
+            for (TargetKey key : pd.records.keySet()) {
+                recorded.add(new CommandAnalysisModel.TargetRef(key.itemId(), key.count()));
+            }
+            for (TargetKey key : pd.targets) {
+                if (TargetKey.isTagId(key.itemId())) {
+                    for (String item : TagTargets.index().members(key.itemId())) {
+                        tagItems.add(new CommandAnalysisModel.TargetRef(item, TargetKey.MIN_COUNT));
+                    }
+                }
+            }
+        }
+        CommandAnalysisModel.BulkPlan plan = CommandAnalysisModel.bulkPlan(
+                personalRefs(pd), recorded, tagItems, MilestoneService.MAX_PERSONAL_TARGETS);
+        return send(ctx, ServerLang.tr(ctx.getSource(), "message.itemmilestonelog.bulk_preview",
+                plan.stepTargets(), plan.taggedItems(), plan.completedTargets()));
+    }
+
+    /** F-150-30: expand a tag into individual item keys; the tag key itself is kept (D-150-76). */
+    private static int bulkExpandTag(CommandContext<CommandSourceStack> ctx, String tag, boolean confirm)
+            throws CommandSyntaxException {
+        ServerPlayer me = player(ctx);
+        CommandSourceStack source = ctx.getSource();
+        Set<String> members = TagTargets.index().members(tag);
+        if (!MilestoneService.isValidItemId(tag) || members.isEmpty()) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.invalid_tag", tag));
+        }
+        List<CommandAnalysisModel.TargetRef> refs = new ArrayList<>();
+        for (String item : members) {
+            refs.add(new CommandAnalysisModel.TargetRef(item, TargetKey.MIN_COUNT));
+        }
+        MilestoneData.PlayerData pd = dataOrNull(me);
+        CommandAnalysisModel.CopyPlan plan = CommandAnalysisModel.copyTargets(
+                personalRefs(pd), refs, MilestoneService.MAX_PERSONAL_TARGETS);
+        if (!confirm) {
+            send(ctx, ServerLang.tr(source, "message.itemmilestonelog.addsteps_preview",
+                    plan.copied(), Component.literal(tag)));
+            return 1;
+        }
+        int applied = 0;
+        for (CommandAnalysisModel.TargetRef ref : plan.missing()) {
+            if (MilestoneService.addTarget(me, ref.itemId(), ref.count()).success()) {
+                applied++;
+            }
+        }
+        send(ctx, ServerLang.tr(source, "message.itemmilestonelog.bulk_expandtag_done", applied,
+                Component.literal(tag)));
+        if (plan.skipped() > 0) {
+            send(ctx, ServerLang.tr(source, "message.itemmilestonelog.bulk_skipped", plan.skipped()));
+        }
+        return applied;
+    }
+
+    /** F-150-30: remove only completed personal targets; records/world-firsts/presets untouched. */
+    private static int bulkCleanup(CommandContext<CommandSourceStack> ctx, boolean confirm)
+            throws CommandSyntaxException {
+        ServerPlayer me = player(ctx);
+        CommandSourceStack source = ctx.getSource();
+        MilestoneData data = MilestoneData.get(me.level().getServer());
+        MilestoneData.PlayerData pd = data.playerOrNull(me.getUUID());
+        List<TargetKey> completed = new ArrayList<>();
+        if (pd != null) {
+            for (TargetKey key : pd.targets) {
+                if (pd.records.containsKey(key)) {
+                    completed.add(key);
+                }
+            }
+        }
+        if (!confirm) {
+            return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.bulk_cleanup_preview",
+                    completed.size()));
+        }
+        List<TargetKey> removed = new ArrayList<>();
+        if (pd != null) {
+            for (TargetKey key : completed) {
+                if (pd.targets.remove(key)) {
+                    removed.add(key);
+                    pd.targetMeta.remove(key.toEncodedString());
+                }
+            }
+        }
+        if (removed.isEmpty()) {
+            return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.bulk_cleanup_done", 0));
+        }
+        data.setDirty();
+        boolean undoable = MilestoneService.UNDO_SNAPSHOTS.offer(me.getUUID(),
+                UndoLogic.Snapshot.bulkRemoval(removed, Map.of(), System.nanoTime()));
+        send(ctx, ServerLang.tr(source, "message.itemmilestonelog.bulk_cleanup_done", removed.size()));
+        if (undoable) {
+            send(ctx, ServerLang.tr(source, "message.itemmilestonelog.undo_hint"));
+        }
+        return removed.size();
+    }
+
+    /** F-150-25: newest-first list of still-valid generations (1 = newest). */
+    private static int undoList(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+        ServerPlayer me = player(ctx);
+        CommandSourceStack source = ctx.getSource();
+        List<UndoLogic.Snapshot<TargetKey, MilestoneRecord>> snapshots =
+                MilestoneService.UNDO_SNAPSHOTS.list(me.getUUID(), System.nanoTime());
+        if (snapshots.isEmpty()) {
+            return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.undo_list_empty"));
+        }
+        int index = 0;
+        for (UndoLogic.Snapshot<TargetKey, MilestoneRecord> snapshot : snapshots) {
+            Component description = snapshot.kind() == UndoLogic.Kind.RESET
+                    ? ServerLang.tr(source, "message.itemmilestonelog.undo_done", snapshot.removedRecords().size())
+                    : ServerLang.tr(source, "message.itemmilestonelog.undo_done_targets",
+                            snapshot.removedTargets().size());
+            long age = Math.max(0L, (System.nanoTime() - snapshot.capturedAtNanos()) / 1_000_000_000L);
+            Component ageText = ServerLang.tr(source, "message.itemmilestonelog.playtime_format",
+                    age / 3600L, (age % 3600L) / 60L, age % 60L);
+            send(ctx, ServerLang.tr(source, "message.itemmilestonelog.undo_list_entry",
+                    ++index, description, ageText));
+        }
+        return snapshots.size();
+    }
+
+    /** F-150-25: undo a specific generation; newer generations become invalid (D-150-66). */
+    private static int undoGeneration(CommandContext<CommandSourceStack> ctx, int generation)
+            throws CommandSyntaxException {
+        ServerPlayer me = player(ctx);
+        CommandSourceStack source = ctx.getSource();
+        long now = System.nanoTime();
+        int available = MilestoneService.UNDO_SNAPSHOTS.list(me.getUUID(), now).size();
+        if (generation < 1 || generation > available || available == 0) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.undo_generation_invalid",
+                    generation, Math.max(1, available)));
+        }
+        MilestoneService.ActionResult result = MilestoneService.undo(me, generation);
+        int status = result.success() ? send(ctx, result.message()) : fail(ctx, result.message());
+        if (result.success() && generation < available) {
+            send(ctx, ServerLang.tr(source, "message.itemmilestonelog.undo_discarded_later"));
+        }
+        return status;
+    }
+
+    /** F-150-26: four-number preview of an import, with no write to MilestoneData. */
+    private static int sendDryRun(CommandContext<CommandSourceStack> ctx, String fileName,
+                                  CommandAnalysisModel.ImportPreview preview) {
+        CommandSourceStack source = ctx.getSource();
+        send(ctx, ServerLang.tr(source, "message.itemmilestonelog.import_dryrun_header", fileName));
+        send(ctx, ServerLang.tr(source, "message.itemmilestonelog.import_dryrun_targets", preview.targetsToAdd()));
+        send(ctx, ServerLang.tr(source, "message.itemmilestonelog.import_dryrun_records", preview.recordsToOverwrite()));
+        send(ctx, ServerLang.tr(source, "message.itemmilestonelog.import_dryrun_firsts", preview.newWorldFirsts()));
+        send(ctx, ServerLang.tr(source, "message.itemmilestonelog.import_dryrun_skipped", preview.skipped()));
+        return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.import_dryrun_hint"));
+    }
+
+    private static int importAllDryRun(CommandContext<CommandSourceStack> ctx, String fileName) {
+        CommandSourceStack source = ctx.getSource();
+        if (!Config.EXPORT_IMPORT_ENABLED.get()) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.feature_disabled"));
+        }
+        if (!MilestoneExport.isSafeFileName(fileName)) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.import_invalid_name", fileName));
+        }
+        Path dir = MilestoneExport.exportsDir(source.getServer()).normalize();
+        Path file = dir.resolve(fileName).normalize();
+        if (!file.getParent().equals(dir) || !Files.isRegularFile(file)) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.import_not_found", fileName));
+        }
+        try {
+            MilestoneExport.MergePlan plan = MilestoneExport.buildMergePlan(
+                    MilestoneExport.parseAllPlayersExport(file));
+            MilestoneData data = MilestoneData.get(source.getServer());
+            int targets = 0;
+            int records = 0;
+            int firsts = 0;
+            for (MilestoneExport.PlayerMergePlan playerPlan : plan.players()) {
+                MilestoneData.PlayerData pd = data.playerOrNull(playerPlan.uuid());
+                Set<TargetKey> currentTargets = pd != null ? pd.targets : Set.of();
+                int capacity = Math.max(0, MilestoneService.MAX_PERSONAL_TARGETS - currentTargets.size());
+                Set<TargetKey> added = new LinkedHashSet<>();
+                for (TargetKey key : playerPlan.targets()) {
+                    if (!currentTargets.contains(key) && added.add(key) && added.size() <= capacity) {
+                        targets++;
+                    }
+                }
+                for (MilestoneExport.RecordUpdate update : playerPlan.recordUpdates()) {
+                    MilestoneRecord current = pd != null ? pd.records.get(update.key()) : null;
+                    if (current == null || update.record().playTicks() < current.playTicks()) {
+                        records++;
+                    }
+                }
+            }
+            if (plan.worldFirsts() != null) {
+                for (WorldFirstRecord wf : plan.worldFirsts()) {
+                    if (!data.worldFirsts().containsKey(wf.targetKey())) {
+                        firsts++;
+                    }
+                }
+            }
+            return sendDryRun(ctx, fileName, new CommandAnalysisModel.ImportPreview(
+                    targets, records, firsts,
+                    plan.skippedEntries() + plan.worldFirstSkippedEntries()));
+        } catch (IllegalArgumentException e) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.import_invalid_format", fileName));
+        } catch (java.io.IOException e) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.import_failed", fileName));
+        }
+    }
+
+    /** F-150-31: {@code targets meta} / {@code targets meta clear}, sharing the {@code targets} Entry. */
+    private static LiteralArgumentBuilder<CommandSourceStack> targetMetaNode() {
+        LiteralArgumentBuilder<CommandSourceStack> meta = literal("meta");
+        var metaCountNode = argument("metaCount", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                .executes(ctx -> targetMetaApply(ctx, itemIdentifierArg(ctx, "metaItem"),
+                        IntegerArgumentType.getInteger(ctx, "metaCount")));
+        attachMetaOptions(metaCountNode);
+        var metaItemNode = argument("metaItem", itemResourceLocationArgumentType())
+                .executes(ctx -> targetMetaApply(ctx, itemIdentifierArg(ctx, "metaItem"), TargetKey.MIN_COUNT))
+                .then(metaCountNode);
+        attachMetaOptions(metaItemNode);
+        meta.then(metaItemNode);
+        meta.then(literal("clear")
+                .then(argument("metaItem", itemResourceLocationArgumentType())
+                        .executes(ctx -> targetMetaClear(ctx, itemIdentifierArg(ctx, "metaItem"), TargetKey.MIN_COUNT))
+                        .then(argument("metaCount", IntegerArgumentType.integer(TargetKey.MIN_COUNT, TargetKey.MAX_COUNT))
+                                .executes(ctx -> targetMetaClear(ctx, itemIdentifierArg(ctx, "metaItem"),
+                                        IntegerArgumentType.getInteger(ctx, "metaCount"))))));
+        return meta;
+    }
+
+    /** Optional trailing options in the documented order: priority, label, pin. */
+    private static <T extends ArgumentBuilder<CommandSourceStack, T>> T attachMetaOptions(T node) {
+        node.then(literal("priority")
+                .then(argument("metaPriority", IntegerArgumentType.integer(0, 9))
+                        .executes(ctx -> targetMetaApply(ctx, itemIdentifierArg(ctx, "metaItem"), metaCount(ctx)))
+                        .then(literal("label")
+                                .then(argument("metaLabel", StringArgumentType.string())
+                                        .executes(ctx -> targetMetaApply(ctx,
+                                                itemIdentifierArg(ctx, "metaItem"), metaCount(ctx)))
+                                        .then(literal("pin")
+                                                .then(argument("metaPin", StringArgumentType.word())
+                                                        .executes(ctx -> targetMetaApply(ctx,
+                                                                itemIdentifierArg(ctx, "metaItem"), metaCount(ctx)))))))));
+        node.then(literal("label")
+                .then(argument("metaLabel", StringArgumentType.string())
+                        .executes(ctx -> targetMetaApply(ctx, itemIdentifierArg(ctx, "metaItem"), metaCount(ctx)))
+                        .then(literal("pin")
+                                .then(argument("metaPin", StringArgumentType.word())
+                                        .executes(ctx -> targetMetaApply(ctx,
+                                                itemIdentifierArg(ctx, "metaItem"), metaCount(ctx)))))));
+        node.then(literal("pin")
+                .then(argument("metaPin", StringArgumentType.word())
+                        .executes(ctx -> targetMetaApply(ctx, itemIdentifierArg(ctx, "metaItem"), metaCount(ctx)))));
+        return node;
+    }
+
+    /** Brigadier 1.3 has no public getArguments(); detect optional arguments via lookup. */
+    private static boolean hasArg(CommandContext<CommandSourceStack> ctx, String name) {
+        try {
+            ctx.getArgument(name, Object.class);
+            return true;
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+    }
+
+    private static int metaCount(CommandContext<CommandSourceStack> ctx) {
+        return hasArg(ctx, "metaCount")
+                ? IntegerArgumentType.getInteger(ctx, "metaCount") : TargetKey.MIN_COUNT;
+    }
+
+    private static int targetMetaApply(CommandContext<CommandSourceStack> ctx, String itemId, int count)
+            throws CommandSyntaxException {
+        ServerPlayer me = player(ctx);
+        CommandSourceStack source = ctx.getSource();
+        TargetKey key = TargetKey.normalize(itemId, count);
+        MilestoneData data = MilestoneData.get(me.level().getServer());
+        MilestoneData.PlayerData pd = data.playerOrNull(me.getUUID());
+        if (key == null || pd == null || !pd.targets.contains(key)) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.target_meta_not_found",
+                    Component.literal(itemId)));
+        }
+        String encoded = key.toEncodedString();
+        TargetMeta current = pd.targetMeta.getOrDefault(encoded, TargetMeta.DEFAULT);
+        boolean hasPriority = hasArg(ctx, "metaPriority");
+        boolean hasLabel = hasArg(ctx, "metaLabel");
+        boolean hasPin = hasArg(ctx, "metaPin");
+        if (!hasPriority && !hasLabel && !hasPin) {
+            return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.target_meta_query",
+                    MilestoneService.targetDisplayName(key), current.priority(),
+                    Component.literal(current.label()), current.pinned()));
+        }
+        int priority = hasPriority ? IntegerArgumentType.getInteger(ctx, "metaPriority") : current.priority();
+        String label = hasLabel ? StringArgumentType.getString(ctx, "metaLabel") : current.label();
+        boolean pinned = hasPin
+                ? "on".equalsIgnoreCase(StringArgumentType.getString(ctx, "metaPin"))
+                : current.pinned();
+        TargetMeta next = TargetMeta.of(priority, label, pinned);
+        if (next.equals(TargetMeta.INVALID)) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.target_meta_invalid_label",
+                    TargetMeta.MAX_LABEL_LENGTH));
+        }
+        pd.targetMeta.put(encoded, next);
+        data.setDirty();
+        return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.target_meta_done",
+                MilestoneService.targetDisplayName(key)));
+    }
+
+    private static int targetMetaClear(CommandContext<CommandSourceStack> ctx, String itemId, int count)
+            throws CommandSyntaxException {
+        ServerPlayer me = player(ctx);
+        CommandSourceStack source = ctx.getSource();
+        TargetKey key = TargetKey.normalize(itemId, count);
+        MilestoneData data = MilestoneData.get(me.level().getServer());
+        MilestoneData.PlayerData pd = data.playerOrNull(me.getUUID());
+        if (key == null || pd == null || !pd.targets.contains(key)) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.target_meta_not_found",
+                    Component.literal(itemId)));
+        }
+        if (pd.targetMeta.remove(key.toEncodedString()) == null) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.target_meta_not_found",
+                    Component.literal(itemId)));
+        }
+        data.setDirty();
+        return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.target_meta_cleared",
+                MilestoneService.targetDisplayName(key)));
+    }
+
+    /** F-150-31: server-side pin list, priority descending then TargetKey order, at most 20 rows. */
+    private static int pinned(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+        ServerPlayer me = player(ctx);
+        CommandSourceStack source = ctx.getSource();
+        MilestoneData.PlayerData pd = dataOrNull(me);
+        List<Map.Entry<TargetKey, TargetMeta>> pinned = new ArrayList<>();
+        if (pd != null) {
+            for (TargetKey key : pd.targets) {
+                TargetMeta meta = pd.targetMeta.get(key.toEncodedString());
+                if (meta != null && meta.pinned()) {
+                    pinned.add(Map.entry(key, meta));
+                }
+            }
+        }
+        if (pinned.isEmpty()) {
+            return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.pinned_empty"));
+        }
+        pinned.sort(Comparator.<Map.Entry<TargetKey, TargetMeta>>comparingInt(e -> e.getValue().priority())
+                .reversed().thenComparing(Map.Entry::getKey));
+        send(ctx, ServerLang.tr(source, "message.itemmilestonelog.pinned_header", pinned.size()));
+        int shown = 0;
+        for (Map.Entry<TargetKey, TargetMeta> entry : pinned) {
+            if (shown++ >= 20) {
+                break;
+            }
+            TargetKey key = entry.getKey();
+            Component label = entry.getValue().label().isEmpty()
+                    ? MilestoneService.targetDisplayName(key)
+                    : Component.literal(entry.getValue().label());
+            int current = Tracker.countItemsInPossession(me, Set.of(key.itemId()))
+                    .getOrDefault(key.itemId(), 0);
+            Component progress = ServerLang.tr(source, "message.itemmilestonelog.target_progress", label, current);
+            send(ctx, ServerLang.tr(source, "message.itemmilestonelog.pinned_entry", label, progress));
+        }
+        return shown;
+    }
+
+    /** F-150-16: granttag writes a record for the tag key without creating a world first. */
+    private static int adminGrantTag(CommandContext<CommandSourceStack> ctx, String query,
+                                     String tag, int count) {
+        CommandSourceStack source = ctx.getSource();
+        Map.Entry<UUID, MilestoneData.PlayerData> target = resolveOrReport(source, query);
+        if (target == null) {
+            return 0;
+        }
+        if (!MilestoneService.isValidItemId(tag)) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.invalid_tag", tag));
+        }
+        TargetKey key = TargetKey.normalize(tag, count);
+        if (key == null) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.invalid_tag", tag));
+        }
+        MilestoneData data = MilestoneData.get(source.getServer());
+        MilestoneData.PlayerData pd = data.playerOrNull(target.getKey());
+        if (pd == null) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.admin_player_not_found", query));
+        }
+        ServerPlayer online = source.getServer().getPlayerList().getPlayer(target.getKey());
+        pd.records.put(key, new MilestoneRecord(online != null ? Playtime.currentTicks(online) : 0,
+                MilestoneRecord.UNKNOWN_DAY, System.currentTimeMillis()));
+        data.setDirty();
+        ScoreboardSync.refreshScores(source.getServer(), target.getKey());
+        if (online != null) {
+            MilestoneService.syncPlayerIfOpen(online);
+        }
+        return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.admin_granted",
+                displayNameFor(target.getKey(), target.getValue()), MilestoneService.targetDisplayName(key)));
     }
 }

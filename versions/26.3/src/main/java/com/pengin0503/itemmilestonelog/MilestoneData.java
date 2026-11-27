@@ -62,6 +62,8 @@ public class MilestoneData extends SavedData {
         public final Set<String> completedPresets = new LinkedHashSet<>();
         /** F-140-12 (D-140-8): per-preset G-C state ({@code autoApplied} + {@code lastSeenVersion}). */
         public final Map<String, PresetState> presetState = new LinkedHashMap<>();
+        /** F-150-31 (N155): optional per-target metadata, keyed by {@code TargetKey#toEncodedString()}. */
+        public final Map<String, TargetMeta> targetMeta = new LinkedHashMap<>();
 
         /** Whether this player hides their records from lookups by non-privileged other players (F14). */
         public boolean isHiddenFromLookup() {
@@ -213,6 +215,22 @@ public class MilestoneData extends SavedData {
         return PresetStateLogic.copyOf(pd.presetState);
     }
 
+    /** F-150-31 (N155): one optional target metadata value (priority + label + pinned). */
+    private static final Codec<TargetMeta> TARGET_META_CODEC = RecordCodecBuilder.create(instance -> instance.group(
+            Codec.INT.optionalFieldOf("priority", 0).forGetter(TargetMeta::priority),
+            Codec.STRING.optionalFieldOf("label", "").forGetter(TargetMeta::label),
+            Codec.BOOL.optionalFieldOf("pinned", false).forGetter(TargetMeta::pinned)
+    ).apply(instance, TargetMeta::new));
+
+    /** Lenient per-entry wrapper: a malformed value decodes to the INVALID sentinel and is skipped. */
+    private static final Codec<TargetMeta> LENIENT_TARGET_META_CODEC =
+            TARGET_META_CODEC.orElse(TargetMeta.INVALID);
+
+    /** Mirrors {@link #encodePresetState}: emit the map directly, including empty maps. */
+    private static Map<String, TargetMeta> encodeTargetMeta(PlayerData pd) {
+        return new LinkedHashMap<>(pd.targetMeta);
+    }
+
     private static Map<String, Integer> encodeProgressNotified(PlayerData pd) {
         if (pd.progressNotified.isEmpty()) {
             return Map.of();
@@ -265,8 +283,12 @@ public class MilestoneData extends SavedData {
             lenient("presetState",
                     Codec.unboundedMap(Codec.STRING, LENIENT_PRESET_STATE_CODEC), Map.of())
                     .optionalFieldOf("presetState", Map.of())
-                    .forGetter(MilestoneData::encodePresetState)
-    ).apply(instance, (targets, records, carriedFromCreative, lastKnownName, firstJoinHintShown, muteBroadcasts, muteProgressAlerts, excludeFromDiscord, hideFromLookup, lastSeen, progressNotified, completedPresets, presetState) -> {
+                    .forGetter(MilestoneData::encodePresetState),
+            lenient("targetMeta",
+                    Codec.unboundedMap(Codec.STRING, LENIENT_TARGET_META_CODEC), Map.of())
+                    .optionalFieldOf("targetMeta", Map.of())
+                    .forGetter(MilestoneData::encodeTargetMeta)
+    ).apply(instance, (targets, records, carriedFromCreative, lastKnownName, firstJoinHintShown, muteBroadcasts, muteProgressAlerts, excludeFromDiscord, hideFromLookup, lastSeen, progressNotified, completedPresets, presetState, targetMeta) -> {
         PlayerData pd = new PlayerData();
         for (String raw : targets) {
             TargetKey parsed = TargetKey.tryParseEncoded(raw);
@@ -362,6 +384,21 @@ public class MilestoneData extends SavedData {
                 continue;
             }
             pd.presetState.put(presetId, state);
+        }
+        for (Map.Entry<String, TargetMeta> metaEntry : targetMeta.entrySet()) {
+            String encodedKey = metaEntry.getKey();
+            TargetMeta stored = metaEntry.getValue();
+            // LENIENT_TARGET_META_CODEC maps malformed values to INVALID; also re-validate
+            // decoded values so one bad element never fails the player or its siblings.
+            TargetMeta meta = stored == null ? TargetMeta.INVALID : TargetMeta.of(
+                    stored.priority(), stored.label(), stored.pinned());
+            if (meta == TargetMeta.INVALID) {
+                MilestoneLoadReport.recordElementSkip();
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid targetMeta entry '{}' in SavedData",
+                        encodedKey);
+                continue;
+            }
+            pd.targetMeta.put(encodedKey, meta);
         }
         return pd;
     }));

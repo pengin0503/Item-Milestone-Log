@@ -1,7 +1,10 @@
 package com.pengin0503.itemmilestonelog;
 
+import java.util.ArrayDeque;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Deque;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -20,13 +23,16 @@ import java.util.function.ToIntFunction;
  * (MilestoneRecord) so that it stays free of Minecraft/NeoForge dependencies and Java 21 compatible.
  *
  * <p>A snapshot holds what one reset (F23) or bulk target removal (F28) removed from a player's
- * data. {@link Store} keeps at most one snapshot per player UUID, in memory only, valid for
- * {@link #VALIDITY_NANOS} measured with the server's monotonic clock ({@code System.nanoTime}).
- * Operations that removed nothing never overwrite an existing snapshot.
+ * data. {@link Store} keeps at most {@link #UNDO_HISTORY_DEPTH} snapshots per player UUID, newest
+ * first, in memory only, each valid for {@link #VALIDITY_NANOS} measured with the server's monotonic
+ * clock ({@code System.nanoTime}). Operations that removed nothing never add a snapshot.
  */
 public final class UndoLogic {
     /** How long a snapshot can be undone: 10 minutes. */
     public static final long VALIDITY_NANOS = TimeUnit.MINUTES.toNanos(10);
+
+    /** Maximum number of undo generations kept per player (F-150-25, D-150-65). */
+    public static final int UNDO_HISTORY_DEPTH = 5;
 
     private UndoLogic() {
     }
@@ -189,16 +195,18 @@ public final class UndoLogic {
     }
 
     /**
-     * In-memory, per-player store holding at most one snapshot per UUID. Not persisted: lost when
-     * the server stops ({@link #clear()} is called on server stop so an integrated server does not
-     * carry snapshots into the next world). Logging out does not clear a player's snapshot.
+     * In-memory, per-player store holding a stack of at most {@link #UNDO_HISTORY_DEPTH} snapshots
+     * per UUID (head = newest generation). Not persisted: lost when the server stops ({@link #clear()}
+     * is called on server stop so an integrated server does not carry snapshots into the next world).
+     * Logging out does not clear a player's snapshots.
      */
     public static final class Store<K, R> {
-        private final Map<UUID, Snapshot<K, R>> snapshots = new ConcurrentHashMap<>();
+        private final Map<UUID, Deque<Snapshot<K, R>>> snapshots = new ConcurrentHashMap<>();
 
         /**
-         * Stores {@code snapshot} for {@code playerId}, replacing the previous one, unless the
-         * snapshot is empty (an operation that removed nothing keeps the previous snapshot).
+         * Pushes {@code snapshot} as the newest generation for {@code playerId}, dropping the
+         * oldest (tail) when more than {@link #UNDO_HISTORY_DEPTH} generations are stored, unless
+         * the snapshot is empty (an operation that removed nothing keeps the existing history).
          *
          * @return whether the snapshot was stored (i.e. the operation can be undone)
          */
@@ -206,26 +214,81 @@ public final class UndoLogic {
             if (snapshot == null || snapshot.isEmpty()) {
                 return false;
             }
-            snapshots.put(playerId, snapshot);
+            snapshots.compute(playerId, (id, deque) -> {
+                Deque<Snapshot<K, R>> history = deque == null ? new ArrayDeque<>() : deque;
+                history.addFirst(snapshot);
+                while (history.size() > UNDO_HISTORY_DEPTH) {
+                    history.removeLast();
+                }
+                return history;
+            });
             return true;
         }
 
-        /** Returns the player's snapshot if it is still valid at {@code nowNanos}; drops and returns null if expired. */
+        /**
+         * Returns the newest still-valid snapshot (generation 1) for {@code playerId}, pruning
+         * expired snapshots from every position; returns null and drops the map entry if none is valid.
+         */
         public Snapshot<K, R> peekValid(UUID playerId, long nowNanos) {
-            Snapshot<K, R> snapshot = snapshots.get(playerId);
-            if (snapshot == null) {
-                return null;
-            }
-            if (snapshot.isExpired(nowNanos)) {
-                snapshots.remove(playerId, snapshot);
-                return null;
-            }
-            return snapshot;
+            Deque<Snapshot<K, R>> history = pruneExpired(playerId, nowNanos);
+            return history == null ? null : history.peekFirst();
         }
 
-        /** Removes {@code snapshot} after a successful undo (no-op if it was replaced meanwhile). */
+        /**
+         * Returns the valid generations for {@code playerId}, newest first (index 0 = generation 1),
+         * pruning expired snapshots and dropping the map entry if none remains. The returned list is
+         * immutable and never exposes mutable snapshot state.
+         */
+        public List<Snapshot<K, R>> list(UUID playerId, long nowNanos) {
+            Deque<Snapshot<K, R>> history = pruneExpired(playerId, nowNanos);
+            return history == null ? List.of() : List.copyOf(history);
+        }
+
+        /**
+         * Returns generation {@code generation} (1-based, 1 = newest) if it is still valid at
+         * {@code nowNanos}, after pruning expired snapshots; null when out of range or expired.
+         */
+        public Snapshot<K, R> get(UUID playerId, int generation, long nowNanos) {
+            if (generation < 1) {
+                return null;
+            }
+            Deque<Snapshot<K, R>> history = pruneExpired(playerId, nowNanos);
+            if (history == null || generation > history.size()) {
+                return null;
+            }
+            int index = 1;
+            for (Snapshot<K, R> snapshot : history) {
+                if (index++ == generation) {
+                    return snapshot;
+                }
+            }
+            return null;
+        }
+
+        /**
+         * Removes {@code snapshot} after a successful undo, together with every newer generation
+         * (closer to the head): undoing a middle generation invalidates the later ones (D-150-66).
+         * Consuming the newest generation therefore removes only it. No-op if no equal snapshot is
+         * stored (e.g. it was replaced meanwhile).
+         */
         public void consume(UUID playerId, Snapshot<K, R> snapshot) {
-            snapshots.remove(playerId, snapshot);
+            if (snapshot == null) {
+                return;
+            }
+            snapshots.computeIfPresent(playerId, (id, deque) -> {
+                if (!deque.contains(snapshot)) {
+                    return deque;
+                }
+                Iterator<Snapshot<K, R>> iterator = deque.iterator();
+                while (iterator.hasNext()) {
+                    Snapshot<K, R> current = iterator.next();
+                    iterator.remove();
+                    if (current.equals(snapshot)) {
+                        break;
+                    }
+                }
+                return deque.isEmpty() ? null : deque;
+            });
         }
 
         /** Drops every snapshot (server stop). */
@@ -233,9 +296,27 @@ public final class UndoLogic {
             snapshots.clear();
         }
 
-        /** Number of stored snapshots, including expired ones not yet dropped (for tests). */
+        /** Total number of stored snapshots across all players, including expired ones not yet dropped (for tests). */
         public int size() {
-            return snapshots.size();
+            int total = 0;
+            for (Deque<Snapshot<K, R>> history : snapshots.values()) {
+                total += history.size();
+            }
+            return total;
+        }
+
+        /** Drops expired snapshots from every position; null (with the map entry removed) if none is left. */
+        private Deque<Snapshot<K, R>> pruneExpired(UUID playerId, long nowNanos) {
+            Deque<Snapshot<K, R>> history = snapshots.get(playerId);
+            if (history == null) {
+                return null;
+            }
+            history.removeIf(snapshot -> snapshot.isExpired(nowNanos));
+            if (history.isEmpty()) {
+                snapshots.remove(playerId, history);
+                return null;
+            }
+            return history;
         }
     }
 }

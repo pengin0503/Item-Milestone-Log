@@ -68,6 +68,8 @@ public class MilestoneData extends SavedData {
          * Kept separate from {@link #completedPresets} so completion keeps its original meaning.
          */
         public final Map<String, PresetState> presetState = new LinkedHashMap<>();
+        /** F-150-31 (N155): optional per-target metadata, keyed by {@code TargetKey#toEncodedString()}. */
+        public final Map<String, TargetMeta> targetMeta = new LinkedHashMap<>();
 
         /** Whether this player hides their records from lookups by non-privileged other players (F14). */
         public boolean isHiddenFromLookup() {
@@ -538,6 +540,60 @@ public class MilestoneData extends SavedData {
                 MilestoneLoadReport.recordElementSkip();
                 ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed presetState tag in SavedData");
             }
+            if (McCompat.nbt().containsTyped(entry, "targetMeta", Tag.TAG_COMPOUND)) {
+                CompoundTag metas = McCompat.nbt().getCompound(entry, "targetMeta");
+                for (String encodedKey : McCompat.nbt().keys(metas)) {
+                    if (!McCompat.nbt().containsTyped(metas, encodedKey, Tag.TAG_COMPOUND)) {
+                        MilestoneLoadReport.recordElementSkip();
+                        ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping non-compound targetMeta entry '{}' in SavedData",
+                                encodedKey);
+                        continue;
+                    }
+                    CompoundTag metaTag = McCompat.nbt().getCompound(metas, encodedKey);
+                    boolean malformed = false;
+                    int priority = 0;
+                    String label = "";
+                    boolean pinned = false;
+                    if (McCompat.nbt().contains(metaTag, "priority")) {
+                        if (McCompat.nbt().containsTyped(metaTag, "priority", NbtCompat.ANY_NUMERIC)) {
+                            priority = McCompat.nbt().getInt(metaTag, "priority");
+                        } else {
+                            malformed = true;
+                        }
+                    } else {
+                        malformed = true;
+                    }
+                    if (McCompat.nbt().contains(metaTag, "label")) {
+                        if (McCompat.nbt().containsTyped(metaTag, "label", Tag.TAG_STRING)) {
+                            label = McCompat.nbt().getString(metaTag, "label");
+                        } else {
+                            malformed = true;
+                        }
+                    } else {
+                        malformed = true;
+                    }
+                    if (McCompat.nbt().contains(metaTag, "pinned")) {
+                        if (McCompat.nbt().containsTyped(metaTag, "pinned", NbtCompat.ANY_NUMERIC)) {
+                            pinned = McCompat.nbt().getBoolean(metaTag, "pinned");
+                        } else {
+                            malformed = true;
+                        }
+                    } else {
+                        malformed = true;
+                    }
+                    TargetMeta meta = malformed ? TargetMeta.INVALID : TargetMeta.of(priority, label, pinned);
+                    if (meta == TargetMeta.INVALID) {
+                        MilestoneLoadReport.recordElementSkip();
+                        ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid targetMeta entry '{}' in SavedData",
+                                encodedKey);
+                        continue;
+                    }
+                    pd.targetMeta.put(encodedKey, meta);
+                }
+            } else if (McCompat.nbt().contains(entry, "targetMeta")) {
+                MilestoneLoadReport.recordElementSkip();
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping malformed targetMeta tag in SavedData");
+            }
             data.players.put(uuid, pd);
         }
 
@@ -677,6 +733,17 @@ public class MilestoneData extends SavedData {
                     presetStateTag.put(state.getKey(), stateTag);
                 }
                 entry.put("presetState", presetStateTag);
+            }
+            if (!pd.targetMeta.isEmpty()) {
+                CompoundTag targetMetaTag = new CompoundTag();
+                for (Map.Entry<String, TargetMeta> meta : pd.targetMeta.entrySet()) {
+                    CompoundTag metaTag = new CompoundTag();
+                    metaTag.putInt("priority", meta.getValue().priority());
+                    metaTag.putString("label", meta.getValue().label());
+                    metaTag.putBoolean("pinned", meta.getValue().pinned());
+                    targetMetaTag.put(meta.getKey(), metaTag);
+                }
+                entry.put("targetMeta", targetMetaTag);
             }
             all.put(e.getKey().toString(), entry);
         }

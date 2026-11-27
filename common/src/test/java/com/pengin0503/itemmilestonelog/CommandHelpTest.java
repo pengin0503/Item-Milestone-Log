@@ -34,6 +34,7 @@ class CommandHelpTest {
                 "settings", "randomtarget", "trends", "recap",
                 "compare", "timeline", "timelinetag", "session",
                 "modstats", "presetstats", "presetmatrix",
+                "copytargets", "sharetargets", "addsteps", "bulk", "pinned",
                 "export", "exporthtml", "exportcsv", "import",
                 "exportall", "exporthtmlall", "exportcsvall", "importall",
                 "admin", "prunedata", "renameitem", "renametag", "discordtest", "help"

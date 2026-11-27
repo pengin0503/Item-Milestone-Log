@@ -16,6 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -595,5 +596,295 @@ class CommandAnalysisModelTest {
         assertTrue(CommandAnalysisModel.presetMatrix(List.of(), presets,
                 CommandAnalysisModel.PRESETMATRIX_COLUMNS,
                 CommandAnalysisModel.PRESETMATRIX_LIMIT).rows().isEmpty());
+    }
+
+    // ================================================================= PR-3: write-command plans
+
+    @Test
+    void copyTargetsUnionsMissingKeysAndKeepsExistingKeysAndSourceOrder() {
+        List<CommandAnalysisModel.TargetRef> existing = new ArrayList<>(List.of(
+                key("minecraft:a", 1), key("minecraft:b", 5), key("minecraft:stone", 1)));
+        // The caller supplies only personal keys: config defaults are excluded before the model call
+        // because every player already owns them.
+        List<CommandAnalysisModel.TargetRef> source = List.of(
+                key("minecraft:c", 1), key("minecraft:a", 1), key("minecraft:d", 10));
+        CommandAnalysisModel.CopyPlan plan = CommandAnalysisModel.copyTargets(existing, source, 1024);
+        assertEquals(List.of(key("minecraft:c", 1), key("minecraft:d", 10)), plan.missing());
+        assertEquals(1, plan.skipped(), "an already-owned key is skipped");
+        assertEquals(2, plan.copied());
+        assertEquals(List.of(key("minecraft:a", 1), key("minecraft:b", 5), key("minecraft:stone", 1)),
+                existing);
+        assertEquals(3, source.size());
+    }
+
+    @Test
+    void copyTargetsCapsAtRemainingCapacityAndCountsOverflow() {
+        List<CommandAnalysisModel.TargetRef> existing = List.of(key("minecraft:a", 1), key("minecraft:b", 1));
+        List<CommandAnalysisModel.TargetRef> source = List.of(
+                key("minecraft:c", 1), key("minecraft:d", 1), key("minecraft:e", 1));
+        CommandAnalysisModel.CopyPlan plan = CommandAnalysisModel.copyTargets(existing, source, 3);
+        assertEquals(List.of(key("minecraft:c", 1)), plan.missing());
+        assertEquals(2, plan.skipped());
+        assertEquals(1, plan.copied());
+        CommandAnalysisModel.CopyPlan full = CommandAnalysisModel.copyTargets(existing, source, 1);
+        assertTrue(full.missing().isEmpty());
+        assertEquals(3, full.skipped());
+        assertEquals(0, full.copied());
+    }
+
+    @Test
+    void copyTargetsHandlesNullEmptyAndInvalidKeysWithoutMutation() {
+        assertEquals(new CommandAnalysisModel.CopyPlan(List.of(), 0, 0),
+                CommandAnalysisModel.copyTargets(null, null, 1024));
+        assertEquals(new CommandAnalysisModel.CopyPlan(List.of(), 0, 0),
+                CommandAnalysisModel.copyTargets(List.of(), List.of(), 1024));
+        List<CommandAnalysisModel.TargetRef> source = new ArrayList<>(List.of(
+                key("minecraft:x", 1), key("minecraft:x", 1), key("", 1)));
+        source.add(null);
+        CommandAnalysisModel.CopyPlan plan = CommandAnalysisModel.copyTargets(null, source, 1024);
+        assertEquals(List.of(key("minecraft:x", 1)), plan.missing());
+        assertEquals(3, plan.skipped(), "a duplicate, a blank and a null key are all skipped");
+        assertEquals(4, source.size());
+        assertNull(source.get(3));
+    }
+
+    @Test
+    void sharePlanUsesTheSameCopyMathAsCopyTargets() {
+        List<CommandAnalysisModel.TargetRef> existing = List.of(key("minecraft:a", 1));
+        List<CommandAnalysisModel.TargetRef> shared = List.of(
+                key("minecraft:b", 1), key("minecraft:a", 1), key("minecraft:c", 2));
+        CommandAnalysisModel.CopyPlan direct = CommandAnalysisModel.copyTargets(existing, shared, 2);
+        assertEquals(direct, CommandAnalysisModel.sharePlan(existing, shared, 2));
+        assertEquals(List.of(key("minecraft:b", 1)), direct.missing());
+        assertEquals(2, direct.skipped());
+        assertEquals(new CommandAnalysisModel.CopyPlan(List.of(), 0, 0),
+                CommandAnalysisModel.sharePlan(null, null, 1024));
+    }
+
+    @Test
+    void parseStepsAcceptsOneFourAndTwentyCountsIncludingBounds() {
+        assertEquals(List.of(1), CommandAnalysisModel.parseSteps("1"));
+        assertEquals(List.of(10, 25, 50, 100), CommandAnalysisModel.parseSteps("10,25,50,100"));
+        assertEquals(List.of(CommandAnalysisModel.MIN_COUNT, CommandAnalysisModel.MAX_COUNT),
+                CommandAnalysisModel.parseSteps("1,1000000"));
+        StringBuilder twenty = new StringBuilder();
+        for (int i = 1; i <= CommandAnalysisModel.MAX_STEPS; i++) {
+            if (i > 1) {
+                twenty.append(',');
+            }
+            twenty.append(i);
+        }
+        List<Integer> parsed = CommandAnalysisModel.parseSteps(twenty.toString());
+        assertNotNull(parsed);
+        assertEquals(CommandAnalysisModel.MAX_STEPS, parsed.size());
+        assertEquals(1, parsed.get(0));
+        assertEquals(20, parsed.get(parsed.size() - 1));
+        assertNull(CommandAnalysisModel.parseSteps(""));
+    }
+
+    @Test
+    void parseStepsRejectsDuplicatesNonAscendingTooManyAndEmptyEntries() {
+        assertNull(CommandAnalysisModel.parseSteps("5,5"));
+        assertNull(CommandAnalysisModel.parseSteps("10,5"));
+        assertNull(CommandAnalysisModel.parseSteps("1,2,2"));
+        StringBuilder twentyOne = new StringBuilder();
+        for (int i = 1; i <= CommandAnalysisModel.MAX_STEPS + 1; i++) {
+            if (i > 1) {
+                twentyOne.append(',');
+            }
+            twentyOne.append(i);
+        }
+        assertNull(CommandAnalysisModel.parseSteps(twentyOne.toString()));
+        assertNull(CommandAnalysisModel.parseSteps(null));
+        assertNull(CommandAnalysisModel.parseSteps("1,"));
+        assertNull(CommandAnalysisModel.parseSteps(",1"));
+        assertNull(CommandAnalysisModel.parseSteps("1,,2"));
+    }
+
+    @Test
+    void parseStepsRejectsZeroNegativeSignedDecimalSpacedAndGarbage() {
+        assertNull(CommandAnalysisModel.parseSteps("0"));
+        assertNull(CommandAnalysisModel.parseSteps("-1"));
+        assertNull(CommandAnalysisModel.parseSteps("+1"));
+        assertNull(CommandAnalysisModel.parseSteps("1.0"));
+        assertNull(CommandAnalysisModel.parseSteps("1, 2"));
+        assertNull(CommandAnalysisModel.parseSteps(" 1"));
+        assertNull(CommandAnalysisModel.parseSteps("1 "));
+        assertNull(CommandAnalysisModel.parseSteps("abc"));
+        assertNull(CommandAnalysisModel.parseSteps("1;2"));
+        assertNull(CommandAnalysisModel.parseSteps("1000001"));
+    }
+
+    @Test
+    void stepsForCreatesTagKeysFromTheCallerSuppliedItemId() {
+        CommandAnalysisModel.StepsPlan plan = CommandAnalysisModel.stepsFor("#minecraft:tag",
+                List.of(10, 25), List.of(), 1024);
+        assertEquals(List.of(key("#minecraft:tag", 10), key("#minecraft:tag", 25)), plan.keys());
+        assertTrue(plan.keys().get(0).isTag());
+        assertEquals(0, plan.skipped());
+        assertEquals(0, plan.invalid());
+    }
+
+    @Test
+    void stepsForFiltersExistingKeysAndCapsByCapacity() {
+        List<CommandAnalysisModel.TargetRef> existing = List.of(
+                key("minecraft:a", 1), key("minecraft:a", 25));
+        CommandAnalysisModel.StepsPlan plan = CommandAnalysisModel.stepsFor("minecraft:a",
+                List.of(1, 10, 25, 50), existing, 4);
+        assertEquals(List.of(key("minecraft:a", 10), key("minecraft:a", 50)), plan.keys());
+        assertEquals(2, plan.skipped(), "one existing key and one capacity overflow");
+        assertEquals(0, plan.invalid());
+    }
+
+    @Test
+    void stepsForHandlesEmptyNullAndInvalidCounts() {
+        assertEquals(new CommandAnalysisModel.StepsPlan(List.of(), 0, 0),
+                CommandAnalysisModel.stepsFor("minecraft:a", List.of(), null, 1024));
+        assertEquals(new CommandAnalysisModel.StepsPlan(List.of(), 0, 0),
+                CommandAnalysisModel.stepsFor("minecraft:a", null, null, 1024));
+        CommandAnalysisModel.StepsPlan counts = CommandAnalysisModel.stepsFor("minecraft:a",
+                java.util.Arrays.asList(5, null, 0, CommandAnalysisModel.MAX_COUNT + 1), null, 1024);
+        assertEquals(List.of(key("minecraft:a", 5)), counts.keys());
+        assertEquals(3, counts.invalid());
+        assertEquals(0, counts.skipped());
+        CommandAnalysisModel.StepsPlan blankId = CommandAnalysisModel.stepsFor(" ",
+                List.of(5, 10), null, 1024);
+        assertTrue(blankId.keys().isEmpty());
+        assertEquals(2, blankId.invalid());
+    }
+
+    @Test
+    void bulkPlanCountsStepsTaggedItemsAndCompletedTargets() {
+        List<CommandAnalysisModel.TargetRef> targets = List.of(
+                key("minecraft:a", 1), key("minecraft:b", 10), key("#minecraft:tag", 1));
+        Set<CommandAnalysisModel.TargetRef> recorded = Set.of(key("minecraft:b", 10));
+        List<CommandAnalysisModel.TargetRef> tagItems = List.of(
+                key("minecraft:c", 1), key("#minecraft:tag", 1), key("minecraft:d", 1));
+        CommandAnalysisModel.BulkPlan plan =
+                CommandAnalysisModel.bulkPlan(targets, recorded, tagItems, 1024);
+        assertEquals(1, plan.stepTargets());
+        assertEquals(2, plan.taggedItems());
+        assertEquals(1, plan.completedTargets());
+        assertEquals(1, plan.skipped(), "the tag key is already present");
+        assertEquals(Set.of(key("minecraft:b", 10)), recorded);
+    }
+
+    @Test
+    void bulkPlanCapsTaggedItemsByRemainingCapacity() {
+        List<CommandAnalysisModel.TargetRef> targets = List.of(key("minecraft:a", 1), key("minecraft:b", 1));
+        List<CommandAnalysisModel.TargetRef> tagItems = List.of(
+                key("minecraft:c", 1), key("minecraft:d", 1), key("minecraft:e", 1));
+        CommandAnalysisModel.BulkPlan plan =
+                CommandAnalysisModel.bulkPlan(targets, Set.of(), tagItems, 4);
+        assertEquals(2, plan.taggedItems(), "two free slots out of four");
+        assertEquals(1, plan.skipped());
+        assertEquals(0, plan.stepTargets());
+        assertEquals(0, plan.completedTargets());
+        CommandAnalysisModel.BulkPlan full =
+                CommandAnalysisModel.bulkPlan(targets, Set.of(), tagItems, 1);
+        assertEquals(0, full.taggedItems());
+        assertEquals(3, full.skipped());
+    }
+
+    @Test
+    void bulkPlanAcceptsEmptyInputsAndNeverTouchesRecords() {
+        assertEquals(new CommandAnalysisModel.BulkPlan(0, 0, 0, 0),
+                CommandAnalysisModel.bulkPlan(null, null, null, 1024));
+        assertEquals(new CommandAnalysisModel.BulkPlan(0, 0, 0, 0),
+                CommandAnalysisModel.bulkPlan(List.of(), Set.of(key("minecraft:a", 1)), List.of(), 1024));
+        List<CommandAnalysisModel.TargetRef> targets = new ArrayList<>(List.of(key("minecraft:a", 1)));
+        Set<CommandAnalysisModel.TargetRef> recorded =
+                new java.util.LinkedHashSet<>(Set.of(key("minecraft:a", 1)));
+        CommandAnalysisModel.bulkPlan(targets, recorded, List.of(key("minecraft:b", 1)), 1024);
+        assertEquals(List.of(key("minecraft:a", 1)), targets);
+        assertEquals(Set.of(key("minecraft:a", 1)), recorded);
+    }
+
+    @Test
+    void importPreviewComputesTargetsOverwritesFirstsAndSkipped() {
+        List<CommandAnalysisModel.TargetRef> currentTargets =
+                List.of(key("minecraft:a", 1), key("minecraft:b", 1));
+        List<CommandAnalysisModel.TargetRef> importedTargets =
+                List.of(key("minecraft:b", 1), key("minecraft:c", 1), key("minecraft:d", 1));
+        Map<CommandAnalysisModel.TargetRef, Integer> currentRecords = Map.of(
+                key("minecraft:a", 1), 100, key("minecraft:b", 1), 50, key("minecraft:c", 1), 10);
+        Map<CommandAnalysisModel.TargetRef, Integer> importedRecords = Map.of(
+                key("minecraft:a", 1), 100, key("minecraft:b", 1), 40,
+                key("minecraft:c", 1), 20, key("minecraft:d", 1), 5);
+        List<CommandAnalysisModel.TargetRef> currentFirsts = List.of(key("minecraft:a", 1));
+        List<CommandAnalysisModel.TargetRef> importedFirsts = java.util.Arrays.asList(
+                key("minecraft:a", 1), key("minecraft:c", 1), key("minecraft:c", 1),
+                key("minecraft:d", 1), null);
+        CommandAnalysisModel.ImportPreview preview = CommandAnalysisModel.importPreview(
+                currentTargets, importedTargets, currentRecords, importedRecords,
+                currentFirsts, importedFirsts, 5);
+        assertEquals(2, preview.targetsToAdd());
+        assertEquals(1, preview.recordsToOverwrite(), "only strictly smaller playTicks overwrite");
+        assertEquals(2, preview.newWorldFirsts());
+        assertEquals(2, preview.skipped(), "one already-owned target plus one null world-first key");
+    }
+
+    @Test
+    void importPreviewDeduplicatesWorldFirstsAndCountsInvalidKeys() {
+        List<CommandAnalysisModel.TargetRef> importedFirsts = java.util.Arrays.asList(
+                key("minecraft:x", 1), key("minecraft:x", 1), key("minecraft:y", 1),
+                key("minecraft:x", 1), key(" ", 1), null);
+        CommandAnalysisModel.ImportPreview preview = CommandAnalysisModel.importPreview(
+                List.of(), List.of(), Map.of(), Map.of(), List.of(), importedFirsts, 1024);
+        assertEquals(2, preview.newWorldFirsts());
+        assertEquals(2, preview.skipped());
+        assertEquals(0, preview.targetsToAdd());
+        assertEquals(0, preview.recordsToOverwrite());
+    }
+
+    @Test
+    void importPreviewCapsTargetAddsAndCountsInvalidImportedTargetKeys() {
+        List<CommandAnalysisModel.TargetRef> current = List.of(
+                key("minecraft:a", 1), key("minecraft:b", 1), key("minecraft:c", 1));
+        List<CommandAnalysisModel.TargetRef> imported = java.util.Arrays.asList(
+                key("minecraft:d", 1), key("minecraft:e", 1), key("minecraft:f", 1), key("", 1), null);
+        CommandAnalysisModel.ImportPreview preview = CommandAnalysisModel.importPreview(
+                current, imported, Map.of(), Map.of(), List.of(), List.of(), 4);
+        assertEquals(1, preview.targetsToAdd());
+        assertEquals(4, preview.skipped(), "two capacity overflows, one blank and one null key");
+    }
+
+    @Test
+    void importPreviewReadsInputsWithoutMutation() {
+        List<CommandAnalysisModel.TargetRef> currentTargets =
+                new ArrayList<>(List.of(key("minecraft:a", 1)));
+        List<CommandAnalysisModel.TargetRef> importedTargets =
+                new ArrayList<>(List.of(key("minecraft:b", 1)));
+        Map<CommandAnalysisModel.TargetRef, Integer> currentRecords =
+                new java.util.LinkedHashMap<>(Map.of(key("minecraft:a", 1), 100));
+        Map<CommandAnalysisModel.TargetRef, Integer> importedRecords =
+                new java.util.LinkedHashMap<>(Map.of(key("minecraft:a", 1), 50));
+        List<CommandAnalysisModel.TargetRef> currentFirsts =
+                new ArrayList<>(List.of(key("minecraft:a", 1)));
+        List<CommandAnalysisModel.TargetRef> importedFirsts =
+                new ArrayList<>(List.of(key("minecraft:b", 1), key("minecraft:a", 1)));
+        List<CommandAnalysisModel.TargetRef> currentTargetsRef = currentTargets;
+        Map<CommandAnalysisModel.TargetRef, Integer> currentRecordsRef = currentRecords;
+        List<CommandAnalysisModel.TargetRef> importedFirstsRef = importedFirsts;
+        CommandAnalysisModel.importPreview(currentTargets, importedTargets, currentRecords,
+                importedRecords, currentFirsts, importedFirsts, 1024);
+        assertSame(currentTargetsRef, currentTargets);
+        assertSame(currentRecordsRef, currentRecords);
+        assertSame(importedFirstsRef, importedFirsts);
+        assertEquals(List.of(key("minecraft:a", 1)), currentTargets);
+        assertEquals(List.of(key("minecraft:b", 1)), importedTargets);
+        assertEquals(Map.of(key("minecraft:a", 1), 100), currentRecords);
+        assertEquals(Map.of(key("minecraft:a", 1), 50), importedRecords);
+        assertEquals(List.of(key("minecraft:a", 1)), currentFirsts);
+        assertEquals(List.of(key("minecraft:b", 1), key("minecraft:a", 1)), importedFirsts);
+    }
+
+    @Test
+    void importPreviewHandlesEmptyAndNullInputs() {
+        assertEquals(new CommandAnalysisModel.ImportPreview(0, 0, 0, 0),
+                CommandAnalysisModel.importPreview(null, null, null, null, null, null, 1024));
+        assertEquals(new CommandAnalysisModel.ImportPreview(0, 0, 0, 0),
+                CommandAnalysisModel.importPreview(List.of(), List.of(), Map.of(), Map.of(),
+                        List.of(), List.of(), 1024));
     }
 }

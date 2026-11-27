@@ -139,6 +139,12 @@ public final class CommandHelp {
             new Entry("modstats", false, Gate.LOOKUP),
             new Entry("presetstats", false, Gate.LOOKUP),
             new Entry("presetmatrix", false, Gate.LOOKUP),
+            // PR-3 write operations (F-150-13/14/16/17/25/26/30/31/37).
+            new Entry("copytargets", true, Gate.LOOKUP),
+            new Entry("sharetargets", true, Gate.LOOKUP),
+            new Entry("addsteps", true, Gate.NONE),
+            new Entry("bulk", true, Gate.NONE),
+            new Entry("pinned", true, Gate.NONE),
             new Entry("export", true, Gate.EXPORT_IMPORT),
             new Entry("exporthtml", true, Gate.EXPORT_IMPORT),
             new Entry("exportcsv", true, Gate.EXPORT_IMPORT),
