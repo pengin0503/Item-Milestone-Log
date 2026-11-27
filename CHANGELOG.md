@@ -3,6 +3,11 @@
 The section for a version is used as it is for the GitHub Release (created when a
 `v<version>` tag is pushed) and for the CurseForge file changelog.
 
+## 1.5.0
+
+### Permissions
+- **Permission node subdivision (N89)**: Seven boolean permission nodes (`doctor`, `debug`, `discordstatus`, `discorddigest`, `backup.manage`, `backup.view`, `audit.view`) are registered alongside the existing nine, with human-readable names and descriptions in English and Japanese. The existing nodes, checks and command permissions are unchanged: a node can only add access, and console / RCON / command blocks still use the vanilla permission level. No command behaviour changes in this PR.
+
 ## 1.4.0
 
 This release adds saved-data versioning and recovery, extends presets with composition and automatic add-ons, and adds new inspection, sharing and administration commands, alongside a broad wave of fixes from review and pre-release audits. Every supported Minecraft edition ships with the same version number and feature set.

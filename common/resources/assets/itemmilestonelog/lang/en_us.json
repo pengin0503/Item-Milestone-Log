@@ -649,5 +649,19 @@
   "message.itemmilestonelog.sound_mute_current": "Notification sounds: %s",
   "message.itemmilestonelog.sound_mute_set": "Notification sounds %s",
   "message.itemmilestonelog.sound_mute_toggled": "Notification sounds %s (key)",
-  "key.itemmilestonelog.mute_notification_sound": "Mute notification sounds"
+  "key.itemmilestonelog.mute_notification_sound": "Mute notification sounds",
+  "permission.name.itemmilestonelog.doctor": "Server diagnostics",
+  "permission.desc.itemmilestonelog.doctor": "Read-only server diagnostics (/milestonelog doctor)",
+  "permission.name.itemmilestonelog.debug": "Runtime statistics",
+  "permission.desc.itemmilestonelog.debug": "Read-only runtime statistics (/milestonelog admin debug)",
+  "permission.name.itemmilestonelog.discordstatus": "Discord status",
+  "permission.desc.itemmilestonelog.discordstatus": "Read-only Discord status (/milestonelog discordstatus)",
+  "permission.name.itemmilestonelog.discorddigest": "Manual Discord digest",
+  "permission.desc.itemmilestonelog.discorddigest": "Send the Discord digest manually (/milestonelog discordstatus digest)",
+  "permission.name.itemmilestonelog.backup.manage": "Backup creation",
+  "permission.desc.itemmilestonelog.backup.manage": "Create a backup now (/milestonelog backup now)",
+  "permission.name.itemmilestonelog.backup.view": "Backup inspection",
+  "permission.desc.itemmilestonelog.backup.view": "List and verify backups (/milestonelog backup list / verify)",
+  "permission.name.itemmilestonelog.audit.view": "Audit log viewing",
+  "permission.desc.itemmilestonelog.audit.view": "Reserved for viewing the admin audit log; no viewing command is shipped yet"
 }

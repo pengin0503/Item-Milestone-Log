@@ -28,7 +28,19 @@ public final class MilestonePermissionLogic {
     public static final String PRESETS_MANAGE = MOD_ID + ".presets.manage";
     public static final String VIEWHIDDEN = MOD_ID + ".viewhidden";
 
-    /** The complete F43 table, in the order used by the specification. */
+    // F-150-51 (N89): seven step-5 nodes appended after the nine F43 nodes. The nine names,
+    // constants and ordering above are deliberately untouched so an existing permission-mod
+    // setup keeps exactly the access it has today. See spec-150-operations.md §1.2 (the single
+    // definition of the migration-compatibility rule) for how all sixteen nodes are checked.
+    public static final String DOCTOR = MOD_ID + ".doctor";
+    public static final String DEBUG = MOD_ID + ".debug";
+    public static final String DISCORD_STATUS = MOD_ID + ".discordstatus";
+    public static final String DISCORD_DIGEST = MOD_ID + ".discorddigest";
+    public static final String BACKUP_MANAGE = MOD_ID + ".backup.manage";
+    public static final String BACKUP_VIEW = MOD_ID + ".backup.view";
+    public static final String AUDIT_VIEW = MOD_ID + ".audit.view";
+
+    /** The complete table, in specification order: the nine F43 nodes, then the seven step-5 nodes. */
     public static final List<String> NODE_NAMES = List.of(
             ADMIN,
             FIRSTS_RESET,
@@ -38,13 +50,23 @@ public final class MilestonePermissionLogic {
             RENAMEITEM,
             DISCORDTEST,
             PRESETS_MANAGE,
-            VIEWHIDDEN);
+            VIEWHIDDEN,
+            DOCTOR,
+            DEBUG,
+            DISCORD_STATUS,
+            DISCORD_DIGEST,
+            BACKUP_MANAGE,
+            BACKUP_VIEW,
+            AUDIT_VIEW);
 
     private MilestonePermissionLogic() {
     }
 
     /**
-     * Test seam for the F43 check matrix.
+     * The one implementation of the migration-compatibility rule defined in
+     * {@code spec-150-operations.md} §1.2; callers must use this method instead of restating it.
+     *
+     * <p>Test seam for the F43 / F-150-51 check matrix.
      *
      * <ul>
      *   <li>Player sources: the legacy check (level-2 {@code requires} or {@code isPrivileged},

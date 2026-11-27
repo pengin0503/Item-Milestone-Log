@@ -133,6 +133,13 @@ Admin commands also accept NeoForge boolean permission nodes, so a permission mo
 | `itemmilestonelog.discordtest` | `discordtest` (including `discordtest worldfirst`) |
 | `itemmilestonelog.presets.manage` | Saving/deleting (and reloading) custom presets on a dedicated server (G1, including the GUI) |
 | `itemmilestonelog.viewhidden` | Using `lookup`, `top`, `recent`, `stats`, and the recorder count/rank line of `info` when `allowLookup = false`; viewing records hidden with `/milestonelog privacy` |
+| `itemmilestonelog.doctor` | Reserved for the read-only `/milestonelog doctor` diagnostics command (F-150-52) |
+| `itemmilestonelog.debug` | Reserved for the read-only `/milestonelog admin debug` runtime dump (F-150-53) |
+| `itemmilestonelog.discordstatus` | Reserved for the read-only `/milestonelog discordstatus` command (F-150-54) |
+| `itemmilestonelog.discorddigest` | Reserved for `/milestonelog discordstatus digest`, which sends the Discord digest (F-150-54) |
+| `itemmilestonelog.backup.manage` | Reserved for `/milestonelog backup now`, which creates a backup (F-150-55) |
+| `itemmilestonelog.backup.view` | Reserved for the read-only `/milestonelog backup list` / `backup verify` commands (F-150-55) |
+| `itemmilestonelog.audit.view` | Reserved for a future audit-log viewing command (F-150-57); no viewing command is shipped |
 
 - The check is **legacy OR node**: OP / permission level 2 (or the singleplayer/LAN host) keeps access even if a permission mod denies a node. A node can only add access; it cannot take OP access away.
 - **Console, RCON, command blocks and functions** keep using the vanilla permission-level check only. The NeoForge permission API needs an online `ServerPlayer`, so it is never queried for them.
