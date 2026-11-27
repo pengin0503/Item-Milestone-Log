@@ -403,6 +403,103 @@ class NotificationGroupingTest {
     }
 
     @Test
+    void windowIndexAndCloseUseTheSingleSharedDefinition() {
+        assertEquals(NotificationGrouping.MIN_WINDOW_TICKS,
+                NotificationGrouping.normalizeWindowTicks(0));
+        assertEquals(NotificationGrouping.MAX_WINDOW_TICKS,
+                NotificationGrouping.normalizeWindowTicks(99));
+
+        // Default window (1 tick) must reproduce today's F27 per-tick flush exactly.
+        assertEquals(0L, NotificationGrouping.windowIndex(0, 1));
+        assertEquals(1L, NotificationGrouping.windowIndex(1, 1));
+        assertFalse(NotificationGrouping.windowClosed(0L, 0, 1));
+        assertTrue(NotificationGrouping.windowClosed(0L, 1, 1));
+
+        // Two-tick window: both ticks share one index; the first Post of the next window closes it.
+        assertEquals(0L, NotificationGrouping.windowIndex(0, 2));
+        assertEquals(0L, NotificationGrouping.windowIndex(1, 2));
+        assertEquals(1L, NotificationGrouping.windowIndex(2, 2));
+        assertEquals(2L, NotificationGrouping.windowIndex(5, 2));
+        assertFalse(NotificationGrouping.windowClosed(0L, 0, 2));
+        assertFalse(NotificationGrouping.windowClosed(0L, 1, 2));
+        assertTrue(NotificationGrouping.windowClosed(0L, 2, 2));
+        assertTrue(NotificationGrouping.windowClosed(1L, 4, 2));
+    }
+
+    @Test
+    void progressAlertsFormASeparateChannelWithTheF27Threshold() {
+        assertEquals(NotificationGrouping.SendMode.NONE,
+                NotificationGrouping.planProgressChannel(List.of()).mode());
+
+        List<String> one = List.of("minecraft:diamond");
+        NotificationGrouping.ChannelPlan<String> p1 = NotificationGrouping.planProgressChannel(one);
+        assertEquals(NotificationGrouping.SendMode.INDIVIDUAL, p1.mode());
+        assertEquals(one, p1.items());
+
+        List<String> two = List.of("minecraft:diamond", "minecraft:coal");
+        NotificationGrouping.ChannelPlan<String> p2 = NotificationGrouping.planProgressChannel(two);
+        assertEquals(NotificationGrouping.SendMode.INDIVIDUAL, p2.mode());
+        assertEquals(two, p2.items());
+
+        NotificationGrouping.ChannelPlan<String> p3 = NotificationGrouping.planProgressChannel(
+                List.of("minecraft:diamond", "minecraft:coal", "minecraft:emerald"));
+        assertEquals(NotificationGrouping.SendMode.GROUPED, p3.mode());
+        assertEquals(3, p3.items().size());
+
+        NotificationGrouping.ChannelPlan<String> p6 = NotificationGrouping.planProgressChannel(
+                List.of("a", "b", "c", "d", "e", "f"));
+        assertEquals(NotificationGrouping.SendMode.GROUPED, p6.mode());
+        assertEquals(6, p6.items().size());
+
+        // Progress alerts never enter the record or Discord plans of the same window.
+        List<StubRecord> records = List.of(new StubRecord("minecraft:coal", false));
+        NotificationGrouping.FlushPlan<StubRecord> plan = NotificationGrouping.planFlush(
+                records, records, StubRecord::worldFirst, BY_KEY,
+                true, true, true, true, true, "all");
+        assertEquals(NotificationGrouping.SendMode.INDIVIDUAL, plan.playerChat().mode());
+        assertEquals(1, plan.discord().items().size());
+        assertEquals(3, p3.items().size());
+    }
+
+    @Test
+    void multiTickWindowAccumulatesOneDiscordBatchPerDestinationAndExcludesOptOuts() {
+        List<StubRecord> tick0 = List.of(
+                new StubRecord("minecraft:coal", false),
+                new StubRecord("minecraft:diamond", true));
+        List<StubRecord> tick1 = List.of(
+                new StubRecord("minecraft:emerald", false),
+                new StubRecord("minecraft:iron_ingot", false),
+                new StubRecord("minecraft:gold_ingot", false));
+        assertEquals(NotificationGrouping.windowIndex(0, 2), NotificationGrouping.windowIndex(1, 2));
+        assertTrue(NotificationGrouping.windowClosed(NotificationGrouping.windowIndex(1, 2), 2, 2));
+
+        List<StubRecord> windowBatch = new ArrayList<>(tick0);
+        windowBatch.addAll(tick1);
+        NotificationGrouping.FlushPlan<StubRecord> plan = NotificationGrouping.planFlush(
+                windowBatch, windowBatch, StubRecord::worldFirst, BY_KEY,
+                true, true, true, true, true, "all", true, true);
+        // Three-plus normal records across two ticks become one grouped main batch; the world-first
+        // stays in its own batch, so both destinations are never mixed.
+        assertEquals(NotificationGrouping.SendMode.GROUPED, plan.discord().mode());
+        assertEquals(List.of("minecraft:coal", "minecraft:emerald", "minecraft:gold_ingot", "minecraft:iron_ingot"),
+                plan.discord().items().stream().map(StubRecord::key).toList());
+        assertEquals(NotificationGrouping.SendMode.INDIVIDUAL, plan.discordWorldFirst().mode());
+        assertEquals(List.of("minecraft:diamond"),
+                plan.discordWorldFirst().items().stream().map(StubRecord::key).toList());
+
+        // Opted-out records are absent from the Discord queue: only two eligible records remain,
+        // which is below the grouping threshold.
+        List<StubRecord> discordEligible = List.of(
+                new StubRecord("minecraft:coal", false), new StubRecord("minecraft:emerald", false));
+        NotificationGrouping.FlushPlan<StubRecord> filtered = NotificationGrouping.planFlush(
+                windowBatch, discordEligible, StubRecord::worldFirst, BY_KEY,
+                true, true, true, true, true, "all", true, true);
+        assertEquals(NotificationGrouping.SendMode.INDIVIDUAL, filtered.discord().mode());
+        assertEquals(2, filtered.discord().items().size());
+        assertEquals(NotificationGrouping.SendMode.GROUPED, filtered.playerChat().mode());
+    }
+
+    @Test
     void discordGroupNullItemEntriesAreIgnoredInHeaderCountAndLines() {
         List<NotificationGrouping.DiscordItem> items = new ArrayList<>();
         items.add(new NotificationGrouping.DiscordItem("Coal", false));
