@@ -312,6 +312,37 @@ public final class Config {
                     "the server's value is never used.")
             .define("itemTooltipStatus", true);
 
+    /** F-150-64 (N115): cache received sync snapshots locally for offline viewing (client display only). */
+    public static final ModConfigSpec.BooleanValue LOCAL_CACHE_ENABLED = BUILDER
+            .comment("Cache the last received milestone sync snapshot on this client for offline viewing.",
+                    "Local display only: never sent to the server and never written to SavedData.",
+                    "Cached data is always labelled as an offline view.")
+            .define("localCacheEnabled", true);
+
+    /** F-150-67 (N119): keep rotating local backups of the client cache. */
+    public static final ModConfigSpec.BooleanValue CLIENT_BACKUP_ENABLED = BUILDER
+            .comment("Keep local backups of this client's milestone cache on disconnect and when connecting to another server.",
+                    "Local display only: backups are stored under config/itemmilestonelog-client/backups/.")
+            .define("clientBackupEnabled", true);
+
+    /** F-150-67 (N119): number of client cache backup generations to keep (1-10). */
+    public static final ModConfigSpec.IntValue CLIENT_BACKUP_GENERATIONS = BUILDER
+            .comment("Number of local client cache backups to keep (1-10).")
+            .defineInRange("clientBackupGenerations", ClientBackupRotation.DEFAULT_GENERATIONS,
+                    ClientBackupRotation.MIN_GENERATIONS, ClientBackupRotation.MAX_GENERATIONS);
+
+    /** F-150-85 (N198, PR-1 config only): export local data once on disconnect. */
+    public static final ModConfigSpec.BooleanValue EXIT_AUTO_EXPORT = BUILDER
+            .comment("Write one local export when disconnecting from a server (client display only).",
+                    "The export file writer itself ships in a later client PR; this key only records the preference.")
+            .define("exitAutoExport", false);
+
+    /** F-150-86 (N199, PR-1 config only): reduce client-side refresh and cosmetic frequency. */
+    public static final ModConfigSpec.BooleanValue LOW_POWER_MODE = BUILDER
+            .comment("Reduce client-side refresh frequency and disable cosmetic effects.",
+                    "Displayed information and button layout are unchanged; no server setting is affected.")
+            .define("lowPowerMode", false);
+
     static final ModConfigSpec SPEC = BUILDER.build();
 
     private record ThresholdsCache(List<? extends Integer> source, List<Integer> normalized) {
