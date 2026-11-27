@@ -225,8 +225,6 @@ public final class Tracker {
         MilestoneData data = MilestoneData.get(player.level().getServer());
         MilestoneData.PlayerData existingPd = data.playerOrNull(player.getUUID());
         long previousLastSeen = existingPd != null ? existingPd.lastSeen : 0L;
-        // RB-2: capture the value F52 already uses before processPlayerLogin overwrites lastSeen.
-        rememberPreLoginLastSeen(player.getUUID(), previousLastSeen);
         String previousName = existingPd != null ? existingPd.lastKnownName : null;
         boolean hasMod = player.connection != null
                 && player.connection.hasChannel(SyncMilestonesPayload.TYPE);
@@ -364,7 +362,11 @@ public final class Tracker {
             long nowMillis,
             int playTicks,
             Predicate<String> modLoaded) {
-        int firstJoinAdded = data.playerOrNull(playerId) == null
+        // R2-MN-2(a): the production capture lives in the login path itself (the event handler
+        // routes through this overload), before any first-join preset or lastSeen overwrite.
+        MilestoneData.PlayerData beforeLogin = data.playerOrNull(playerId);
+        rememberPreLoginLastSeen(playerId, beforeLogin != null ? beforeLogin.lastSeen : 0L);
+        int firstJoinAdded = beforeLogin == null
                 ? MilestoneService.applyFirstJoinPresets(
                         data, playerId, firstJoinPresets, isKnownNonAirItem, presetsEnabled)
                 : 0;

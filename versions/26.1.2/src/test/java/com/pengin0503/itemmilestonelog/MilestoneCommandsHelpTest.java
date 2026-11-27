@@ -17,8 +17,6 @@ import org.junit.jupiter.api.Test;
 
 import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.io.Reader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -975,6 +973,22 @@ class MilestoneCommandsHelpTest {
     }
 
     @Test
+    void settingsToggleNoOpLeavesADataLessPlayerUntouched() {
+        // R2-SF-1: an absent PlayerData has all-off defaults, so every "off" toggle is a no-op and
+        // must not insert or dirty a PlayerData. Only "on" needs a write (done by the legacy handler).
+        MilestoneData data = new MilestoneData();
+        UUID playerId = UUID.fromString("44444444-4444-4444-4444-444444444444");
+        for (CommandAnalysisModel.Toggle toggle : CommandAnalysisModel.Toggle.values()) {
+            assertFalse(MilestoneCommands.settingsToggleNeedsWrite(data, playerId, toggle, false),
+                    toggle + " off must be a no-op for a data-less player");
+            assertTrue(MilestoneCommands.settingsToggleNeedsWrite(data, playerId, toggle, true),
+                    toggle + " on must reach the legacy write handler");
+        }
+        assertTrue(data.allPlayers().isEmpty(), "the read-only decision must not insert PlayerData");
+        assertFalse(data.isDirty(), "the read-only decision must not dirty the data set");
+    }
+
+    @Test
     void previewStatesCoverEveryRelatedKeyIncludingUntrackedOnes() throws Exception {
         List<CommandAnalysisModel.TargetRef> refs = new ArrayList<>();
         for (int i = 0; i < 12; i++) {
@@ -992,11 +1006,7 @@ class MilestoneCommandsHelpTest {
         assertEquals(10, result.entries().size());
         assertEquals(2, result.moreCount());
         assertEquals("none", result.entries().get(1).statusKey());
-
-        String sourceDir = System.getProperty("itemmilestonelog.mainSourceDir", "src/main/java");
-        String src = Files.readString(Path.of(sourceDir,
-                "com/pengin0503/itemmilestonelog/MilestoneCommands.java"));
-        assertTrue(src.contains("if (!relatedTags.isEmpty() && !preview)"),
-                "the base related-tag section must not be duplicated while preview is active");
+        // R2-MN-2(b): the duplicate-section pin is now a rendered-output assertion through
+        // MilestoneCommands.sendInfoRelatedTags in the version-local MilestoneCommandRenderTest.
     }
 }

@@ -408,6 +408,7 @@
   "message.itemmilestonelog.recap_entry": "%s — %s",
   "message.itemmilestonelog.recap_header": "振り返り（%s）:",
   "message.itemmilestonelog.recap_legacy": "日時不明の記録が %s 件、そのうち %s 件がまだ目標です。",
+  "message.itemmilestonelog.recap_more": "…他に %s 件は表示されません。",
   "message.itemmilestonelog.recent_empty": "日付のある記録はまだありません。",
   "message.itemmilestonelog.recent_entry": "%s — %s（%s）",
   "message.itemmilestonelog.recent_entry_world_first": "★ %s — %s（%s）",

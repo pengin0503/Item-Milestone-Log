@@ -90,9 +90,10 @@ class TargetFilterModelTest {
         assertFalse(TargetFilterModel.matchesKeyword(ingot, TargetFilterModel.tokens("ferro")));
         assertFalse(TargetFilterModel.matchesKeyword(ingot, TargetFilterModel.tokens("shiny")));
 
-        // Note (spec contradiction, recorded in progress-150-pr1.md): the spec's literal example
-        // 'query "Iron Ingot" must not hit minecraft:iron_ingot' cannot hold under the normative
-        // whitespace+substring rule, because both 'iron' and 'ingot' are ID substrings.
+        // D-150-1 is settled: the normative token-AND / whitespace+substring rule is authoritative,
+        // and its worked example is corrected to match. Query "Iron Ingot" DOES hit
+        // minecraft:iron_ingot because both tokens are path substrings; only display names are
+        // never consulted. The unrelated words above still must not create a hit.
     }
 
     @Test

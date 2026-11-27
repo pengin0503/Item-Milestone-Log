@@ -100,7 +100,92 @@ class DiscordTestHandoffTest {
         }
     }
 
+    // R2-SF-2: an abandoned result reaches the initiator as a failure on the server thread.
+    @Test
+    void abandonedDiscordtestResultIsDeliveredAsAFailure() {
+        List<DiscordTestResult> abandoned = new ArrayList<>();
+        FakeDiscordSource source = new FakeDiscordSource();
+        String message = ServerLang.trForLang("en_us", "message.itemmilestonelog.discordtest_abandoned").getString();
+        try {
+            MilestoneCommands.discordExecutorAliveForTest = true;
+            MilestoneCommands.discordTestOnServerThreadForTest = true;
+            MilestoneCommands.discordTestAbandonedForTest = abandoned::add;
+            MilestoneCommands.discordTestSchedulerForTest = Runnable::run;
+            MilestoneCommands.handOffDiscordTestResult(null, source, null, null, DiscordTestResult.abandoned());
+            assertEquals(1, source.failureCount);
+            assertEquals(0, source.successCount);
+            assertTrue(abandoned.isEmpty(), "a delivered result must not also be logged as abandoned");
+            assertEquals(1, countText(source, message), "the abandoned lang message must be delivered");
+        } finally {
+            MilestoneCommands.resetDiscordTestHooksForTest();
+        }
+    }
+
+    // R2-SF-2: the onAbandoned callback from the Discord sender takes the same handoff.
+    @Test
+    void senderAbandonedCallbackIsRoutedToTheCommandSource() {
+        List<DiscordTestResult> abandoned = new ArrayList<>();
+        FakeDiscordSource source = new FakeDiscordSource();
+        try {
+            MilestoneCommands.discordExecutorAliveForTest = true;
+            MilestoneCommands.discordTestOnServerThreadForTest = true;
+            MilestoneCommands.discordTestAbandonedForTest = abandoned::add;
+            MilestoneCommands.discordTestSchedulerForTest = Runnable::run;
+            MilestoneCommands.abandonDiscordTestResult(null, source, null, null, "sender shut down");
+            assertEquals(1, source.failureCount);
+            assertTrue(abandoned.isEmpty());
+        } finally {
+            MilestoneCommands.resetDiscordTestHooksForTest();
+        }
+    }
+
+    // R2-SF-2: sender shutdown is a common cause of abandonment; the notice still goes to the source.
+    @Test
+    void abandonedResultIsDeliveredEvenWhenTheDiscordSenderIsGone() {
+        List<DiscordTestResult> abandoned = new ArrayList<>();
+        FakeDiscordSource source = new FakeDiscordSource();
+        try {
+            MilestoneCommands.discordExecutorAliveForTest = false;
+            MilestoneCommands.discordTestOnServerThreadForTest = true;
+            MilestoneCommands.discordTestAbandonedForTest = abandoned::add;
+            MilestoneCommands.discordTestSchedulerForTest = Runnable::run;
+            MilestoneCommands.abandonDiscordTestResult(null, source, null, null, "sender shut down");
+            assertEquals(1, source.failureCount);
+            assertTrue(abandoned.isEmpty());
+        } finally {
+            MilestoneCommands.resetDiscordTestHooksForTest();
+        }
+    }
+
+    // R2-SF-2: no source means no delivery; the explicit log remains.
+    @Test
+    void abandonedResultWithoutASourceStaysLogged() {
+        List<DiscordTestResult> abandoned = new ArrayList<>();
+        try {
+            MilestoneCommands.discordExecutorAliveForTest = true;
+            MilestoneCommands.discordTestOnServerThreadForTest = true;
+            MilestoneCommands.discordTestAbandonedForTest = abandoned::add;
+            MilestoneCommands.discordTestSchedulerForTest = Runnable::run;
+            MilestoneCommands.abandonDiscordTestResult(null, null, null, null, "command source gone");
+            assertEquals(1, abandoned.size());
+            assertEquals(DiscordTestResult.Kind.ABANDONED, abandoned.get(0).kind());
+        } finally {
+            MilestoneCommands.resetDiscordTestHooksForTest();
+        }
+    }
+
+    private static int countText(FakeDiscordSource source, String text) {
+        int count = 0;
+        for (Component message : source.messages) {
+            if (message.getString().contains(text)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
     private static final class FakeDiscordSource extends CommandSourceStack {
+        private final List<Component> messages = new ArrayList<>();
         private int successCount;
         private int failureCount;
 
@@ -112,11 +197,13 @@ class DiscordTestHandoffTest {
         @Override
         public void sendFailure(Component message) {
             failureCount++;
+            messages.add(message);
         }
 
         @Override
         public void sendSuccess(java.util.function.Supplier<Component> message, boolean allowLogging) {
             successCount++;
+            messages.add(message.get());
         }
     }
 }
