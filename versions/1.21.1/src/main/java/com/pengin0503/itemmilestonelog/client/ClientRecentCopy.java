@@ -1,5 +1,6 @@
 package com.pengin0503.itemmilestonelog.client;
 
+import com.pengin0503.itemmilestonelog.ClientExportLogic;
 import com.pengin0503.itemmilestonelog.RecentRecordSelection;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
@@ -56,9 +57,13 @@ public final class ClientRecentCopy {
         notice("message.itemmilestonelog.copied_recent");
     }
 
-    /** Item ids come from the wire snapshot; allow only id-shaped characters, never raw text. */
+    /**
+     * Item ids come from the wire snapshot; allow only id-shaped characters, never raw text or
+     * a URL / {@code env:} reference in any letter case (MN-2).
+     */
     private static String safeItemId(String raw) {
-        if (raw == null || raw.isEmpty() || raw.length() > 128) {
+        if (raw == null || raw.isEmpty() || raw.length() > 128
+                || ClientExportLogic.hasUnsafeScheme(raw)) {
             return "item";
         }
         for (int i = 0; i < raw.length(); i++) {

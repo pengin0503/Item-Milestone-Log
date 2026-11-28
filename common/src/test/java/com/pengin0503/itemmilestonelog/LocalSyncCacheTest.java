@@ -77,8 +77,10 @@ class LocalSyncCacheTest {
         assertEquals(LocalSyncCache.MAX_LIST_ENTRIES, loaded.records().size());
         assertEquals(LocalSyncCache.MAX_LIST_ENTRIES, loaded.progress().size());
         assertEquals(LocalSyncCache.MAX_LIST_ENTRIES, loaded.presets().size());
-        assertEquals("minecraft:item_0", loaded.targets().get(0).itemId());
-        assertEquals("minecraft:item_4095", loaded.targets().get(4095).itemId());
+        // §1.4-3: when the cap is exceeded the oldest entries are discarded, so the newest tail survives.
+        assertEquals("minecraft:item_10", loaded.targets().get(0).itemId());
+        assertEquals("minecraft:item_" + (LocalSyncCache.MAX_LIST_ENTRIES + 9),
+                loaded.targets().get(LocalSyncCache.MAX_LIST_ENTRIES - 1).itemId());
     }
 
     @Test
@@ -127,6 +129,20 @@ class LocalSyncCacheTest {
         assertTrue(LocalSyncCache.writeDue(1000L, 2000L));
         assertTrue(LocalSyncCache.writeDue(1000L, 5000L));
         assertTrue(LocalSyncCache.writeDue(5000L, 4000L), "backwards clock must not freeze the cache");
+    }
+
+    @Test
+    void capTrimmingDropsTheOldestEntriesFirst() {
+        List<LocalSyncCache.CachedTarget> targets = new ArrayList<>();
+        for (int i = 0; i < LocalSyncCache.MAX_LIST_ENTRIES + 5; i++) {
+            targets.add(new LocalSyncCache.CachedTarget("minecraft:item_" + i, 1, false, false));
+        }
+        LocalSyncCache.Snapshot capped = LocalSyncCache.cap(new LocalSyncCache.Snapshot(
+                targets, List.of(), List.of(), 0, List.of(), false, false, SERVER_A, 1L, false));
+        assertEquals(LocalSyncCache.MAX_LIST_ENTRIES, capped.targets().size());
+        assertEquals("minecraft:item_5", capped.targets().get(0).itemId());
+        assertEquals("minecraft:item_" + (LocalSyncCache.MAX_LIST_ENTRIES + 4),
+                capped.targets().get(capped.targets().size() - 1).itemId());
     }
 
     @Test

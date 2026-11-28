@@ -6,6 +6,8 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Objects;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Pure-Java OBS status writer for F-150-66 (N27) and F-150-83 (N196). Writes only two files
@@ -27,6 +29,11 @@ public final class StreamStatusWriter {
     public static final String JSON_FILE = "status.json";
     /** Debounce window for status updates (F-150-66 / D-150-194). */
     public static final long DEBOUNCE_MILLIS = 1000L;
+    /** Mirrors {@code TargetKey.MAX_COUNT} without depending on a version tree. */
+    public static final int MAX_RECORD_COUNT = 1_000_000;
+    /** Canonical id, optional tag prefix and optional {@code #count} suffix (F-150-66-1). */
+    private static final Pattern SAFE_VALUE =
+            Pattern.compile("^(#?[a-z0-9_]+:[a-z0-9_/.-]{1,255})(?:#([0-9]{1,7}))?$");
 
     /** Stable, untranslated key order. The first five are the F-150-66 interface. */
     public static final List<String> KEYS = List.of(
@@ -53,14 +60,31 @@ public final class StreamStatusWriter {
         return new Values(0, 0, "", 0, true, "", 0);
     }
 
-    /** Rejects anything that could be a player name, URL, secret or non-canonical id. */
+    /**
+     * Accepts only a canonical id, an optional leading {@code #} tag and an optional bounded
+     * {@code #count} suffix, so counted and tag achievements reach OBS (F-150-66-1 / SF-3).
+     * URLs and {@code env:} references are rejected case-insensitively (MN-1); player names,
+     * control characters and arbitrary text never match.
+     */
     public static boolean isSafeValue(String value) {
-        if (value == null || value.isEmpty() || value.length() > 256) {
+        if (value == null || value.isEmpty() || value.length() > 256
+                || ClientExportLogic.hasUnsafeScheme(value)) {
             return false;
         }
-        // A single namespace colon is the only colon allowed; this also rejects URLs,
-        // env: references, player names with @, control characters and arbitrary text.
-        return value.matches("^[a-z0-9_]+:[a-z0-9_/.-]{1,255}$");
+        Matcher matcher = SAFE_VALUE.matcher(value);
+        if (!matcher.matches()) {
+            return false;
+        }
+        String count = matcher.group(2);
+        if (count == null) {
+            return true;
+        }
+        try {
+            int parsed = Integer.parseInt(count);
+            return parsed >= 1 && parsed <= MAX_RECORD_COUNT;
+        } catch (NumberFormatException e) {
+            return false;
+        }
     }
 
     /** Keeps only safe canonical ids; everything else becomes an empty value. */

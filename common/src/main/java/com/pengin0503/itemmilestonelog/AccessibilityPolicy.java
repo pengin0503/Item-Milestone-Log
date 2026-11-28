@@ -25,7 +25,8 @@ public record AccessibilityPolicy(boolean accessibleNarration, boolean hudHighCo
 
     /**
      * Detects conflicts among bound keys. Unbound keys use {@code InputConstants.UNKNOWN} (-1) and
-     * are ignored; the game never changes a player's assignment automatically.
+     * are ignored; key code {@code 0} (left mouse button) is a valid assignment and is included.
+     * The game never changes a player's assignment automatically.
      */
     public static List<Conflict> detectConflicts(Map<String, Integer> bindings) {
         if (bindings == null || bindings.isEmpty()) {
@@ -34,7 +35,7 @@ public record AccessibilityPolicy(boolean accessibleNarration, boolean hudHighCo
         Map<Integer, List<String>> byCode = new TreeMap<>();
         for (Map.Entry<String, Integer> entry : bindings.entrySet()) {
             Integer code = entry.getValue();
-            if (code == null || code <= 0 || entry.getKey() == null) {
+            if (code == null || code < 0 || entry.getKey() == null) {
                 continue;
             }
             byCode.computeIfAbsent(code, ignored -> new ArrayList<>()).add(entry.getKey());

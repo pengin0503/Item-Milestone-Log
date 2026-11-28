@@ -1,6 +1,7 @@
 package com.pengin0503.itemmilestonelog.client;
 
 import com.pengin0503.itemmilestonelog.AccessibilityPolicy;
+import com.pengin0503.itemmilestonelog.ClientCarryStore;
 import com.pengin0503.itemmilestonelog.ClientProfileStore;
 import com.pengin0503.itemmilestonelog.ClientStorageIO;
 import com.pengin0503.itemmilestonelog.Config;
@@ -68,6 +69,8 @@ public final class MilestoneHudOverlay {
     private static volatile Set<String> previousRecorded;
     private static volatile boolean pendingCapture;
     private static volatile long lastCaptureMillis;
+    // F-150-64: the invalid-cache notice is shown at most once per session.
+    private static boolean cacheInvalidNoticeShown;
 
     private MilestoneHudOverlay() {
     }
@@ -79,10 +82,13 @@ public final class MilestoneHudOverlay {
         return current == null ? null : current.available();
     }
 
-    /** F-150-64: opaque server identifier computed at login (no raw address is persisted). */
+    /**
+     * F-150-64 / SF-2: opaque server identifier computed at login. It is deterministic as soon as
+     * {@link #onLogin(Minecraft)} runs, before any snapshot or sync arrives, so connect-time backup
+     * rotation and profile loading see the real key. Empty only outside a connection.
+     */
     public static String serverKey() {
-        Snapshot current = snapshot;
-        return current == null ? "" : serverKey;
+        return serverKey;
     }
 
     /** True only when a profile-adjusted config enables the HUD (default false). */
@@ -95,16 +101,28 @@ public final class MilestoneHudOverlay {
         return effective;
     }
 
+    /** F-150-72: re-applies config + the current per-server profile after a profile command. */
+    public static void reloadOptions() {
+        refreshOptions();
+        rebuild();
+    }
+
     /** Called on login: binds the local profile and loads any offline snapshot. */
     public static void onLogin(Minecraft mc) {
         String address = mc.getConnection() != null && mc.getConnection().getConnection() != null
                 && mc.getConnection().getConnection().getRemoteAddress() != null
                 ? mc.getConnection().getConnection().getRemoteAddress().toString() : "";
-        String world = mc.level == null ? "" : mc.level.dimension().toString();
+        // SF-1: a real save/world identity, not the dimension (every save has overworld).
+        String world = worldIdentity(mc);
         serverKey = ClientStorageIO.serverKey(address, world);
+        // Set before any consumer runs: ClientLocalOutput.onLogin() rotates on this key.
         ClientLocalOutput.onLogin();
         refreshOptions();
         LocalSyncCache.LoadResult cached = LocalSyncCache.read(FMLPaths.CONFIGDIR.get(), serverKey);
+        if (cached.invalid() && !cacheInvalidNoticeShown) {
+            cacheInvalidNoticeShown = true;
+            ClientNotice.overlay(Component.translatable("message.itemmilestonelog.cache_invalid"));
+        }
         if (snapshot == null && cached.present()) {
             applyOffline(cached.snapshot());
         } else {
@@ -112,8 +130,58 @@ public final class MilestoneHudOverlay {
         }
     }
 
+    /**
+     * SF-1: resolves the client-side save identity without linking version-varying APIs. The
+     * integrated server's level name and save directory distinguish two single-player saves that
+     * share a dimension; the level seed and finally the dimension are only fallbacks.
+     */
+    private static String worldIdentity(Minecraft mc) {
+        try {
+            Object integrated = Minecraft.class.getMethod("getSingleplayerServer").invoke(mc);
+            if (integrated != null) {
+                String name = "";
+                Object worldData = integrated.getClass().getMethod("getWorldData").invoke(integrated);
+                if (worldData != null) {
+                    Object levelName = worldData.getClass().getMethod("getLevelName").invoke(worldData);
+                    if (levelName instanceof String s && !s.isEmpty()) {
+                        name = s;
+                    }
+                }
+                Object dir = integrated.getClass().getMethod("getServerDirectory").invoke(integrated);
+                if (dir instanceof java.nio.file.Path path && path.getFileName() != null) {
+                    String folder = path.getFileName().toString();
+                    name = name.isEmpty() ? folder : name + "\0" + folder;
+                }
+                if (!name.isEmpty()) {
+                    return name;
+                }
+            }
+        } catch (Throwable ignored) {
+            // Reflection is best-effort; fall through to the level identity below.
+        }
+        try {
+            java.lang.reflect.Field levelField = Minecraft.class.getDeclaredField("level");
+            levelField.setAccessible(true);
+            Object level = levelField.get(mc);
+            if (level != null) {
+                Object seed = level.getClass().getMethod("getSeed").invoke(level);
+                if (seed instanceof Number number) {
+                    return "seed:" + number;
+                }
+            }
+        } catch (Throwable ignored) {
+            // Fall through to the dimension, which keeps the pre-fix behaviour as a last resort.
+        }
+        return mc.level == null ? "" : mc.level.dimension().toString();
+    }
+
     /** Called on logout: no rows, no identity and no cached ids survive the connection. */
     public static void onLogout() {
+        // F-150-72: persist the current display options under this connection's key first.
+        if (ClientStorageIO.isServerKey(serverKey)) {
+            ClientProfileStore.save(FMLPaths.CONFIGDIR.get(), serverKey, effective.toOverrides());
+        }
+        ClientCarryStore.clearImported();
         snapshot = null;
         rows = List.of();
         serverKey = "";
@@ -169,6 +237,22 @@ public final class MilestoneHudOverlay {
         boolean pending = pendingCapture;
         pendingCapture = false;
         return pending;
+    }
+
+    /**
+     * MN-5: PRESET_COMPLETE screenshots share the record-diff capture clock. A pending record
+     * capture already covers this arrival; otherwise only one capture per second passes.
+     */
+    public static boolean presetCaptureDue() {
+        if (pendingCapture) {
+            return false;
+        }
+        long now = System.currentTimeMillis();
+        if (!RecordDiff.captureDue(lastCaptureMillis, now)) {
+            return false;
+        }
+        lastCaptureMillis = now;
+        return true;
     }
 
     /** Uses the PR-1 local cache as the only offline data source (F-150-64). */

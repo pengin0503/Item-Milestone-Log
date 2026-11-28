@@ -176,6 +176,10 @@ for suffix in "${suffixes[@]}"; do
   expect_file "$PKG/compat/client/${suffix}/TextCompatImpl.class"
   expect_file "$PKG/compat/client/${suffix}/SoundCompatImpl.class"
   expect_file "$PKG/compat/client/${suffix}/ListCompatImpl.class"
+  # Client PR-6/7 profile implementations must ship in every merged profile jar.
+  expect_file "$PKG/compat/client/${suffix}/NarrationCompatImpl.class"
+  expect_file "$PKG/compat/client/${suffix}/ScreenshotCompatImpl.class"
+  expect_file "$PKG/compat/client/${suffix}/ClipboardCompatImpl.class"
 done
 
 expect_file logo.png

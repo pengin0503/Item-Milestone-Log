@@ -96,7 +96,15 @@ public final class ScreenshotStore {
         return Integer.compare(suffix(ma), suffix(mb));
     }
 
+    /** Oversized owned-pattern suffixes sort after every numeric one instead of aborting pruning. */
     private static int suffix(Matcher matcher) {
-        return matcher.group(3) == null ? 0 : Integer.parseInt(matcher.group(3));
+        if (matcher.group(3) == null) {
+            return 0;
+        }
+        try {
+            return Integer.parseInt(matcher.group(3));
+        } catch (NumberFormatException e) {
+            return Integer.MAX_VALUE;
+        }
     }
 }

@@ -3,6 +3,8 @@ package com.pengin0503.itemmilestonelog;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import com.google.gson.JsonObject;
+
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
@@ -71,6 +73,28 @@ class ClientProfileStoreTest {
         // The most recently saved server survives; the oldest five were dropped.
         assertTrue(all.profiles().containsKey(ClientStorageIO.serverKey("host-36", "world")));
         assertFalse(all.profiles().containsKey(ClientStorageIO.serverKey("host-0", "world")));
+    }
+
+    @Test
+    void loadTrimsTheOldestProfilesWhenTheFileAlreadyExceedsTheCap() throws Exception {
+        JsonObject root = new JsonObject();
+        JsonObject profiles = new JsonObject();
+        for (int i = 0; i < ClientProfileStore.MAX_PROFILES + 5; i++) {
+            JsonObject overrides = new JsonObject();
+            overrides.addProperty("tooltipSort", "count");
+            profiles.add(ClientStorageIO.serverKey("host-" + i, "world"), overrides);
+        }
+        root.add("profiles", profiles);
+        Path file = ClientProfileStore.fileFor(configDir);
+        Files.createDirectories(file.getParent());
+        Files.writeString(file, root.toString());
+
+        ClientProfileStore.LoadResult loaded = ClientProfileStore.readAll(configDir);
+        assertEquals(ClientProfileStore.MAX_PROFILES, loaded.profiles().size());
+        assertTrue(loaded.profiles().containsKey(
+                ClientStorageIO.serverKey("host-36", "world")), "newest profile must survive");
+        assertFalse(loaded.profiles().containsKey(
+                ClientStorageIO.serverKey("host-0", "world")), "oldest profile must be dropped");
     }
 
     @Test

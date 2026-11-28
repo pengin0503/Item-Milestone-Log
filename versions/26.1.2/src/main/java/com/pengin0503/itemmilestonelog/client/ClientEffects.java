@@ -26,6 +26,11 @@ public final class ClientEffects {
             return;
         }
         if (payload.kind() == MilestoneEffectPayload.Kind.PRESET_COMPLETE) {
+            // MN-5: preset effects use the same 3-per-second limiter as other kinds; multiple
+            // payloads from one completed preset collapse to one screenshot in ClientLocalOutput.
+            if (!RATE_LIMIT.allow(System.currentTimeMillis())) {
+                return;
+            }
             ClientLocalOutput.capturePresetComplete();
             return;
         }

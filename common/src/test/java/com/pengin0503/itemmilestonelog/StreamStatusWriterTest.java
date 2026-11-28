@@ -68,6 +68,29 @@ class StreamStatusWriterTest {
     }
 
     @Test
+    void countedAndTagRecordsReachLastRecord() {
+        assertTrue(StreamStatusWriter.isSafeValue("minecraft:diamond#2"));
+        assertTrue(StreamStatusWriter.isSafeValue("#minecraft:planks"));
+        assertTrue(StreamStatusWriter.isSafeValue("#minecraft:planks#3"));
+        StreamStatusWriter.Values tagged = new StreamStatusWriter.Values(
+                1, 1, "#minecraft:planks#3", 20, false, "", 0);
+        assertTrue(StreamStatusWriter.renderTxt(tagged).contains("last_record: #minecraft:planks#3"));
+        assertFalse(StreamStatusWriter.isSafeValue("minecraft:diamond#0"));
+        assertFalse(StreamStatusWriter.isSafeValue("minecraft:diamond#1000001"));
+    }
+
+    @Test
+    void lowercaseUrlAndEnvSchemesAreRejected() {
+        for (String value : List.of("http://evil.example/a", "https://example/x",
+                "env:TOKEN", "Env:TOKEN", "ENV:TOKEN", "minecraft:diamond env:secret")) {
+            assertFalse(StreamStatusWriter.isSafeValue(value), value);
+            assertFalse(StreamStatusWriter.sanitize(value).equals(value), value);
+            assertFalse(ClientExportLogic.isSafeItemId(value), value);
+        }
+        assertTrue(StreamStatusWriter.isSafeValue("minecraft:diamond"));
+    }
+
+    @Test
     void secretsAndPlayerNamesAreNeverWritten() {
         StreamStatusWriter.Values dirty = new StreamStatusWriter.Values(
                 1, 1, "https://discord.com/api/webhooks/123/token#Steve", 10, false,

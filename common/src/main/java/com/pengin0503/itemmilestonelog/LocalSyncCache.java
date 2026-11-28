@@ -101,7 +101,7 @@ public final class LocalSyncCache {
         return nowMillis < lastWriteMillis || nowMillis - lastWriteMillis >= DEBOUNCE_MILLIS;
     }
 
-    /** Applies the 4096-entry cap to every list, preserving insertion order. */
+    /** Applies the 4096-entry cap to every list, keeping the newest (last) entries (§1.4-3). */
     public static Snapshot cap(Snapshot snapshot) {
         Objects.requireNonNull(snapshot, "snapshot");
         return new Snapshot(
@@ -227,7 +227,7 @@ public final class LocalSyncCache {
         if (values == null || values.isEmpty()) {
             return List.of();
         }
-        return List.copyOf(values.subList(0, Math.min(values.size(), MAX_LIST_ENTRIES)));
+        return List.copyOf(values.subList(Math.max(0, values.size() - MAX_LIST_ENTRIES), values.size()));
     }
 
     private static JsonObject encodeSnapshot(Snapshot snapshot) {
@@ -317,11 +317,11 @@ public final class LocalSyncCache {
                     // Skip one malformed entry instead of rejecting the whole snapshot.
                 }
             }
-            if (values.size() >= MAX_LIST_ENTRIES) {
-                break;
-            }
         }
-        return values;
+        // Decode order is oldest first (§1.4-3); an oversized file must keep the newest tail.
+        return values.size() > MAX_LIST_ENTRIES
+                ? List.copyOf(values.subList(values.size() - MAX_LIST_ENTRIES, values.size()))
+                : values;
     }
 
     private static String string(JsonObject json, String key) {

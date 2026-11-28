@@ -181,10 +181,11 @@ public final class PinStore {
                 Pin pin = normalize(child.getAsString());
                 if (pin != null && seen.add(pin.encoded())) {
                     pins.add(pin);
-                    if (pins.size() >= MAX_PINS) {
-                        break;
-                    }
                 }
+            }
+            // §1.4-3: on load the newest entries are the last ones; drop the oldest first.
+            if (pins.size() > MAX_PINS) {
+                return List.copyOf(pins.subList(pins.size() - MAX_PINS, pins.size()));
             }
             return List.copyOf(pins);
         } catch (RuntimeException e) {

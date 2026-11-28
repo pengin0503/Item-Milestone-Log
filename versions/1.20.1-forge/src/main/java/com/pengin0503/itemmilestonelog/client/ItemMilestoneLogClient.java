@@ -183,6 +183,7 @@ public final class ItemMilestoneLogClient {
         bindings.put(KEY_OPEN_GUI, OPEN_GUI_MAPPING.getKey().getValue());
         bindings.put(KEY_ADD_HOVERED, ADD_HOVERED_MAPPING.getKey().getValue());
         bindings.put(KEY_MUTE_NOTIFICATION_SOUND, MUTE_NOTIFICATION_SOUND_MAPPING.getKey().getValue());
+        bindings.put(KEY_COPY_RECENT, COPY_RECENT_MAPPING.getKey().getValue());
         List<AccessibilityPolicy.Conflict> conflicts = AccessibilityPolicy.detectConflicts(bindings);
         if (!conflicts.isEmpty()) {
             ClientNotice.overlay(Component.translatable("message.itemmilestonelog.key_conflict",
