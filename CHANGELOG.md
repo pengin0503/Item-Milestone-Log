@@ -3,6 +3,32 @@
 The section for a version is used as it is for the GitHub Release (created when a
 `v<version>` tag is pushed) and for the CurseForge file changelog.
 
+## 1.7.0
+
+This release completes step 5 of the 1.5.0 plan with the operations group: fine-grained permission nodes, read-only doctor and admin debug diagnostics, Discord payload previews, status and a manual digest, on-demand backup management with verification, and a structured administrator audit log. Existing permissions, defaults, saved data and command behaviour are unchanged unless the new nodes are granted, and every supported Minecraft edition ships with the same version number and feature set. **F-150-58 (`adjustrecord`) is a design memo only and is not shipped in 1.7.0.**
+
+### Permissions & diagnostics
+- **Fine-grained permission nodes (F-150-51 / N89)**: Seven opt-in boolean nodes — `itemmilestonelog.doctor`, `itemmilestonelog.debug`, `itemmilestonelog.discordstatus`, `itemmilestonelog.discorddigest`, `itemmilestonelog.backup.manage`, `itemmilestonelog.backup.view` and `itemmilestonelog.audit.view` — are registered alongside the existing nine. Player checks accept the legacy permission or the new node, and a node can only add access: existing OP levels, node names and command behaviour are unchanged, and console / RCON / command blocks / functions continue to use the vanilla permission level.
+- **Doctor diagnostics (F-150-52 / N47)**: `/iml doctor` prints a read-only summary of at most 20 lines covering the world/server, saved-data counts (negative ticks and unknown epochs as counts only), the backup directory, Discord configuration state and the I/O queue. No player names, UUIDs or webhook URLs are printed; nothing is repaired, saved or dirtied, and anomalies only add a warning-coloured line.
+- **Admin debug dump (F-150-53 / N147)**: `/iml admin debug` adds a read-only runtime dump of at most 20 lines beside a condensed doctor summary: current thread, average TPS when the version exposes it (otherwise a fixed "unavailable" wording), pending notification and Discord-send counts, dropped posts, dead-webhook and send-thread state, memory usage and per-kind I/O queue depth. Exceptions, stack traces, webhook URLs and player names are never shown; no tasks are submitted and no data is dirtied.
+
+### Discord operations
+- **Payload preview and status (F-150-54 / N32, F-150-56 / N35)**: `/iml discordtest payload` and `/iml discordtest worldfirst payload` print the JSON those test messages would send without sending, queueing or changing test results; the existing `discordtest` executions and result messages are unchanged. `/iml discordstatus` reports webhook resolution status (environment variable name only), embed mode, notification scope, digest settings, last/next digest epoch and pending sends in at most 12 lines, with no resolved URL.
+- **Manual digest (F-150-54 / N32)**: `/iml discordstatus digest` runs the existing digest path once, bypassing only the enabled/interval gate; per-player opt-outs, scope, the main webhook and the periodic throttler are unchanged. It advances `lastDigestEpoch` after the attempt, including when no new entries are found, but not when the webhook is unconfigured. This command uses its own `itemmilestonelog.discorddigest` node and is recorded in the audit log; status checks are read-only.
+
+### Backup operations
+- **On-demand backups and read-only verification (F-150-55 / N39)**: `/iml backup now` writes one backup immediately through the existing synchronous writer, ignoring `autoBackupEnabled` and the hourly rate limit but refused while the server is stopping; `/iml backup list [page <page>]` lists at most 15 matching files per page with name, size and timestamp, newest first; `/iml backup verify [fileName]` decompresses the newest matching file or a supplied direct-child name and reports schema version plus player and world-first counts without restoring anything. A supplied name must match the backup pattern and stay directly inside the backup directory, verification never touches live saved data or prunes files, and all failures use fixed status words with no exception details. `itemmilestonelog.backup.manage` gates `now`, and `itemmilestonelog.backup.view` gates `list` and `verify`.
+
+### Audit log
+- **Structured operations audit log (F-150-57 / N90)**: Successful administrative changes append one UTF-8 JSONL line to `<world>/itemmilestonelog/audit.log` — target add/remove/reset/purge/copy-from, firsts resets, data pruning, item/tag renames, imports, preset mutations, manual Discord digests and `backup now`. Each line has a record version, UTC timestamp, upper-case operation name, player UUID (or `#nonplayer`), target, a small detail object and `result: success`; no URLs, environment values, exception messages or display names are stored. The file rotates at 1 MiB into five numbered generations, writes run synchronously on the server thread, and a write/rotation failure only warns in the server log without failing the operation. No in-game viewer ships: `itemmilestonelog.audit.view` is reserved and the log is read from disk.
+
+### Fixes
+- **Audit-log rotation filenames**: Rotated generations now use the documented `audit.1.log` … `audit.5.log` names alongside the current `audit.log`, matching the operations spec and smoke checklist instead of the previous helper-derived scheme.
+- **Backup verification**: I/O failures are now reported as `IO_ERROR` instead of being mislabelled as corrupt NBT, and decoded backups with skipped elements are no longer reported as `OK` (they return `INVALID_NBT`).
+
+### Known limitation
+- **`itemmilestonelog.debug` still requires the admin parent gate**: Granting the new debug node alone does not open `/iml admin debug` for a non-OP player — the `admin` parent requirement (legacy OP level 2 or `itemmilestonelog.admin`) must also pass. This is documented as-is for 1.7.0; restructuring the parent gate is pending a spec decision.
+
 ## 1.5.0
 
 ### Permissions
