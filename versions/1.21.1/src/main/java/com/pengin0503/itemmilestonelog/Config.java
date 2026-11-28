@@ -450,6 +450,24 @@ public final class Config {
                     "Only the search field's value is stored; /imlclient history clear removes it.")
             .define("searchHistoryEnabled", true);
 
+    /** F-150-65 (N26): optional export subdirectory below the client-local area. */
+    public static final ModConfigSpec.ConfigValue<String> CLIENT_EXPORT_DIR = BUILDER
+            .comment("Subdirectory under config/itemmilestonelog-client/ for /imlclient export files.",
+                    "Empty uses exports/. Absolute paths and '..' are rejected; local files only.")
+            .define("clientExportDir", "");
+
+    /** F-150-66 (N27): OBS status files, off by default (D-150-195). */
+    public static final ModConfigSpec.BooleanValue STREAM_STATUS_ENABLED = BUILDER
+            .comment("Write status.txt/status.json for OBS under config/itemmilestonelog-client/stream/.",
+                    "Off by default. No player names, UUIDs, URLs or other players' data are written.")
+            .define("streamStatusEnabled", false);
+
+    /** F-150-70 (N67): screenshot on a new record, off by default (D-150-202). */
+    public static final ModConfigSpec.BooleanValue SCREENSHOT_ON_RECORD = BUILDER
+            .comment("Capture one screenshot when a new milestone record arrives (default off).",
+                    "Open screens are skipped; images stay under config/itemmilestonelog-client/screenshots/.")
+            .define("screenshotOnRecord", false);
+
     static final ModConfigSpec SPEC = BUILDER.build();
 
     private record ThresholdsCache(List<? extends Integer> source, List<Integer> normalized) {

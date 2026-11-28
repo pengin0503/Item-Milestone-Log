@@ -105,6 +105,8 @@ public final class ItemMilestoneLogClient {
     }
 
     private static void onClientLoggingOut(ClientPlayerNetworkEvent.LoggingOut event) {
+        // PR-5: flush cache, rotate backup, optional export - before snapshots are cleared.
+        ClientLocalOutput.onLogout();
         ClientMilestoneHandler.clearExtraData();
         ClientMilestoneHandler.clearTooltipData();
     }
