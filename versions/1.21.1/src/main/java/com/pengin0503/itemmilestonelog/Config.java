@@ -501,6 +501,16 @@ public final class Config {
                     "The timestamp is formatted at display time; no server timezone is sent.")
             .define("showRecordClock", false);
 
+    /** step 7 PR-1 (F-150-90): periodic automatic HTML/JSON export (server side). */
+    public static final ModConfigSpec.BooleanValue AUTO_EXPORT_ENABLED = BUILDER
+            .comment("Periodically write HTML and JSON exports to <world>/itemmilestonelog/exports/ (default off).")
+            .define("autoExportEnabled", false);
+
+    /** step 7 PR-1 (F-150-90): hours between automatic exports; clamped to 1..168. */
+    public static final ModConfigSpec.IntValue AUTO_EXPORT_INTERVAL_HOURS = BUILDER
+            .comment("Hours between automatic HTML/JSON exports (1-168).")
+            .defineInRange("autoExportIntervalHours", 24, 1, 168);
+
     static final ModConfigSpec SPEC = BUILDER.build();
 
     private record ThresholdsCache(List<? extends Integer> source, List<Integer> normalized) {

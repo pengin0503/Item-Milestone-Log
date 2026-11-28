@@ -864,5 +864,16 @@
   "command.itemmilestonelog.imlclient.diag.sync": "[client] 最終同期: %s",
   "key.itemmilestonelog.copy_recent": "直近の達成記録をコピー",
   "message.itemmilestonelog.copied_recent": "直近の達成記録をクリップボードにコピーしました。",
-  "message.itemmilestonelog.no_recent_record": "時刻が分かる直近の達成記録がありません。"
+  "message.itemmilestonelog.no_recent_record": "時刻が分かる直近の達成記録がありません。",
+  "message.itemmilestonelog.help.export_since": "直近 N 日分の記録だけをエクスポート",
+  "message.itemmilestonelog.help.export_anonymized": "プレイヤー名と UUID を匿名化してエクスポート",
+  "message.itemmilestonelog.help.export_snapshot": "世代ローテーション付きの日付入りスナップショットを書き出す",
+  "message.itemmilestonelog.export_option_invalid_days": "エクスポート日数は 1〜365 の範囲で指定してください",
+  "message.itemmilestonelog.export_queued": "エクスポートをキューに追加しました: %s",
+  "message.itemmilestonelog.export_snapshot_written": "スナップショットを書き出しました: %s",
+  "message.itemmilestonelog.export_snapshot_pruned": "古いスナップショットを %s 件削除しました",
+  "itemmilestonelog.configuration.autoExportEnabled": "自動エクスポート",
+  "itemmilestonelog.configuration.autoExportEnabled.tooltip": "<world>/itemmilestonelog/exports/ に HTML と JSON を定期的に書き出します（既定はオフ）。",
+  "itemmilestonelog.configuration.autoExportIntervalHours": "自動エクスポート間隔（時間）",
+  "itemmilestonelog.configuration.autoExportIntervalHours.tooltip": "HTML/JSON の自動エクスポート間隔（1〜168 時間）。"
 }

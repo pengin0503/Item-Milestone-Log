@@ -1,5 +1,8 @@
 package com.pengin0503.itemmilestonelog;
 
+import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.tree.CommandNode;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
 import net.minecraft.commands.CommandSource;
@@ -26,6 +29,7 @@ import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -363,6 +367,31 @@ class MilestoneCommandRenderTest {
                     source.messages.get(0).getString());
         } finally {
             MilestoneBackup.resetState();
+        }
+    }
+
+    @Test
+    void exportLiteralsKeepTheirBareUsageAndOnlyGainOptionChildren() {
+        CommandDispatcher<CommandSourceStack> dispatcher = new CommandDispatcher<>();
+        dispatcher.register(MilestoneCommands.buildCommandTree(
+                StringArgumentType::word, src -> true, dispatcher));
+        CommandNode<CommandSourceStack> root = dispatcher.getRoot().getChild("milestonelog");
+        assertNotNull(root);
+        for (String name : List.of("export", "exporthtml", "exportcsv",
+                "exportall", "exporthtmlall", "exportcsvall")) {
+            CommandNode<CommandSourceStack> node = root.getChild(name);
+            assertNotNull(node, name + " must stay registered");
+            assertNotNull(node.getCommand(), name + " must still execute with no arguments");
+            Set<String> childNames = new java.util.TreeSet<>();
+            for (CommandNode<CommandSourceStack> child : node.getChildren()) {
+                childNames.add(child.getName());
+            }
+            assertEquals(new java.util.TreeSet<>(List.of("since", "anonymized", "snapshot")),
+                    childNames, name + " children");
+            CommandHelp.Entry entry = CommandHelp.ENTRIES.stream()
+                    .filter(e -> e.name().equals(name)).findFirst().orElseThrow();
+            assertTrue(MilestoneCommands.helpUsages(dispatcher, null, entry)
+                    .contains("/milestonelog " + name), name + " bare usage changed");
         }
     }
 }

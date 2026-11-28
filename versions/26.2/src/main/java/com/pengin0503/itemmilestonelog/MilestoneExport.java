@@ -32,6 +32,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -253,7 +257,8 @@ public final class MilestoneExport {
         try (Stream<Path> stream = Files.list(dir)) {
             stream.filter(Files::isRegularFile)
                     .map(p -> p.getFileName().toString())
-                    .filter(name -> name.endsWith(".json") && isSafeFileName(name))
+                    .filter(name -> name.endsWith(".json") && isSafeFileName(name)
+                            && !ExportSnapshotFiles.isSnapshotFileName(name))
                     .sorted()
                     .forEach(names::add);
         } catch (IOException e) {
@@ -288,6 +293,215 @@ public final class MilestoneExport {
 
     private static void writeTextAtomically(Path dir, String prefix, Path target, String content) throws IOException {
         writeAtomically(dir, prefix, target, writer -> writer.write(content));
+    }
+
+    // ------------------------------------------- step 7 PR-1: shared export options / snapshots
+
+    /** Per-session sequence for equal-second snapshot names; avoids directory I/O on the server thread. */
+    private static final ConcurrentMap<String, AtomicInteger> SNAPSHOT_SEQUENCE = new ConcurrentHashMap<>();
+    private static final AutoExportSchedule.Throttle AUTO_EXPORT_THROTTLE = new AutoExportSchedule.Throttle();
+    private static volatile long lastAutoExportMillis = 0L;
+    private static final AtomicBoolean FINAL_AUTO_EXPORT_WRITTEN = new AtomicBoolean(false);
+
+    /** Clears the in-memory auto-export state for a new server session (no SavedData keys). */
+    public static void resetAutoExportSession() {
+        AUTO_EXPORT_THROTTLE.reset();
+        lastAutoExportMillis = 0L;
+        FINAL_AUTO_EXPORT_WRITTEN.set(false);
+        SNAPSHOT_SEQUENCE.clear();
+    }
+
+    private static String relativePath(String fileName) {
+        return ItemMilestoneLog.MOD_ID + "/exports/" + fileName;
+    }
+
+    private static String resolveSnapshotFileName(Path dir, String canonicalFileName,
+                                                  Instant now, ZoneId zone) {
+        String timestamp = ExportSnapshotFiles.formatTimestamp(now, zone);
+        String key = dir.toAbsolutePath().normalize() + "|" + canonicalFileName + "|" + timestamp;
+        int suffix = SNAPSHOT_SEQUENCE.computeIfAbsent(key, ignored -> new AtomicInteger()).getAndIncrement();
+        List<String> taken = new ArrayList<>(suffix);
+        int dot = canonicalFileName.lastIndexOf('.');
+        String stem = "snapshot-" + canonicalFileName.substring(0, dot) + "-" + timestamp;
+        String extension = canonicalFileName.substring(dot);
+        for (int i = 0; i < suffix; i++) {
+            taken.add(i == 0 ? stem + extension : stem + "-" + i + extension);
+        }
+        return ExportSnapshotFiles.chooseFileName(canonicalFileName, timestamp, taken);
+    }
+
+    /** Writes a fully rendered export on the I/O thread (or synchronously when no queue exists). */
+    private static void writeText(Path dir, String fileName, String content) throws IOException {
+        if (!isSafeFileName(fileName)) {
+            throw new IOException("Invalid export file name");
+        }
+        Files.createDirectories(dir);
+        Path target = dir.resolve(fileName).normalize();
+        if (!target.getParent().equals(dir.normalize())) {
+            throw new IOException("Invalid export target path");
+        }
+        writeTextAtomically(dir, fileName, target, content);
+    }
+
+    private static void writeExportContent(Path dir, String fileName, String content, ExportOptions options)
+            throws IOException {
+        Runnable task = () -> {
+            try {
+                writeText(dir, fileName, content);
+                if (options.snapshot()) {
+                    pruneSnapshotFiles(dir);
+                }
+            } catch (IOException e) {
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Export write failed for {}: {}",
+                        fileName, e.getClass().getSimpleName());
+            }
+        };
+        if (!MilestoneIo.submit(MilestoneIoLogic.TaskKind.EXPORT, task)) {
+            // No live executor (tests / early startup): keep the historic synchronous contract.
+            writeText(dir, fileName, content);
+            if (options.snapshot()) {
+                pruneSnapshotFiles(dir);
+            }
+        }
+    }
+
+    /**
+     * Deletes old dated snapshots only. Canonical {@code all-players.*} files, player exports and
+     * hand-written files never match the dedicated pattern and are never touched (D-150-250).
+     *
+     * @return number of files actually removed
+     */
+    public static int pruneSnapshotFiles(Path dir) {
+        List<String> names;
+        try (Stream<Path> stream = Files.list(dir)) {
+            names = stream.filter(Files::isRegularFile)
+                    .map(path -> path.getFileName().toString())
+                    .toList();
+        } catch (IOException e) {
+            ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Could not list snapshots in {}: {}",
+                    dir, e.getClass().getSimpleName());
+            return 0;
+        }
+        int pruned = 0;
+        for (String name : ExportSnapshotFiles.selectFilesToPrune(
+                names, ExportSnapshotFiles.DEFAULT_GENERATIONS)) {
+            if (!ExportSnapshotFiles.isSnapshotFileName(name)) {
+                continue;
+            }
+            Path target = dir.resolve(name).normalize();
+            if (!target.getParent().equals(dir.normalize())) {
+                continue;
+            }
+            try {
+                if (Files.deleteIfExists(target)) {
+                    pruned++;
+                }
+            } catch (IOException e) {
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Snapshot prune failed for {}: {}",
+                        name, e.getClass().getSimpleName());
+            }
+        }
+        return pruned;
+    }
+
+    private static JsonObject buildAllPlayersObject(List<PlayerExportSnapshot> snapshots,
+                                                    Map<TargetKey, WorldFirstRecord> worldFirsts) {
+        JsonObject root = new JsonObject();
+        root.addProperty("format", FORMAT_VERSION);
+        JsonArray playersArr = new JsonArray();
+        for (PlayerExportSnapshot snapshot : snapshots) {
+            playersArr.add(buildPlayerObject(snapshot));
+        }
+        root.add("players", playersArr);
+        root.add("worldFirsts", buildWorldFirstsArray(worldFirsts));
+        return root;
+    }
+
+    private static void warnAutoExport(Exception e) {
+        ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Auto export failed: {}", e.getClass().getSimpleName());
+    }
+
+    /**
+     * Writes the two files of one automatic batch. Each writer is isolated so a failed HTML file
+     * never prevents the JSON file from being written (and vice versa).
+     *
+     * @return number of files actually written (0, 1 or 2)
+     */
+    public static int writeAutoExportBatchFiles(Path dir, String jsonName, String htmlName,
+                                                String json, String html) {
+        int written = 0;
+        try {
+            writeText(dir, jsonName, json);
+            written++;
+        } catch (IOException e) {
+            warnAutoExport(e);
+        }
+        try {
+            writeText(dir, htmlName, html);
+            written++;
+        } catch (IOException e) {
+            warnAutoExport(e);
+        }
+        pruneSnapshotFiles(dir);
+        return written;
+    }
+
+    /**
+     * Called from the existing {@code ServerTickEvent.Post} hook. The one-hour tick throttle and
+     * the configured hour window are both checked on the server thread; only the rendered files
+     * are handed to the {@code itemmilestonelog-io} queue as one batch (F-150-90).
+     */
+    public static void autoExportTick(MinecraftServer server) {
+        if (!AUTO_EXPORT_THROTTLE.tick()) {
+            return;
+        }
+        if (!Config.AUTO_EXPORT_ENABLED.get()) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        int intervalHours = Config.AUTO_EXPORT_INTERVAL_HOURS.get();
+        if (AutoExportSchedule.decide(now, lastAutoExportMillis, intervalHours)
+                != AutoExportSchedule.Decision.COLLECT) {
+            return;
+        }
+        lastAutoExportMillis = now;
+        queueAutoExportBatch(server);
+    }
+
+    /** Writes the final automatic batch exactly once during server stop. */
+    public static void autoExportOnStop(MinecraftServer server) {
+        if (!Config.AUTO_EXPORT_ENABLED.get()) {
+            return;
+        }
+        if (!FINAL_AUTO_EXPORT_WRITTEN.compareAndSet(false, true)) {
+            return;
+        }
+        queueAutoExportBatch(server);
+    }
+
+    private static void queueAutoExportBatch(MinecraftServer server) {
+        try {
+            Path dir = exportsDir(server);
+            MilestoneData data = MilestoneData.get(server);
+            Instant now = Instant.now();
+            ZoneId zone = Config.displayTimeZone();
+            // Snapshot collection stays on the server thread (MilestoneData is server-thread confined).
+            List<PlayerExportSnapshot> snapshots = collectAllPlayerSnapshots(data);
+            Map<TargetKey, WorldFirstRecord> worldFirsts = new LinkedHashMap<>(data.worldFirsts());
+            Set<TargetKey> defaultTargets = Tracker.defaultTargets();
+            Function<String, String> resolver = MilestoneExport::resolveItemDisplayName;
+            String jsonName = resolveSnapshotFileName(dir, "all-players.json", now, zone);
+            String htmlName = resolveSnapshotFileName(dir, HtmlExportRenderer.ALL_PLAYERS_HTML_FILE, now, zone);
+            String json = GSON.toJson(buildAllPlayersObject(snapshots, worldFirsts));
+            String html = renderAllPlayersHtml(snapshots, defaultTargets, worldFirsts, resolver, now, zone);
+
+            Runnable batch = () -> writeAutoExportBatchFiles(dir, jsonName, htmlName, json, html);
+            if (!MilestoneIo.submit(MilestoneIoLogic.TaskKind.EXPORT, batch)) {
+                batch.run();
+            }
+        } catch (RuntimeException e) {
+            warnAutoExport(e);
+        }
     }
 
     static PlayerExportSnapshot collectPlayerSnapshot(UUID uuid, @Nullable String playerName, @Nullable MilestoneData.PlayerData pd) {
@@ -326,6 +540,20 @@ public final class MilestoneExport {
         return ItemMilestoneLog.MOD_ID + "/exports/" + fileName;
     }
 
+    /** Export entry point used by commands that carry {@link ExportOptions}. */
+    public static String exportPlayer(Path dir, UUID uuid, String playerName, MilestoneData.PlayerData pd,
+                                      ExportOptions options, Instant now, ZoneId zone) throws IOException {
+        if (!options.snapshot()) {
+            return exportPlayer(dir, uuid, playerName, pd);
+        }
+        String fileName = resolveSnapshotFileName(dir, sanitizePlayerFileName(playerName, uuid), now, zone);
+        PlayerExportSnapshot snapshot = collectPlayerSnapshot(uuid, playerName, pd);
+        JsonObject root = buildPlayerObject(snapshot);
+        root.addProperty("format", FORMAT_VERSION);
+        writeExportContent(dir, fileName, GSON.toJson(root), options);
+        return relativePath(fileName);
+    }
+
     public static String exportAll(Path dir, MilestoneData data) throws IOException {
         Files.createDirectories(dir);
         String fileName = "all-players.json";
@@ -342,6 +570,18 @@ public final class MilestoneExport {
 
         writeJsonAtomically(dir, fileName, target, root);
         return ItemMilestoneLog.MOD_ID + "/exports/" + fileName;
+    }
+
+    /** Export-all entry point used by commands that carry {@link ExportOptions}. */
+    public static String exportAll(Path dir, MilestoneData data, ExportOptions options,
+                                   Instant now, ZoneId zone) throws IOException {
+        if (!options.snapshot()) {
+            return exportAll(dir, data);
+        }
+        String fileName = resolveSnapshotFileName(dir, "all-players.json", now, zone);
+        JsonObject root = buildAllPlayersObject(collectAllPlayerSnapshots(data), data.worldFirsts());
+        writeExportContent(dir, fileName, GSON.toJson(root), options);
+        return relativePath(fileName);
     }
 
     private static JsonArray buildWorldFirstsArray(Map<TargetKey, WorldFirstRecord> worldFirsts) {
@@ -422,6 +662,29 @@ public final class MilestoneExport {
                 Config.displayTimeZone());
     }
 
+    /** HTML entry point used by commands that carry {@link ExportOptions}. */
+    public static String exportPlayerHtml(
+            Path dir,
+            UUID uuid,
+            @Nullable String playerName,
+            @Nullable MilestoneData.PlayerData pd,
+            @Nullable MilestoneData data,
+            ExportOptions options,
+            Instant generatedAt,
+            ZoneId zone) throws IOException {
+        if (!options.snapshot()) {
+            return exportPlayerHtml(dir, uuid, playerName, pd, data);
+        }
+        String fileName = resolveSnapshotFileName(dir, sanitizePlayerHtmlFileName(playerName, uuid),
+                generatedAt, zone);
+        Map<TargetKey, WorldFirstRecord> worldFirsts = data != null ? data.worldFirsts() : Map.of();
+        PlayerExportSnapshot snapshot = collectPlayerSnapshot(uuid, playerName, pd);
+        String html = renderPlayerHtml(snapshot, Tracker.defaultTargets(), worldFirsts,
+                MilestoneExport::resolveItemDisplayName, generatedAt, zone);
+        writeExportContent(dir, fileName, html, options);
+        return relativePath(fileName);
+    }
+
     static String exportPlayerHtml(
             Path dir,
             UUID uuid,
@@ -453,6 +716,21 @@ public final class MilestoneExport {
                 MilestoneExport::resolveItemDisplayName,
                 Instant.now(),
                 Config.displayTimeZone());
+    }
+
+    /** HTML all-players entry point used by commands that carry {@link ExportOptions}. */
+    public static String exportAllHtml(Path dir, MilestoneData data, ExportOptions options,
+                                       Instant generatedAt, ZoneId zone) throws IOException {
+        if (!options.snapshot()) {
+            return exportAllHtml(dir, data);
+        }
+        String fileName = resolveSnapshotFileName(dir, HtmlExportRenderer.ALL_PLAYERS_HTML_FILE,
+                generatedAt, zone);
+        List<PlayerExportSnapshot> snapshots = collectAllPlayerSnapshots(data);
+        String html = renderAllPlayersHtml(snapshots, Tracker.defaultTargets(), data.worldFirsts(),
+                MilestoneExport::resolveItemDisplayName, generatedAt, zone);
+        writeExportContent(dir, fileName, html, options);
+        return relativePath(fileName);
     }
 
     static String exportAllHtml(
@@ -571,6 +849,27 @@ public final class MilestoneExport {
                 Config.displayTimeZone());
     }
 
+    /** CSV entry point used by commands that carry {@link ExportOptions}. */
+    public static String exportPlayerCsv(
+            Path dir,
+            UUID uuid,
+            @Nullable String playerName,
+            @Nullable MilestoneData.PlayerData pd,
+            @Nullable MilestoneData data,
+            ExportOptions options,
+            ZoneId zone) throws IOException {
+        if (!options.snapshot()) {
+            return exportPlayerCsv(dir, uuid, playerName, pd, data);
+        }
+        String fileName = resolveSnapshotFileName(dir, sanitizePlayerCsvFileName(playerName, uuid),
+                Instant.now(), zone);
+        Map<TargetKey, WorldFirstRecord> worldFirsts = data != null ? data.worldFirsts() : Map.of();
+        PlayerExportSnapshot snapshot = collectPlayerSnapshot(uuid, playerName, pd);
+        String csv = renderPlayerCsv(snapshot, worldFirsts, MilestoneExport::resolveItemDisplayName, zone);
+        writeExportContent(dir, fileName, csv, options);
+        return relativePath(fileName);
+    }
+
     static String exportPlayerCsv(
             Path dir,
             UUID uuid,
@@ -598,6 +897,21 @@ public final class MilestoneExport {
                 data,
                 MilestoneExport::resolveItemDisplayName,
                 Config.displayTimeZone());
+    }
+
+    /** CSV all-players entry point used by commands that carry {@link ExportOptions}. */
+    public static String exportAllCsv(Path dir, MilestoneData data, ExportOptions options, ZoneId zone)
+            throws IOException {
+        if (!options.snapshot()) {
+            return exportAllCsv(dir, data);
+        }
+        String fileName = resolveSnapshotFileName(dir, CsvExportRenderer.ALL_PLAYERS_CSV_FILE,
+                Instant.now(), zone);
+        List<PlayerExportSnapshot> snapshots = collectAllPlayerSnapshots(data);
+        String csv = renderAllPlayersCsv(snapshots, data.worldFirsts(),
+                MilestoneExport::resolveItemDisplayName, zone);
+        writeExportContent(dir, fileName, csv, options);
+        return relativePath(fileName);
     }
 
     static String exportAllCsv(

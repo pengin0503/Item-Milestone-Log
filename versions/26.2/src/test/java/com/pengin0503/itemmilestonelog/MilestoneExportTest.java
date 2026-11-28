@@ -22,6 +22,7 @@ import java.util.Set;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -1154,5 +1155,78 @@ class MilestoneExportTest {
         MilestoneExport.ImportAllMergeStats badFieldStats =
                 MilestoneExport.mergeAllInto(data, MilestoneExport.parseAllPlayersExport(badWfField));
         assertEquals(new MilestoneExport.ImportAllMergeStats(0, 0, 0, 0, 1), badFieldStats);
+    }
+
+    @Test
+    void snapshotExportUsesDatedNameWithoutTouchingTheCanonicalFile(@TempDir Path dir) throws Exception {
+        MilestoneData data = new MilestoneData();
+        UUID alice = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        TargetKey diamond = TargetKey.of("minecraft:diamond");
+        MilestoneData.PlayerData pd = data.player(alice);
+        pd.lastKnownName = "Alice";
+        pd.targets.add(diamond);
+        pd.records.put(diamond, new MilestoneRecord(1200, 1L, 1795500000000L));
+        Instant now = Instant.parse("2026-11-28T19:00:00Z");
+        ZoneId zone = ZoneId.of("UTC");
+
+        String relPath = MilestoneExport.exportAll(dir, data, ExportOptions.SNAPSHOT, now, zone);
+        assertEquals("itemmilestonelog/exports/snapshot-all-players-20261128-190000.json", relPath);
+        assertTrue(Files.isRegularFile(dir.resolve("snapshot-all-players-20261128-190000.json")));
+        assertFalse(Files.exists(dir.resolve("all-players.json")), "snapshots must not replace the canonical file");
+        JsonObject root = JsonParser.parseString(
+                Files.readString(dir.resolve("snapshot-all-players-20261128-190000.json"))).getAsJsonObject();
+        assertEquals(1, root.get("format").getAsInt());
+        assertEquals(1, root.getAsJsonArray("players").size());
+    }
+
+    @Test
+    void defaultOptionsKeepTheHistoricExportBytes(@TempDir Path dir) throws Exception {
+        MilestoneData data = new MilestoneData();
+        MilestoneData.PlayerData pd = data.player(UUID.fromString("11111111-1111-1111-1111-111111111111"));
+        pd.lastKnownName = "Alice";
+        TargetKey diamond = TargetKey.of("minecraft:diamond");
+        pd.targets.add(diamond);
+        pd.records.put(diamond, new MilestoneRecord(1200, 1L, 1795500000000L));
+        Instant now = Instant.parse("2026-11-28T19:00:00Z");
+        ZoneId zone = ZoneId.of("UTC");
+
+        String oldJson = MilestoneExport.exportAll(dir, data);
+        byte[] oldBytes = Files.readAllBytes(dir.resolve("all-players.json"));
+        String newJson = MilestoneExport.exportAll(dir, data, ExportOptions.DEFAULT, now, zone);
+        assertEquals(oldJson, newJson);
+        assertArrayEquals(oldBytes, Files.readAllBytes(dir.resolve("all-players.json")));
+        assertFalse(Files.list(dir).anyMatch(p -> p.getFileName().toString().startsWith("snapshot-")));
+    }
+
+    @Test
+    void pruneRemovesOnlyOldDatedSnapshotsAndKeepsCanonicalFiles(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("all-players.json"), "{}");
+        Files.writeString(dir.resolve("all-players.html"), "<html></html>");
+        Files.writeString(dir.resolve("Alice-11111111-1111-1111-1111-111111111111.json"), "{}");
+        Files.writeString(dir.resolve("my-notes.txt"), "notes");
+        for (int day = 20; day <= 26; day++) {
+            Files.writeString(dir.resolve("snapshot-all-players-202611" + day + "-120000.json"), "{}");
+        }
+
+        assertEquals(2, MilestoneExport.pruneSnapshotFiles(dir));
+        assertTrue(Files.exists(dir.resolve("all-players.json")));
+        assertTrue(Files.exists(dir.resolve("all-players.html")));
+        assertTrue(Files.exists(dir.resolve("Alice-11111111-1111-1111-1111-111111111111.json")));
+        assertTrue(Files.exists(dir.resolve("my-notes.txt")));
+        assertFalse(Files.exists(dir.resolve("snapshot-all-players-20261120-120000.json")));
+        assertFalse(Files.exists(dir.resolve("snapshot-all-players-20261121-120000.json")));
+        assertTrue(Files.exists(dir.resolve("snapshot-all-players-20261126-120000.json")));
+    }
+
+    @Test
+    void autoExportBatchWritesBothFilesAndSurvivesOneWriterFailure(@TempDir Path dir) throws Exception {
+        String jsonName = "snapshot-all-players-20261128-190000.json";
+        String htmlName = "snapshot-all-players-20261128-190000.html";
+        assertEquals(2, MilestoneExport.writeAutoExportBatchFiles(dir, jsonName, htmlName, "{}", "<html></html>"));
+        assertTrue(Files.isRegularFile(dir.resolve(jsonName)));
+        assertTrue(Files.isRegularFile(dir.resolve(htmlName)));
+
+        assertEquals(1, MilestoneExport.writeAutoExportBatchFiles(dir, jsonName, "../invalid.html", "{}", "<html></html>"));
+        assertTrue(Files.isRegularFile(dir.resolve(jsonName)), "a failed HTML writer must not remove the JSON file");
     }
 }

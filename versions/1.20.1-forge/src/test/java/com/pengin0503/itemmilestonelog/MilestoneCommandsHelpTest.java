@@ -1121,7 +1121,11 @@ class MilestoneCommandsHelpTest {
                 "message.itemmilestonelog.help.undo_list",
                 // PR-4: sub-literal descriptions; `firstshistorytag` is a real top-level ENTRY.
                 "message.itemmilestonelog.help.firsts_history",
-                "message.itemmilestonelog.help.preset_edit");
+                "message.itemmilestonelog.help.preset_edit",
+                // step 7 PR-1 (F-150-88/89): export child literals have no top-level help entries.
+                "message.itemmilestonelog.help.export_since",
+                "message.itemmilestonelog.help.export_anonymized",
+                "message.itemmilestonelog.help.export_snapshot");
         actualHelpKeys.removeAll(auxiliaryHelpKeys);
         assertEquals(expectedHelpKeys, actualHelpKeys,
                 "en_us.json help.* keys must match CommandHelp.ENTRIES plus PR-1 and PR-2 auxiliary keys");
@@ -1560,6 +1564,35 @@ class MilestoneCommandsHelpTest {
         UUID playerId = UUID.fromString("55555555-5555-5555-5555-555555555555");
         assertEquals(4, MilestoneCommands.settingsLinesFor(data, playerId).size(),
                 "sound must not add a fifth settings toggle");
+    }
+
+    @Test
+    void exportLiteralsKeepTheirBareUsageAndGainOnlyThreeOptionChildren() {
+        CommandDispatcher<CommandSourceStack> op = buildDispatcher(src -> true);
+        CommandNode<CommandSourceStack> root = op.getRoot().getChild("milestonelog");
+        assertNotNull(root);
+        for (String name : List.of("export", "exporthtml", "exportcsv",
+                "exportall", "exporthtmlall", "exportcsvall")) {
+            CommandNode<CommandSourceStack> node = root.getChild(name);
+            assertNotNull(node, name + " must stay registered");
+            assertNotNull(node.getCommand(), name + " must still execute with no arguments");
+            Set<String> children = new TreeSet<>();
+            for (CommandNode<CommandSourceStack> child : node.getChildren()) {
+                children.add(child.getName());
+            }
+            assertEquals(new TreeSet<>(List.of("since", "anonymized", "snapshot")), children, name);
+            CommandNode<CommandSourceStack> days = node.getChild("since").getChild("days");
+            assertNotNull(days, name + " since must take a days argument");
+            assertTrue(days instanceof ArgumentCommandNode<?, ?>
+                    && ((ArgumentCommandNode<?, ?>) days).getType() instanceof IntegerArgumentType,
+                    name + " since days must use the vanilla integer argument");
+            assertTrue(op.parse("milestonelog " + name + " snapshot", null).getExceptions().isEmpty(),
+                    name + " snapshot must parse");
+            List<String> usages = MilestoneCommands.helpUsages(op, null, entryByName(name));
+            assertTrue(usages.contains("/milestonelog " + name), name + " bare usage changed: " + usages);
+            assertTrue(usages.stream().anyMatch(u -> u.contains("snapshot")),
+                    name + " child usage missing: " + usages);
+        }
     }
 
 }

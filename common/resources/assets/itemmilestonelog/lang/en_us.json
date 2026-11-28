@@ -864,5 +864,16 @@
   "command.itemmilestonelog.imlclient.diag.sync": "[client] last sync: %s",
   "key.itemmilestonelog.copy_recent": "Copy Recent Record",
   "message.itemmilestonelog.copied_recent": "Copied the most recent record to the clipboard.",
-  "message.itemmilestonelog.no_recent_record": "No recent record with a usable time is available."
+  "message.itemmilestonelog.no_recent_record": "No recent record with a usable time is available.",
+  "message.itemmilestonelog.help.export_since": "Export only records from the last N days",
+  "message.itemmilestonelog.help.export_anonymized": "Export with player names and UUIDs anonymized",
+  "message.itemmilestonelog.help.export_snapshot": "Write a dated snapshot with generation rotation",
+  "message.itemmilestonelog.export_option_invalid_days": "Export days must be between 1 and 365",
+  "message.itemmilestonelog.export_queued": "Export queued: %s",
+  "message.itemmilestonelog.export_snapshot_written": "Snapshot written: %s",
+  "message.itemmilestonelog.export_snapshot_pruned": "Pruned %s old snapshot file(s)",
+  "itemmilestonelog.configuration.autoExportEnabled": "Automatic Export",
+  "itemmilestonelog.configuration.autoExportEnabled.tooltip": "Periodically write HTML and JSON exports to <world>/itemmilestonelog/exports/ (default off).",
+  "itemmilestonelog.configuration.autoExportIntervalHours": "Automatic Export Interval (Hours)",
+  "itemmilestonelog.configuration.autoExportIntervalHours.tooltip": "Hours between automatic HTML/JSON exports (1-168)."
 }

@@ -32,7 +32,9 @@ public final class MilestoneIoLogic {
     public enum TaskKind {
         BACKUP("backup"),
         IMPORT_ALL("importall"),
-        FINAL_BACKUP("final backup");
+        FINAL_BACKUP("final backup"),
+        /** step 7 PR-1 (F-150-88): server-side export writers, including automatic snapshots. */
+        EXPORT("export");
 
         private final String label;
 

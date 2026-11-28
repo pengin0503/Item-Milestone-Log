@@ -972,9 +972,14 @@ public final class MilestoneCommands {
                         .then(literal("hand")
                                 .executes(ctx -> infoHand(ctx, false))
                                 .then(literal("preview").executes(ctx -> infoHand(ctx, true)))))
-                .then(literal("export").executes(MilestoneCommands::exportSelf))
-                .then(literal("exporthtml").executes(MilestoneCommands::exportHtmlSelf))
-                .then(literal("exportcsv").executes(MilestoneCommands::exportCsvSelf))
+                // step 7 PR-1 (F-150-88/89): the bare literals keep their existing executors;
+                // their only children are the shared since / anonymized / snapshot options.
+                .then(withExportOptionChildren(literal("export"), MilestoneCommands::exportSelf)
+                        .executes(MilestoneCommands::exportSelf))
+                .then(withExportOptionChildren(literal("exporthtml"), MilestoneCommands::exportHtmlSelf)
+                        .executes(MilestoneCommands::exportHtmlSelf))
+                .then(withExportOptionChildren(literal("exportcsv"), MilestoneCommands::exportCsvSelf)
+                        .executes(MilestoneCommands::exportCsvSelf))
                 .then(literal("import")
                         .then(argument("fileName", StringArgumentType.word())
                                 .suggests(exportFileSuggestions)
@@ -982,15 +987,12 @@ public final class MilestoneCommands {
                                 .then(literal("dryrun")
                                         .executes(ctx -> importSelf(ctx,
                                                 StringArgumentType.getString(ctx, "fileName"), true)))))
-                .then(literal("exportall")
-                        .requires(exportAllRequirement)
-                        .executes(MilestoneCommands::exportAll))
-                .then(literal("exporthtmlall")
-                        .requires(exportAllRequirement)
-                        .executes(MilestoneCommands::exportHtmlAll))
-                .then(literal("exportcsvall")
-                        .requires(exportAllRequirement)
-                        .executes(MilestoneCommands::exportCsvAll))
+                .then(withExportOptionChildren(literal("exportall").requires(exportAllRequirement),
+                        MilestoneCommands::exportAll).executes(MilestoneCommands::exportAll))
+                .then(withExportOptionChildren(literal("exporthtmlall").requires(exportAllRequirement),
+                        MilestoneCommands::exportHtmlAll).executes(MilestoneCommands::exportHtmlAll))
+                .then(withExportOptionChildren(literal("exportcsvall").requires(exportAllRequirement),
+                        MilestoneCommands::exportCsvAll).executes(MilestoneCommands::exportCsvAll))
                 .then(literal("importall")
                         .requires(importAllRequirement)
                         .then(argument("fileName", StringArgumentType.word())
@@ -3721,7 +3723,37 @@ public final class MilestoneCommands {
 
     // --------------------------------------------------------- F6 export/import
 
+    /** Handler shape shared by the six export literals and their child options (D-150-252/291/292). */
+    @FunctionalInterface
+    private interface ExportOptionExecutor {
+        int run(CommandContext<CommandSourceStack> ctx, ExportOptions options) throws CommandSyntaxException;
+    }
+
+    /** Adds exactly three children: {@code since <days>}, {@code anonymized} and {@code snapshot}. */
+    private static LiteralArgumentBuilder<CommandSourceStack> withExportOptionChildren(
+            LiteralArgumentBuilder<CommandSourceStack> node, ExportOptionExecutor executor) {
+        return node
+                .then(literal("since")
+                        .then(argument("days", IntegerArgumentType.integer(1, 365))
+                                .executes(ctx -> executor.run(ctx, ExportOptions.DEFAULT.withSinceDays(
+                                        IntegerArgumentType.getInteger(ctx, "days"))))))
+                .then(literal("anonymized")
+                        .executes(ctx -> executor.run(ctx, ExportOptions.DEFAULT.withAnonymized(true))))
+                .then(literal("snapshot")
+                        .executes(ctx -> executor.run(ctx, ExportOptions.DEFAULT.withSnapshot(true))));
+    }
+
+    private static String exportDoneKey(ExportOptions options) {
+        return options.snapshot()
+                ? "message.itemmilestonelog.export_snapshot_written"
+                : "message.itemmilestonelog.export_done";
+    }
+
     private static int exportSelf(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+        return exportSelf(ctx, ExportOptions.DEFAULT);
+    }
+
+    private static int exportSelf(CommandContext<CommandSourceStack> ctx, ExportOptions options) throws CommandSyntaxException {
         ServerPlayer player = player(ctx);
         if (!Config.EXPORT_IMPORT_ENABLED.get()) {
             return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.feature_disabled"));
@@ -3731,8 +3763,9 @@ public final class MilestoneCommands {
         String playerName = McCompat.player().profileName(player.getGameProfile());
         Path dir = MilestoneExport.exportsDir(player.level().getServer());
         try {
-            String relPath = MilestoneExport.exportPlayer(dir, player.getUUID(), playerName, pd);
-            return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.export_done", relPath));
+            String relPath = MilestoneExport.exportPlayer(dir, player.getUUID(), playerName, pd,
+                    options, Instant.now(), Config.displayTimeZone());
+            return send(ctx, ServerLang.tr(player, exportDoneKey(options), relPath));
         } catch (IOException e) {
             ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Export failed", e);
             return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.export_failed"));
@@ -3805,6 +3838,10 @@ public final class MilestoneCommands {
     }
 
     private static int exportAll(CommandContext<CommandSourceStack> ctx) {
+        return exportAll(ctx, ExportOptions.DEFAULT);
+    }
+
+    private static int exportAll(CommandContext<CommandSourceStack> ctx, ExportOptions options) {
         CommandSourceStack source = ctx.getSource();
         if (!Config.EXPORT_IMPORT_ENABLED.get()) {
             return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.feature_disabled"));
@@ -3813,7 +3850,7 @@ public final class MilestoneCommands {
         MilestoneData data = MilestoneData.get(server);
         Path dir = MilestoneExport.exportsDir(server);
         try {
-            String relPath = MilestoneExport.exportAll(dir, data);
+            String relPath = MilestoneExport.exportAll(dir, data, options, Instant.now(), Config.displayTimeZone());
             return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.exportall_done",
                     data.allPlayers().size(), relPath));
         } catch (IOException e) {
@@ -3832,6 +3869,10 @@ public final class MilestoneCommands {
     }
 
     private static int exportHtmlSelf(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+        return exportHtmlSelf(ctx, ExportOptions.DEFAULT);
+    }
+
+    private static int exportHtmlSelf(CommandContext<CommandSourceStack> ctx, ExportOptions options) throws CommandSyntaxException {
         ServerPlayer player = player(ctx);
         if (!Config.EXPORT_IMPORT_ENABLED.get()) {
             return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.feature_disabled"));
@@ -3841,8 +3882,9 @@ public final class MilestoneCommands {
         String playerName = McCompat.player().profileName(player.getGameProfile());
         Path dir = MilestoneExport.exportsDir(player.level().getServer());
         try {
-            String relPath = MilestoneExport.exportPlayerHtml(dir, player.getUUID(), playerName, pd, data);
-            return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.export_done", relPath));
+            String relPath = MilestoneExport.exportPlayerHtml(dir, player.getUUID(), playerName, pd, data,
+                    options, Instant.now(), Config.displayTimeZone());
+            return send(ctx, ServerLang.tr(player, exportDoneKey(options), relPath));
         } catch (IOException e) {
             ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] HTML export failed", e);
             return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.export_failed"));
@@ -3850,6 +3892,10 @@ public final class MilestoneCommands {
     }
 
     private static int exportHtmlAll(CommandContext<CommandSourceStack> ctx) {
+        return exportHtmlAll(ctx, ExportOptions.DEFAULT);
+    }
+
+    private static int exportHtmlAll(CommandContext<CommandSourceStack> ctx, ExportOptions options) {
         CommandSourceStack source = ctx.getSource();
         if (!Config.EXPORT_IMPORT_ENABLED.get()) {
             return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.feature_disabled"));
@@ -3858,7 +3904,7 @@ public final class MilestoneCommands {
         MilestoneData data = MilestoneData.get(server);
         Path dir = MilestoneExport.exportsDir(server);
         try {
-            String relPath = MilestoneExport.exportAllHtml(dir, data);
+            String relPath = MilestoneExport.exportAllHtml(dir, data, options, Instant.now(), Config.displayTimeZone());
             return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.exportall_done",
                     data.allPlayers().size(), relPath));
         } catch (IOException e) {
@@ -3868,6 +3914,10 @@ public final class MilestoneCommands {
     }
 
     private static int exportCsvSelf(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+        return exportCsvSelf(ctx, ExportOptions.DEFAULT);
+    }
+
+    private static int exportCsvSelf(CommandContext<CommandSourceStack> ctx, ExportOptions options) throws CommandSyntaxException {
         ServerPlayer player = player(ctx);
         if (!Config.EXPORT_IMPORT_ENABLED.get()) {
             return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.feature_disabled"));
@@ -3877,8 +3927,9 @@ public final class MilestoneCommands {
         String playerName = McCompat.player().profileName(player.getGameProfile());
         Path dir = MilestoneExport.exportsDir(player.level().getServer());
         try {
-            String relPath = MilestoneExport.exportPlayerCsv(dir, player.getUUID(), playerName, pd, data);
-            return send(ctx, ServerLang.tr(player, "message.itemmilestonelog.export_done", relPath));
+            String relPath = MilestoneExport.exportPlayerCsv(dir, player.getUUID(), playerName, pd, data,
+                    options, Config.displayTimeZone());
+            return send(ctx, ServerLang.tr(player, exportDoneKey(options), relPath));
         } catch (IOException e) {
             ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] CSV export failed", e);
             return fail(ctx, ServerLang.tr(player, "message.itemmilestonelog.export_failed"));
@@ -3886,6 +3937,10 @@ public final class MilestoneCommands {
     }
 
     private static int exportCsvAll(CommandContext<CommandSourceStack> ctx) {
+        return exportCsvAll(ctx, ExportOptions.DEFAULT);
+    }
+
+    private static int exportCsvAll(CommandContext<CommandSourceStack> ctx, ExportOptions options) {
         CommandSourceStack source = ctx.getSource();
         if (!Config.EXPORT_IMPORT_ENABLED.get()) {
             return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.feature_disabled"));
@@ -3894,7 +3949,7 @@ public final class MilestoneCommands {
         MilestoneData data = MilestoneData.get(server);
         Path dir = MilestoneExport.exportsDir(server);
         try {
-            String relPath = MilestoneExport.exportAllCsv(dir, data);
+            String relPath = MilestoneExport.exportAllCsv(dir, data, options, Config.displayTimeZone());
             return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.exportall_done",
                     data.allPlayers().size(), relPath));
         } catch (IOException e) {
@@ -5415,6 +5470,15 @@ public final class MilestoneCommands {
             return CommandHelp.formatUsageLines(entry, List.of());
         }
         Map<CommandNode<CommandSourceStack>, String> smart = dispatcher.getSmartUsage(target, source);
+        // F-150-88: the historic bare usage stays byte-identical even though the export literals
+        // now have option children; the child usages are listed after it.
+        if (Set.of("export", "exporthtml", "exportcsv", "exportall", "exporthtmlall", "exportcsvall")
+                .contains(entry.name())) {
+            List<String> lines = new ArrayList<>(smart.size() + 1);
+            lines.add(CommandHelp.formatUsageLines(entry, List.of()).get(0));
+            lines.addAll(CommandHelp.formatUsageLines(entry, smart.values()));
+            return List.copyOf(lines);
+        }
         return CommandHelp.formatUsageLines(entry, smart.values());
     }
 
