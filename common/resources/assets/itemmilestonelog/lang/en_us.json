@@ -435,6 +435,7 @@
   "message.itemmilestonelog.preset_unprotect_done": "Preset %s is no longer protected.",
   "message.itemmilestonelog.preset_protected": "Preset %s is protected.",
   "message.itemmilestonelog.preset_edit_builtin": "Built-in presets cannot be edited.",
+  "message.itemmilestonelog.preset_protect_confirm": "Protect preset '%s'? Add [confirm] to apply.",
   "message.itemmilestonelog.preset_unprotect_confirm": "Unprotect preset '%s'? Add [confirm] to apply.",
   "message.itemmilestonelog.presetmatrix_empty": "No visible players with preset progress.",
   "message.itemmilestonelog.presetmatrix_header": "Preset progress matrix (%s players, %s presets):",
