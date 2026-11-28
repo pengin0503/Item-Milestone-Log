@@ -268,6 +268,34 @@ if [[ "$SEGMENT" == B1 ]]; then
   fi
 fi
 
+# 6. Narration is version-gated inside 1.21.x: GameNarrator.say(Component) exists up to
+#    1.21.5 and saySystemQueued(Component) from 1.21.6, so the shared HudCompat.class must
+#    name neither one and must reach the per-profile NarrationCompatImpl through
+#    McCompat.narration(). A whole-file HudCompat override would put one profile's
+#    GameNarrator call into the shared class of a merged jar and break the link audit on
+#    the other versions of that jar's range (1.21-b1 at 1.21.5). The impl classes are
+#    profile-filtered by audit-merged-jar-links.py's checked_classes(); the shared class is
+#    not, so check it explicitly here (exact class + exact member, all segments).
+hud="$PKG/compat/client/HudCompat.class"
+if [[ -f "$workdir/$hud" ]] && hud_out="$(javap -v -p "$workdir/$hud")"; then
+  hud_status=0
+  for pattern in 'net/minecraft/client/GameNarrator.say:' \
+                 'net/minecraft/client/GameNarrator.saySystemQueued:'; do
+    if grep -qF -- "$pattern" <<< "$hud_out"; then
+      echo "  FAIL  $hud references $pattern directly (must use McCompat.narration())"
+      hud_status=1
+    fi
+  done
+  if [[ "$hud_status" -eq 0 ]]; then
+    echo "  PASS  $hud references no GameNarrator.say/saySystemQueued directly"
+  else
+    bytecode_status=1
+  fi
+else
+  echo "  FAIL  cannot inspect $hud"
+  bytecode_status=1
+fi
+
 if [[ "$checked" -eq 0 ]]; then
   echo "  FAIL  no classes checked (segment $SEGMENT)"
   bytecode_status=1
