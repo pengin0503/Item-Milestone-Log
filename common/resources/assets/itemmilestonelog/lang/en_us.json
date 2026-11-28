@@ -843,5 +843,14 @@
   "itemmilestonelog.configuration.showRecordClock": "Show Record Clock",
   "itemmilestonelog.configuration.showRecordClock.tooltip": "Append the local HH:mm record time to GUI record rows (default off). No extra row height or server timezone.",
   "message.itemmilestonelog.record_clock": "Recorded at %s",
-  "message.itemmilestonelog.key_conflict": "Two controls share key %s; nothing was changed automatically."
+  "message.itemmilestonelog.key_conflict": "Two controls share key %s; nothing was changed automatically.",
+  "command.itemmilestonelog.imlclient.diag.version": "[client] loader=%s mc=%s",
+  "command.itemmilestonelog.imlclient.diag.channels": "[client] channels: %s",
+  "command.itemmilestonelog.imlclient.diag.keys": "[client] keys: %s",
+  "command.itemmilestonelog.imlclient.diag.cache": "[client] local cache: %s",
+  "command.itemmilestonelog.imlclient.diag.local": "[client] local counts: %s",
+  "command.itemmilestonelog.imlclient.diag.sync": "[client] last sync: %s",
+  "key.itemmilestonelog.copy_recent": "Copy Recent Record",
+  "message.itemmilestonelog.copied_recent": "Copied the most recent record to the clipboard.",
+  "message.itemmilestonelog.no_recent_record": "No recent record with a usable time is available."
 }

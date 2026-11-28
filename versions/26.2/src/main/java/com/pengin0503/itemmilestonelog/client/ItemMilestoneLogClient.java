@@ -62,6 +62,9 @@ public final class ItemMilestoneLogClient {
     public static final String KEY_MUTE_NOTIFICATION_SOUND =
             "key." + ItemMilestoneLog.MOD_ID + ".mute_notification_sound";
 
+    /** F-150-71 (N68): fourth and final key; unbound by default like the other three. */
+    public static final String KEY_COPY_RECENT = "key." + ItemMilestoneLog.MOD_ID + ".copy_recent";
+
     // No default key: M, the obvious choice, is also the full-screen map key of FTB Chunks,
     // which All the Mods 10 includes (issue #17). Players pick a key under Controls.
     public static final KeyMapping OPEN_GUI_MAPPING = new KeyMapping(
@@ -88,8 +91,16 @@ public final class ItemMilestoneLogClient {
             KEY_CATEGORY
     );
 
-    // F-150-77: one-time, delayed local hint. The copy key from F-150-71 arrives in a later PR;
-    // until then it is treated as unbound (fourth flag in unboundKeys()).
+    // F-150-71 (N68): fourth optional key. InputConstants.UNKNOWN avoids the FTB Chunks M-key
+    // collision (issue #17) and keeps four total key mappings in every tree.
+    public static final KeyMapping COPY_RECENT_MAPPING = new KeyMapping(
+            KEY_COPY_RECENT,
+            KeyConflictContext.IN_GAME,
+            InputConstants.UNKNOWN,
+            KEY_CATEGORY
+    );
+
+    // F-150-77: one-time, delayed local hint; all four bindings are inspected now.
     private static final UnboundKeyHintPolicy UNBOUND_HINT = new UnboundKeyHintPolicy();
     private static boolean unboundHintStored;
     private static boolean keyConflictChecked;
@@ -227,7 +238,7 @@ public final class ItemMilestoneLogClient {
                 OPEN_GUI_MAPPING.getKey() == InputConstants.UNKNOWN,
                 ADD_HOVERED_MAPPING.getKey() == InputConstants.UNKNOWN,
                 MUTE_NOTIFICATION_SOUND_MAPPING.getKey() == InputConstants.UNKNOWN,
-                true); // F-150-71's copy key is not registered until PR-7: still unbound here.
+                COPY_RECENT_MAPPING.getKey() == InputConstants.UNKNOWN);
     }
 
     /**
@@ -263,6 +274,7 @@ public final class ItemMilestoneLogClient {
         event.register(OPEN_GUI_MAPPING);
         event.register(ADD_HOVERED_MAPPING);
         event.register(MUTE_NOTIFICATION_SOUND_MAPPING);
+        event.register(COPY_RECENT_MAPPING); // F-150-71: fourth and final registered key
     }
 
     private static void onClientTick(ClientTickEvent.Post event) {
@@ -275,6 +287,12 @@ public final class ItemMilestoneLogClient {
             // sendAction checks connection/channel and does nothing for vanilla-only peers.
             ClientMilestoneHandler.sendAction(
                     MilestoneActionPayload.Action.MUTE_NOTIFICATION_SOUND, "");
+        }
+        // F-150-86: coalesce HUD row-cache rebuilds only when low-power mode is on.
+        MilestoneHudOverlay.onClientTick();
+        // F-150-71: copy the newest local record; never sends anything to the server.
+        while (COPY_RECENT_MAPPING.consumeClick()) {
+            ClientRecentCopy.copyRecent();
         }
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || ClientCompat.screens().currentScreen(mc) != null) {

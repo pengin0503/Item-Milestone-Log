@@ -2,6 +2,7 @@ package com.pengin0503.itemmilestonelog.client;
 
 import com.pengin0503.itemmilestonelog.Config;
 import com.pengin0503.itemmilestonelog.EffectRateLimit;
+import com.pengin0503.itemmilestonelog.LowPowerModePolicy;
 import com.pengin0503.itemmilestonelog.compat.client.ParticleAccess;
 import com.pengin0503.itemmilestonelog.network.MilestoneEffectPayload;
 import net.minecraft.client.Minecraft;
@@ -28,7 +29,8 @@ public final class ClientEffects {
             ClientLocalOutput.capturePresetComplete();
             return;
         }
-        if (!MilestoneHudOverlay.effectiveOptions().clientEffectEnabled() || Config.reducedMotion()) {
+        if (!LowPowerModePolicy.particlesAllowed(Config.lowPowerMode(),
+                MilestoneHudOverlay.effectiveOptions().clientEffectEnabled(), Config.reducedMotion())) {
             return;
         }
         if (!RATE_LIMIT.allow(System.currentTimeMillis())) {

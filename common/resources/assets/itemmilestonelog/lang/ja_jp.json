@@ -843,5 +843,14 @@
   "itemmilestonelog.configuration.showRecordClock": "達成時刻を表示",
   "itemmilestonelog.configuration.showRecordClock.tooltip": "達成行の末尾に現地時刻 HH:mm を追加します（既定オフ）。行高やサーバーTZは変更しません。",
   "message.itemmilestonelog.record_clock": "達成時刻: %s",
-  "message.itemmilestonelog.key_conflict": "キー %s が2つの操作に割り当てられています。自動変更はしていません。"
+  "message.itemmilestonelog.key_conflict": "キー %s が2つの操作に割り当てられています。自動変更はしていません。",
+  "command.itemmilestonelog.imlclient.diag.version": "[client] ローダー=%s MC=%s",
+  "command.itemmilestonelog.imlclient.diag.channels": "[client] チャンネル: %s",
+  "command.itemmilestonelog.imlclient.diag.keys": "[client] キー: %s",
+  "command.itemmilestonelog.imlclient.diag.cache": "[client] ローカルキャッシュ: %s",
+  "command.itemmilestonelog.imlclient.diag.local": "[client] ローカル件数: %s",
+  "command.itemmilestonelog.imlclient.diag.sync": "[client] 最終同期: %s",
+  "key.itemmilestonelog.copy_recent": "直近の達成記録をコピー",
+  "message.itemmilestonelog.copied_recent": "直近の達成記録をクリップボードにコピーしました。",
+  "message.itemmilestonelog.no_recent_record": "時刻が分かる直近の達成記録がありません。"
 }

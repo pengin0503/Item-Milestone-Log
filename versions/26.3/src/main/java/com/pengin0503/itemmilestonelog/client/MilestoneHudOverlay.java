@@ -8,6 +8,7 @@ import com.pengin0503.itemmilestonelog.DisplayOptions;
 import com.pengin0503.itemmilestonelog.HudLayoutOptions;
 import com.pengin0503.itemmilestonelog.HudRowPlan;
 import com.pengin0503.itemmilestonelog.LocalSyncCache;
+import com.pengin0503.itemmilestonelog.LowPowerModePolicy;
 import com.pengin0503.itemmilestonelog.PinStore;
 import com.pengin0503.itemmilestonelog.RecordDiff;
 import com.pengin0503.itemmilestonelog.compat.client.HudCompat;
@@ -59,6 +60,10 @@ public final class MilestoneHudOverlay {
     private static volatile AccessibilityPolicy accessibility = AccessibilityPolicy.defaults();
     private static volatile String serverKey = "";
     private static volatile long retreatStartedMillis;
+    // F-150-86: row-cache rebuilds are coalesced only while low-power mode is on.
+    private static long tickCounter;
+    private static long lastRebuildTick;
+    private static volatile boolean rebuildPending;
     // F-150-70: the screenshot diff reuses this HUD snapshot history; no second store is kept.
     private static volatile Set<String> previousRecorded;
     private static volatile boolean pendingCapture;
@@ -103,7 +108,7 @@ public final class MilestoneHudOverlay {
         if (snapshot == null && cached.present()) {
             applyOffline(cached.snapshot());
         } else {
-            rebuild();
+            requestRebuild();
         }
     }
 
@@ -156,7 +161,7 @@ public final class MilestoneHudOverlay {
             previousRecorded = Set.copyOf(recorded);
         }
         snapshot = new Snapshot(available, progress, recorded, false);
-        rebuild();
+        requestRebuild();
     }
 
     /** F-150-70: consumes the pending capture decision produced by the shared snapshot diff. */
@@ -188,12 +193,12 @@ public final class MilestoneHudOverlay {
             progress.put(encode(entry.itemId(), entry.count()), entry.value());
         }
         snapshot = new Snapshot(available, progress, recorded, true);
-        rebuild();
+        requestRebuild();
     }
 
     /** Rebuilds after a client-local pin add/remove/clear. */
     public static void onPinsChanged() {
-        rebuild();
+        requestRebuild();
     }
 
     /** Damage starts the three-second retreat (F-150-80-3). */
@@ -216,6 +221,33 @@ public final class MilestoneHudOverlay {
             return Integer.parseInt(encoded.substring(hash + 1));
         } catch (NumberFormatException e) {
             return 1;
+        }
+    }
+
+    /**
+     * F-150-86: with low-power mode off (the default) every event rebuilds immediately, exactly
+     * as before. With it on, only the cosmetic row cache is deferred; snapshots, pin validation
+     * ids and the record-diff used by local output still update on every sync.
+     */
+    private static void requestRebuild() {
+        if (Config.lowPowerMode()) {
+            rebuildPending = true;
+        } else {
+            rebuild();
+        }
+    }
+
+    /** Called from the client tick handler; at most one deferred rebuild per four ticks. */
+    public static void onClientTick() {
+        if (!Config.lowPowerMode() || !rebuildPending) {
+            return;
+        }
+        tickCounter++;
+        if (LowPowerModePolicy.hudRebuildDue(true,
+                tickCounter - lastRebuildTick, rebuildPending)) {
+            rebuildPending = false;
+            lastRebuildTick = tickCounter;
+            rebuild();
         }
     }
 

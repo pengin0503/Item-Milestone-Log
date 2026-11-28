@@ -76,7 +76,9 @@ public final class ClientPinCommands {
                         .then(LiteralArgumentBuilder.<CommandSourceStack>literal("export")
                                 .executes(ClientPinCommands::carryExport))
                         .then(LiteralArgumentBuilder.<CommandSourceStack>literal("import")
-                                .executes(ClientPinCommands::carryImport)));
+                                .executes(ClientPinCommands::carryImport)))
+                // F-150-87 (N200): client-only diagnostics; no server help entry is added.
+                .then(ClientDiagCommands.build());
     }
 
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {

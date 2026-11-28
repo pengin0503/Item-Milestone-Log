@@ -5,6 +5,7 @@ import com.pengin0503.itemmilestonelog.ClientExportLogic;
 import com.pengin0503.itemmilestonelog.ClientStorageIO;
 import com.pengin0503.itemmilestonelog.Config;
 import com.pengin0503.itemmilestonelog.LocalSyncCache;
+import com.pengin0503.itemmilestonelog.LowPowerModePolicy;
 import com.pengin0503.itemmilestonelog.ScreenshotStore;
 import com.pengin0503.itemmilestonelog.StreamStatusWriter;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
@@ -60,7 +61,8 @@ public final class ClientLocalOutput {
         if (streamStatusEnabled()) {
             long now = System.currentTimeMillis();
             String txt = StreamStatusWriter.renderTxt(StreamStatusWriter.offlineValues());
-            if (StreamStatusWriter.shouldWrite(lastStatusWrite, now, lastStatusTxt, txt)) {
+            if (StreamStatusWriter.shouldWrite(lastStatusWrite, now, lastStatusTxt, txt,
+                    LowPowerModePolicy.statusDebounceMillis(Config.lowPowerMode()))) {
                 try {
                     StreamStatusWriter.write(configDir, StreamStatusWriter.offlineValues());
                     lastStatusWrite = now;
@@ -95,7 +97,8 @@ public final class ClientLocalOutput {
         if (streamStatusEnabled()) {
             StreamStatusWriter.Values values = statusValues(payload);
             String txt = StreamStatusWriter.renderTxt(values);
-            if (StreamStatusWriter.shouldWrite(lastStatusWrite, now, lastStatusTxt, txt)) {
+            if (StreamStatusWriter.shouldWrite(lastStatusWrite, now, lastStatusTxt, txt,
+                    LowPowerModePolicy.statusDebounceMillis(Config.lowPowerMode()))) {
                 try {
                     StreamStatusWriter.write(configDir, values);
                     lastStatusWrite = now;

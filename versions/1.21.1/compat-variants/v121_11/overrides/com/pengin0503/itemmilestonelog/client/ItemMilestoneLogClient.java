@@ -47,6 +47,9 @@ public final class ItemMilestoneLogClient {
             ResourceLocation.fromNamespaceAndPath(ItemMilestoneLog.MOD_ID, "general"));
     public static final String KEY_OPEN_GUI = "key." + ItemMilestoneLog.MOD_ID + ".open_gui";
     public static final String KEY_ADD_HOVERED = "key." + ItemMilestoneLog.MOD_ID + ".add_hovered";
+    public static final String KEY_MUTE_NOTIFICATION_SOUND =
+            "key." + ItemMilestoneLog.MOD_ID + ".mute_notification_sound";
+    public static final String KEY_COPY_RECENT = "key." + ItemMilestoneLog.MOD_ID + ".copy_recent";
 
     // No default key: M, the obvious choice, is also the full-screen map key of FTB Chunks,
     // which All the Mods 10 includes (issue #17). Players pick a key under Controls.
@@ -62,6 +65,21 @@ public final class ItemMilestoneLogClient {
     public static final KeyMapping ADD_HOVERED_MAPPING = new KeyMapping(
             KEY_ADD_HOVERED,
             KeyConflictContext.GUI,
+            InputConstants.UNKNOWN,
+            KEY_CATEGORY
+    );
+
+    // F-150-71/50: the two optional keys from later PRs, both unbound by default.
+    public static final KeyMapping MUTE_NOTIFICATION_SOUND_MAPPING = new KeyMapping(
+            KEY_MUTE_NOTIFICATION_SOUND,
+            KeyConflictContext.IN_GAME,
+            InputConstants.UNKNOWN,
+            KEY_CATEGORY
+    );
+
+    public static final KeyMapping COPY_RECENT_MAPPING = new KeyMapping(
+            KEY_COPY_RECENT,
+            KeyConflictContext.IN_GAME,
             InputConstants.UNKNOWN,
             KEY_CATEGORY
     );
@@ -156,9 +174,15 @@ public final class ItemMilestoneLogClient {
         event.registerCategory(KEY_CATEGORY);
         event.register(OPEN_GUI_MAPPING);
         event.register(ADD_HOVERED_MAPPING);
+        event.register(MUTE_NOTIFICATION_SOUND_MAPPING);
+        event.register(COPY_RECENT_MAPPING);
     }
 
     private static void onClientTick(ClientTickEvent.Post event) {
+        MilestoneHudOverlay.onClientTick(); // F-150-86: coalesced rebuilds (low power only)
+        while (COPY_RECENT_MAPPING.consumeClick()) {
+            ClientRecentCopy.copyRecent();
+        }
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.screen != null) {
             return;
