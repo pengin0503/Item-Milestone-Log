@@ -55,6 +55,7 @@ public final class UndoLogic {
      * @param removedPresetState        {@code presetState} entries the operation deleted (preset ID -> state)
      * @param removedTargets            personal targets the operation removed (F28; empty for resets)
      * @param capturedAtNanos           {@code System.nanoTime()} when the snapshot was taken
+     * @param removedTargetMeta         per-target metadata (encoded target key -> {@link TargetMeta}) removed with the targets
      */
     public record Snapshot<K, R>(Kind kind,
                                  Map<K, R> removedRecords,
@@ -62,7 +63,8 @@ public final class UndoLogic {
                                  Map<K, Integer> removedProgressNotified,
                                  Map<String, PresetState> removedPresetState,
                                  List<K> removedTargets,
-                                 long capturedAtNanos) {
+                                 long capturedAtNanos,
+                                 Map<String, TargetMeta> removedTargetMeta) {
         public Snapshot {
             Objects.requireNonNull(kind, "kind");
             removedRecords = Collections.unmodifiableMap(new LinkedHashMap<>(removedRecords));
@@ -70,6 +72,7 @@ public final class UndoLogic {
             removedProgressNotified = Collections.unmodifiableMap(new LinkedHashMap<>(removedProgressNotified));
             removedPresetState = Collections.unmodifiableMap(new LinkedHashMap<>(removedPresetState));
             removedTargets = List.copyOf(removedTargets);
+            removedTargetMeta = Collections.unmodifiableMap(new LinkedHashMap<>(removedTargetMeta));
         }
 
         /** Snapshot for a reset: records plus the completedPresets / progressNotified / presetState entries removed with them. */
@@ -78,16 +81,35 @@ public final class UndoLogic {
                                                   Map<K, Integer> removedProgressNotified,
                                                   Map<String, PresetState> removedPresetState,
                                                   long capturedAtNanos) {
+            return reset(removedRecords, removedCompletedPresets, removedProgressNotified,
+                    removedPresetState, capturedAtNanos, Map.of());
+        }
+
+        /** Overload carrying the per-target metadata removed together with the records. */
+        public static <K, R> Snapshot<K, R> reset(Map<K, R> removedRecords,
+                                                  Collection<String> removedCompletedPresets,
+                                                  Map<K, Integer> removedProgressNotified,
+                                                  Map<String, PresetState> removedPresetState,
+                                                  long capturedAtNanos,
+                                                  Map<String, TargetMeta> removedTargetMeta) {
             return new Snapshot<>(Kind.RESET, removedRecords, new LinkedHashSet<>(removedCompletedPresets),
-                    removedProgressNotified, removedPresetState, List.of(), capturedAtNanos);
+                    removedProgressNotified, removedPresetState, List.of(), capturedAtNanos, removedTargetMeta);
         }
 
         /** Snapshot for an F28 bulk removal: removed personal targets plus the progressNotified entries removed with them. */
         public static <K, R> Snapshot<K, R> bulkRemoval(Collection<K> removedTargets,
                                                         Map<K, Integer> removedProgressNotified,
                                                         long capturedAtNanos) {
+            return bulkRemoval(removedTargets, removedProgressNotified, capturedAtNanos, Map.of());
+        }
+
+        /** Overload carrying the per-target metadata removed together with the targets (SF-2). */
+        public static <K, R> Snapshot<K, R> bulkRemoval(Collection<K> removedTargets,
+                                                        Map<K, Integer> removedProgressNotified,
+                                                        long capturedAtNanos,
+                                                        Map<String, TargetMeta> removedTargetMeta) {
             return new Snapshot<>(Kind.BULK_REMOVAL, Map.of(), Set.of(), removedProgressNotified, Map.of(),
-                    List.copyOf(removedTargets), capturedAtNanos);
+                    List.copyOf(removedTargets), capturedAtNanos, removedTargetMeta);
         }
 
         /**
@@ -113,6 +135,7 @@ public final class UndoLogic {
      * @param restoredRecords     records whose snapshot value was put back (absent now, or the snapshot's playTicks was smaller)
      * @param restoredTargets     personal targets added back (F28)
      * @param skippedTargetsLimit targets not added back because the personal target limit was reached (F28)
+     * @param targetMeta          per-target metadata after the restore (encoded key -> {@link TargetMeta}; SF-2)
      */
     public record Result<K, R>(Map<K, R> records,
                                Set<String> completedPresets,
@@ -121,7 +144,8 @@ public final class UndoLogic {
                                Set<K> targets,
                                int restoredRecords,
                                int restoredTargets,
-                               int skippedTargetsLimit) {
+                               int skippedTargetsLimit,
+                               Map<String, TargetMeta> targetMeta) {
     }
 
     /**
@@ -138,6 +162,8 @@ public final class UndoLogic {
      *       {@code maxTargets} are skipped and counted.</li>
      *   <li>progressNotified: keys recorded after the restore have no entry (§1.1); for keys that are
      *       still unrecorded, the pre-removal value is restored only if there is no entry now.</li>
+     *   <li>targetMeta (SF-2): metadata removed with the targets is merged back with
+     *       {@code putIfAbsent}, so metadata set after the removal wins.</li>
      * </ul>
      * World firsts are not part of the snapshot and are never touched.
      */
@@ -148,7 +174,8 @@ public final class UndoLogic {
                                               Map<String, PresetState> currentPresetState,
                                               Set<K> currentTargets,
                                               int maxTargets,
-                                              ToIntFunction<R> playTicks) {
+                                              ToIntFunction<R> playTicks,
+                                              Map<String, TargetMeta> currentTargetMeta) {
         Map<K, R> records = new LinkedHashMap<>(currentRecords);
         int restoredRecords = 0;
         for (Map.Entry<K, R> e : snapshot.removedRecords().entrySet()) {
@@ -191,7 +218,13 @@ public final class UndoLogic {
             }
         }
 
-        return new Result<>(records, completed, progress, presetState, targets, restoredRecords, restoredTargets, skippedLimit);
+        Map<String, TargetMeta> meta = new LinkedHashMap<>(currentTargetMeta);
+        for (Map.Entry<String, TargetMeta> e : snapshot.removedTargetMeta().entrySet()) {
+            meta.putIfAbsent(e.getKey(), e.getValue());
+        }
+
+        return new Result<>(records, completed, progress, presetState, targets,
+                restoredRecords, restoredTargets, skippedLimit, meta);
     }
 
     /**

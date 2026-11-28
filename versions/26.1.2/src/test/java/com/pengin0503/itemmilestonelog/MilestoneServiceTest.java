@@ -1255,6 +1255,31 @@ class MilestoneServiceTest {
     }
 
     @Test
+    void removeAllTargetsUndoRestoresTargetMetaWithoutOverwritingFreshValues() {
+        // SF-2: metadata deleted with the targets is part of the undo snapshot; metadata set after
+        // the removal wins through putIfAbsent.
+        MilestoneData data = new MilestoneData();
+        UndoLogic.Store<TargetKey, MilestoneRecord> store = new UndoLogic.Store<>();
+        TargetKey diamond3 = TargetKey.of("minecraft:diamond", 3);
+        TargetKey emerald = TargetKey.of("minecraft:emerald");
+        MilestoneData.PlayerData pd = data.player(PLAYER_A);
+        pd.targets.add(diamond3);
+        pd.targets.add(emerald);
+        pd.targetMeta.put(diamond3.toEncodedString(), new TargetMeta(9, "main", true));
+        pd.targetMeta.put(emerald.toEncodedString(), new TargetMeta(4, "old", false));
+
+        long t0 = 10_000L;
+        assertTrue(MilestoneService.removeAllTargets(data, PLAYER_A, null, store, t0).undoable());
+        assertTrue(pd.targetMeta.isEmpty());
+        pd.targetMeta.put(emerald.toEncodedString(), new TargetMeta(2, "fresh", false));
+
+        assertTrue(MilestoneService.undo(data, PLAYER_A, null, store, t0 + 50L).success());
+        assertEquals(Set.of(diamond3, emerald), pd.targets);
+        assertEquals(new TargetMeta(9, "main", true), pd.targetMeta.get(diamond3.toEncodedString()));
+        assertEquals(new TargetMeta(2, "fresh", false), pd.targetMeta.get(emerald.toEncodedString()));
+    }
+
+    @Test
     void bulkRemovalZeroCountPreservesPreviousUndoSnapshotAndUndoHandlesDuplicatesAndCapOverflow(@TempDir Path dir) throws Exception {
         Files.writeString(dir.resolve("small.json"), """
                 {
@@ -1861,6 +1886,19 @@ class MilestoneServiceTest {
     }
 
     @Test
+    void pruneStateOfReportsNonEmptyTargetMetaAsFunctionalState() {
+        // SF-8: a metadata-only player must not be classified as empty with default settings.
+        MilestoneData.PlayerData pd = new MilestoneData.PlayerData();
+        assertTrue(MilestoneService.pruneStateOf(pd).targetMetaEmpty());
+
+        pd.targetMeta.put(TargetKey.of("minecraft:diamond", 3).toEncodedString(),
+                new TargetMeta(9, "main", true));
+        PruneDataLogic.PlayerState state = MilestoneService.pruneStateOf(pd);
+        assertFalse(state.targetMetaEmpty());
+        assertFalse(PruneDataLogic.isEmptyWithDefaultSettings(state));
+    }
+
+    @Test
     void tagCommandHelpersBuildTagKeysAndPickTheTagErrorMessage() {
         assertEquals("#c:ingots/iron", MilestoneService.tagKeyId("c:ingots/iron"));
         assertEquals("message.itemmilestonelog.invalid_tag", MilestoneService.invalidTargetKey("#c:ingots/iron"));
@@ -2015,6 +2053,41 @@ class MilestoneServiceTest {
         assertEquals(newId, wf64.itemId());
         assertEquals(64, wf64.count());
         assertEquals(PLAYER_A, wf64.playerUuid());
+    }
+
+    @Test
+    void renameItemInDataMigratesTargetMetaAndHolderHistoryKeysOnlyWhenApplied() {
+        // SF-5: metadata and holder history are keyed by encoded TargetKey; both must follow the
+        // renamed target, and preview must leave both maps untouched.
+        String oldId = "oldmod:gem";
+        String newId = "minecraft:diamond";
+        TargetKey old3 = TargetKey.of(oldId, 3);
+        TargetKey new3 = TargetKey.of(newId, 3);
+        MilestoneData data = new MilestoneData();
+        MilestoneData.PlayerData pd = data.player(PLAYER_A);
+        pd.targets.add(old3);
+        pd.targetMeta.put(old3.toEncodedString(), new TargetMeta(7, "gem", true));
+
+        MilestoneRecord record = new MilestoneRecord(100, 1L, 1_000L);
+        data.recordWorldFirstIfAbsent(old3, PLAYER_A, "Alice", record);
+        assertTrue(data.removeWorldFirst(old3)); // appends the outgoing holder under the OLD key
+        assertEquals(1, data.holderHistory(old3.toEncodedString()).size());
+
+        MilestoneService.RenameCounts preview = MilestoneService.renameItemInData(data, oldId, newId, false);
+        assertEquals(1, preview.players());
+        assertEquals(1, preview.targets());
+        assertEquals(new TargetMeta(7, "gem", true), pd.targetMeta.get(old3.toEncodedString()));
+        assertNull(pd.targetMeta.get(new3.toEncodedString()));
+        assertEquals(1, data.holderHistory(old3.toEncodedString()).size());
+        assertTrue(data.holderHistory(new3.toEncodedString()).isEmpty());
+
+        MilestoneService.RenameCounts applied = MilestoneService.renameItemInData(data, oldId, newId);
+        assertEquals(preview, applied);
+        assertNull(pd.targetMeta.get(old3.toEncodedString()));
+        assertEquals(new TargetMeta(7, "gem", true), pd.targetMeta.get(new3.toEncodedString()));
+        assertTrue(data.holderHistory(old3.toEncodedString()).isEmpty());
+        assertEquals(1, data.holderHistory(new3.toEncodedString()).size());
+        assertEquals("Alice", data.holderHistory(new3.toEncodedString()).get(0).name());
     }
 
     @Test
@@ -2217,6 +2290,37 @@ class MilestoneServiceTest {
         assertNotNull(data.worldFirstOrNull(TargetKey.of(newTag, 64)));
         assertNull(data.worldFirstOrNull(TargetKey.of(oldTag, 64)));
         assertTrue(data.isDirty());
+    }
+
+    @Test
+    void renameTagInDataMigratesTargetMetaAndHolderHistoryKeysOnlyWhenApplied() {
+        String oldTag = "#oldmod:gems";
+        String newTag = "#newmod:crystals";
+        TargetKey old2 = TargetKey.of(oldTag, 2);
+        TargetKey new2 = TargetKey.of(newTag, 2);
+        MilestoneData data = new MilestoneData();
+        MilestoneData.PlayerData pd = data.player(PLAYER_A);
+        pd.targets.add(old2);
+        pd.targetMeta.put(old2.toEncodedString(), new TargetMeta(5, "tag", true));
+
+        MilestoneRecord record = new MilestoneRecord(200, 2L, 2_000L);
+        data.recordWorldFirstIfAbsent(old2, PLAYER_A, "Alice", record);
+        assertTrue(data.removeWorldFirst(old2));
+
+        MilestoneService.TagRenameCounts preview = MilestoneService.renameTagInData(data, oldTag, newTag, false);
+        assertEquals(1, preview.players());
+        assertEquals(1, preview.targets());
+        assertEquals(new TargetMeta(5, "tag", true), pd.targetMeta.get(old2.toEncodedString()));
+        assertEquals(1, data.holderHistory(old2.toEncodedString()).size());
+        assertTrue(data.holderHistory(new2.toEncodedString()).isEmpty());
+
+        MilestoneService.TagRenameCounts applied = MilestoneService.renameTagInData(data, oldTag, newTag);
+        assertEquals(preview, applied);
+        assertNull(pd.targetMeta.get(old2.toEncodedString()));
+        assertEquals(new TargetMeta(5, "tag", true), pd.targetMeta.get(new2.toEncodedString()));
+        assertTrue(data.holderHistory(old2.toEncodedString()).isEmpty());
+        assertEquals(1, data.holderHistory(new2.toEncodedString()).size());
+        assertEquals("Alice", data.holderHistory(new2.toEncodedString()).get(0).name());
     }
 
     @Test

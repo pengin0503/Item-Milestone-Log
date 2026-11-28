@@ -1900,4 +1900,137 @@ class MilestoneDataTest {
         assertEquals(0, after.loadReport().elementSkipCount());
     }
 
+    @Test
+    void replaceWorldFirstsAppendsHistoryForReplacedAndRemovedKeys() {
+        UUID playerB = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        MilestoneData data = new MilestoneData();
+        TargetKey diamond = TargetKey.of("minecraft:diamond");
+        TargetKey emerald = TargetKey.of("minecraft:emerald");
+        assertTrue(data.recordWorldFirstIfAbsent(diamond, PLAYER_A, "Alice",
+                new MilestoneRecord(100, 1L, 1000L)));
+        assertTrue(data.recordWorldFirstIfAbsent(emerald, PLAYER_A, "Alice",
+                new MilestoneRecord(200, 1L, 1000L)));
+
+        WorldFirstRecord bob = new WorldFirstRecord("minecraft:diamond", 1, playerB, "Bob", 50, 1L, 500L);
+        Map<TargetKey, WorldFirstRecord> updated = Map.of(diamond, bob);
+        data.replaceWorldFirsts(updated);
+
+        assertEquals(Map.of(diamond, bob), data.worldFirsts());
+        assertEquals(List.of(new HolderEntry(PLAYER_A.toString(), "Alice", 100, 1000L)),
+                data.holderHistory(diamond.toEncodedString()));
+        assertEquals(List.of(new HolderEntry(PLAYER_A.toString(), "Alice", 200, 1000L)),
+                data.holderHistory(emerald.toEncodedString()));
+
+        // A no-change merge must not append the unchanged holder again.
+        data.replaceWorldFirsts(updated);
+        assertEquals(1, data.holderHistory(diamond.toEncodedString()).size());
+        assertEquals(1, data.holderHistory(emerald.toEncodedString()).size());
+    }
+
+    @Test
+    void isEmptyIsFalseWhenOnlyHolderHistoryRemains() {
+        MilestoneData data = new MilestoneData();
+        assertTrue(data.isEmpty());
+        TargetKey diamond = TargetKey.of("minecraft:diamond");
+        assertTrue(data.recordWorldFirstIfAbsent(diamond, PLAYER_A, "Alice",
+                new MilestoneRecord(100, 1L, 1000L)));
+        assertEquals(1, data.clearWorldFirsts());
+        assertTrue(data.worldFirsts().isEmpty());
+        assertTrue(data.allPlayers().isEmpty());
+        assertFalse(data.isEmpty());
+    }
+
+    @Test
+    void firstsHolderHistoryLoaderKeepsValidSiblingsWhenOneValueIsNotAList() {
+        UUID playerB = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        HolderEntry validA = new HolderEntry(PLAYER_A.toString(), "Alice", 111, 1795600000000L);
+        HolderEntry validB = new HolderEntry(playerB.toString(), "Bob", 222, 1795600001000L);
+        CompoundTag goodA = new CompoundTag();
+        goodA.putString("uuid", validA.uuid());
+        goodA.putString("name", validA.name());
+        goodA.putInt("playTicks", validA.playTicks());
+        goodA.putLong("epochMillis", validA.epochMillis());
+        CompoundTag goodB = new CompoundTag();
+        goodB.putString("uuid", validB.uuid());
+        goodB.putString("name", validB.name());
+        goodB.putInt("playTicks", validB.playTicks());
+        goodB.putLong("epochMillis", validB.epochMillis());
+        ListTag listA = new ListTag();
+        listA.add(goodA);
+        ListTag listB = new ListTag();
+        listB.add(goodB);
+
+        CompoundTag saved = encodeRoot(new MilestoneData());
+        CompoundTag history = new CompoundTag();
+        history.put("minecraft:diamond", listA);
+        history.put("minecraft:emerald", listB);
+        history.put("minecraft:stone", StringTag.valueOf("not a list"));
+        saved.put("firstsHolderHistory", history);
+
+        MilestoneData loaded = MilestoneData.CODEC.parse(NbtOps.INSTANCE, saved).getOrThrow();
+        assertEquals(List.of(validA), loaded.holderHistory("minecraft:diamond"));
+        assertEquals(List.of(validB), loaded.holderHistory("minecraft:emerald"));
+        assertEquals(Map.of(
+                "minecraft:diamond", List.of(validA),
+                "minecraft:emerald", List.of(validB)), loaded.firstsHolderHistory());
+        assertNotNull(loaded.loadReport());
+        assertEquals(1, loaded.loadReport().elementSkipCount());
+        assertFalse(loaded.loadReport().totalFailure());
+    }
+
+    @Test
+    void firstsHolderHistoryLoaderKeepsNewestTwentyEntries() {
+        MilestoneData data = new MilestoneData();
+        CompoundTag saved = encodeRoot(data);
+        ListTag list = new ListTag();
+        for (int i = 0; i < FirstsHolderHistory.HISTORY_LIMIT + 2; i++) {
+            CompoundTag holder = new CompoundTag();
+            holder.putString("uuid", PLAYER_A.toString());
+            holder.putString("name", "Holder" + i);
+            holder.putInt("playTicks", 1000 + i);
+            holder.putLong("epochMillis", 1800000000000L + i);
+            list.add(holder);
+        }
+        String encodedKey = TargetKey.of("minecraft:diamond").toEncodedString();
+        CompoundTag history = new CompoundTag();
+        history.put(encodedKey, list);
+        saved.put("firstsHolderHistory", history);
+
+        MilestoneData loaded = MilestoneData.CODEC.parse(NbtOps.INSTANCE, saved).getOrThrow();
+        List<HolderEntry> expected = new ArrayList<>();
+        for (int i = 2; i < FirstsHolderHistory.HISTORY_LIMIT + 2; i++) {
+            expected.add(new HolderEntry(PLAYER_A.toString(), "Holder" + i,
+                    1000 + i, 1800000000000L + i));
+        }
+        assertEquals(FirstsHolderHistory.HISTORY_LIMIT, loaded.holderHistory(encodedKey).size());
+        assertEquals(expected, loaded.holderHistory(encodedKey));
+        assertNotNull(loaded.loadReport());
+        assertEquals(0, loaded.loadReport().elementSkipCount());
+    }
+
+    @Test
+    void targetMetaLoaderSkipsInvalidEncodedKeysAndKeepsValidOnes() {
+        MilestoneData data = new MilestoneData();
+        data.player(PLAYER_A);
+        CompoundTag saved = encodeRoot(data);
+        CompoundTag valid = new CompoundTag();
+        valid.putInt("priority", 5);
+        valid.putString("label", "valid");
+        valid.putBoolean("pinned", true);
+        CompoundTag metas = new CompoundTag();
+        metas.put("not a valid key", valid.copy());
+        metas.put("minecraft:emerald", valid);
+        CompoundTag savedPd = saved.getCompoundOrEmpty("players")
+                .getCompoundOrEmpty(PLAYER_A.toString());
+        savedPd.put("targetMeta", metas);
+
+        MilestoneData loaded = MilestoneData.CODEC.parse(NbtOps.INSTANCE, saved).getOrThrow();
+        MilestoneData.PlayerData loadedPd = loaded.playerOrNull(PLAYER_A);
+        assertNotNull(loadedPd);
+        assertEquals(Map.of("minecraft:emerald", new TargetMeta(5, "valid", true)), loadedPd.targetMeta);
+        assertNotNull(loaded.loadReport());
+        assertEquals(1, loaded.loadReport().elementSkipCount());
+        assertFalse(loaded.loadReport().totalFailure());
+    }
+
 }

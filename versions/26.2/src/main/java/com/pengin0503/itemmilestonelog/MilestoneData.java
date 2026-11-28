@@ -162,6 +162,32 @@ public class MilestoneData extends SavedData {
     private static final Codec<HolderEntry> LENIENT_HOLDER_ENTRY_CODEC =
             HOLDER_ENTRY_CODEC.orElse(HolderEntry.INVALID);
 
+    /**
+     * Lenient per-key wrapper for {@code firstsHolderHistory} values: a non-list value decodes to an
+     * empty list with one element skip instead of failing the enclosing map (which would discard
+     * every valid sibling key). Encoding delegates unchanged to the list codec.
+     */
+    private static final Codec<List<HolderEntry>> LENIENT_HOLDER_HISTORY_LIST_CODEC = new Codec<>() {
+        private final Codec<List<HolderEntry>> delegate = Codec.list(LENIENT_HOLDER_ENTRY_CODEC);
+
+        @Override
+        public <T> DataResult<Pair<List<HolderEntry>, T>> decode(DynamicOps<T> ops, T input) {
+            DataResult<Pair<List<HolderEntry>, T>> result = delegate.decode(ops, input);
+            if (result.isError()) {
+                MilestoneLoadReport.recordElementSkip();
+                ItemMilestoneLog.LOGGER.warn(
+                        "[ItemMilestoneLog] Skipping malformed 'firstsHolderHistory' value in SavedData; using an empty list");
+                return DataResult.success(new Pair<>(List.of(), input));
+            }
+            return result;
+        }
+
+        @Override
+        public <T> DataResult<T> encode(List<HolderEntry> input, DynamicOps<T> ops, T prefix) {
+            return delegate.encode(input, ops, prefix);
+        }
+    };
+
     /** F-150-38 (N167): emit the optional history map directly, including empty maps. */
     private static Map<String, List<HolderEntry>> encodeFirstsHolderHistory(MilestoneData data) {
         return new LinkedHashMap<>(data.firstsHolderHistory);
@@ -415,6 +441,12 @@ public class MilestoneData extends SavedData {
                         encodedKey);
                 continue;
             }
+            if (TargetKey.tryParseEncoded(encodedKey) == null) {
+                MilestoneLoadReport.recordElementSkip();
+                ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Skipping invalid targetMeta key '{}' in SavedData",
+                        encodedKey);
+                continue;
+            }
             pd.targetMeta.put(encodedKey, meta);
         }
         return pd;
@@ -443,7 +475,7 @@ public class MilestoneData extends SavedData {
             // F-150-38 (N167): optional root field; missing = empty map, no schemaVersion bump,
             // and the export/import JSON and backup formats are left untouched.
             lenient("firstsHolderHistory",
-                    Codec.unboundedMap(Codec.STRING, Codec.list(LENIENT_HOLDER_ENTRY_CODEC)), Map.of())
+                    Codec.unboundedMap(Codec.STRING, LENIENT_HOLDER_HISTORY_LIST_CODEC), Map.of())
                     .optionalFieldOf("firstsHolderHistory", Map.of())
                     .forGetter(MilestoneData::encodeFirstsHolderHistory)
     ).apply(instance, MilestoneData::fromCodec));
@@ -554,9 +586,9 @@ public class MilestoneData extends SavedData {
         }
     }
 
-    /** Returns {@code true} when neither player entries nor world-first records exist. */
+    /** Returns {@code true} when no player entries, world-first records or holder history exist. */
     public boolean isEmpty() {
-        return players.isEmpty() && worldFirsts.isEmpty();
+        return players.isEmpty() && worldFirsts.isEmpty() && firstsHolderHistory.isEmpty();
     }
 
     /**
@@ -733,11 +765,30 @@ public class MilestoneData extends SavedData {
 
     /**
      * Replaces the stored world-first map with {@code updated} and marks the data dirty
-     * (used when merging imported world firsts in F31).
+     * (used when merging imported world firsts in F31). Every replaced or removed holder
+     * is appended to its key's history first, so import merges cannot silently lose it.
      */
     void replaceWorldFirsts(Map<TargetKey, WorldFirstRecord> updated) {
+        for (Map.Entry<TargetKey, WorldFirstRecord> outgoing : worldFirsts.entrySet()) {
+            TargetKey key = outgoing.getKey();
+            WorldFirstRecord oldRecord = outgoing.getValue();
+            WorldFirstRecord incoming = updated.get(key);
+            if (!oldRecord.equals(incoming)) {
+                appendPastHolder(key, oldRecord);
+            }
+        }
         worldFirsts.clear();
         worldFirsts.putAll(updated);
+        setDirty();
+    }
+
+    /** Replaces the holder-history map (used by the rename paths to migrate encoded keys). */
+    void replaceFirstsHolderHistory(Map<String, List<HolderEntry>> updated) {
+        if (firstsHolderHistory.equals(updated)) {
+            return;
+        }
+        firstsHolderHistory.clear();
+        firstsHolderHistory.putAll(updated);
         setDirty();
     }
 
@@ -874,8 +925,8 @@ public class MilestoneData extends SavedData {
                     continue;
                 }
                 accepted.add(entry);
-                if (accepted.size() >= FirstsHolderHistory.HISTORY_LIMIT) {
-                    break;
+                while (accepted.size() > FirstsHolderHistory.HISTORY_LIMIT) {
+                    accepted.remove(0);
                 }
             }
             if (!accepted.isEmpty()) {

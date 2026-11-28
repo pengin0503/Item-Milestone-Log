@@ -86,6 +86,71 @@ public final class MilestoneCommands {
         return RequiredArgumentBuilder.argument(name, type);
     }
 
+    /**
+     * The TargetKeys actually written by a confirmed bulk add. Invalid references are skipped and
+     * duplicates collapse while preserving first-seen order, so the undo snapshot holds each key once.
+     */
+    static List<TargetKey> addedKeys(List<CommandAnalysisModel.TargetRef> refs) {
+        Set<TargetKey> keys = new LinkedHashSet<>();
+        if (refs != null) {
+            for (CommandAnalysisModel.TargetRef ref : refs) {
+                if (ref == null) {
+                    continue;
+                }
+                TargetKey key = TargetKey.normalize(ref.itemId(), ref.count());
+                if (key != null) {
+                    keys.add(key);
+                }
+            }
+        }
+        return List.copyOf(keys);
+    }
+
+    /** F-150-37: consent-based share codes are keyed by the recipient, not by the offerer. */
+    static void putPendingShareCode(UUID recipient, String code) {
+        if (recipient == null) {
+            return;
+        }
+        if (code == null) {
+            PENDING_SHARE_CODES.remove(recipient);
+        } else {
+            PENDING_SHARE_CODES.put(recipient, code);
+        }
+    }
+
+    static String pendingShareCode(UUID recipient) {
+        return recipient == null ? null : PENDING_SHARE_CODES.get(recipient);
+    }
+
+    static boolean pendingShareCodeMatches(UUID recipient, String rawCode) {
+        String pending = pendingShareCode(recipient);
+        return pending != null && rawCode != null && pending.equals(rawCode.trim());
+    }
+
+    static void removePendingShareCode(UUID recipient) {
+        putPendingShareCode(recipient, null);
+    }
+
+    static boolean consumePendingShareCode(UUID recipient, String rawCode) {
+        String code = rawCode == null ? null : rawCode.trim();
+        return recipient != null && code != null && PENDING_SHARE_CODES.remove(recipient, code);
+    }
+
+    /** F-150-40: protect and unprotect are both preview-only until {@code confirm}. */
+    static boolean presetProtectApplies(boolean protect, boolean confirm) {
+        return confirm;
+    }
+
+    /** F-150-16: an existing record is never replaced by a granttag candidate. */
+    static MilestoneRecord grantTagRecord(@Nullable MilestoneRecord existing, int candidateTicks, long epoch) {
+        return existing != null ? existing : new MilestoneRecord(candidateTicks, MilestoneRecord.UNKNOWN_DAY, epoch);
+    }
+
+    /** F-150-31: {@code pin} takes an {@code on}/{@code off} literal, not an arbitrary word. */
+    static boolean pinLiteralValue(String literal) {
+        return "on".equals(literal);
+    }
+
     /** Item IDs of the non-tag keys (tag keys cannot be typed into the item commands, F8b). */
     private static Set<String> itemIdsOf(Set<TargetKey> keys) {
         Set<String> ids = new LinkedHashSet<>();
@@ -2905,10 +2970,11 @@ public final class MilestoneCommands {
             return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.preset_datapack_protected", name));
         }
         Component display = MilestoneService.presetDisplayName(source.getPlayer(), preset);
-        // F-150-40: `protect` applies immediately; only `unprotect` is two-step (confirm).
-        if (!protect && !confirm) {
-            return send(ctx, ServerLang.tr(source,
-                    "message.itemmilestonelog.preset_unprotect_confirm", display));
+        // F-150-40: both directions are preview-only until `confirm`.
+        if (!presetProtectApplies(protect, confirm)) {
+            return send(ctx, ServerLang.tr(source, protect
+                    ? "message.itemmilestonelog.preset_protect_confirm"
+                    : "message.itemmilestonelog.preset_unprotect_confirm", display));
         }
         try {
             if (!Presets.setProtected(Presets.presetsDir(), name, protect)) {
@@ -5653,7 +5719,13 @@ public final class MilestoneCommands {
             return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.lookup_hidden",
                     Component.literal(otherName)));
         }
-        List<TargetKey> items = new ArrayList<>(other.getValue().targets);
+        // Consent-based offer: the caller shares their own targets with <player>. The pending code
+        // is keyed by the recipient so only that player can accept it, and only they can revoke it.
+        MilestoneData.PlayerData mine = dataOrNull(me);
+        List<TargetKey> items = new ArrayList<>();
+        if (mine != null) {
+            items.addAll(mine.targets);
+        }
         if (items.isEmpty() || items.size() > PresetShareLogic.MAX_ITEMS) {
             return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.sharetargets_invalid"));
         }
@@ -5663,7 +5735,7 @@ public final class MilestoneCommands {
         if (code.length() > PresetShareLogic.MAX_CODE_CHARS) {
             return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.sharetargets_invalid"));
         }
-        PENDING_SHARE_CODES.put(me.getUUID(), code);
+        putPendingShareCode(other.getKey(), code);
         MutableComponent message = ServerLang.tr(source, "message.itemmilestonelog.sharetargets_offer",
                 Component.literal(otherName), Component.literal(code).withStyle(style -> style
                         .withUnderlined(true).withClickEvent(copyToClipboardEvent(code))));
@@ -5702,7 +5774,12 @@ public final class MilestoneCommands {
             throws CommandSyntaxException {
         ServerPlayer me = player(ctx);
         CommandSourceStack source = ctx.getSource();
-        PresetShareLogic.Decoded decoded = PresetShareLogic.decode(rawCode != null ? rawCode.trim() : null, null);
+        String code = rawCode != null ? rawCode.trim() : null;
+        // A live code offered to this player is required for both preview and confirm.
+        if (!pendingShareCodeMatches(me.getUUID(), code)) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.sharetargets_invalid"));
+        }
+        PresetShareLogic.Decoded decoded = PresetShareLogic.decode(code, null);
         if (decoded.status() != PresetShareLogic.Status.OK || !TARGET_SHARE_ID.equals(decoded.id())
                 || decoded.json() == null) {
             return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.sharetargets_invalid"));
@@ -5722,13 +5799,26 @@ public final class MilestoneCommands {
                 applied++;
             }
         }
+        consumePendingShareCode(me.getUUID(), code);
         return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.sharetargets_accepted", applied));
     }
 
-    /** F-150-37: drop pending codes only; already-accepted targets are unaffected. */
+    /** F-150-37: the recipient drops their pending offer; already-accepted targets are unaffected. */
     private static int shareTargetsRevoke(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
-        PENDING_SHARE_CODES.remove(player(ctx).getUUID());
+        removePendingShareCode(player(ctx).getUUID());
         return send(ctx, ServerLang.tr(ctx.getSource(), "message.itemmilestonelog.sharetargets_revoked"));
+    }
+
+    /** F-150-30: a confirmed bulk add is undoable as one bulk removal; previews and no-ops are not. */
+    private static void offerBulkAddUndoSnapshot(CommandContext<CommandSourceStack> ctx, UUID playerId,
+                                                 List<TargetKey> added) {
+        if (added.isEmpty()) {
+            return;
+        }
+        if (MilestoneService.UNDO_SNAPSHOTS.offer(playerId,
+                UndoLogic.Snapshot.bulkRemoval(added, Map.of(), System.nanoTime()))) {
+            send(ctx, ServerLang.tr(ctx.getSource(), "message.itemmilestonelog.undo_hint"));
+        }
     }
 
     /** F-150-17 / F-150-30: one staged-quantity parser shared by addsteps and bulk addsteps. */
@@ -5753,14 +5843,19 @@ public final class MilestoneCommands {
             return 1;
         }
         int applied = 0;
+        List<CommandAnalysisModel.TargetRef> addedRefs = new ArrayList<>();
         for (CommandAnalysisModel.TargetRef ref : plan.keys()) {
             if (MilestoneService.addTarget(me, ref.itemId(), ref.count()).success()) {
                 applied++;
+                addedRefs.add(ref);
             }
         }
         send(ctx, ServerLang.tr(source, "message.itemmilestonelog.addsteps_done", applied, label));
         if (plan.skipped() > 0) {
             send(ctx, ServerLang.tr(source, "message.itemmilestonelog.addsteps_skipped", plan.skipped()));
+        }
+        if (fromBulk && applied > 0) {
+            offerBulkAddUndoSnapshot(ctx, me.getUUID(), addedKeys(addedRefs));
         }
         return applied;
     }
@@ -5811,15 +5906,20 @@ public final class MilestoneCommands {
             return 1;
         }
         int applied = 0;
+        List<CommandAnalysisModel.TargetRef> addedRefs = new ArrayList<>();
         for (CommandAnalysisModel.TargetRef ref : plan.missing()) {
             if (MilestoneService.addTarget(me, ref.itemId(), ref.count()).success()) {
                 applied++;
+                addedRefs.add(ref);
             }
         }
         send(ctx, ServerLang.tr(source, "message.itemmilestonelog.bulk_expandtag_done", applied,
                 Component.literal(tag)));
         if (plan.skipped() > 0) {
             send(ctx, ServerLang.tr(source, "message.itemmilestonelog.bulk_skipped", plan.skipped()));
+        }
+        if (applied > 0) {
+            offerBulkAddUndoSnapshot(ctx, me.getUUID(), addedKeys(addedRefs));
         }
         return applied;
     }
@@ -5844,11 +5944,16 @@ public final class MilestoneCommands {
                     completed.size()));
         }
         List<TargetKey> removed = new ArrayList<>();
+        Map<String, TargetMeta> removedMeta = new LinkedHashMap<>();
         if (pd != null) {
             for (TargetKey key : completed) {
                 if (pd.targets.remove(key)) {
                     removed.add(key);
-                    pd.targetMeta.remove(key.toEncodedString());
+                    String encoded = key.toEncodedString();
+                    TargetMeta meta = pd.targetMeta.remove(encoded);
+                    if (meta != null) {
+                        removedMeta.put(encoded, meta);
+                    }
                 }
             }
         }
@@ -5857,7 +5962,7 @@ public final class MilestoneCommands {
         }
         data.setDirty();
         boolean undoable = MilestoneService.UNDO_SNAPSHOTS.offer(me.getUUID(),
-                UndoLogic.Snapshot.bulkRemoval(removed, Map.of(), System.nanoTime()));
+                UndoLogic.Snapshot.bulkRemoval(removed, Map.of(), System.nanoTime(), removedMeta));
         send(ctx, ServerLang.tr(source, "message.itemmilestonelog.bulk_cleanup_done", removed.size()));
         if (undoable) {
             send(ctx, ServerLang.tr(source, "message.itemmilestonelog.undo_hint"));
@@ -5896,9 +6001,12 @@ public final class MilestoneCommands {
         CommandSourceStack source = ctx.getSource();
         long now = System.nanoTime();
         int available = MilestoneService.UNDO_SNAPSHOTS.list(me.getUUID(), now).size();
-        if (generation < 1 || generation > available || available == 0) {
+        if (available == 0) {
+            return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.undo_list_empty"));
+        }
+        if (generation < 1 || generation > available) {
             return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.undo_generation_invalid",
-                    generation, Math.max(1, available)));
+                    generation, available));
         }
         MilestoneService.ActionResult result = MilestoneService.undo(me, generation);
         int status = result.success() ? send(ctx, result.message()) : fail(ctx, result.message());
@@ -5958,11 +6066,10 @@ public final class MilestoneCommands {
                 }
             }
             if (plan.worldFirsts() != null) {
-                for (WorldFirstRecord wf : plan.worldFirsts()) {
-                    if (!data.worldFirsts().containsKey(wf.targetKey())) {
-                        firsts++;
-                    }
-                }
+                // Same dedup/earlier-epoch logic as the real merge, so the dry run cannot
+                // double-count duplicate incoming keys or miss an earlier-epoch replacement.
+                firsts = MilestoneExport.mergeWorldFirsts(data.worldFirsts(), plan.worldFirsts(),
+                        plan.worldFirstSkippedEntries()).updatedCount();
             }
             return sendDryRun(ctx, fileName, new CommandAnalysisModel.ImportPreview(
                     targets, records, firsts,
@@ -5995,7 +6102,7 @@ public final class MilestoneCommands {
         return meta;
     }
 
-    /** Optional trailing options in the documented order: priority, label, pin. */
+    /** Optional trailing options in the documented order: priority, label, pin &lt;on|off&gt;. */
     private static <T extends ArgumentBuilder<CommandSourceStack, T>> T attachMetaOptions(T node) {
         node.then(literal("priority")
                 .then(argument("metaPriority", IntegerArgumentType.integer(0, 9))
@@ -6004,21 +6111,24 @@ public final class MilestoneCommands {
                                 .then(argument("metaLabel", StringArgumentType.string())
                                         .executes(ctx -> targetMetaApply(ctx,
                                                 itemIdentifierArg(ctx, "metaItem"), metaCount(ctx)))
-                                        .then(literal("pin")
-                                                .then(argument("metaPin", StringArgumentType.word())
-                                                        .executes(ctx -> targetMetaApply(ctx,
-                                                                itemIdentifierArg(ctx, "metaItem"), metaCount(ctx)))))))));
+                                        .then(pinLiterals())))));
         node.then(literal("label")
                 .then(argument("metaLabel", StringArgumentType.string())
                         .executes(ctx -> targetMetaApply(ctx, itemIdentifierArg(ctx, "metaItem"), metaCount(ctx)))
-                        .then(literal("pin")
-                                .then(argument("metaPin", StringArgumentType.word())
-                                        .executes(ctx -> targetMetaApply(ctx,
-                                                itemIdentifierArg(ctx, "metaItem"), metaCount(ctx)))))));
-        node.then(literal("pin")
-                .then(argument("metaPin", StringArgumentType.word())
-                        .executes(ctx -> targetMetaApply(ctx, itemIdentifierArg(ctx, "metaItem"), metaCount(ctx)))));
+                        .then(pinLiterals())));
+        node.then(pinLiterals());
         return node;
+    }
+
+    /** F-150-31: the pin option is a literal choice; arbitrary words no longer parse as "off". */
+    private static LiteralArgumentBuilder<CommandSourceStack> pinLiterals() {
+        return literal("pin")
+                .then(literal("on")
+                        .executes(ctx -> targetMetaApply(ctx, itemIdentifierArg(ctx, "metaItem"), metaCount(ctx),
+                                pinLiteralValue("on"))))
+                .then(literal("off")
+                        .executes(ctx -> targetMetaApply(ctx, itemIdentifierArg(ctx, "metaItem"), metaCount(ctx),
+                                pinLiteralValue("off"))));
     }
 
     /** Brigadier 1.3 has no public getArguments(); detect optional arguments via lookup. */
@@ -6038,6 +6148,12 @@ public final class MilestoneCommands {
 
     private static int targetMetaApply(CommandContext<CommandSourceStack> ctx, String itemId, int count)
             throws CommandSyntaxException {
+        return targetMetaApply(ctx, itemId, count, null);
+    }
+
+    /** {@code pinLiteral} comes from the on/off literal branch; the metaPin argument is legacy compatibility. */
+    private static int targetMetaApply(CommandContext<CommandSourceStack> ctx, String itemId, int count,
+                                       @Nullable Boolean pinLiteral) throws CommandSyntaxException {
         ServerPlayer me = player(ctx);
         CommandSourceStack source = ctx.getSource();
         TargetKey key = TargetKey.normalize(itemId, count);
@@ -6051,7 +6167,8 @@ public final class MilestoneCommands {
         TargetMeta current = pd.targetMeta.getOrDefault(encoded, TargetMeta.DEFAULT);
         boolean hasPriority = hasArg(ctx, "metaPriority");
         boolean hasLabel = hasArg(ctx, "metaLabel");
-        boolean hasPin = hasArg(ctx, "metaPin");
+        boolean hasLegacyPin = hasArg(ctx, "metaPin");
+        boolean hasPin = pinLiteral != null || hasLegacyPin;
         if (!hasPriority && !hasLabel && !hasPin) {
             return send(ctx, ServerLang.tr(source, "message.itemmilestonelog.target_meta_query",
                     MilestoneService.targetDisplayName(key), current.priority(),
@@ -6059,9 +6176,9 @@ public final class MilestoneCommands {
         }
         int priority = hasPriority ? IntegerArgumentType.getInteger(ctx, "metaPriority") : current.priority();
         String label = hasLabel ? StringArgumentType.getString(ctx, "metaLabel") : current.label();
-        boolean pinned = hasPin
-                ? "on".equalsIgnoreCase(StringArgumentType.getString(ctx, "metaPin"))
-                : current.pinned();
+        boolean pinned = pinLiteral != null
+                ? pinLiteral
+                : (hasLegacyPin ? pinLiteralValue(StringArgumentType.getString(ctx, "metaPin")) : current.pinned());
         TargetMeta next = TargetMeta.of(priority, label, pinned);
         if (next.equals(TargetMeta.INVALID)) {
             return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.target_meta_invalid_label",
@@ -6151,8 +6268,9 @@ public final class MilestoneCommands {
             return fail(ctx, ServerLang.tr(source, "message.itemmilestonelog.admin_player_not_found", query));
         }
         ServerPlayer online = source.getServer().getPlayerList().getPlayer(target.getKey());
-        pd.records.put(key, new MilestoneRecord(online != null ? Playtime.currentTicks(online) : 0,
-                MilestoneRecord.UNKNOWN_DAY, System.currentTimeMillis()));
+        // Match Tracker's ALREADY_RECORDED behaviour: never replace an existing record.
+        pd.records.put(key, grantTagRecord(pd.records.get(key),
+                online != null ? Playtime.currentTicks(online) : 0, System.currentTimeMillis()));
         data.setDirty();
         ScoreboardSync.refreshScores(source.getServer(), target.getKey());
         if (online != null) {
