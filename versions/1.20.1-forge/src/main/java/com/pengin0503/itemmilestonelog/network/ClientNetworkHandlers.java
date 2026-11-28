@@ -15,9 +15,12 @@ public final class ClientNetworkHandlers {
     };
     private static final Consumer<SyncExtraPayload> NO_OP_SYNC_EXTRA = payload -> {
     };
+    private static final Consumer<MilestoneEffectPayload> NO_OP_EFFECT = payload -> {
+    };
 
     private static volatile Consumer<SyncMilestonesPayload> syncHandler = NO_OP_SYNC;
     private static volatile Consumer<SyncExtraPayload> syncExtraHandler = NO_OP_SYNC_EXTRA;
+    private static volatile Consumer<MilestoneEffectPayload> effectHandler = NO_OP_EFFECT;
 
     private ClientNetworkHandlers() {
     }
@@ -36,5 +39,13 @@ public final class ClientNetworkHandlers {
 
     public static void handleSyncExtra(SyncExtraPayload payload) {
         syncExtraHandler.accept(payload);
+    }
+
+    public static void setEffectHandler(Consumer<MilestoneEffectPayload> handler) {
+        effectHandler = handler != null ? handler : NO_OP_EFFECT;
+    }
+
+    public static void handleEffect(MilestoneEffectPayload payload) {
+        effectHandler.accept(payload);
     }
 }

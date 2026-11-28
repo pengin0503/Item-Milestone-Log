@@ -85,6 +85,11 @@ public final class MilestoneHudOverlay {
         return effective.pinHudEnabled();
     }
 
+    /** PR-6: one read-only snapshot shared by the chat style, effect and GUI clock consumers. */
+    public static DisplayOptions effectiveOptions() {
+        return effective;
+    }
+
     /** Called on login: binds the local profile and loads any offline snapshot. */
     public static void onLogin(Minecraft mc) {
         String address = mc.getConnection() != null && mc.getConnection().getConnection() != null
@@ -114,10 +119,9 @@ public final class MilestoneHudOverlay {
     }
 
     private static void refreshOptions() {
-        DisplayOptions fromConfig = new DisplayOptions(
-                Config.pinHudEnabled(), Config.pinHudMaxRows(),
-                3, true, true, "default", false, "default", false,
-                Config.pinHudAnchor(), Config.pinHudAutoHide(), Config.pinHudScale());
+        // PR-6: read every display key from Config (tail-appended keys included) so profile
+        // overrides for showRecordClock / chatStyleMode / clientEffectEnabled take effect.
+        DisplayOptions fromConfig = Config.displayOptions();
         effective = fromConfig.apply(ClientProfileStore.load(FMLPaths.CONFIGDIR.get(), serverKey));
         layout = HudLayoutOptions.fromConfig(effective.pinHudAnchor(),
                 effective.pinHudAutoHide(), effective.pinHudScale());

@@ -8,6 +8,7 @@ import com.pengin0503.itemmilestonelog.api.RecordCause;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
 import com.pengin0503.itemmilestonelog.api.WorldFirstRecord;
 import com.pengin0503.itemmilestonelog.compat.McCompat;
+import com.pengin0503.itemmilestonelog.network.MilestoneEffectPayload;
 import com.pengin0503.itemmilestonelog.network.ModNetworking;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -2108,6 +2109,16 @@ public final class Tracker {
             }
         }
 
+        // F-150-69 / F-150-83: one optional S2C per record (and one per completed preset).
+        // Forge's single channel uses isRemotePresent; vanilla peers receive nothing.
+        if (ModNetworking.isRemotePresent(player)) {
+            ModNetworking.sendToPlayer(player, new MilestoneEffectPayload(
+                    key.itemId(), key.count(), MilestoneEffectPayload.Kind.RECORDED));
+            for (Presets.PresetDefinition preset : completedPresets) {
+                ModNetworking.sendToPlayer(player, new MilestoneEffectPayload(
+                        preset.id(), 1, MilestoneEffectPayload.Kind.PRESET_COMPLETE));
+            }
+        }
         if (syncImmediately) {
             MilestoneService.syncPlayerIfOpen(player);
         }

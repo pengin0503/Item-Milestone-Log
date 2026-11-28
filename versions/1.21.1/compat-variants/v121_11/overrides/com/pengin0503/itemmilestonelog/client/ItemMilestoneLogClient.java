@@ -2,6 +2,8 @@ package com.pengin0503.itemmilestonelog.client;
 
 import com.mojang.blaze3d.platform.InputConstants;
 import com.pengin0503.itemmilestonelog.Config;
+import net.neoforged.neoforge.client.event.ClientChatReceivedEvent;
+import net.neoforged.neoforge.client.event.sound.PlaySoundEvent;
 import com.pengin0503.itemmilestonelog.ExternalIntegrationGate;
 import com.pengin0503.itemmilestonelog.ItemMilestoneLog;
 import com.pengin0503.itemmilestonelog.network.ModNetworking;
@@ -94,6 +96,7 @@ public final class ItemMilestoneLogClient {
                 (mod, parentScreen) -> new ConfigurationScreen(mod, parentScreen, HIDDEN_CONFIG_FILTER));
         ModNetworking.setClientSyncHandler(ClientMilestoneHandler::onSyncReceived);
         ModNetworking.setClientSyncExtraHandler(ClientMilestoneHandler::onSyncExtraReceived);
+        ModNetworking.setClientEffectHandler(ClientEffects::onEffect);
         modEventBus.addListener(ItemMilestoneLogClient::onRegisterKeyMappings);
         NeoForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onClientTick);
         NeoForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onScreenKeyPressed);
@@ -102,13 +105,28 @@ public final class ItemMilestoneLogClient {
         NeoForge.EVENT_BUS.addListener(EventPriority.LOW, ItemMilestoneLogClient::onTagsUpdated);
         NeoForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onItemTooltip);
         NeoForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onClientLoggingOut);
+        NeoForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onClientChat);
+        NeoForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onClientSound);
     }
 
     private static void onClientLoggingOut(ClientPlayerNetworkEvent.LoggingOut event) {
         // PR-5: flush cache, rotate backup, optional export - before snapshots are cleared.
         ClientLocalOutput.onLogout();
+        ClientEffects.onLogout();
         ClientMilestoneHandler.clearExtraData();
         ClientMilestoneHandler.clearTooltipData();
+    }
+
+    /** F-150-74 / F-150-81: concrete chat and sound events in this profile as well. */
+    private static void onClientChat(ClientChatReceivedEvent event) {
+        Component styled = ChatStyler.apply(event.getMessage());
+        if (styled != null && styled != event.getMessage()) {
+            event.setMessage(styled);
+        }
+    }
+
+    private static void onClientSound(PlaySoundEvent event) {
+        ClientSoundGate.onPlaySound(event);
     }
 
     /**

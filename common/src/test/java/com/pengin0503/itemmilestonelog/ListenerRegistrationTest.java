@@ -83,6 +83,12 @@ class ListenerRegistrationTest {
                     version + ": expected concrete LivingDamageEvent.Post registration, got " + types);
             assertFalse(source.contains("onLivingDamage(LivingDamageEvent event)"),
                     version + ": handler still takes the abstract LivingDamageEvent");
+            assertTrue(types.contains("ClientChatReceivedEvent"),
+                    version + ": F-150-74 chat listener must be registered: " + types);
+            assertTrue(types.contains("PlaySoundEvent"),
+                    version + ": F-150-81 sound listener must be registered: " + types);
+            assertFalse(types.contains("SoundEvent") || types.contains("SoundEvent.SoundSourceEvent"),
+                    version + ": abstract sound event must never be registered: " + types);
         }
     }
 
@@ -94,5 +100,26 @@ class ListenerRegistrationTest {
                 "Forge 1.20.1 LivingDamageEvent is a concrete class and must stay registered: " + types);
         assertFalse(types.contains("LivingDamageEvent.Post"),
                 "Forge 1.20.1 has no Pre/Post split; do not introduce a NeoForge subclass here");
+        assertTrue(types.contains("ClientChatReceivedEvent"),
+                "F-150-74 chat listener must be registered: " + types);
+        assertTrue(types.contains("PlaySoundEvent"),
+                "F-150-81 sound listener must be registered: " + types);
+        assertFalse(types.contains("SoundEvent") || types.contains("SoundEvent.SoundSourceEvent"),
+                "abstract sound event must never be registered: " + types);
+    }
+
+    @Test
+    void stale1219And1211OverridesWireTheNewHandlersToo() throws IOException {
+        Path root = repoRoot();
+        for (String variant : new String[]{"v121_9", "v121_11"}) {
+            Path file = root.resolve("versions/1.21.1/compat-variants").resolve(variant)
+                    .resolve("overrides/com/pengin0503/itemmilestonelog/client/ItemMilestoneLogClient.java");
+            assertTrue(Files.isRegularFile(file), "missing override: " + file);
+            String source = Files.readString(file);
+            assertTrue(source.contains("onClientChat"), variant + ": chat listener missing");
+            assertTrue(source.contains("onClientSound"), variant + ": sound listener missing");
+            assertTrue(source.contains("setClientEffectHandler(ClientEffects::onEffect)"),
+                    variant + ": effect handler missing");
+        }
     }
 }

@@ -96,6 +96,13 @@ public final class ModNetworking {
                 .decoder(SyncExtraPayload::decode)
                 .consumerNetworkThread(SyncExtraPayload::handle)
                 .add();
+        // F-150-69: one extra OPTIONAL S2C message on the same channel. C2S ids 0..1 and
+        // S2C ids 2..3 keep their numbers; this is only a tail append (id 4).
+        ch.messageBuilder(MilestoneEffectPayload.class, id++, NetworkDirection.PLAY_TO_CLIENT)
+                .encoder(MilestoneEffectPayload::encode)
+                .decoder(MilestoneEffectPayload::decode)
+                .consumerNetworkThread(MilestoneEffectPayload::handle)
+                .add();
     }
 
     /** {@code channel.isRemotePresent(player.connection.connection)}; false for vanilla clients. */
@@ -187,5 +194,10 @@ public final class ModNetworking {
     /** Client GUI extra-metadata handler registration (see {@link #setClientSyncHandler}). */
     public static void setClientSyncExtraHandler(Consumer<SyncExtraPayload> handler) {
         ClientNetworkHandlers.setSyncExtraHandler(handler);
+    }
+
+    /** F-150-69: client effect handler registration; the default sink never touches client code. */
+    public static void setClientEffectHandler(Consumer<MilestoneEffectPayload> handler) {
+        ClientNetworkHandlers.setEffectHandler(handler);
     }
 }

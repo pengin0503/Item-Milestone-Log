@@ -468,6 +468,39 @@ public final class Config {
                     "Open screens are skipped; images stay under config/itemmilestonelog-client/screenshots/.")
             .define("screenshotOnRecord", false);
 
+
+    // ---- 1.5.0 step 6 PR-6: effects / chat / sound / clock (tail-only; never reorder) ----
+    /** F-150-69 (N31): client particles, OFF by default. The channel stays registered. */
+    public static final ModConfigSpec.BooleanValue CLIENT_EFFECT_ENABLED = BUILDER
+            .comment("Play one small particle effect when a milestone record arrives (default off).",
+                    "The optional S2C channel stays registered so enabling this needs no relogin.")
+            .define("clientEffectEnabled", false);
+
+    /** F-150-74 (N72): default/subtle/bold/high-contrast; default is byte-identical output. */
+    public static final ModConfigSpec.ConfigValue<String> CHAT_STYLE_MODE = BUILDER
+            .comment("Client-side chat style for this mod's own messages: default, subtle, bold, high-contrast.")
+            .define("chatStyleMode", "default", ChatStylePolicy::isValidConfigValue);
+
+    /** F-150-81 (N194): four independent client-side sound on/off flags (volume is untouched). */
+    public static final ModConfigSpec.BooleanValue CLIENT_SOUND_RECORDED = BUILDER
+            .comment("Play the record notification sound on this client (default on).")
+            .define("clientSoundRecorded", true);
+    public static final ModConfigSpec.BooleanValue CLIENT_SOUND_WORLD_FIRST = BUILDER
+            .comment("Play the world-first notification sound on this client (default on).")
+            .define("clientSoundWorldFirst", true);
+    public static final ModConfigSpec.BooleanValue CLIENT_SOUND_PRESET_COMPLETE = BUILDER
+            .comment("Play the preset-completion notification sound on this client (default on).")
+            .define("clientSoundPresetComplete", true);
+    public static final ModConfigSpec.BooleanValue CLIENT_SOUND_PROGRESS_ALERT = BUILDER
+            .comment("Play the progress-alert notification sound on this client (default on).")
+            .define("clientSoundProgressAlert", true);
+
+    /** F-150-76 (N120): append HH:mm to record rows, OFF by default. */
+    public static final ModConfigSpec.BooleanValue SHOW_RECORD_CLOCK = BUILDER
+            .comment("Append the local HH:mm record time to GUI record rows (default off).",
+                    "The timestamp is formatted at display time; no server timezone is sent.")
+            .define("showRecordClock", false);
+
     static final ModConfigSpec SPEC = BUILDER.build();
 
     private record ThresholdsCache(List<? extends Integer> source, List<Integer> normalized) {
@@ -935,6 +968,52 @@ public final class Config {
         } catch (IllegalStateException notLoaded) {
             return false;
         }
+    }
+
+    // ---- PR-6 accessors: values used while the config is not loaded match shipped defaults. ----
+    /** F-150-69: false before the config is loaded, so particles never fire in plain unit tests. */
+    public static boolean clientEffectEnabled() {
+        try {
+            return CLIENT_EFFECT_ENABLED.get();
+        } catch (IllegalStateException notLoaded) {
+            return false;
+        }
+    }
+
+    /** F-150-74: "default" before the config is loaded. */
+    public static String chatStyleMode() {
+        try {
+            return CHAT_STYLE_MODE.get();
+        } catch (IllegalStateException notLoaded) {
+            return "default";
+        }
+    }
+
+    /** F-150-81: all four flags on before the config is loaded; volume is never touched. */
+    public static ClientSoundFilter.Flags clientSoundFilter() {
+        try {
+            return new ClientSoundFilter.Flags(CLIENT_SOUND_RECORDED.get(), CLIENT_SOUND_WORLD_FIRST.get(),
+                    CLIENT_SOUND_PRESET_COMPLETE.get(), CLIENT_SOUND_PROGRESS_ALERT.get());
+        } catch (IllegalStateException notLoaded) {
+            return ClientSoundFilter.Flags.defaults();
+        }
+    }
+
+    /** F-150-76: false before the config is loaded. */
+    public static boolean showRecordClock() {
+        try {
+            return SHOW_RECORD_CLOCK.get();
+        } catch (IllegalStateException notLoaded) {
+            return false;
+        }
+    }
+
+    /** One immutable options snapshot for profile overrides and all client-only display features. */
+    public static DisplayOptions displayOptions() {
+        return new DisplayOptions(
+                pinHudEnabled(), pinHudMaxRows(), tooltipMaxLines(), tooltipShowTarget(),
+                tooltipShowRecorded(), tooltipSort(), showRecordClock(), chatStyleMode(),
+                clientEffectEnabled(), pinHudAnchor(), pinHudAutoHide(), pinHudScale());
     }
 
 
