@@ -37,7 +37,8 @@ class UndoLogicTest {
                                                          Set<String> completed,
                                                          Map<String, Integer> progress,
                                                          Map<String, PresetState> presetState) {
-        return UndoLogic.restore(snapshot, records, completed, progress, presetState, Set.of(), 1024, Rec::ticks);
+        return UndoLogic.restore(snapshot, records, completed, progress, presetState, Set.of(),
+                1024, Rec::ticks, Map.of());
     }
 
     private static UndoLogic.Snapshot<String, Rec> resetSnapshot(Map<String, Rec> records, Set<String> completed,
@@ -172,7 +173,7 @@ class UndoLogicTest {
         Set<String> currentTargets = new LinkedHashSet<>(List.of("t2", "x"));
 
         UndoLogic.Result<String, Rec> result = UndoLogic.restore(snapshot, Map.of(), Set.of(), Map.of(), Map.of(),
-                currentTargets, 4, Rec::ticks);
+                currentTargets, 4, Rec::ticks, Map.of());
 
         assertEquals(List.of("t2", "x", "t1", "t3"), List.copyOf(result.targets()));
         assertEquals(2, result.restoredTargets());
@@ -180,6 +181,28 @@ class UndoLogicTest {
         assertEquals(50, result.progressNotified().get("t1"));
         assertEquals(25, result.progressNotified().get("t4"));
         assertEquals(0, result.restoredRecords());
+    }
+
+    @Test
+    void bulkRemovalRestoresRemovedTargetMetaWithoutOverwritingFreshValues() {
+        // SF-2: a pinned/labelled/priority entry removed with its target must come back, but an entry
+        // set after the removal (e.g. by re-adding the target) wins (putIfAbsent).
+        Map<String, TargetMeta> removedMeta = new LinkedHashMap<>();
+        removedMeta.put("t1", new TargetMeta(9, "main", true));
+        removedMeta.put("t2", new TargetMeta(3, "old", false));
+        UndoLogic.Snapshot<String, Rec> snapshot = UndoLogic.Snapshot.bulkRemoval(
+                List.of("t1", "t2"), Map.of(), 0L, removedMeta);
+        Map<String, TargetMeta> currentMeta = new LinkedHashMap<>();
+        currentMeta.put("t1", new TargetMeta(1, "fresh", true));
+
+        UndoLogic.Result<String, Rec> result = UndoLogic.restore(snapshot, Map.of(), Set.of(), Map.of(),
+                Map.of(), Set.of(), 1024, Rec::ticks, currentMeta);
+
+        assertEquals(new TargetMeta(1, "fresh", true), result.targetMeta().get("t1"));
+        assertEquals(new TargetMeta(3, "old", false), result.targetMeta().get("t2"));
+        assertEquals(2, result.restoredTargets());
+        assertEquals(new TargetMeta(1, "fresh", true), currentMeta.get("t1"), "inputs are not mutated");
+        assertThrows(UnsupportedOperationException.class, () -> snapshot.removedTargetMeta().put("x", TargetMeta.DEFAULT));
     }
 
     @Test

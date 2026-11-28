@@ -74,6 +74,17 @@ class PruneDataLogicTest {
     }
 
     @Test
+    void nonEmptyTargetMetaExcludesPlayerFromPruning() {
+        // SF-8: pinned/labelled/priority metadata is functional state even when every other
+        // collection is empty; the legacy 10-arg constructor keeps the old "empty" behaviour.
+        PruneDataLogic.PlayerState metadataOnly = new PruneDataLogic.PlayerState(
+                0, 0, true, false, false, false, false, true, true, true, false);
+        assertFalse(PruneDataLogic.isEmptyWithDefaultSettings(metadataOnly));
+        assertFalse(PruneDataLogic.isPruneTarget(metadataOnly, false, OLD_LAST_SEEN, NOW, DAYS));
+        assertTrue(PruneDataLogic.isEmptyWithDefaultSettings(emptyDefaultState()));
+    }
+
+    @Test
     void onlinePlayerIsNeverTargeted() {
         assertFalse(PruneDataLogic.isPruneTarget(emptyDefaultState(), true, OLD_LAST_SEEN, NOW, DAYS));
     }

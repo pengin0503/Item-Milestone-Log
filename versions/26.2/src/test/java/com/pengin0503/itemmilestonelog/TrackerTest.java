@@ -2105,4 +2105,41 @@ class TrackerTest {
         assertEquals(1.0F, Tracker.SOUND_PITCH, "pitch is unchanged from 1.4.0");
     }
 
+
+
+    @Test
+    void worldFirstSoundIsDerivedFromQueuedRecordsInBothGroupingModes() {
+        String customWorldFirstSound = "minecraft:entity.player.levelup";
+        Tracker.SoundConfigSnapshot cfg = new Tracker.SoundConfigSnapshot(
+                true, "minecraft:ui.toast.challenge_complete", customWorldFirstSound,
+                "", "", false, false, false, 100);
+
+        MilestoneData data = new MilestoneData();
+        MilestoneData.PlayerData pd = data.player(PLAYER_A);
+        pd.soundVolume = SoundVolumeLogic.FOLLOW_SERVER;
+
+        // Grouped path (groupSimultaneousRecords=true): one queued world-first record.
+        Tracker.queuePendingNotification(PLAYER_A, "Alice", Component.literal("Alice"),
+                TargetKey.of("minecraft:diamond"), new MilestoneRecord(1, 1L, 1000L), true, false);
+        List<Tracker.PendingNotifications> drained = Tracker.drainPendingNotifications();
+        assertEquals(1, drained.size());
+        Tracker.PendingNotifications pending = drained.get(0);
+        boolean groupedWorldFirst = Tracker.hasWorldFirstQueued(pending);
+
+        // Immediate path (groupSimultaneousRecords=false): the raw record flag.
+        boolean immediateWorldFirst = pending.records.get(0).worldFirst();
+        assertEquals(immediateWorldFirst, groupedWorldFirst,
+                "a queued world-first must survive announceWorldFirst=false");
+
+        List<NotificationSoundLogic.SoundRequest> groupedRequests = Tracker.planSoundsForWindow(
+                null, data, PLAYER_A, true, groupedWorldFirst, false, false, cfg);
+        List<NotificationSoundLogic.SoundRequest> immediateRequests = Tracker.planSoundsForWindow(
+                null, data, PLAYER_A, true, immediateWorldFirst, false, false, cfg);
+        assertEquals(immediateRequests, groupedRequests,
+                "both grouping modes must produce the same request for the same record");
+        assertEquals(List.of(new NotificationSoundLogic.SoundRequest(
+                PLAYER_A, NotificationSoundLogic.Event.WORLD_FIRST, customWorldFirstSound, 100, false)),
+                groupedRequests, "the actor hears the configured worldFirstSound, not the record sound");
+    }
+
 }

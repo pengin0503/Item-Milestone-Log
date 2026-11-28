@@ -102,14 +102,25 @@ public final class AuditLog {
     }
 
     private static void rotate(Path file, Path dir) throws IOException {
-        Files.deleteIfExists(dir.resolve(FILE_NAME + "." + MAX_GENERATIONS + ".log"));
+        Files.deleteIfExists(dir.resolve(generationFileName(MAX_GENERATIONS)));
         for (int generation = MAX_GENERATIONS - 1; generation >= 1; generation--) {
-            Path source = dir.resolve(FILE_NAME + "." + generation + ".log");
+            Path source = dir.resolve(generationFileName(generation));
             if (Files.exists(source)) {
-                moveReplace(source, dir.resolve(FILE_NAME + "." + (generation + 1) + ".log"));
+                moveReplace(source, dir.resolve(generationFileName(generation + 1)));
             }
         }
-        moveReplace(file, dir.resolve(FILE_NAME + ".1.log"));
+        moveReplace(file, dir.resolve(generationFileName(1)));
+    }
+
+    /**
+     * §1.3 names the generations {@code audit.1.log} .. {@code audit.5.log}; the base is the
+     * current file name without its {@code .log} suffix, never {@code audit.log.1.log}.
+     */
+    private static String generationFileName(int generation) {
+        String base = FILE_NAME.endsWith(".log")
+                ? FILE_NAME.substring(0, FILE_NAME.length() - ".log".length())
+                : FILE_NAME;
+        return base + "." + generation + ".log";
     }
 
     /** Atomic move with the same fallback F10 uses for filesystems without atomic move. */

@@ -1575,9 +1575,11 @@ public final class CommandAnalysisModel {
 
     /**
      * Pure four-number diff for {@code import} / {@code importall dryrun}. Target adds reuse the
-     * copy capacity rule; a record is overwritten only when the imported playTicks is strictly
-     * smaller than the stored one; world firsts are deduplicated. Invalid/null keys are skipped and
-     * included in {@code skipped}. Every argument is read-only.
+     * copy capacity rule; a record is written when its key is absent locally or the imported
+     * playTicks is strictly smaller than the stored one (SF-3, matching the real import); world
+     * firsts are deduplicated. Invalid/null keys are skipped and included in {@code skipped}.
+     * Every argument is read-only. The displayed label stays {@code recordsToOverwrite} and covers
+     * both writes and adds.
      */
     public static ImportPreview importPreview(Collection<TargetRef> currentTargets,
                                               Collection<TargetRef> importedTargets,
@@ -1597,11 +1599,13 @@ public final class CommandAnalysisModel {
                     continue;
                 }
                 Integer importedTicks = entry.getValue();
-                if (importedTicks == null || currentRecords == null) {
+                if (importedTicks == null) {
                     continue;
                 }
-                Integer currentTicks = currentRecords.get(key);
-                if (currentTicks != null && importedTicks < currentTicks) {
+                // The real import writes a record when it is absent locally as well as when the
+                // incoming playTicks is strictly smaller; the dry run must count both (SF-3).
+                Integer currentTicks = currentRecords == null ? null : currentRecords.get(key);
+                if (currentTicks == null || importedTicks < currentTicks) {
                     recordsToOverwrite++;
                 }
             }

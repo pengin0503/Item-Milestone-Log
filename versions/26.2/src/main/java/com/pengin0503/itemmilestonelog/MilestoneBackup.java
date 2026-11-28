@@ -203,15 +203,26 @@ public final class MilestoneBackup {
      *         empty or writing failed
      */
     public static boolean writeBackupNow(@Nullable MinecraftServer server) {
+        return writeBackupNowFileName(server) != null;
+    }
+
+    /**
+     * MN-1: same synchronous write as {@link #writeBackupNow}, but returns the exact file name
+     * produced while the snapshot lock is held. Null means nothing was written. Callers that
+     * audit the operation use this name instead of re-scanning the directory (which could name a
+     * different, later-timestamped file).
+     */
+    @Nullable
+    static String writeBackupNowFileName(@Nullable MinecraftServer server) {
         // Deliberately synchronous (N45): F24 renameitem proceeds only after the pre-rename
         // backup is known to be on disk. Moving this to the I/O executor would let the caller
         // mutate/delete data before the snapshot becomes durable.
         if (server == null) {
-            return false;
+            return null;
         }
         try {
             MilestoneData data = MilestoneData.get(server);
-            return writeBackup(
+            return writeBackupAndName(
                     backupsDir(server),
                     data,
                     server.registryAccess(),
@@ -220,7 +231,7 @@ public final class MilestoneBackup {
                     Config.autoBackupGenerations());
         } catch (RuntimeException e) {
             ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Could not write SavedData backup: {}", e.getMessage());
-            return false;
+            return null;
         }
     }
 
@@ -693,23 +704,36 @@ public final class MilestoneBackup {
             Instant now,
             ZoneId zone,
             int maxGenerations) {
+        return writeBackupAndName(dir, data, registries, now, zone, maxGenerations) != null;
+    }
+
+    /** MN-1: the boolean {@link #writeBackup} path with the chosen file name preserved. */
+    @Nullable
+    static String writeBackupAndName(
+            Path dir,
+            @Nullable MilestoneData data,
+            @Nullable HolderLookup.Provider registries,
+            Instant now,
+            ZoneId zone,
+            int maxGenerations) {
         if (dir == null || data == null || data.isEmpty()) {
-            return false;
+            return null;
         }
         try {
             CompoundTag root = data.toSavedDataFileTag(registries);
-            if (!writeBackupSnapshot(dir, root, now, zone, maxGenerations)) {
-                return false;
+            String fileName = writeBackupSnapshotName(dir, root, now, zone, maxGenerations);
+            if (fileName == null) {
+                return null;
             }
             // F-140-3: the synchronous path records the timestamp on its caller's thread (the
             // server thread) only after the write succeeded; the I/O thread never owns it.
             lastBackupMillis = now.toEpochMilli();
+            return fileName;
         } catch (RuntimeException e) {
             ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Could not write SavedData backup in {}: {}",
                     dir, e.getMessage());
-            return false;
+            return null;
         }
-        return true;
     }
 
     /** Writes an already-serialized SavedData root and prunes old generations (I/O thread). */
@@ -719,8 +743,19 @@ public final class MilestoneBackup {
             Instant now,
             ZoneId zone,
             int maxGenerations) {
+        return writeBackupSnapshotName(dir, root, now, zone, maxGenerations) != null;
+    }
+
+    /** MN-1: locked snapshot write that returns the chosen file name on success. */
+    @Nullable
+    static String writeBackupSnapshotName(
+            Path dir,
+            @Nullable CompoundTag root,
+            Instant now,
+            ZoneId zone,
+            int maxGenerations) {
         if (dir == null || root == null) {
-            return false;
+            return null;
         }
         SNAPSHOT_WRITE_LOCK.lock();
         try {
@@ -761,21 +796,23 @@ public final class MilestoneBackup {
             return false;
         }
         try {
-            return writeBackupSnapshotLocked(dir, root, now, zone, maxGenerations);
+            return writeBackupSnapshotLocked(dir, root, now, zone, maxGenerations) != null;
         } finally {
             SNAPSHOT_WRITE_LOCK.unlock();
         }
     }
 
-    private static boolean writeBackupSnapshotLocked(
+    @Nullable
+    private static String writeBackupSnapshotLocked(
             Path dir,
             CompoundTag root,
             Instant now,
             ZoneId zone,
             int maxGenerations) {
+        String fileName;
         try {
             Files.createDirectories(dir);
-            String fileName = MilestoneBackupLogic.chooseFileName(
+            fileName = MilestoneBackupLogic.chooseFileName(
                     now, zone, name -> Files.exists(dir.resolve(name)));
             Path target = dir.resolve(fileName).normalize();
             if (!dir.normalize().equals(target.getParent())) {
@@ -785,10 +822,10 @@ public final class MilestoneBackup {
         } catch (IOException | RuntimeException e) {
             ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] Could not write SavedData backup in {}: {}",
                     dir, e.getMessage());
-            return false;
+            return null;
         }
         pruneOldBackups(dir, maxGenerations);
-        return true;
+        return fileName;
     }
 
     private static void writeCompressedAtomically(Path dir, String fileName, Path target, CompoundTag root)

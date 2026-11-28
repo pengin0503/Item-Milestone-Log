@@ -435,6 +435,7 @@
   "message.itemmilestonelog.preset_unprotect_done": "プリセット %s の保護を解除しました。",
   "message.itemmilestonelog.preset_protected": "プリセット %s は保護されています。",
   "message.itemmilestonelog.preset_edit_builtin": "組み込みプリセットは編集できません。",
+  "message.itemmilestonelog.preset_protect_confirm": "プリセット '%s' を保護しますか？適用するには [confirm] を付けてください。",
   "message.itemmilestonelog.preset_unprotect_confirm": "プリセット '%s' の保護を解除しますか？適用するには [confirm] を付けてください。",
   "message.itemmilestonelog.presetmatrix_empty": "表示できるプリセット進捗のあるプレイヤーはいません。",
   "message.itemmilestonelog.presetmatrix_header": "プリセット進捗マトリクス（%s 人、%s プリセット）:",

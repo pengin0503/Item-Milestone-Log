@@ -9,8 +9,10 @@ import net.minecraft.nbt.NbtOps;
 import net.minecraft.nbt.Tag;
 
 import javax.annotation.Nullable;
+import java.io.EOFException;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.zip.ZipException;
 
 /**
  * F-150-55 (N39): thin, read-only NBT wrapper for {@code backup verify} on 26.x.
@@ -20,20 +22,31 @@ import java.nio.file.Path;
  * {@link BackupVerifyResult} statuses (no exception messages, paths or secret values).
  */
 final class BackupVerify {
+    /** MN-5: cap inflated NBT at 64 MiB; {@link NbtAccounter} budgets are expressed in bits. */
+    private static final long MAX_VERIFY_NBT_BITS = 64L * 1024L * 1024L * 8L;
+
     private BackupVerify() {
     }
 
     static BackupVerifyResult verifyFile(Path file, @Nullable HolderLookup.Provider registries) {
         CompoundTag root;
         try {
-            root = NbtIo.readCompressed(file, NbtAccounter.unlimitedHeap());
-        } catch (IOException | RuntimeException e) {
-            // Truncated gzip / malformed NBT is a corrupt backup, not a host I/O failure.
+            root = NbtIo.readCompressed(file, NbtAccounter.create(MAX_VERIFY_NBT_BITS));
+        } catch (IOException e) {
+            // MN-2: a gzip/structure failure is corrupt data; a genuine OS read failure is I/O.
+            return BackupVerifyResult.failure(isCorruptPayload(e)
+                    ? BackupVerifyResult.Status.INVALID_NBT : BackupVerifyResult.Status.IO_ERROR);
+        } catch (RuntimeException e) {
+            // Includes the NbtAccounter budget failure for an oversized payload.
             return BackupVerifyResult.failure(BackupVerifyResult.Status.INVALID_NBT);
+        } catch (Error e) {
+            // MN-5: never let an allocation/verification failure escape command dispatch.
+            return BackupVerifyResult.failure(BackupVerifyResult.Status.IO_ERROR);
         }
         if (root == null || !(root.get("data") instanceof CompoundTag data)) {
             return BackupVerifyResult.failure(BackupVerifyResult.Status.INVALID_NBT);
         }
+        // MN-4: getIntOr accepts any NumericTag (Int/Long/Short/Byte/Float/Double) uniformly.
         int rawSchema = data.contains("schemaVersion")
                 ? data.getIntOr("schemaVersion", SchemaVersionLogic.MALFORMED_SCHEMA_VERSION)
                 : SchemaVersionLogic.ABSENT_SCHEMA_VERSION;
@@ -48,10 +61,30 @@ final class BackupVerify {
                     ? registries.createSerializationContext(NbtOps.INSTANCE) : NbtOps.INSTANCE;
             MilestoneData snapshot = MilestoneData.TYPE.codecFactory().create(null)
                     .parse(ops, data).getOrThrow();
+            // MN-3: the lenient codec substitutes sentinels and counts element skips. A skipped
+            // element means this backup is not fully restorable, so it must not report OK.
+            MilestoneLoadReport report = snapshot.loadReport();
+            if (report != null && (report.elementSkipCount() > 0 || report.totalFailure())) {
+                return BackupVerifyResult.failure(BackupVerifyResult.Status.INVALID_NBT);
+            }
             return BackupVerifyResult.ok(snapshot.allPlayers().size(), snapshot.worldFirsts().size(),
                     schema.retainedVersion());
         } catch (RuntimeException e) {
             return BackupVerifyResult.failure(BackupVerifyResult.Status.INVALID_NBT);
+        } catch (Error e) {
+            return BackupVerifyResult.failure(BackupVerifyResult.Status.IO_ERROR);
         }
+    }
+
+    /** Recognizes corrupt gzip/NBT errors in either the exception itself or a wrapping cause. */
+    private static boolean isCorruptPayload(Throwable failure) {
+        Throwable current = failure;
+        for (int depth = 0; current != null && depth < 8; depth++) {
+            if (current instanceof ZipException || current instanceof EOFException) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 }

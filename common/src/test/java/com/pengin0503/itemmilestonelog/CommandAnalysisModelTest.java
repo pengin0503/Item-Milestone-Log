@@ -819,9 +819,30 @@ class CommandAnalysisModelTest {
                 currentTargets, importedTargets, currentRecords, importedRecords,
                 currentFirsts, importedFirsts, 5);
         assertEquals(2, preview.targetsToAdd());
-        assertEquals(1, preview.recordsToOverwrite(), "only strictly smaller playTicks overwrite");
+        assertEquals(2, preview.recordsToOverwrite(),
+                "absent local record is a write (minecraft:d) plus one strictly smaller playTicks (minecraft:b)");
         assertEquals(2, preview.newWorldFirsts());
         assertEquals(2, preview.skipped(), "one already-owned target plus one null world-first key");
+    }
+
+    @Test
+    void importPreviewCountsAbsentRecordsButNotEqualLargerOrNullTicks() {
+        Map<CommandAnalysisModel.TargetRef, Integer> currentRecords = Map.of(
+                key("minecraft:a", 1), 100, key("minecraft:b", 1), 50);
+        Map<CommandAnalysisModel.TargetRef, Integer> importedRecords =
+                new java.util.LinkedHashMap<>();
+        importedRecords.put(key("minecraft:a", 1), 150); // larger: no write
+        importedRecords.put(key("minecraft:b", 1), 50);  // equal: no write
+        importedRecords.put(key("minecraft:c", 1), 10);  // absent locally: write
+        importedRecords.put(key("minecraft:d", 1), null); // null ticks: skipped
+
+        CommandAnalysisModel.ImportPreview preview = CommandAnalysisModel.importPreview(
+                List.of(), List.of(), currentRecords, importedRecords, List.of(), List.of(), 1024);
+        assertEquals(1, preview.recordsToOverwrite(), "only the absent key is written");
+
+        CommandAnalysisModel.ImportPreview noLocalRecords = CommandAnalysisModel.importPreview(
+                List.of(), List.of(), null, importedRecords, List.of(), List.of(), 1024);
+        assertEquals(3, noLocalRecords.recordsToOverwrite(), "all three non-null imports write when no local records exist");
     }
 
     @Test

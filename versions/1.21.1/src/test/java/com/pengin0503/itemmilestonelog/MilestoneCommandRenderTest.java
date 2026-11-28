@@ -321,8 +321,12 @@ class MilestoneCommandRenderTest {
         Instant ts = Instant.parse("2026-11-24T11:15:30Z");
 
         FakeRenderSource okSource = new FakeRenderSource();
-        MilestoneCommands.backupNowWriterForTest = () -> MilestoneBackup.writeBackup(
+        String[] writtenName = {null};
+        MilestoneCommands.backupNowWriterForTest = () -> {
+            writtenName[0] = MilestoneBackup.writeBackupAndName(
                 tempDir, live, null, ts, UTC, 5);
+            return writtenName[0];
+        };
         try {
             assertEquals(1, MilestoneCommands.backupNowForTest(okSource));
             assertEquals(1, okSource.messages.size());
@@ -332,13 +336,15 @@ class MilestoneCommandRenderTest {
             assertTrue(Files.isRegularFile(tempDir.resolve("milestones-20261124-111530.dat")),
                     "backup now must leave the backup on disk");
             assertTrue(live.isDirty(), "backup now must not clear the live dirty flag");
+            assertEquals("milestones-20261124-111530.dat", writtenName[0],
+                    "MN-1: the audit target must be the exact file written, not a directory re-scan");
         } finally {
             MilestoneCommands.backupNowWriterForTest = null;
             MilestoneBackup.resetState();
         }
 
         FakeRenderSource failedSource = new FakeRenderSource();
-        MilestoneCommands.backupNowWriterForTest = () -> false;
+        MilestoneCommands.backupNowWriterForTest = () -> null;
         try {
             assertEquals(0, MilestoneCommands.backupNowForTest(failedSource));
             assertEquals(ServerLang.trForLang("en_us",
