@@ -52,7 +52,8 @@ public record DisplayOptions(
     public static final int DEFAULT_TOOLTIP_MAX_LINES = 3;
     /** Config range is 1..10 (F-150-63); the default remains five rows. */
     public static final int MAX_PIN_HUD_ROWS = HudRowPlan.MAX_ROWS;
-    public static final int MAX_TOOLTIP_LINES = 12;
+    /** Mirrors {@link TooltipOptions#MAX_MAX_LINES}; a saved profile value is never clamped later. */
+    public static final int MAX_TOOLTIP_LINES = TooltipOptions.MAX_MAX_LINES;
     public static final String DEFAULT_PIN_HUD_ANCHOR = "top-left";
     public static final boolean DEFAULT_PIN_HUD_AUTO_HIDE = true;
     public static final int DEFAULT_PIN_HUD_SCALE = 100;

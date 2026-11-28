@@ -30,6 +30,25 @@ class ClientCarryStoreTest {
     }
 
     @Test
+    void capKeepsTheNewestTailAndImportInstallsDisplayOnlyCandidates() throws Exception {
+        List<ClientCarryStore.Entry> many = new ArrayList<>();
+        for (int i = 0; i < 100; i++) {
+            many.add(new ClientCarryStore.Entry("minecraft:item_" + i, 1));
+        }
+        List<ClientCarryStore.Entry> capped = ClientCarryStore.merge(many, List.of());
+        assertTrue(capped.contains(new ClientCarryStore.Entry("minecraft:item_99", 1)));
+        assertFalse(capped.contains(new ClientCarryStore.Entry("minecraft:item_0", 1)));
+
+        ClientCarryStore.export(tempDir, List.of(new ClientCarryStore.Entry("minecraft:iron", 1)),
+                List.of());
+        assertEquals(List.of(new ClientCarryStore.Entry("minecraft:iron", 1)),
+                ClientCarryStore.importCandidates(tempDir));
+        assertEquals(ClientCarryStore.imported(), ClientCarryStore.importCandidates(tempDir));
+        ClientCarryStore.clearImported();
+        assertTrue(ClientCarryStore.imported().isEmpty());
+    }
+
+    @Test
     void pinsAndPersonalTargetsAreMergedFirstWins() {
         List<ClientCarryStore.Entry> pins = List.of(new ClientCarryStore.Entry("minecraft:diamond", 2));
         List<ClientCarryStore.Entry> targets = List.of(

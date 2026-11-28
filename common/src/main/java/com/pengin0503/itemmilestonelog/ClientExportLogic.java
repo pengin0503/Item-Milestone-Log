@@ -88,10 +88,23 @@ public final class ClientExportLogic {
         return resolved;
     }
 
+    /**
+     * True for any URL-style {@code scheme://} or {@code env:} reference, compared
+     * case-insensitively. Wire-provided ids are untrusted, so lowercase variants must be rejected
+     * as well as uppercase ones (MN-1 / MN-2).
+     */
+    public static boolean hasUnsafeScheme(String value) {
+        if (value == null) {
+            return false;
+        }
+        String lower = value.toLowerCase(Locale.ROOT);
+        return lower.contains("://") || lower.contains("env:");
+    }
+
     /** Returns whether {@code itemId} is a canonical item id that is safe to write to a file. */
     public static boolean isSafeItemId(String itemId) {
         return itemId != null && SAFE_ITEM_ID.matcher(itemId).matches()
-                && !itemId.contains("://") && !itemId.contains("env:");
+                && !hasUnsafeScheme(itemId);
     }
 
     /** Chooses a collision-free name; multiple exports in the same second get -1, -2, ... . */

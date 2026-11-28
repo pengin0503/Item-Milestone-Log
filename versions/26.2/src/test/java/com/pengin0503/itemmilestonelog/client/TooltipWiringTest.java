@@ -40,6 +40,19 @@ class TooltipWiringTest {
     }
 
     @Test
+    void profileOverridesReachTheRefineGateInTheClientHandler() throws Exception {
+        String mainSourceDir = System.getProperty("itemmilestonelog.mainSourceDir");
+        assertNotNull(mainSourceDir);
+        String source = java.nio.file.Files.readString(
+                java.nio.file.Path.of(mainSourceDir).toAbsolutePath().normalize()
+                        .resolve("com/pengin0503/itemmilestonelog/client/ClientMilestoneHandler.java"));
+        assertTrue(source.contains("TooltipOptions.fromDisplayOptions("),
+                "F-150-68/72/75: tooltip overrides must reach ItemTooltipLogic.refineLines");
+        assertTrue(source.contains("MilestoneHudOverlay.effectiveOptions()"),
+                "the effective per-server profile must be the override source");
+    }
+
+    @Test
     void configDeclaresEveryNewKeyExactlyOnce() throws Exception {
         String src = System.getProperty("itemmilestonelog.mainSourceDir");
         assertNotNull(src);

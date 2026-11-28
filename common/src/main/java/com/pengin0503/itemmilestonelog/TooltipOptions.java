@@ -41,6 +41,21 @@ public record TooltipOptions(
     }
 
     /**
+     * F-150-68/72/75: takes the four tooltip override keys from the effective per-server
+     * {@link DisplayOptions} and keeps the two non-profile keys (status colour and tag names)
+     * from the global config snapshot. No new config key or settings class is introduced.
+     */
+    public static TooltipOptions fromDisplayOptions(DisplayOptions effective, TooltipOptions base) {
+        if (effective == null || base == null) {
+            return base == null ? DEFAULT : base;
+        }
+        return new TooltipOptions(
+                effective.tooltipMaxLines(), effective.tooltipShowTarget(),
+                effective.tooltipShowRecorded(), parseSort(effective.tooltipSort()),
+                base.statusColor(), base.tagNames());
+    }
+
+    /**
      * Lenient conversion from the persisted config strings. Unknown values fall back to the
      * shipped defaults instead of throwing during client startup.
      */

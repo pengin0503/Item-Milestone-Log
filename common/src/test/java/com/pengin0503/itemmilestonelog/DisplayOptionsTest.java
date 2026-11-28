@@ -66,6 +66,20 @@ class DisplayOptionsTest {
     }
 
     @Test
+    void profileOverridesReachTheTooltipRefineGate() {
+        assertEquals(TooltipOptions.MAX_MAX_LINES, DisplayOptions.MAX_TOOLTIP_LINES);
+        DisplayOptions profile = DisplayOptions.defaults().apply(Map.of(
+                "tooltipMaxLines", "9", "tooltipShowTarget", "false",
+                "tooltipSort", "recorded-first"));
+        TooltipOptions refined = TooltipOptions.fromDisplayOptions(profile, TooltipOptions.DEFAULT);
+        assertEquals(9, refined.maxLines());
+        assertFalse(refined.showTarget());
+        assertEquals(TooltipOptions.Sort.RECORDED_FIRST, refined.sort());
+        assertEquals(TooltipOptions.DEFAULT.statusColor(), refined.statusColor());
+        assertEquals(TooltipOptions.DEFAULT.tagNames(), refined.tagNames());
+    }
+
+    @Test
     void numericOverridesAreClamped() {
         DisplayOptions options = DisplayOptions.defaults().apply(Map.of(
                 "pinHudMaxRows", "999", "tooltipMaxLines", "-4"));

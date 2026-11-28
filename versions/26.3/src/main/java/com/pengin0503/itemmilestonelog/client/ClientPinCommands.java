@@ -8,6 +8,8 @@ import com.mojang.brigadier.context.CommandContext;
 import com.pengin0503.itemmilestonelog.ClientBackupRotation;
 import com.pengin0503.itemmilestonelog.ClientCarryStore;
 import com.pengin0503.itemmilestonelog.ClientExportLogic;
+import com.pengin0503.itemmilestonelog.ClientProfileStore;
+import com.pengin0503.itemmilestonelog.ClientStorageIO;
 import com.pengin0503.itemmilestonelog.Config;
 import com.pengin0503.itemmilestonelog.LocalSyncCache;
 import com.pengin0503.itemmilestonelog.PinStore;
@@ -27,6 +29,7 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 /**
  * F-150-62 (N113): client-only {@code /imlclient pin} command tree. It is registered through
@@ -76,7 +79,23 @@ public final class ClientPinCommands {
                         .then(LiteralArgumentBuilder.<CommandSourceStack>literal("export")
                                 .executes(ClientPinCommands::carryExport))
                         .then(LiteralArgumentBuilder.<CommandSourceStack>literal("import")
-                                .executes(ClientPinCommands::carryImport)))
+                                .executes(ClientPinCommands::carryImport))
+                        .then(LiteralArgumentBuilder.<CommandSourceStack>literal("list")
+                                .executes(ClientPinCommands::carryList)))
+                // F-150-64: offline cache browsing through the existing MilestoneScreen.
+                .then(LiteralArgumentBuilder.<CommandSourceStack>literal("cache")
+                        .executes(ClientPinCommands::cacheHelp)
+                        .then(LiteralArgumentBuilder.<CommandSourceStack>literal("open")
+                                .executes(ClientPinCommands::cacheOpen)))
+                // F-150-72: per-server display profiles, client-only (D-150-185).
+                .then(LiteralArgumentBuilder.<CommandSourceStack>literal("profile")
+                        .executes(ClientPinCommands::profileHelp)
+                        .then(LiteralArgumentBuilder.<CommandSourceStack>literal("save")
+                                .executes(ClientPinCommands::profileSave))
+                        .then(LiteralArgumentBuilder.<CommandSourceStack>literal("list")
+                                .executes(ClientPinCommands::profileList))
+                        .then(LiteralArgumentBuilder.<CommandSourceStack>literal("clear")
+                                .executes(ClientPinCommands::profileClear)))
                 // F-150-87 (N200): client-only diagnostics; no server help entry is added.
                 .then(ClientDiagCommands.build());
     }
@@ -251,10 +270,102 @@ public final class ClientPinCommands {
     }
 
     private static int carryImport(CommandContext<CommandSourceStack> context) {
-        int count = ClientCarryStore.importCandidates(configDir()).size();
-        success(context, "command.itemmilestonelog.imlclient.carry.import", String.valueOf(count));
+        List<ClientCarryStore.Entry> entries = ClientCarryStore.importCandidates(configDir());
+        success(context, "command.itemmilestonelog.imlclient.carry.import",
+                String.valueOf(entries.size()));
+        showCandidates(context, entries);
         localOnlyNotice(context);
         return Command.SINGLE_SUCCESS;
+    }
+
+    /** F-150-85-1: shows the in-memory, display-only candidate list; never sends to a server. */
+    private static int carryList(CommandContext<CommandSourceStack> context) {
+        List<ClientCarryStore.Entry> entries = ClientCarryStore.imported();
+        success(context, "command.itemmilestonelog.imlclient.carry.list",
+                String.valueOf(entries.size()));
+        showCandidates(context, entries);
+        localOnlyNotice(context);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private static void showCandidates(CommandContext<CommandSourceStack> context,
+                                       List<ClientCarryStore.Entry> entries) {
+        if (entries.isEmpty()) {
+            return;
+        }
+        MutableComponent lines = Component.literal("");
+        for (ClientCarryStore.Entry entry : entries) {
+            lines.append(Component.literal("\n- " + entry.encoded()));
+        }
+        context.getSource().sendSuccess(() -> lines, false);
+    }
+
+    private static int cacheHelp(CommandContext<CommandSourceStack> context) {
+        context.getSource().sendSuccess(() -> Component.translatable(
+                "command.itemmilestonelog.imlclient.cache.help"), false);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    /** F-150-64-4: opens the cached snapshot read-only, or reports that there is no data. */
+    private static int cacheOpen(CommandContext<CommandSourceStack> context) {
+        if (!ClientMilestoneHandler.openOfflineCacheView(configDir())) {
+            context.getSource().sendFailure(Component.translatable(
+                    "command.itemmilestonelog.imlclient.cache.empty"));
+            return Command.SINGLE_SUCCESS;
+        }
+        context.getSource().sendSuccess(() -> Component.translatable(
+                "command.itemmilestonelog.imlclient.cache.opened"), false);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private static int profileHelp(CommandContext<CommandSourceStack> context) {
+        context.getSource().sendSuccess(() -> Component.translatable(
+                "command.itemmilestonelog.imlclient.profile.help"), false);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private static int profileSave(CommandContext<CommandSourceStack> context) {
+        String key = MilestoneHudOverlay.serverKey();
+        if (!ClientStorageIO.isServerKey(key)) {
+            noServerProfile(context);
+            return Command.SINGLE_SUCCESS;
+        }
+        Map<String, String> overrides = MilestoneHudOverlay.effectiveOptions().toOverrides();
+        ClientProfileStore.save(configDir(), key, overrides);
+        MilestoneHudOverlay.reloadOptions();
+        success(context, "command.itemmilestonelog.imlclient.profile.saved",
+                String.valueOf(overrides.size()));
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private static int profileList(CommandContext<CommandSourceStack> context) {
+        Map<String, Map<String, String>> profiles = ClientProfileStore.readAll(configDir()).profiles();
+        success(context, "command.itemmilestonelog.imlclient.profile.list",
+                String.valueOf(profiles.size()));
+        MutableComponent lines = Component.literal("");
+        for (Map.Entry<String, Map<String, String>> entry : profiles.entrySet()) {
+            lines.append(Component.literal("\n- " + entry.getKey() + "=" + entry.getValue()));
+        }
+        context.getSource().sendSuccess(() -> lines, false);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private static int profileClear(CommandContext<CommandSourceStack> context) {
+        String key = MilestoneHudOverlay.serverKey();
+        if (!ClientStorageIO.isServerKey(key)) {
+            noServerProfile(context);
+            return Command.SINGLE_SUCCESS;
+        }
+        ClientProfileStore.clear(configDir(), key);
+        MilestoneHudOverlay.reloadOptions();
+        context.getSource().sendSuccess(() -> Component.translatable(
+                "command.itemmilestonelog.imlclient.profile.cleared"), false);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private static void noServerProfile(CommandContext<CommandSourceStack> context) {
+        context.getSource().sendFailure(Component.translatable(
+                "command.itemmilestonelog.imlclient.profile.no_server"));
     }
 
     private static void localOnlyNotice(CommandContext<CommandSourceStack> context) {

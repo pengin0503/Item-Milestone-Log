@@ -89,6 +89,26 @@ class PinStoreTest {
     }
 
     @Test
+    void loadingAnOversizedFileKeepsTheNewestPins() throws Exception {
+        StringBuilder json = new StringBuilder("{\"v\":\"1\",\"pins\":[");
+        for (int i = 0; i < PinStore.MAX_PINS + 6; i++) {
+            if (i > 0) {
+                json.append(',');
+            }
+            json.append('"').append("minecraft:item_").append(i).append('"');
+        }
+        json.append("]}");
+        Path file = PinStore.fileFor(configDir);
+        Files.createDirectories(file.getParent());
+        Files.writeString(file, json.toString(), StandardCharsets.UTF_8);
+
+        List<PinStore.Pin> pins = PinStore.read(configDir);
+        assertEquals(PinStore.MAX_PINS, pins.size());
+        assertEquals("minecraft:item_6", pins.get(0).itemId());
+        assertEquals("minecraft:item_" + (PinStore.MAX_PINS + 5), pins.get(pins.size() - 1).itemId());
+    }
+
+    @Test
     void corruptJsonAndBadEntriesAreLenient() throws Exception {
         assertTrue(PinStore.read(configDir).isEmpty());
         Files.createDirectories(PinStore.fileFor(configDir).getParent());

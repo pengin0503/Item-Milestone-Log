@@ -6,10 +6,13 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
@@ -70,6 +73,16 @@ class ListenerRegistrationTest {
         return types;
     }
 
+    /** Every handler name referenced by an addListener call, in registration order. */
+    private static Set<String> registeredHandlers(String source) {
+        Set<String> handlers = new LinkedHashSet<>();
+        Matcher reg = REGISTRATION.matcher(source);
+        while (reg.find()) {
+            handlers.add(reg.group(1));
+        }
+        return handlers;
+    }
+
     @Test
     void neoForgeTreesRegisterConcreteDamageEvent() throws IOException {
         Path root = repoRoot();
@@ -120,6 +133,36 @@ class ListenerRegistrationTest {
             assertTrue(source.contains("onClientSound"), variant + ": sound listener missing");
             assertTrue(source.contains("setClientEffectHandler(ClientEffects::onEffect)"),
                     variant + ": effect handler missing");
+        }
+    }
+
+    @Test
+    void overrideEntryPointsRegisterTheSameHandlersAsBase() throws IOException {
+        Path root = repoRoot();
+        Set<String> expected = registeredHandlers(read(root, "1.21.1"));
+        assertEquals(13, expected.size(), "the base 1.21.1 client must register 13 listeners");
+        for (String variant : new String[]{"v121_9", "v121_11"}) {
+            Path file = root.resolve("versions/1.21.1/compat-variants").resolve(variant)
+                    .resolve("overrides/com/pengin0503/itemmilestonelog/client/ItemMilestoneLogClient.java");
+            String source = Files.readString(file);
+            assertEquals(expected, registeredHandlers(source),
+                    variant + ": override handler set must match the base client");
+            for (String call : List.of("MilestoneHudOverlay.onLogin(",
+                    "ClientPinCommands.register(", "MilestoneHudOverlay.render(",
+                    "onLivingDamage(LivingDamageEvent.Post event)", "warnKeyConflicts()",
+                    "MUTE_NOTIFICATION_SOUND_MAPPING.consumeClick()",
+                    "COPY_RECENT_MAPPING.consumeClick()", "clearHoverCache()",
+                    "MilestoneHudOverlay.onLogout()", "ClientSoundGate.resetMuted()",
+                    "UNBOUND_HINT.clear()")) {
+                assertTrue(source.contains(call), variant + ": missing base wiring " + call);
+            }
+            // Genuine 1.21.9+ deltas must survive a future base-copy refresh.
+            assertTrue(source.contains("KeyMapping.Category KEY_CATEGORY"),
+                    variant + ": version-specific key category lost");
+            assertTrue(source.contains("event.registerCategory(KEY_CATEGORY)"),
+                    variant + ": version-specific category registration lost");
+            assertTrue(source.contains("getKey(event.getKeyEvent())"),
+                    variant + ": version-specific key lookup lost");
         }
     }
 }

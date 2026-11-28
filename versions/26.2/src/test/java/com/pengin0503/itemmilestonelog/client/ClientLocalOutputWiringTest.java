@@ -55,6 +55,25 @@ class ClientLocalOutputWiringTest {
     }
 
     @Test
+    void loginKeyIsDeterministicAndBackupRotationIsNotSnapshotGated() throws IOException {
+        String hud = source("com/pengin0503/itemmilestonelog/client/MilestoneHudOverlay.java");
+        assertTrue(hud.contains("return serverKey;"),
+                "SF-2: serverKey() must be readable at login, before any snapshot exists");
+        assertTrue(hud.contains("worldIdentity(mc)"),
+                "SF-1: identity must use the save/world, not the dimension");
+        assertTrue(hud.contains("ClientProfileStore.save("),
+                "SF-4: profiles must be saved on disconnect");
+        String local = source("com/pengin0503/itemmilestonelog/client/ClientLocalOutput.java");
+        assertFalse(local.contains("Files.exists(LocalSyncCache.fileFor(configDir))"),
+                "SF-2: connect-time rotation must not depend on a snapshot existing");
+        assertTrue(local.contains("MilestoneHudOverlay.presetCaptureDue()"),
+                "MN-5: preset captures share the record capture clock");
+        String effects = source("com/pengin0503/itemmilestonelog/client/ClientEffects.java");
+        assertTrue(effects.contains("RATE_LIMIT.allow(System.currentTimeMillis())"),
+                "MN-5: preset effects must use the same limiter");
+    }
+
+    @Test
     void screenshotImplementationIsReflectiveOnly() throws IOException {
         String mainSourceDir = System.getProperty("itemmilestonelog.mainSourceDir");
         assertNotNull(mainSourceDir);

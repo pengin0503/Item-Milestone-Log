@@ -6,6 +6,7 @@ import com.pengin0503.itemmilestonelog.HoverCountPolicy;
 import com.pengin0503.itemmilestonelog.HoverItemCache;
 import com.pengin0503.itemmilestonelog.HoverShortcutPolicy;
 import com.pengin0503.itemmilestonelog.ItemTooltipLogic;
+import com.pengin0503.itemmilestonelog.LocalSyncCache;
 import com.pengin0503.itemmilestonelog.TooltipOptions;
 import com.pengin0503.itemmilestonelog.Playtime;
 import com.pengin0503.itemmilestonelog.TagTargets;
@@ -13,6 +14,7 @@ import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
 import com.pengin0503.itemmilestonelog.compat.client.ClientCompat;
 import com.pengin0503.itemmilestonelog.network.MilestoneActionPayload;
+import com.pengin0503.itemmilestonelog.network.PresetEntry;
 import com.pengin0503.itemmilestonelog.network.RequestSyncPayload;
 import com.pengin0503.itemmilestonelog.network.SyncExtraPayload;
 import com.pengin0503.itemmilestonelog.network.SyncMilestonesPayload;
@@ -30,6 +32,7 @@ import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -51,6 +54,8 @@ public final class ClientMilestoneHandler {
     private static volatile SyncMilestonesPayload latestSync;
     private static volatile Map<String, List<ItemTooltipLogic.Status>> tooltipIndex = Map.of();
     private static volatile Map<String, Component> tagTooltipNames = Map.of();
+    // F-150-64: true only while the read-only offline cache view is open.
+    private static volatile boolean offlineView;
 
     private ClientMilestoneHandler() {
     }
@@ -246,6 +251,15 @@ public final class ClientMilestoneHandler {
     }
 
     public static void sendAction(MilestoneActionPayload.Action action, String argument, int count) {
+        if (offlineView) {
+            // F-150-64-4: the offline view never mutates server state; say why instead.
+            Minecraft offlineMc = Minecraft.getInstance();
+            if (offlineMc.player != null) {
+                offlineMc.player.sendOverlayMessage(
+                        Component.translatable("message.itemmilestonelog.offline_readonly"));
+            }
+            return;
+        }
         Minecraft mc = Minecraft.getInstance();
         ClientPacketListener connection = mc.getConnection();
         if (connection == null || !connection.hasChannel(MilestoneActionPayload.TYPE)) {
@@ -297,7 +311,10 @@ public final class ClientMilestoneHandler {
     public static List<Component> tooltipLines(String itemId) {
         // F-150-68/79: the pure options carry the same precedence in every tree; the public
         // signature stays unchanged because existing tests call it directly (D-150-197).
-        TooltipOptions options = Config.tooltipOptions();
+        // F-150-68/72/75: per-server tooltip overrides must reach the same refine gate; colour
+        // and tag-name keys are global config values, not profile-overridable.
+        TooltipOptions options = TooltipOptions.fromDisplayOptions(
+                MilestoneHudOverlay.effectiveOptions(), Config.tooltipOptions());
         ItemTooltipLogic.Lines lines = ItemTooltipLogic.refineLines(
                 ItemTooltipLogic.linesForItem(tooltipIndex, itemId), options);
         if (lines.isEmpty()) {
@@ -333,7 +350,60 @@ public final class ClientMilestoneHandler {
         return result;
     }
 
+    /** Clears the offline-view guard as soon as a live sync arrives. */
+    public static void setOfflineView(boolean value) {
+        offlineView = value;
+    }
+
+    public static boolean isOfflineView() {
+        return offlineView;
+    }
+
+    /**
+     * F-150-64-4: opens the existing {@link MilestoneScreen} with a display-only snapshot made from
+     * {@code cache.json}; no new Screen class and no server request. Returns false when no cached
+     * snapshot exists for this server.
+     */
+    public static boolean openOfflineCacheView(Path configDir) {
+        LocalSyncCache.LoadResult cached = LocalSyncCache.read(configDir,
+                MilestoneHudOverlay.serverKey());
+        if (!cached.present()) {
+            return false;
+        }
+        Minecraft mc = Minecraft.getInstance();
+        offlineView = true;
+        ClientCompat.screens().setScreen(mc,
+                new MilestoneScreen(payloadFromCache(cached.snapshot()), true));
+        return true;
+    }
+
+    /** Shapes the cached rows into the same payload order the live sync uses (FL-2). */
+    static SyncMilestonesPayload payloadFromCache(LocalSyncCache.Snapshot cached) {
+        List<TargetEntry> targets = new ArrayList<>();
+        for (LocalSyncCache.CachedTarget target : cached.targets()) {
+            targets.add(new TargetEntry(target.itemId(), target.count(),
+                    target.personal(), target.defaultTarget()));
+        }
+        Map<TargetKey, MilestoneRecord> records = new LinkedHashMap<>();
+        for (LocalSyncCache.CachedRecord record : cached.records()) {
+            records.put(new TargetKey(record.itemId(), record.count()),
+                    new MilestoneRecord(record.playTicks(), record.day(), record.epochMillis()));
+        }
+        Map<TargetKey, Integer> progress = new LinkedHashMap<>();
+        for (LocalSyncCache.CachedProgress entry : cached.progress()) {
+            progress.put(new TargetKey(entry.itemId(), entry.count()), entry.value());
+        }
+        List<PresetEntry> presets = new ArrayList<>();
+        for (LocalSyncCache.CachedPreset preset : cached.presets()) {
+            presets.add(new PresetEntry(preset.id(), preset.displayName(),
+                    preset.itemCount(), preset.builtin()));
+        }
+        return new SyncMilestonesPayload(targets, records, progress,
+                cached.currentPlaytimeTicks(), presets, false, false, null);
+    }
+
     public static void onSyncReceived(SyncMilestonesPayload payload) {
+        offlineView = false;
         rebuildTooltipIndex(payload);
         // PR-5: local cache / OBS status / screenshot, after the shared HUD diff ran.
         ClientLocalOutput.onSyncReceived(payload);

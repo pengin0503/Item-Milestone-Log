@@ -1,26 +1,34 @@
 package com.pengin0503.itemmilestonelog.client;
 
 import com.mojang.blaze3d.platform.InputConstants;
+import com.pengin0503.itemmilestonelog.ClientPrefsStore;
 import com.pengin0503.itemmilestonelog.Config;
+import com.pengin0503.itemmilestonelog.ExternalIntegrationGate;
+import com.pengin0503.itemmilestonelog.HoverCountPolicy;
+import com.pengin0503.itemmilestonelog.HoverItemCache;
+import com.pengin0503.itemmilestonelog.HoverShortcutPolicy;
+import com.pengin0503.itemmilestonelog.UnboundKeyHintPolicy;
+import com.pengin0503.itemmilestonelog.ItemMilestoneLog;
+import com.pengin0503.itemmilestonelog.AccessibilityPolicy;
+import com.pengin0503.itemmilestonelog.network.MilestoneActionPayload;
 import net.neoforged.neoforge.client.event.ClientChatReceivedEvent;
 import net.neoforged.neoforge.client.event.sound.PlaySoundEvent;
-import com.pengin0503.itemmilestonelog.ExternalIntegrationGate;
-import com.pengin0503.itemmilestonelog.ItemMilestoneLog;
 import com.pengin0503.itemmilestonelog.network.ModNetworking;
+import net.neoforged.fml.ModList;
+import net.neoforged.fml.loading.FMLPaths;
 import net.minecraft.client.KeyMapping;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
-import net.neoforged.fml.ModList;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
@@ -33,7 +41,13 @@ import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.TagsUpdatedEvent;
 import net.neoforged.neoforge.event.entity.player.ItemTooltipEvent;
 
+import net.neoforged.neoforge.client.event.RegisterClientCommandsEvent;
+import net.neoforged.neoforge.client.event.RenderGuiEvent;
+import net.neoforged.neoforge.event.entity.living.LivingDamageEvent;
+
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Client-only entrypoint for Item Milestone Log.
@@ -49,6 +63,8 @@ public final class ItemMilestoneLogClient {
     public static final String KEY_ADD_HOVERED = "key." + ItemMilestoneLog.MOD_ID + ".add_hovered";
     public static final String KEY_MUTE_NOTIFICATION_SOUND =
             "key." + ItemMilestoneLog.MOD_ID + ".mute_notification_sound";
+
+    /** F-150-71 (N68): fourth and final key; unbound by default like the other three. */
     public static final String KEY_COPY_RECENT = "key." + ItemMilestoneLog.MOD_ID + ".copy_recent";
 
     // No default key: M, the obvious choice, is also the full-screen map key of FTB Chunks,
@@ -69,7 +85,7 @@ public final class ItemMilestoneLogClient {
             KEY_CATEGORY
     );
 
-    // F-150-71/50: the two optional keys from later PRs, both unbound by default.
+    // F-150-50 (N121): third optional key, unbound by default like the existing two.
     public static final KeyMapping MUTE_NOTIFICATION_SOUND_MAPPING = new KeyMapping(
             KEY_MUTE_NOTIFICATION_SOUND,
             KeyConflictContext.IN_GAME,
@@ -77,6 +93,8 @@ public final class ItemMilestoneLogClient {
             KEY_CATEGORY
     );
 
+    // F-150-71 (N68): fourth optional key. InputConstants.UNKNOWN avoids the FTB Chunks M-key
+    // collision (issue #17) and keeps four total key mappings in every tree.
     public static final KeyMapping COPY_RECENT_MAPPING = new KeyMapping(
             KEY_COPY_RECENT,
             KeyConflictContext.IN_GAME,
@@ -84,6 +102,13 @@ public final class ItemMilestoneLogClient {
             KEY_CATEGORY
     );
 
+    // F-150-77: one-time, delayed local hint; all four bindings are inspected now.
+    private static final UnboundKeyHintPolicy UNBOUND_HINT = new UnboundKeyHintPolicy();
+    private static boolean unboundHintStored;
+    private static boolean keyConflictChecked;
+    // F-150-59: soft integration only. No JEI/EMI/REI class or API is referenced; when none of
+    // the three is loaded, the tooltip cache is never populated (a pure no-op).
+    private static boolean hoverModsPresent;
     // F-150-73: soft integration flags, read only once at client construction.
     private static boolean externalJade;
     private static boolean externalWthit;
@@ -102,10 +127,13 @@ public final class ItemMilestoneLogClient {
     public ItemMilestoneLogClient(IEventBus modEventBus, ModContainer modContainer) {
         try {
             ModList list = ModList.get();
+            hoverModsPresent = list.isLoaded("jei") || list.isLoaded("emi") || list.isLoaded("rei");
+            // F-150-73: one ModList check at construction; never reflect into these mods (D-150-207).
             externalJade = list.isLoaded("jade");
             externalWthit = list.isLoaded("wthit");
             externalTop = list.isLoaded("top");
         } catch (RuntimeException | LinkageError ignored) {
+            hoverModsPresent = false;
             externalJade = false;
             externalWthit = false;
             externalTop = false;
@@ -123,19 +151,27 @@ public final class ItemMilestoneLogClient {
         NeoForge.EVENT_BUS.addListener(EventPriority.LOW, ItemMilestoneLogClient::onTagsUpdated);
         NeoForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onItemTooltip);
         NeoForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onClientLoggingOut);
+        NeoForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onClientLoggingIn);
         NeoForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onClientChat);
         NeoForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onClientSound);
+        NeoForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onRegisterClientCommands);
+        NeoForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onRenderGuiPost);
+        NeoForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onLivingDamage);
     }
 
     private static void onClientLoggingOut(ClientPlayerNetworkEvent.LoggingOut event) {
         // PR-5: flush cache, rotate backup, optional export - before snapshots are cleared.
         ClientLocalOutput.onLogout();
-        ClientEffects.onLogout();
         ClientMilestoneHandler.clearExtraData();
         ClientMilestoneHandler.clearTooltipData();
+        ClientMilestoneHandler.clearHoverCache();
+        MilestoneHudOverlay.onLogout();
+        ClientEffects.onLogout();
+        ClientSoundGate.resetMuted();
+        UNBOUND_HINT.clear();
     }
 
-    /** F-150-74 / F-150-81: concrete chat and sound events in this profile as well. */
+    /** F-150-74: restyle only this mod's own chat messages; the default mode returns unchanged. */
     private static void onClientChat(ClientChatReceivedEvent event) {
         Component styled = ChatStyler.apply(event.getMessage());
         if (styled != null && styled != event.getMessage()) {
@@ -143,8 +179,69 @@ public final class ItemMilestoneLogClient {
         }
     }
 
+    /** F-150-81: a concrete PlaySoundEvent; setSound(null) suppresses a filtered notification. */
     private static void onClientSound(PlaySoundEvent event) {
         ClientSoundGate.onPlaySound(event);
+    }
+
+    /** F-150-82: report a duplicate key binding once; never change a player's assignment. */
+    private static void warnKeyConflicts() {
+        Map<String, Integer> bindings = new HashMap<>();
+        bindings.put(KEY_OPEN_GUI, OPEN_GUI_MAPPING.getKey().getValue());
+        bindings.put(KEY_ADD_HOVERED, ADD_HOVERED_MAPPING.getKey().getValue());
+        bindings.put(KEY_MUTE_NOTIFICATION_SOUND, MUTE_NOTIFICATION_SOUND_MAPPING.getKey().getValue());
+        bindings.put(KEY_COPY_RECENT, COPY_RECENT_MAPPING.getKey().getValue());
+        List<AccessibilityPolicy.Conflict> conflicts = AccessibilityPolicy.detectConflicts(bindings);
+        if (!conflicts.isEmpty()) {
+            ClientNotice.overlay(Component.translatable("message.itemmilestonelog.key_conflict",
+                    conflicts.get(0).keyCode()));
+        }
+    }
+
+    /** F-150-62: register /imlclient on the client dispatcher only (D-150-185). */
+    private static void onRegisterClientCommands(RegisterClientCommandsEvent event) {
+        ClientPinCommands.register(event.getDispatcher());
+    }
+
+    /** F-150-63: independent overlay, registered outside every frozen screen (FL-3). */
+    private static void onRenderGuiPost(RenderGuiEvent.Post event) {
+        MilestoneHudOverlay.render(event.getGuiGraphics());
+    }
+
+    /**
+     * F-150-80: client-player damage starts the three-second retreat. NeoForge splits
+     * {@code LivingDamageEvent} into the abstract parent and the concrete {@code Pre}/{@code Post}
+     * subclasses; FML rejects a listener registered for the abstract class at construction
+     * ("Cannot register listeners for abstract class ..."). {@code Post} is the correct subclass:
+     * it fires only after damage has actually been applied (it is not cancelable), which matches
+     * "the player took damage -> fade the HUD". {@code Pre} is cancelable and would start the
+     * retreat even when another mod/shield cancels the hit. {@code getEntity()} is inherited from
+     * {@code LivingEvent}, so the body is unchanged.
+     */
+    private static void onLivingDamage(LivingDamageEvent.Post event) {
+        if (event.getEntity() == Minecraft.getInstance().player) {
+            MilestoneHudOverlay.onDamage();
+        }
+    }
+
+    /** F-150-77: schedule the once-only hint on login; the tick handler applies the 2 s delay. */
+    private static void onClientLoggingIn(ClientPlayerNetworkEvent.LoggingIn event) {
+        try {
+            unboundHintStored = ClientPrefsStore.unboundHintShown(FMLPaths.CONFIGDIR.get());
+        } catch (RuntimeException | LinkageError e) {
+            // If local preferences cannot be read, do not show a hint that could repeat.
+            unboundHintStored = true;
+        }
+        UNBOUND_HINT.schedule(System.currentTimeMillis());
+        MilestoneHudOverlay.onLogin(Minecraft.getInstance());
+    }
+
+    private static UnboundKeyHintPolicy.Keys unboundKeys() {
+        return new UnboundKeyHintPolicy.Keys(
+                OPEN_GUI_MAPPING.getKey() == InputConstants.UNKNOWN,
+                ADD_HOVERED_MAPPING.getKey() == InputConstants.UNKNOWN,
+                MUTE_NOTIFICATION_SOUND_MAPPING.getKey() == InputConstants.UNKNOWN,
+                COPY_RECENT_MAPPING.getKey() == InputConstants.UNKNOWN);
     }
 
     /**
@@ -152,6 +249,9 @@ public final class ItemMilestoneLogClient {
      * this {@link Dist#CLIENT} entry point, so the event is never handled on a dedicated server.
      */
     private static void onItemTooltip(ItemTooltipEvent event) {
+        if (hoverModsPresent) {
+            ClientMilestoneHandler.rememberTooltipStack(event.getItemStack());
+        }
         ItemStack stack = event.getItemStack();
         if (stack == null || stack.isEmpty()) {
             return;
@@ -164,6 +264,8 @@ public final class ItemMilestoneLogClient {
             event.getToolTip().addAll(lines);
             addedF42 = true;
         }
+        // F-150-73: at most one line even when all three mods are present; the existing
+        // Component and colour are reused, and a duplicate F42 row suppresses it (D-150-208).
         if (ExternalIntegrationGate.addLine(Config.externalTooltipIntegration(),
                 externalJade, externalWthit, externalTop, addedF42) && !lines.isEmpty()) {
             event.getToolTip().add(lines.get(0));
@@ -171,15 +273,28 @@ public final class ItemMilestoneLogClient {
     }
 
     private static void onRegisterKeyMappings(RegisterKeyMappingsEvent event) {
+        // MC 1.21.9+ requires the category to be registered explicitly.
         event.registerCategory(KEY_CATEGORY);
         event.register(OPEN_GUI_MAPPING);
         event.register(ADD_HOVERED_MAPPING);
         event.register(MUTE_NOTIFICATION_SOUND_MAPPING);
-        event.register(COPY_RECENT_MAPPING);
+        event.register(COPY_RECENT_MAPPING); // F-150-71: fourth and final registered key
     }
 
     private static void onClientTick(ClientTickEvent.Post event) {
-        MilestoneHudOverlay.onClientTick(); // F-150-86: coalesced rebuilds (low power only)
+        if (!keyConflictChecked) {
+            keyConflictChecked = true;
+            warnKeyConflicts();
+        }
+        while (MUTE_NOTIFICATION_SOUND_MAPPING.consumeClick()) {
+            ClientSoundGate.toggleMuted();
+            // sendAction checks connection/channel and does nothing for vanilla-only peers.
+            ClientMilestoneHandler.sendAction(
+                    MilestoneActionPayload.Action.MUTE_NOTIFICATION_SOUND, "");
+        }
+        // F-150-86: coalesce HUD row-cache rebuilds only when low-power mode is on.
+        MilestoneHudOverlay.onClientTick();
+        // F-150-71: copy the newest local record; never sends anything to the server.
         while (COPY_RECENT_MAPPING.consumeClick()) {
             ClientRecentCopy.copyRecent();
         }
@@ -189,6 +304,19 @@ public final class ItemMilestoneLogClient {
         }
         while (OPEN_GUI_MAPPING.consumeClick()) {
             ClientMilestoneHandler.requestOpenGui();
+        }
+        if (UNBOUND_HINT.shouldShow(System.currentTimeMillis(), unboundKeys(), unboundHintStored)) {
+            Minecraft mcHint = Minecraft.getInstance();
+            if (mcHint.player != null) {
+                mcHint.player.displayClientMessage(Component.translatable("message.itemmilestonelog.unbound_key_hint"), true);
+                UNBOUND_HINT.markShown();
+                unboundHintStored = true;
+                try {
+                    ClientPrefsStore.markUnboundHintShown(FMLPaths.CONFIGDIR.get());
+                } catch (RuntimeException | LinkageError ignored) {
+                    // Local preference write failure must never interrupt the game.
+                }
+            }
         }
     }
 
@@ -201,7 +329,8 @@ public final class ItemMilestoneLogClient {
                 InputConstants.getKey(event.getKeyEvent()))) {
             return;
         }
-        addHoveredFromScreen(event.getScreen());
+        handleHoverShortcut(event.getScreen(),
+                HoverShortcutPolicy.Modifiers.fromGlfw(event.getModifiers()));
     }
 
     /**
@@ -214,18 +343,47 @@ public final class ItemMilestoneLogClient {
                 InputConstants.Type.MOUSE.getOrCreate(event.getButton()))) {
             return;
         }
-        addHoveredFromScreen(event.getScreen());
+        // Older ScreenEvent mouse events expose no modifiers; treat those as "no modifier"
+        // instead of reading an unavailable API (spec F-150-60-5).
+        handleHoverShortcut(event.getScreen(),
+                HoverShortcutPolicy.Modifiers.fromGlfw(0));
     }
 
-    private static void addHoveredFromScreen(Screen screen) {
-        if (!(screen instanceof AbstractContainerScreen<?> container)) {
+    /**
+     * F-150-59/60/61/78: resolves the hover target (slot first, short-lived tooltip cache second)
+     * and sends one of the existing ADD_TARGET / REMOVE_TARGET / ADD_HAND actions. No new key,
+     * button, screen or Action ordinal is involved (FL-4/FL-7).
+     */
+    private static void handleHoverShortcut(Screen screen, HoverShortcutPolicy.Modifiers modifiers) {
+        HoverShortcutPolicy.Operation operation = HoverShortcutPolicy.choose(modifiers);
+        if (operation == HoverShortcutPolicy.Operation.ADD_HAND) {
+            Minecraft mc = Minecraft.getInstance();
+            ClientMilestoneHandler.addHandTarget(mc.player == null ? null : mc.player.getMainHandItem());
             return;
         }
-        Slot slot = container.getSlotUnderMouse();
-        if (slot == null || !slot.hasItem()) {
+        HoverItemCache.Entry target = null;
+        if (screen instanceof AbstractContainerScreen<?> container) {
+            Slot slot = container.getSlotUnderMouse();
+            if (slot != null && slot.hasItem()) {
+                target = ClientMilestoneHandler.entryFrom(slot.getItem());
+            }
+        }
+        if (target == null && hoverModsPresent && Config.hoverModIntegration()) {
+            target = ClientMilestoneHandler.hoveredStack();
+        }
+        if (target == null || target.isEmpty()) {
+            if (hoverModsPresent && Config.hoverModIntegration()) {
+                ClientMilestoneHandler.showHoverUnavailable();
+            }
             return;
         }
-        ClientMilestoneHandler.addHoveredTarget(slot.getItem());
+        switch (operation) {
+            case ADD_COUNT_ONE -> ClientMilestoneHandler.addHoveredTarget(target, 1);
+            case ADD_STACK_COUNT -> ClientMilestoneHandler.addHoveredTarget(target,
+                    HoverCountPolicy.forStack(true, target.count()));
+            case REMOVE_TARGET -> ClientMilestoneHandler.removeHoveredTarget(target);
+            case ADD_HAND -> { /* handled before resolving the hover target */ }
+        }
     }
 
     /** F42: rebuild the tooltip index after the client's tag-packet update. */

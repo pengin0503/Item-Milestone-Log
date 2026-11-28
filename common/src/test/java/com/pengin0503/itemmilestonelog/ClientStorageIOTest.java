@@ -11,6 +11,7 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -31,6 +32,16 @@ class ClientStorageIOTest {
         assertFalse(first.contains("example"));
         assertFalse(first.contains("25565"));
         assertFalse(ClientStorageIO.isServerKey("mc.example.com:25565"));
+    }
+
+    @Test
+    void twoLevelsInTheSameDimensionGetDifferentIdentityKeys() {
+        String first = ClientStorageIO.serverKey("", "save-one\0minecraft:overworld");
+        String second = ClientStorageIO.serverKey("", "save-two\0minecraft:overworld");
+        assertNotEquals(first, second, "dimension alone must not identify a level (SF-1)");
+        assertFalse(first.contains("save-one"));
+        assertFalse(second.contains("save-two"));
+        assertTrue(ClientStorageIO.isServerKey(first));
     }
 
     @Test

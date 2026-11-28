@@ -28,7 +28,8 @@ class PinCommandTreeTest {
         assertNotNull(root, "/imlclient must be registered on the client dispatcher");
         assertTrue(root instanceof LiteralCommandNode<?>);
         assertEquals("imlclient", root.getName());
-        assertEquals(6, root.getChildren().size(), "pin, history, three PR-5 commands and PR-7 diag are client-registered");
+        assertEquals(8, root.getChildren().size(),
+                "pin, history, three PR-5 commands, cache, profile and diag are client-registered");
 
         CommandNode<CommandSourceStack> pin = root.getChild("pin");
         assertNotNull(pin, "pin subtree must exist");
@@ -64,18 +65,33 @@ class PinCommandTreeTest {
         assertNotNull(carry, "carry subtree must exist");
         assertNotNull(carry.getChild("export").getCommand(), "carry export must execute");
         assertNotNull(carry.getChild("import").getCommand(), "carry import must execute");
+        assertNotNull(carry.getChild("list").getCommand(), "carry list must show imported candidates");
 
         CommandNode<CommandSourceStack> diag = root.getChild("diag");
         assertNotNull(diag, "/imlclient diag must be registered on the client dispatcher only");
         assertNotNull(diag.getCommand(), "/imlclient diag must execute");
         assertEquals(0, diag.getChildren().size(), "diag takes no argument");
+
+        CommandNode<CommandSourceStack> cache = root.getChild("cache");
+        assertNotNull(cache, "/imlclient cache must be registered for offline browsing");
+        assertNotNull(cache.getCommand(), "/imlclient cache prints help");
+        assertNotNull(cache.getChild("open").getCommand(), "cache open must open the offline view");
+
+        CommandNode<CommandSourceStack> profile = root.getChild("profile");
+        assertNotNull(profile, "/imlclient profile must be registered (F-150-72)");
+        assertNotNull(profile.getCommand(), "/imlclient profile prints help");
+        for (String sub : new String[]{"save", "list", "clear"}) {
+            assertNotNull(profile.getChild(sub).getCommand(), "profile " + sub + " must execute");
+        }
+        assertEquals(3, profile.getChildren().size());
     }
 
     @Test
     void serverHelpSetIsUntouchedByTheClientCommand() {
         assertFalse(CommandHelp.ENTRIES.stream()
                         .anyMatch(e -> "imlclient".equals(e.name()) || "pin".equals(e.name())
-                                || "history".equals(e.name()) || "diag".equals(e.name())),
+                                || "history".equals(e.name()) || "diag".equals(e.name())
+                                || "cache".equals(e.name()) || "profile".equals(e.name())),
                 "client commands must not enter the server help table");
         assertEquals("/milestonelog", CommandHelp.ROOT_COMMAND);
     }

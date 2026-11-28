@@ -79,6 +79,18 @@ public final class ClientProfileStore {
                 }
                 profiles.put(server.getKey(), Map.copyOf(overrides));
             }
+            // On-disk order is oldest first; keep the newest tail on load (§1.4-3).
+            if (profiles.size() > MAX_PROFILES) {
+                Map<String, Map<String, String>> trimmed = new LinkedHashMap<>();
+                int skip = profiles.size() - MAX_PROFILES;
+                int index = 0;
+                for (Map.Entry<String, Map<String, String>> entry : profiles.entrySet()) {
+                    if (index++ >= skip) {
+                        trimmed.put(entry.getKey(), entry.getValue());
+                    }
+                }
+                return new LoadResult(trimmed, false);
+            }
             return new LoadResult(profiles, false);
         } catch (RuntimeException e) {
             // JsonParseException / IllegalStateException / malformed shapes all mean "no usable data".

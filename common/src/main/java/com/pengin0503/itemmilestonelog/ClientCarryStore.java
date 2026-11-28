@@ -28,6 +28,8 @@ public final class ClientCarryStore {
     /** File name inside {@link ClientStorageIO#CLIENT_DIR}. */
     public static final String FILE_NAME = "carry.json";
     private static final String VERSION = "1";
+    /** Display-only candidates populated by {@link #importCandidates(Path)} (F-150-85-1). */
+    private static volatile List<Entry> imported = List.of();
 
     private ClientCarryStore() {
     }
@@ -49,7 +51,10 @@ public final class ClientCarryStore {
         return ClientStorageIO.clientDir(configDir).resolve(FILE_NAME);
     }
 
-    /** Deduplicates by encoded id and keeps at most {@link #MAX_ITEMS} entries, first wins. */
+    /**
+     * Deduplicates by encoded id and keeps at most {@link #MAX_ITEMS} entries. On overflow the
+     * oldest (earliest) entries are dropped first, so the newest tail survives (§1.4-3).
+     */
     public static List<Entry> merge(Collection<Entry> first, Collection<Entry> second) {
         Set<String> seen = new LinkedHashSet<>();
         List<Entry> result = new ArrayList<>();
@@ -61,10 +66,13 @@ public final class ClientCarryStore {
                 if (entry == null || !ClientExportLogic.isSafeItemId(entry.itemId())) {
                     continue;
                 }
-                if (seen.add(entry.encoded()) && result.size() < MAX_ITEMS) {
+                if (seen.add(entry.encoded())) {
                     result.add(entry);
                 }
             }
+        }
+        if (result.size() > MAX_ITEMS) {
+            return List.copyOf(result.subList(result.size() - MAX_ITEMS, result.size()));
         }
         return List.copyOf(result);
     }
@@ -136,8 +144,24 @@ public final class ClientCarryStore {
         }
     }
 
-    /** Alias for {@link #read(Path)} used by the client command to make "local only" explicit. */
+    /** The last imported display-only candidate list; never sent to a server. */
+    public static List<Entry> imported() {
+        return imported;
+    }
+
+    /** Drops the in-memory candidate list (client-only; no file is changed). */
+    public static void clearImported() {
+        imported = List.of();
+    }
+
+    /**
+     * Reads the local file and installs the entries as the display-only candidate list used by
+     * {@code /imlclient carry list}. No server write or {@code /milestonelog add} is performed
+     * here: the player must add each target explicitly on every server (D-150-231).
+     */
     public static List<Entry> importCandidates(Path configDir) {
-        return read(configDir);
+        List<Entry> entries = read(configDir);
+        imported = entries;
+        return entries;
     }
 }

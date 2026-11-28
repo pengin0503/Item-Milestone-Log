@@ -26,6 +26,19 @@ class ScreenshotStoreTest {
     }
 
     @Test
+    void oversizedOwnedSuffixDoesNotAbortRotation() {
+        List<String> names = new ArrayList<>();
+        for (int i = 1; i <= 20; i++) {
+            names.add(String.format("shot-20261127-%02d0000.png", i));
+        }
+        names.add("shot-20261128-030405-99999999999999999999.png");
+        List<String> prune = ScreenshotStore.selectFilesToPrune(names);
+        assertEquals(List.of("shot-20261127-010000.png"), prune);
+        assertTrue(ScreenshotStore.isScreenshotFileName(
+                "shot-20261128-030405-99999999999999999999.png"));
+    }
+
+    @Test
     void rotationKeepsOnlyTheNewestTwentyOwnedFiles() {
         List<String> names = new ArrayList<>();
         for (int i = 1; i <= 30; i++) {

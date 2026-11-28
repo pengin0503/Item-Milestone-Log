@@ -131,7 +131,10 @@ public final class ClientLocalOutput {
 
     /** One warn at most per session (F-150-67); gameplay and disconnect are never interrupted. */
     private static void rotateBackup(Path configDir) {
-        if (!backupEnabled() || !Files.exists(LocalSyncCache.fileFor(configDir))) {
+        // SF-2: do not gate on a snapshot existing here. ClientBackupRotation.rotate already
+        // treats a missing cache as a silent no-op, and the login key is now available before
+        // the first sync, so the connect-time trigger fires when a cache is present.
+        if (!backupEnabled()) {
             return;
         }
         try {
@@ -152,10 +155,16 @@ public final class ClientLocalOutput {
     /** Called once on logout, before the sync snapshot is cleared. At most three side effects. */
     /**
      * F-150-83: takes one screenshot on PRESET_COMPLETE using exactly F-150-70's setting and
-     * secret-screen skip rule; no new config key, channel or screen is introduced.
+     * secret-screen skip rule; no new config key, channel or screen is introduced. MN-5: the
+     * shared record-diff capture clock groups several presets completed in the same second.
      */
     public static void capturePresetComplete() {
         if (!screenshotEnabled()) {
+            return;
+        }
+        if (MilestoneHudOverlay.consumeNewRecord()) {
+            // A record capture is already due; that one screenshot covers the preset too.
+        } else if (!MilestoneHudOverlay.presetCaptureDue()) {
             return;
         }
         Minecraft mc = Minecraft.getInstance();

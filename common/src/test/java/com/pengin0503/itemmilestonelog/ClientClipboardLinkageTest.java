@@ -73,6 +73,16 @@ class ClientClipboardLinkageTest {
     }
 
     @Test
+    void clipboardSanitizerRejectsSchemesCaseInsensitively() throws IOException {
+        for (String tree : List.of("1.21.1", "1.20.1-forge", "26.1.2", "26.2", "26.3")) {
+            String source = Files.readString(repoRoot().resolve("versions").resolve(tree)
+                    .resolve("src/main/java/com/pengin0503/itemmilestonelog/client/ClientRecentCopy.java"));
+            assertTrue(source.contains("ClientExportLogic.hasUnsafeScheme(raw)"),
+                    tree + ": clipboard sanitizer must use the case-insensitive scheme check");
+        }
+    }
+
+    @Test
     void newPureHelpersHaveNoGameImports() throws IOException {
         Path root = repoRoot();
         for (String name : List.of("ClientDiagRender.java", "LowPowerModePolicy.java",

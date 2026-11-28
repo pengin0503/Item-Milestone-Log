@@ -40,6 +40,15 @@ class AccessibilityPolicyTest {
     }
 
     @Test
+    void keyCodeZeroIsTreatedAsABoundKey() {
+        Map<String, Integer> bindings = Map.of("copy_recent", 0, "foreign_key", 0);
+        List<AccessibilityPolicy.Conflict> conflicts = AccessibilityPolicy.detectConflicts(bindings);
+        assertEquals(1, conflicts.size());
+        assertEquals(0, conflicts.get(0).keyCode());
+        assertEquals(2, bindings.size(), "detection never rebinds a key");
+    }
+
+    @Test
     void reducedMotionOnlyRemovesTheFadeNotTheInformation() {
         List<PinStore.Pin> pins = List.of(new PinStore.Pin("minecraft:diamond", 1));
         Set<String> available = Set.of("minecraft:diamond");
