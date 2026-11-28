@@ -147,6 +147,22 @@ public final class ClientLocalOutput {
     }
 
     /** Called once on logout, before the sync snapshot is cleared. At most three side effects. */
+    /**
+     * F-150-83: takes one screenshot on PRESET_COMPLETE using exactly F-150-70's setting and
+     * secret-screen skip rule; no new config key, channel or screen is introduced.
+     */
+    public static void capturePresetComplete() {
+        if (!screenshotEnabled()) {
+            return;
+        }
+        Minecraft mc = Minecraft.getInstance();
+        if (screenOpen(mc)) {
+            notice("message.itemmilestonelog.screenshot_skipped");
+            return;
+        }
+        captureScreenshot(FMLPaths.CONFIGDIR.get());
+    }
+
     public static void onLogout() {
         Path configDir = FMLPaths.CONFIGDIR.get();
         Instant now = Instant.now();

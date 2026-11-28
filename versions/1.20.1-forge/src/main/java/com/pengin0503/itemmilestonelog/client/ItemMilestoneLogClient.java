@@ -9,7 +9,10 @@ import com.pengin0503.itemmilestonelog.HoverItemCache;
 import com.pengin0503.itemmilestonelog.HoverShortcutPolicy;
 import com.pengin0503.itemmilestonelog.UnboundKeyHintPolicy;
 import com.pengin0503.itemmilestonelog.ItemMilestoneLog;
+import com.pengin0503.itemmilestonelog.AccessibilityPolicy;
 import com.pengin0503.itemmilestonelog.network.MilestoneActionPayload;
+import net.minecraftforge.client.event.ClientChatReceivedEvent;
+import net.minecraftforge.client.event.sound.PlaySoundEvent;
 import com.pengin0503.itemmilestonelog.network.ModNetworking;
 import net.minecraftforge.fml.ModList;
 import net.minecraftforge.fml.loading.FMLPaths;
@@ -36,7 +39,9 @@ import net.minecraftforge.client.event.RegisterClientCommandsEvent;
 import net.minecraftforge.client.event.RenderGuiEvent;
 import net.minecraftforge.event.entity.living.LivingDamageEvent;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Client-only bootstrap for Item Milestone Log on Forge 1.20.1.
@@ -85,6 +90,7 @@ public final class ItemMilestoneLogClient {
     // until then it is treated as unbound (fourth flag in unboundKeys()).
     private static final UnboundKeyHintPolicy UNBOUND_HINT = new UnboundKeyHintPolicy();
     private static boolean unboundHintStored;
+    private static boolean keyConflictChecked;
     // F-150-59: soft integration only. No JEI/EMI/REI class or API is referenced; when none of
     // the three is loaded, the tooltip cache is never populated (a pure no-op).
     private static boolean hoverModsPresent;
@@ -117,6 +123,7 @@ public final class ItemMilestoneLogClient {
         }
         ModNetworking.setClientSyncHandler(ClientMilestoneHandler::onSyncReceived);
         ModNetworking.setClientSyncExtraHandler(ClientMilestoneHandler::onSyncExtraReceived);
+        ModNetworking.setClientEffectHandler(ClientEffects::onEffect);
         FMLJavaModLoadingContext.get().getModEventBus()
                 .addListener(ItemMilestoneLogClient::onRegisterKeyMappings);
         MinecraftForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onClientTick);
@@ -127,6 +134,8 @@ public final class ItemMilestoneLogClient {
         MinecraftForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onItemTooltip);
         MinecraftForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onClientLoggingOut);
         MinecraftForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onClientLoggingIn);
+        MinecraftForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onClientChat);
+        MinecraftForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onClientSound);
         MinecraftForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onRegisterClientCommands);
         MinecraftForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onRenderGuiPost);
         MinecraftForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onLivingDamage);
@@ -139,7 +148,35 @@ public final class ItemMilestoneLogClient {
         ClientMilestoneHandler.clearTooltipData();
         ClientMilestoneHandler.clearHoverCache();
         MilestoneHudOverlay.onLogout();
+        ClientEffects.onLogout();
+        ClientSoundGate.resetMuted();
         UNBOUND_HINT.clear();
+    }
+
+    /** F-150-74: restyle only this mod's own chat messages; the default mode returns unchanged. */
+    private static void onClientChat(ClientChatReceivedEvent event) {
+        Component styled = ChatStyler.apply(event.getMessage());
+        if (styled != null && styled != event.getMessage()) {
+            event.setMessage(styled);
+        }
+    }
+
+    /** F-150-81: a concrete PlaySoundEvent; setSound(null) suppresses a filtered notification. */
+    private static void onClientSound(PlaySoundEvent event) {
+        ClientSoundGate.onPlaySound(event);
+    }
+
+    /** F-150-82: report a duplicate key binding once; never change a player's assignment. */
+    private static void warnKeyConflicts() {
+        Map<String, Integer> bindings = new HashMap<>();
+        bindings.put(KEY_OPEN_GUI, OPEN_GUI_MAPPING.getKey().getValue());
+        bindings.put(KEY_ADD_HOVERED, ADD_HOVERED_MAPPING.getKey().getValue());
+        bindings.put(KEY_MUTE_NOTIFICATION_SOUND, MUTE_NOTIFICATION_SOUND_MAPPING.getKey().getValue());
+        List<AccessibilityPolicy.Conflict> conflicts = AccessibilityPolicy.detectConflicts(bindings);
+        if (!conflicts.isEmpty()) {
+            ClientNotice.overlay(Component.translatable("message.itemmilestonelog.key_conflict",
+                    conflicts.get(0).keyCode()));
+        }
     }
 
     /** F-150-62: register /imlclient on the client dispatcher only (D-150-185). */
@@ -214,10 +251,15 @@ public final class ItemMilestoneLogClient {
     }
 
     private static void onClientTick(TickEvent.ClientTickEvent event) {
+        if (!keyConflictChecked) {
+            keyConflictChecked = true;
+            warnKeyConflicts();
+        }
         if (event.phase != TickEvent.Phase.END) {
             return;
         }
         while (MUTE_NOTIFICATION_SOUND_MAPPING.consumeClick()) {
+            ClientSoundGate.toggleMuted();
             // sendAction checks connection/channel and does nothing for vanilla-only peers.
             ClientMilestoneHandler.sendAction(
                     MilestoneActionPayload.Action.MUTE_NOTIFICATION_SOUND, "");

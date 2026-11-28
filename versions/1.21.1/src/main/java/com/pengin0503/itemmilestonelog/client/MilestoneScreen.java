@@ -1,6 +1,7 @@
 package com.pengin0503.itemmilestonelog.client;
 
 import com.pengin0503.itemmilestonelog.Playtime;
+import com.pengin0503.itemmilestonelog.RecordClockFormat;
 import com.pengin0503.itemmilestonelog.TagTargets;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
@@ -463,8 +464,19 @@ public final class MilestoneScreen extends Screen {
                 String statusKey = ClientMilestoneHandler.isWorldFirst(targetKey)
                         ? "gui.itemmilestonelog.status.recorded_world_first"
                         : "gui.itemmilestonelog.status.recorded";
-                this.statusText = Component.translatable(statusKey,
+                String status = Component.translatable(statusKey,
                         Playtime.formatRecordComponent(recordedRecord, java.time.ZoneId.systemDefault(), Playtime.CLIENT)).getString();
+                // F-150-76: append the local HH:mm to the existing status line. No third draw call,
+                // no row-height/widget change (FL-1..6): the 28px row stays byte-identical.
+                if (MilestoneHudOverlay.effectiveOptions().showRecordClock() && recordedRecord.hasEpoch()) {
+                    String clock = RecordClockFormat.format(recordedRecord.epochMillis(),
+                            java.time.ZoneId.systemDefault());
+                    if (!clock.isEmpty()) {
+                        status = status + " " + Component.translatable(
+                                "message.itemmilestonelog.record_clock", clock).getString();
+                    }
+                }
+                this.statusText = status;
                 this.statusColor = 0xFF55FF55;
             } else {
                 this.statusText = Component.translatable("gui.itemmilestonelog.status.pending").getString();

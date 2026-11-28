@@ -8,6 +8,7 @@ import com.pengin0503.itemmilestonelog.api.RecordCause;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
 import com.pengin0503.itemmilestonelog.api.WorldFirstRecord;
 import com.pengin0503.itemmilestonelog.compat.McCompat;
+import com.pengin0503.itemmilestonelog.network.MilestoneEffectPayload;
 import com.pengin0503.itemmilestonelog.network.ModNetworking;
 import com.pengin0503.itemmilestonelog.network.SyncMilestonesPayload;
 import net.minecraft.commands.CommandSourceStack;
@@ -27,6 +28,7 @@ import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.common.util.FakePlayer;
+import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.neoforge.event.OnDatapackSyncEvent;
 import net.neoforged.neoforge.event.TagsUpdatedEvent;
 import net.neoforged.neoforge.event.entity.player.ItemEntityPickupEvent;
@@ -2093,6 +2095,16 @@ public final class Tracker {
             }
         }
 
+        // F-150-69 / F-150-83: one optional S2C per record (and one per completed preset).
+        // hasChannel is the ONLY gate: vanilla/old clients get no packet, no log, no disconnect.
+        if (player.connection != null && player.connection.hasChannel(MilestoneEffectPayload.TYPE)) {
+            PacketDistributor.sendToPlayer(player, new MilestoneEffectPayload(
+                    key.itemId(), key.count(), MilestoneEffectPayload.Kind.RECORDED));
+            for (Presets.PresetDefinition preset : completedPresets) {
+                PacketDistributor.sendToPlayer(player, new MilestoneEffectPayload(
+                        preset.id(), 1, MilestoneEffectPayload.Kind.PRESET_COMPLETE));
+            }
+        }
         if (syncImmediately) {
             MilestoneService.syncPlayerIfOpen(player);
         }

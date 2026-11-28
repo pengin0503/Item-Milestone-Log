@@ -93,6 +93,9 @@ public final class ModNetworking {
     };
     private static volatile Consumer<SyncExtraPayload> clientSyncExtraHandler = payload -> {
     };
+    // F-150-69: the single optional S2C effect channel; default sink is a safe no-op.
+    private static volatile Consumer<MilestoneEffectPayload> clientEffectHandler = payload -> {
+    };
 
     private ModNetworking() {
     }
@@ -104,6 +107,11 @@ public final class ModNetworking {
 
     public static void setClientSyncExtraHandler(Consumer<SyncExtraPayload> handler) {
         clientSyncExtraHandler = handler != null ? handler : payload -> {
+        };
+    }
+
+    public static void setClientEffectHandler(Consumer<MilestoneEffectPayload> handler) {
+        clientEffectHandler = handler != null ? handler : payload -> {
         };
     }
 
@@ -129,6 +137,12 @@ public final class ModNetworking {
                 SyncExtraPayload.TYPE,
                 SyncExtraPayload.STREAM_CODEC,
                 ModNetworking::handleSyncExtraClient
+        );
+        // F-150-69: one extra OPTIONAL S2C; C2S ordinals 0..8 and ids 0..3 are unchanged.
+        registrar.playToClient(
+                MilestoneEffectPayload.TYPE,
+                MilestoneEffectPayload.STREAM_CODEC,
+                ModNetworking::handleEffectClient
         );
     }
 
@@ -183,5 +197,9 @@ public final class ModNetworking {
                     payload.worldFirsts().size(), payload.readOnlyPresets().size());
             clientSyncExtraHandler.accept(payload);
         });
+    }
+
+    private static void handleEffectClient(MilestoneEffectPayload payload, IPayloadContext context) {
+        context.enqueueWork(() -> clientEffectHandler.accept(payload));
     }
 }
