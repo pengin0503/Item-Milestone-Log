@@ -1,6 +1,9 @@
 package com.pengin0503.itemmilestonelog.client;
 
 import com.pengin0503.itemmilestonelog.api.TargetKey;
+import com.pengin0503.itemmilestonelog.Config;
+import com.pengin0503.itemmilestonelog.ItemNameCompletion;
+import com.pengin0503.itemmilestonelog.SearchHistoryStore;
 import com.pengin0503.itemmilestonelog.compat.client.ClientCompat;
 import com.pengin0503.itemmilestonelog.network.MilestoneActionPayload;
 import com.pengin0503.itemmilestonelog.network.SyncMilestonesPayload;
@@ -20,6 +23,7 @@ import net.minecraft.sounds.SoundEvents;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.neoforged.fml.loading.FMLPaths;
 
 import javax.annotation.Nullable;
 import java.util.ArrayList;
@@ -28,6 +32,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import net.minecraft.client.input.KeyEvent;
 
 /**
  * Searchable item selector screen for adding new personal target items (Minecraft 26.1.2).
@@ -69,12 +74,32 @@ public final class ItemPickerScreen extends Screen {
     private Set<String> trackedItemIdsAtCount = Set.of();
     @Nullable
     private ItemStack hoveredIconStack = null;
+    // F-150-75/84: suggestions and history are rebuilt only when the query changes (FL-5).
+    private List<ItemNameCompletion.Candidate> catalogCandidates = List.of();
+    private List<ItemNameCompletion.Candidate> suggestions = List.of();
+    private List<String> searchHistory = List.of();
+    private int historyIndex = -1;
+    private String historyDraft = "";
+    private boolean restoringHistory;
 
     public ItemPickerScreen(MilestoneScreen parent) {
         super(Component.translatable("gui.itemmilestonelog.picker.title"));
         this.parent = parent;
         this.trackedTargets = parent.getTrackedTargets();
         this.allItems = getOrBuildCatalog();
+        List<ItemNameCompletion.Candidate> candidates = new ArrayList<>(this.allItems.size());
+        for (CatalogItem item : this.allItems) {
+            candidates.add(new ItemNameCompletion.Candidate(item.id(), item.nameText(),
+                    item.lowerName(), item.lowerId()));
+        }
+        this.catalogCandidates = List.copyOf(candidates);
+        if (Config.searchHistoryEnabled()) {
+            try {
+                this.searchHistory = SearchHistoryStore.read(FMLPaths.CONFIGDIR.get());
+            } catch (RuntimeException | LinkageError ignored) {
+                this.searchHistory = List.of();
+            }
+        }
     }
 
     private static List<CatalogItem> getOrBuildCatalog() {
@@ -153,6 +178,9 @@ public final class ItemPickerScreen extends Screen {
         searchBox.setValue(currentQuery);
         searchBox.setResponder(this::onSearchChanged);
         setInitialFocus(searchBox);
+        // No widget, coordinate, dimension or default hint text is changed: only the hint's
+        // runtime text reflects the current completion candidates (FL-5 / D-150-211).
+        refreshSearchHint();
 
         int listTop = 50;
         int listBottom = this.height - 44;
@@ -190,7 +218,82 @@ public final class ItemPickerScreen extends Screen {
     private void onSearchChanged(String query) {
         this.currentQuery = query;
         refreshList();
+        this.suggestions = Config.searchCompletion()
+                ? ItemNameCompletion.complete(catalogCandidates, query, ItemNameCompletion.MAX_SUGGESTIONS)
+                : List.of();
+        refreshSearchHint();
+        if (!restoringHistory && Config.searchHistoryEnabled()
+                && SearchHistoryStore.isSafeQuery(query)) {
+            try {
+                this.searchHistory = SearchHistoryStore.add(FMLPaths.CONFIGDIR.get(), query);
+                this.historyIndex = -1;
+            } catch (RuntimeException | LinkageError ignored) {
+                // Local history is cosmetic; never interrupt the picker.
+            }
+        }
     }
+
+    private void refreshSearchHint() {
+        if (searchBox == null) {
+            return;
+        }
+        if (suggestions.isEmpty()) {
+            searchBox.setHint(Component.translatable("gui.itemmilestonelog.picker.search_hint"));
+        } else {
+            searchBox.setHint(Component.translatable("gui.itemmilestonelog.picker.search_completions",
+                    ItemNameCompletion.formatHint(suggestions)));
+        }
+    }
+
+    private void setSearchValue(String value) {
+        restoringHistory = true;
+        searchBox.setValue(value);
+        onSearchChanged(value);
+        restoringHistory = false;
+    }
+
+    /** Up/Down walk the local history; Tab (handled in keyPressed) accepts a completion. */
+    private boolean cycleHistory(boolean up) {
+        if (!Config.searchHistoryEnabled() || searchHistory.isEmpty()) {
+            return false;
+        }
+        if (up) {
+            if (historyIndex < 0) {
+                historyDraft = currentQuery;
+                historyIndex = searchHistory.size() - 1;
+            } else if (historyIndex > 0) {
+                historyIndex--;
+            }
+            setSearchValue(searchHistory.get(historyIndex));
+            return true;
+        }
+        if (historyIndex < 0) {
+            return false;
+        }
+        if (historyIndex + 1 >= searchHistory.size()) {
+            historyIndex = -1;
+            setSearchValue(historyDraft);
+        } else {
+            historyIndex++;
+            setSearchValue(searchHistory.get(historyIndex));
+        }
+        return true;
+    }
+    @Override
+    public boolean keyPressed(KeyEvent event) {
+        // F-150-75/84: the focused EditBox keeps priority; Tab confirms, Up/Down recall history.
+        if (this.getFocused() == searchBox) {
+            if (event.isCycleFocus() && !suggestions.isEmpty()) {
+                setSearchValue(suggestions.get(0).displayName());
+                return true;
+            }
+            if (event.isUp() || event.isDown()) {
+                return cycleHistory(event.isUp());
+            }
+        }
+        return super.keyPressed(event);
+    }
+
 
     private void onCountChanged(String text) {
         this.currentCountText = text;

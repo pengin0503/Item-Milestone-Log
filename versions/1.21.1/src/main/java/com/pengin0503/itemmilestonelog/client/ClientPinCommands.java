@@ -6,6 +6,7 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.pengin0503.itemmilestonelog.PinStore;
+import com.pengin0503.itemmilestonelog.SearchHistoryStore;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
@@ -43,7 +44,12 @@ public final class ClientPinCommands {
                         .then(LiteralArgumentBuilder.<CommandSourceStack>literal("list")
                                 .executes(ClientPinCommands::list))
                         .then(LiteralArgumentBuilder.<CommandSourceStack>literal("clear")
-                                .executes(ClientPinCommands::clear)));
+                                .executes(ClientPinCommands::clear)))
+                // F-150-84: client-only history cleanup; no server command or help entry.
+                .then(LiteralArgumentBuilder.<CommandSourceStack>literal("history")
+                        .executes(ClientPinCommands::historyHelp)
+                        .then(LiteralArgumentBuilder.<CommandSourceStack>literal("clear")
+                                .executes(ClientPinCommands::historyClear)));
     }
 
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
@@ -111,6 +117,20 @@ public final class ClientPinCommands {
         MilestoneHudOverlay.onPinsChanged();
         context.getSource().sendSuccess(() -> Component.translatable(
                 "command.itemmilestonelog.imlclient.pin.clear", count), false);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private static int historyHelp(CommandContext<CommandSourceStack> context) {
+        context.getSource().sendSuccess(() -> Component.translatable(
+                "command.itemmilestonelog.imlclient.history.help"), false);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private static int historyClear(CommandContext<CommandSourceStack> context) {
+        int count = SearchHistoryStore.read(configDir()).size();
+        SearchHistoryStore.clear(configDir());
+        context.getSource().sendSuccess(() -> Component.translatable(
+                "command.itemmilestonelog.imlclient.history.clear", count), false);
         return Command.SINGLE_SUCCESS;
     }
 

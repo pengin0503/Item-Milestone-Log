@@ -395,6 +395,61 @@ public final class Config {
                     "Displayed information is never reduced.")
             .define("reducedMotion", false);
 
+
+    // ---- 1.5.0 step 6 PR-4: tooltip / hover options (tail-only; do not reorder existing keys).
+
+    /** F-150-68: maximum F42 status lines, 1-10 (default 3 = the shipped F42 cap). */
+    public static final ModConfigSpec.IntValue TOOLTIP_MAX_LINES = BUILDER
+            .comment("Maximum number of milestone status lines appended to an item tooltip (1-10).",
+                    "The shipped three-line default is unchanged; a larger value cannot reveal extra statuses.")
+            .defineInRange("tooltipMaxLines", TooltipOptions.DEFAULT.maxLines(),
+                    TooltipOptions.MIN_MAX_LINES, TooltipOptions.MAX_MAX_LINES);
+
+    /** F-150-68: show target status rows on tooltips (default true). */
+    public static final ModConfigSpec.BooleanValue TOOLTIP_SHOW_TARGET = BUILDER
+            .comment("Show milestone target rows on item tooltips (default true).")
+            .define("tooltipShowTarget", true);
+
+    /** F-150-68: show recorded status rows on tooltips (default true). */
+    public static final ModConfigSpec.BooleanValue TOOLTIP_SHOW_RECORDED = BUILDER
+            .comment("Show recorded milestone rows on item tooltips (default true).")
+            .define("tooltipShowRecorded", true);
+
+    /** F-150-68: direction-only sort of tooltip statuses (default keeps the existing order). */
+    public static final ModConfigSpec.ConfigValue<String> TOOLTIP_SORT = BUILDER
+            .comment("Tooltip status order: default, target-first or recorded-first (default).",
+                    "Rows inside one direction keep their existing order.")
+            .define("tooltipSort", "default", TooltipOptions::isValidSort);
+
+    /** F-150-79: status row colour (default keeps the shipped grey). */
+    public static final ModConfigSpec.ConfigValue<String> TOOLTIP_STATUS_COLOR = BUILDER
+            .comment("Tooltip status colour: default, gray, white or gold (default = gray).",
+                    "Only named formatting constants are used; no hex or custom font.")
+            .define("tooltipStatusColor", "default", TooltipOptions::isValidColor);
+
+    /** F-150-79: prefix tag target rows with the tag's display name (default true). */
+    public static final ModConfigSpec.BooleanValue TOOLTIP_TAG_NAMES = BUILDER
+            .comment("Prefix tag target tooltip rows with the tag display name (default true).")
+            .define("tooltipTagNames", true);
+
+    /** F-150-73: optional Jade / WTHIT / TOP tooltip line, off by default. */
+    public static final ModConfigSpec.BooleanValue EXTERNAL_TOOLTIP_INTEGRATION = BUILDER
+            .comment("Add one milestone line to Jade / WTHIT / TOP tooltips when installed (default false).",
+                    "No external mod API is called; detection is a one-time ModList.isLoaded check.")
+            .define("externalTooltipIntegration", false);
+
+    /** F-150-75: prefix completion in the existing item-picker search field (default true). */
+    public static final ModConfigSpec.BooleanValue SEARCH_COMPLETION = BUILDER
+            .comment("Suggest up to five item names in the item-picker search hint (default true).",
+                    "Tab accepts the first suggestion; no new widget is added.")
+            .define("searchCompletion", true);
+
+    /** F-150-84: remember the last 50 item-picker queries locally (default true). */
+    public static final ModConfigSpec.BooleanValue SEARCH_HISTORY_ENABLED = BUILDER
+            .comment("Remember up to 50 item-picker search queries on this client (default true).",
+                    "Only the search field's value is stored; /imlclient history clear removes it.")
+            .define("searchHistoryEnabled", true);
+
     static final ModConfigSpec SPEC = BUILDER.build();
 
     private record ThresholdsCache(List<? extends Integer> source, List<Integer> normalized) {
@@ -691,6 +746,94 @@ public final class Config {
             return true;
         }
     }
+
+    /** F-150-68: tooltip row cap, three while the config is not loaded (plain unit tests). */
+    public static int tooltipMaxLines() {
+        try {
+            return TOOLTIP_MAX_LINES.get();
+        } catch (IllegalStateException notLoaded) {
+            return TooltipOptions.DEFAULT.maxLines();
+        }
+    }
+
+    /** F-150-68: show target rows, {@code true} while the config is not loaded. */
+    public static boolean tooltipShowTarget() {
+        try {
+            return TOOLTIP_SHOW_TARGET.get();
+        } catch (IllegalStateException notLoaded) {
+            return true;
+        }
+    }
+
+    /** F-150-68: show recorded rows, {@code true} while the config is not loaded. */
+    public static boolean tooltipShowRecorded() {
+        try {
+            return TOOLTIP_SHOW_RECORDED.get();
+        } catch (IllegalStateException notLoaded) {
+            return true;
+        }
+    }
+
+    /** F-150-68: sort string, {@code default} while the config is not loaded. */
+    public static String tooltipSort() {
+        try {
+            return TOOLTIP_SORT.get();
+        } catch (IllegalStateException notLoaded) {
+            return "default";
+        }
+    }
+
+    /** F-150-79: colour string, {@code default} while the config is not loaded. */
+    public static String tooltipStatusColor() {
+        try {
+            return TOOLTIP_STATUS_COLOR.get();
+        } catch (IllegalStateException notLoaded) {
+            return "default";
+        }
+    }
+
+    /** F-150-79: tag display names, {@code true} while the config is not loaded. */
+    public static boolean tooltipTagNames() {
+        try {
+            return TOOLTIP_TAG_NAMES.get();
+        } catch (IllegalStateException notLoaded) {
+            return true;
+        }
+    }
+
+    /** F-150-73: external tooltip line, {@code false} while the config is not loaded. */
+    public static boolean externalTooltipIntegration() {
+        try {
+            return EXTERNAL_TOOLTIP_INTEGRATION.get();
+        } catch (IllegalStateException notLoaded) {
+            return false;
+        }
+    }
+
+    /** F-150-75: completion, {@code true} while the config is not loaded. */
+    public static boolean searchCompletion() {
+        try {
+            return SEARCH_COMPLETION.get();
+        } catch (IllegalStateException notLoaded) {
+            return true;
+        }
+    }
+
+    /** F-150-84: local search history, {@code true} while the config is not loaded. */
+    public static boolean searchHistoryEnabled() {
+        try {
+            return SEARCH_HISTORY_ENABLED.get();
+        } catch (IllegalStateException notLoaded) {
+            return true;
+        }
+    }
+
+    /** One pure options value consumed by {@code ItemTooltipLogic.refineLines}. */
+    public static TooltipOptions tooltipOptions() {
+        return TooltipOptions.of(tooltipMaxLines(), tooltipShowTarget(), tooltipShowRecorded(),
+                tooltipSort(), tooltipStatusColor(), tooltipTagNames());
+    }
+
 
     /**
      * F-150-59: {@link #HOVER_MOD_INTEGRATION}, or {@code true} while the config is not loaded yet

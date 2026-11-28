@@ -146,4 +146,115 @@ class ItemTooltipLogicTest {
         assertEquals(Set.of(DIAMOND), ItemTooltipLogic.buildIndex(
                 List.of(ItemTooltipLogic.Status.target(DIAMOND, 1)), null).keySet());
     }
+
+    // ---- F-150-68 / F-150-79: refineLines is additive; defaults are byte-for-byte F42.
+
+    private static ItemTooltipLogic.Lines f42Output() {
+        Map<String, List<ItemTooltipLogic.Status>> index = ItemTooltipLogic.buildIndex(
+                List.of(
+                        ItemTooltipLogic.Status.target(DIAMOND, 1),
+                        ItemTooltipLogic.Status.target(DIAMOND, 2),
+                        ItemTooltipLogic.Status.recorded(DIAMOND, 3, 120),
+                        ItemTooltipLogic.Status.target(DIAMOND, 4)),
+                TagIndex.EMPTY);
+        return ItemTooltipLogic.linesForItem(index, DIAMOND);
+    }
+
+    /** The pre-cap list, used to prove maxLines can only remove rows. */
+    private static ItemTooltipLogic.Lines fourLines() {
+        Map<String, List<ItemTooltipLogic.Status>> index = ItemTooltipLogic.buildIndex(
+                List.of(
+                        ItemTooltipLogic.Status.target(DIAMOND, 1),
+                        ItemTooltipLogic.Status.target(DIAMOND, 2),
+                        ItemTooltipLogic.Status.recorded(DIAMOND, 3, 120),
+                        ItemTooltipLogic.Status.target(DIAMOND, 4)),
+                TagIndex.EMPTY);
+        return new ItemTooltipLogic.Lines(index.get(DIAMOND), 0);
+    }
+
+    @Test
+    void defaultOptionsReproduceTheExistingLinesExactly() {
+        ItemTooltipLogic.Lines original = f42Output();
+        assertEquals(original, ItemTooltipLogic.refineLines(original, TooltipOptions.DEFAULT));
+        assertEquals(original, ItemTooltipLogic.refineLines(original, null));
+        assertEquals(original, ItemTooltipLogic.refineLines(original,
+                TooltipOptions.of(99, true, true, "bogus", "bogus", true)));
+    }
+
+    @Test
+    void maxLinesOnlyReducesRowsAndNeverRevealsHiddenStatuses() {
+        ItemTooltipLogic.Lines original = fourLines();
+        assertEquals(4, original.shown().size());
+        assertEquals(0, original.remaining());
+
+        ItemTooltipLogic.Lines one = ItemTooltipLogic.refineLines(original,
+                new TooltipOptions(1, true, true, TooltipOptions.Sort.DEFAULT,
+                        TooltipOptions.StatusColor.DEFAULT, true));
+        assertEquals(1, one.shown().size());
+        assertEquals(original.shown().get(0), one.shown().get(0));
+        assertEquals(3, one.remaining(), "three capped rows");
+
+        ItemTooltipLogic.Lines ten = ItemTooltipLogic.refineLines(original,
+                new TooltipOptions(10, true, true, TooltipOptions.Sort.DEFAULT,
+                        TooltipOptions.StatusColor.DEFAULT, true));
+        assertEquals(original, ten, "a larger setting cannot reveal F42's hidden status");
+        assertTrue(ItemTooltipLogic.refineLines(ItemTooltipLogic.Lines.EMPTY,
+                TooltipOptions.DEFAULT).isEmpty());
+    }
+
+    @Test
+    void showTargetAndShowRecordedFilterOnlyTheirOwnRows() {
+        ItemTooltipLogic.Lines original = fourLines();
+        ItemTooltipLogic.Lines targetsOnly = ItemTooltipLogic.refineLines(original,
+                new TooltipOptions(10, true, false, TooltipOptions.Sort.DEFAULT,
+                        TooltipOptions.StatusColor.DEFAULT, true));
+        assertEquals(List.of(1, 2, 4), targetsOnly.shown().stream()
+                .map(ItemTooltipLogic.Status::count).toList());
+        assertEquals(1, targetsOnly.remaining(), "the filtered recorded row is counted as hidden");
+
+        ItemTooltipLogic.Lines recordedOnly = ItemTooltipLogic.refineLines(original,
+                new TooltipOptions(10, false, true, TooltipOptions.Sort.DEFAULT,
+                        TooltipOptions.StatusColor.DEFAULT, true));
+        assertEquals(1, recordedOnly.shown().size());
+        assertTrue(recordedOnly.shown().get(0).recorded());
+        assertEquals(3, recordedOnly.remaining(), "three filtered target rows are counted as hidden");
+
+        assertTrue(ItemTooltipLogic.refineLines(original,
+                new TooltipOptions(10, false, false, TooltipOptions.Sort.DEFAULT,
+                        TooltipOptions.StatusColor.DEFAULT, true)).isEmpty());
+    }
+
+    @Test
+    void sortChangesOnlyDirectionAndKeepsEqualStatusOrderStable() {
+        ItemTooltipLogic.Lines original = fourLines();
+        ItemTooltipLogic.Lines targetFirst = ItemTooltipLogic.refineLines(original,
+                new TooltipOptions(10, true, true, TooltipOptions.Sort.TARGET_FIRST,
+                        TooltipOptions.StatusColor.DEFAULT, true));
+        assertEquals(List.of(1, 2, 4, 3), targetFirst.shown().stream()
+                .map(ItemTooltipLogic.Status::count).toList(),
+                "the recorded row moves last, the three target rows keep their order");
+
+        ItemTooltipLogic.Lines recordedFirst = ItemTooltipLogic.refineLines(original,
+                new TooltipOptions(10, true, true, TooltipOptions.Sort.RECORDED_FIRST,
+                        TooltipOptions.StatusColor.DEFAULT, true));
+        assertEquals(List.of(3, 1, 2, 4), recordedFirst.shown().stream()
+                .map(ItemTooltipLogic.Status::count).toList());
+    }
+
+    @Test
+    void colourAndTagNameOptionsParseLeniently() {
+        assertEquals(TooltipOptions.Sort.DEFAULT, TooltipOptions.parseSort(null));
+        assertEquals(TooltipOptions.Sort.TARGET_FIRST, TooltipOptions.parseSort("target-first"));
+        assertEquals(TooltipOptions.Sort.RECORDED_FIRST, TooltipOptions.parseSort("RECORDED_FIRST"));
+        assertEquals(TooltipOptions.StatusColor.GOLD, TooltipOptions.parseColor("gold"));
+        assertEquals(TooltipOptions.StatusColor.DEFAULT, TooltipOptions.parseColor("rainbow"));
+        assertTrue(TooltipOptions.isValidSort("target-first"));
+        assertFalse(TooltipOptions.isValidSort("first-target"));
+        assertTrue(TooltipOptions.isValidColor("white"));
+        assertFalse(TooltipOptions.isValidColor("#ff0000"));
+        assertEquals(1, new TooltipOptions(0, true, true, TooltipOptions.Sort.DEFAULT,
+                TooltipOptions.StatusColor.DEFAULT, true).maxLines());
+        assertEquals(10, new TooltipOptions(100, true, true, TooltipOptions.Sort.DEFAULT,
+                TooltipOptions.StatusColor.DEFAULT, true).maxLines());
+    }
 }
