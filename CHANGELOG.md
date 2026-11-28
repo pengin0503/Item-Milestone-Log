@@ -3,6 +3,39 @@
 The section for a version is used as it is for the GitHub Release (created when a
 `v<version>` tag is pushed) and for the CurseForge file changelog.
 
+## 1.5.0
+
+This release completes step 3 of the 1.5.0 plan with the individual command group: new read-only analytics and review commands, target metadata with labels, priority and pins, multi-generation undo, bulk target operations, target copying and sharing, preset editing and protection, world-first holder history, import dry runs and admin tag grants, alongside data-safety fixes found in pre-release review. Every supported Minecraft edition ships with the same version number and feature set. **F-150-28 (help search) and F-150-34 (analyze) are NOT included in 1.5.0 and are deferred to a later release.**
+
+### Analytics & Review
+- **Player comparison (F-150-11 / N01, F-150-33 / N157)**: `compare <player> [<page>]` splits records into shared, other-only and own-only targets with playtime differences; `compare <player> missing|route|rival` narrows this to missing targets, the largest shared-time gaps, and up to ten players with a similar record count. Ranking permissions and hidden-player filtering apply; output is paginated.
+- **Record timelines and pace (F-150-12 / N02, F-150-15 / N10)**: `timeline <item>` and `timelinetag <tag>` list all visible players' records in playtime order with the gaps between successive holders; `stats pace` adds milestones-per-hour rates for `all`, `targets` or `presets`, leaving plain `stats` and `stats <item>` unchanged.
+- **Session, trend and recap views (F-150-18 / N50, F-150-35 / N159, F-150-36 / N160)**: `session [hours <1|6|24|72>] [page <page>]` and `session summary` review a player's recent records; `trends [days <7|30|90>]` adds daily counts, a streak and a text chart; `recap [kind <return|daily|legacy>]` re-shows world firsts/records since last seen, the last 24 hours, or a count of unknown-date records. Nothing new is saved and `lastSeen` is unchanged.
+- **Rankings and namespace statistics (F-150-24 / N94, F-150-29 / N153, F-150-39 / N169)**: `modstats` aggregates targets, records and world firsts per item namespace; an optional `axis <all|period|online|team>` (plus `days <1-30>` for `period`) extends `top`, `stats` and `presettop` without changing default output; `presetstats` and `presetstats predict <preset>` show completion popularity and an estimated completion time from finishers' playtimes. No external services or randomness are used.
+- **Preset and target overviews (F-150-20 / N52, F-150-19 / N51, F-150-23 / N93, F-150-27 / N151, F-150-21 / N57, F-150-32 / N156, F-150-22 / N58)**: `presetmatrix` shows a player × preset completion grid; `targets near [threshold <1-99>]` finds targets close to completion; `randomtarget [kind <item|tag|both>]` suggests an unrecorded target; optional `compact` and `list sort <recent|name|day>` change list presentation only; `info <item> [preview]` adds related tag targets; and bare `settings` lists the four personal toggles while `settings <toggle> <on|off>` changes an individual setting.
+
+### Targets, Sharing & Administration
+- **Copy targets (F-150-13 / N08, F-150-14 / N97)**: `copytargets <player> [confirm]` copies missing personal targets from another player, and `admin <player> copyfrom <source> [confirm]` does the same for an offline or online player using the existing admin permission. Both preview before writing, keep existing targets, respect the target limit and copy no records, progress flags or completions.
+- **Bulk target entry (F-150-17 / N20, F-150-30 / N154)**: `addsteps <item> <steps>` and `addsteps tag <tag> <steps>` register a comma-separated ladder of up to 20 counts; `bulk addsteps`, `bulk expandtag`, `bulk cleanup` and the read-only `bulk preview` add, expand or clear completed targets in batches. All writes require `confirm` and leave an undo snapshot.
+- **Target metadata and pins (F-150-31 / N155)**: `targets meta <item> [<count>] [priority <0-9>] [label <text>] [pin <on|off>]` and `targets meta clear <item> [<count>]` set or clear a per-player priority, sanitized label and server-side pin; `/milestonelog pinned` lists pinned targets by priority. Metadata is optional saved data, is not exported, and is cleared with its target.
+- **Multi-generation undo (F-150-25 / N99)**: `undo` still reverses the latest change, and `undo list` / `undo <generation>` expose a five-generation, ten-minute in-memory history. Undoing a middle generation discards newer ones; admin resets remain non-undoable.
+- **Consensual sharing (F-150-37 / N165)**: `sharetargets offer <player>`, `accept <code>` and `revoke` exchange the same click-to-copy codes used by preset sharing; `accept` previews before writing and consumes a pending code, while offers are memory-only and lost on restart.
+- **Admin tag operations (F-150-16 / N11)**: `admin <player> addtag|removetag|granttag <tag> [<count>]` uses the existing admin permission; `granttag` writes a tag record without requiring possession and never creates a world first.
+- **Import previews (F-150-26 / N127)**: `import <fileName> dryrun` and `importall <fileName> dryrun` report targets to add, records to overwrite, new world firsts and skipped entries without writing any data.
+
+### Presets & World Firsts
+- **Preset editing and protection (F-150-40 / N178)**: `preset edit <name> add|remove <item> [<count>]` edits custom presets while preserving expanded `includes` order; `preset protect <name>` and `preset unprotect <name>` preview first and apply only with `confirm`. All three require the preset-management permission; built-in presets are protected and an optional `protected` flag in preset JSON blocks edits, overwrites and deletion.
+- **World-first holder history (F-150-38 / N167)**: `firsts history <item> [<count>] [<page>]` and `firstshistorytag <tag> [<count>] [<page>]` list up to 20 past holders per target with their playtimes. World-first existence remains public, but history rows require ranking lookup permission; the optional saved field loads leniently and does not change exports.
+
+### Data & Compatibility
+- **Optional saved fields**: `targetMeta` and `firstsHolderHistory` are written only when non-empty, load leniently (bad entries are skipped without losing valid siblings), and do not bump `schemaVersion` or change the JSON export/import format. The new preset `protected` field is optional and defaults to false. Existing worlds and presets remain compatible.
+
+### Fixes
+- **Pre-release audit — data safety**: A review before release found issues that could lose or misreport data, fixed across all five editions (RB-1, SF-1–SF-10, MN-1/2/4/5/7): imports now preserve displaced world-first holders in history, undo restores target metadata and covers bulk removals, dry-run counts match a real import, revoked share codes are rejected, renames migrate metadata and history keys, `preset protect`/`unprotect` only write with `confirm`, `granttag` no longer overwrites existing records, pruning and backups account for the new fields, and loaders keep the newest 20 history entries and validate metadata keys and subfields.
+
+### Deferred
+- **Not in 1.5.0**: F-150-28 (`help search`, including did-you-mean suggestions) and F-150-34 (`analyze` with difficulty/bottleneck/recommend) are explicitly deferred to a later release; no commands or language keys for them ship in this version.
+
 ## 1.4.0
 
 This release adds saved-data versioning and recovery, extends presets with composition and automatic add-ons, and adds new inspection, sharing and administration commands, alongside a broad wave of fixes from review and pre-release audits. Every supported Minecraft edition ships with the same version number and feature set.
