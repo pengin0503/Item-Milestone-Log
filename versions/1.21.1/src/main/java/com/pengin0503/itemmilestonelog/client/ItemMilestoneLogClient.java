@@ -3,6 +3,7 @@ package com.pengin0503.itemmilestonelog.client;
 import com.mojang.blaze3d.platform.InputConstants;
 import com.pengin0503.itemmilestonelog.ClientPrefsStore;
 import com.pengin0503.itemmilestonelog.Config;
+import com.pengin0503.itemmilestonelog.ExternalIntegrationGate;
 import com.pengin0503.itemmilestonelog.HoverCountPolicy;
 import com.pengin0503.itemmilestonelog.HoverItemCache;
 import com.pengin0503.itemmilestonelog.HoverShortcutPolicy;
@@ -89,6 +90,10 @@ public final class ItemMilestoneLogClient {
     // F-150-59: soft integration only. No JEI/EMI/REI class or API is referenced; when none of
     // the three is loaded, the tooltip cache is never populated (a pure no-op).
     private static boolean hoverModsPresent;
+    // F-150-73: soft integration flags, read only once at client construction.
+    private static boolean externalJade;
+    private static boolean externalWthit;
+    private static boolean externalTop;
 
     /**
      * F44: the NeoForge config screen must never render the webhook URLs, because their raw
@@ -104,8 +109,15 @@ public final class ItemMilestoneLogClient {
         try {
             ModList list = ModList.get();
             hoverModsPresent = list.isLoaded("jei") || list.isLoaded("emi") || list.isLoaded("rei");
+            // F-150-73: one ModList check at construction; never reflect into these mods (D-150-207).
+            externalJade = list.isLoaded("jade");
+            externalWthit = list.isLoaded("wthit");
+            externalTop = list.isLoaded("top");
         } catch (RuntimeException | LinkageError ignored) {
             hoverModsPresent = false;
+            externalJade = false;
+            externalWthit = false;
+            externalTop = false;
         }
         modContainer.registerExtensionPoint(IConfigScreenFactory.class,
                 (mod, parentScreen) -> new ConfigurationScreen(mod, parentScreen, HIDDEN_CONFIG_FILTER));
@@ -187,17 +199,23 @@ public final class ItemMilestoneLogClient {
         if (hoverModsPresent) {
             ClientMilestoneHandler.rememberTooltipStack(event.getItemStack());
         }
-        if (!Config.itemTooltipStatus()) {
-            return;
-        }
         ItemStack stack = event.getItemStack();
         if (stack == null || stack.isEmpty()) {
             return;
         }
         String itemId = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
         List<Component> lines = ClientMilestoneHandler.tooltipLines(itemId);
-        if (!lines.isEmpty()) {
+        boolean addedF42 = false;
+        if (Config.itemTooltipStatus() && !lines.isEmpty()
+                && !event.getToolTip().contains(lines.get(0))) {
             event.getToolTip().addAll(lines);
+            addedF42 = true;
+        }
+        // F-150-73: at most one line even when all three mods are present; the existing
+        // Component and colour are reused, and a duplicate F42 row suppresses it (D-150-208).
+        if (ExternalIntegrationGate.addLine(Config.externalTooltipIntegration(),
+                externalJade, externalWthit, externalTop, addedF42) && !lines.isEmpty()) {
+            event.getToolTip().add(lines.get(0));
         }
     }
 

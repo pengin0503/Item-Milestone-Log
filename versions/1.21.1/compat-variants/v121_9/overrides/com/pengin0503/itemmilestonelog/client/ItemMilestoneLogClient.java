@@ -2,6 +2,7 @@ package com.pengin0503.itemmilestonelog.client;
 
 import com.mojang.blaze3d.platform.InputConstants;
 import com.pengin0503.itemmilestonelog.Config;
+import com.pengin0503.itemmilestonelog.ExternalIntegrationGate;
 import com.pengin0503.itemmilestonelog.ItemMilestoneLog;
 import com.pengin0503.itemmilestonelog.network.ModNetworking;
 import net.minecraft.client.KeyMapping;
@@ -17,6 +18,7 @@ import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
+import net.neoforged.fml.ModList;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
@@ -62,6 +64,11 @@ public final class ItemMilestoneLogClient {
             KEY_CATEGORY
     );
 
+    // F-150-73: soft integration flags, read only once at client construction.
+    private static boolean externalJade;
+    private static boolean externalWthit;
+    private static boolean externalTop;
+
     /**
      * F44: the NeoForge config screen must never render the webhook URLs, because their raw
      * values would be captured in screenshots and streams (F39). They are edited in the file.
@@ -73,6 +80,16 @@ public final class ItemMilestoneLogClient {
             };
 
     public ItemMilestoneLogClient(IEventBus modEventBus, ModContainer modContainer) {
+        try {
+            ModList list = ModList.get();
+            externalJade = list.isLoaded("jade");
+            externalWthit = list.isLoaded("wthit");
+            externalTop = list.isLoaded("top");
+        } catch (RuntimeException | LinkageError ignored) {
+            externalJade = false;
+            externalWthit = false;
+            externalTop = false;
+        }
         modContainer.registerExtensionPoint(IConfigScreenFactory.class,
                 (mod, parentScreen) -> new ConfigurationScreen(mod, parentScreen, HIDDEN_CONFIG_FILTER));
         ModNetworking.setClientSyncHandler(ClientMilestoneHandler::onSyncReceived);
@@ -97,17 +114,21 @@ public final class ItemMilestoneLogClient {
      * this {@link Dist#CLIENT} entry point, so the event is never handled on a dedicated server.
      */
     private static void onItemTooltip(ItemTooltipEvent event) {
-        if (!Config.itemTooltipStatus()) {
-            return;
-        }
         ItemStack stack = event.getItemStack();
         if (stack == null || stack.isEmpty()) {
             return;
         }
         String itemId = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
         List<Component> lines = ClientMilestoneHandler.tooltipLines(itemId);
-        if (!lines.isEmpty()) {
+        boolean addedF42 = false;
+        if (Config.itemTooltipStatus() && !lines.isEmpty()
+                && !event.getToolTip().contains(lines.get(0))) {
             event.getToolTip().addAll(lines);
+            addedF42 = true;
+        }
+        if (ExternalIntegrationGate.addLine(Config.externalTooltipIntegration(),
+                externalJade, externalWthit, externalTop, addedF42) && !lines.isEmpty()) {
+            event.getToolTip().add(lines.get(0));
         }
     }
 

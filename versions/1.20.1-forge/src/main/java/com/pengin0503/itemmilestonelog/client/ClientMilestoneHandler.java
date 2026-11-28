@@ -6,6 +6,7 @@ import com.pengin0503.itemmilestonelog.HoverCountPolicy;
 import com.pengin0503.itemmilestonelog.HoverItemCache;
 import com.pengin0503.itemmilestonelog.HoverShortcutPolicy;
 import com.pengin0503.itemmilestonelog.ItemTooltipLogic;
+import com.pengin0503.itemmilestonelog.TooltipOptions;
 import com.pengin0503.itemmilestonelog.Playtime;
 import com.pengin0503.itemmilestonelog.TagTargets;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
@@ -290,10 +291,19 @@ public final class ClientMilestoneHandler {
      * The recorded line uses the F48 client-side Component playtime format.
      */
     public static List<Component> tooltipLines(String itemId) {
-        ItemTooltipLogic.Lines lines = ItemTooltipLogic.linesForItem(tooltipIndex, itemId);
+        // F-150-68/79: the pure options carry the same precedence in every tree; the public
+        // signature stays unchanged because existing tests call it directly (D-150-197).
+        TooltipOptions options = Config.tooltipOptions();
+        ItemTooltipLogic.Lines lines = ItemTooltipLogic.refineLines(
+                ItemTooltipLogic.linesForItem(tooltipIndex, itemId), options);
         if (lines.isEmpty()) {
             return List.of();
         }
+        ChatFormatting color = switch (options.statusColor()) {
+            case WHITE -> ChatFormatting.WHITE;
+            case GOLD -> ChatFormatting.GOLD;
+            case GRAY, DEFAULT -> ChatFormatting.GRAY;
+        };
         List<Component> result = new ArrayList<>(lines.shown().size() + 1);
         Map<String, Component> names = tagTooltipNames;
         for (ItemTooltipLogic.Status status : lines.shown()) {
@@ -302,7 +312,7 @@ public final class ClientMilestoneHandler {
                     ? Component.translatable(TOOLTIP_RECORDED_KEY, suffix,
                             Playtime.formatComponent(status.playTicks(), Playtime.CLIENT))
                     : Component.translatable(TOOLTIP_TARGET_KEY, suffix);
-            if (status.isTag()) {
+            if (status.isTag() && options.tagNames()) {
                 Component tagName = names.get(status.itemId());
                 if (tagName != null) {
                     line = Component.empty().append(tagName)
@@ -310,11 +320,11 @@ public final class ClientMilestoneHandler {
                             .append(line);
                 }
             }
-            result.add(line.copy().withStyle(ChatFormatting.GRAY));
+            result.add(line.copy().withStyle(color));
         }
         if (lines.remaining() > 0) {
             result.add(Component.translatable(TOOLTIP_MORE_KEY, lines.remaining())
-                    .withStyle(ChatFormatting.GRAY));
+                    .withStyle(color));
         }
         return result;
     }

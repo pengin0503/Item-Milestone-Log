@@ -154,6 +154,40 @@ public final class ItemTooltipLogic {
         return new Lines(statuses.subList(0, MAX_LINES), statuses.size() - MAX_LINES);
     }
 
+    /**
+     * F-150-68 / F-150-79: applies the client-local display options to F42's already capped
+     * {@link Lines} without changing {@link #linesForItem} or any other existing signature (D-150-197).
+     *
+     * <p>Only {@code shown} entries can be removed: statuses hidden by F42's own
+     * {@code remaining()} cap can never be revealed by a larger {@code tooltipMaxLines}. Filtering
+     * and the new cap increase {@code remaining()} by exactly the number of entries they hide, so
+     * the "and N more" line keeps counting every hidden status. Sorting is stable, so the relative
+     * order inside one direction is preserved. {@link TooltipOptions#DEFAULT} returns a value equal
+     * to its input, byte for byte.
+     */
+    public static Lines refineLines(Lines lines, TooltipOptions options) {
+        if (lines == null || lines.isEmpty()) {
+            return Lines.EMPTY;
+        }
+        TooltipOptions effective = options == null ? TooltipOptions.DEFAULT : options;
+        List<Status> kept = new ArrayList<>(lines.shown().size());
+        for (Status status : lines.shown()) {
+            if ((status.target() && effective.showTarget())
+                    || (status.recorded() && effective.showRecorded())) {
+                kept.add(status);
+            }
+        }
+        if (effective.sort() == TooltipOptions.Sort.TARGET_FIRST) {
+            kept.sort(Comparator.comparingInt(status -> status.target() ? 0 : 1));
+        } else if (effective.sort() == TooltipOptions.Sort.RECORDED_FIRST) {
+            kept.sort(Comparator.comparingInt(status -> status.recorded() ? 0 : 1));
+        }
+        int cap = Math.min(effective.maxLines(), lines.shown().size());
+        List<Status> shown = kept.size() > cap ? kept.subList(0, cap) : kept;
+        int hidden = lines.shown().size() - shown.size();
+        return new Lines(shown, lines.remaining() + hidden);
+    }
+
     /** Count suffix shared with {@code TargetKey.formatSuffix()}: empty for 1, {@code " ×N"} otherwise. */
     public static String countSuffix(int count) {
         return count > 1 ? " \u00d7" + count : "";

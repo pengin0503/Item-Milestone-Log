@@ -28,7 +28,7 @@ class PinCommandTreeTest {
         assertNotNull(root, "/imlclient must be registered on the client dispatcher");
         assertTrue(root instanceof LiteralCommandNode<?>);
         assertEquals("imlclient", root.getName());
-        assertEquals(1, root.getChildren().size(), "only the pin subtree is client-registered");
+        assertEquals(2, root.getChildren().size(), "only pin and history are client-registered");
 
         CommandNode<CommandSourceStack> pin = root.getChild("pin");
         assertNotNull(pin, "pin subtree must exist");
@@ -49,13 +49,20 @@ class PinCommandTreeTest {
         }
         assertNotNull(pin.getChild("list").getCommand(), "list must execute");
         assertNotNull(pin.getChild("clear").getCommand(), "clear must execute");
+
+        CommandNode<CommandSourceStack> history = root.getChild("history");
+        assertNotNull(history, "history subtree must exist");
+        assertNotNull(history.getCommand(), "/imlclient history prints help");
+        assertNotNull(history.getChild("clear").getCommand(), "history clear must execute");
+        assertEquals(1, history.getChildren().size());
     }
 
     @Test
     void serverHelpSetIsUntouchedByTheClientCommand() {
         assertFalse(CommandHelp.ENTRIES.stream()
-                        .anyMatch(e -> "imlclient".equals(e.name()) || "pin".equals(e.name())),
-                "client pin command must not enter the server help table");
+                        .anyMatch(e -> "imlclient".equals(e.name()) || "pin".equals(e.name())
+                                || "history".equals(e.name())),
+                "client commands must not enter the server help table");
         assertEquals("/milestonelog", CommandHelp.ROOT_COMMAND);
     }
 }
