@@ -89,6 +89,11 @@ public final class ClientMilestoneHandler {
         return extraData;
     }
 
+    /** PR-5: latest live snapshot for local export/carry; null when disconnected. */
+    public static SyncMilestonesPayload currentSync() {
+        return latestSync;
+    }
+
     public static boolean isWorldFirst(@Nullable TargetKey key) {
         return key != null && extraData.worldFirsts().contains(key);
     }
@@ -330,6 +335,8 @@ public final class ClientMilestoneHandler {
 
     public static void onSyncReceived(SyncMilestonesPayload payload) {
         rebuildTooltipIndex(payload);
+        // PR-5: local cache / OBS status / screenshot, after the shared HUD diff ran.
+        ClientLocalOutput.onSyncReceived(payload);
         Minecraft mc = Minecraft.getInstance();
         Screen current = ClientCompat.screens().currentScreen(mc);
 

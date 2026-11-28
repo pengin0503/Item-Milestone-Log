@@ -28,7 +28,7 @@ class PinCommandTreeTest {
         assertNotNull(root, "/imlclient must be registered on the client dispatcher");
         assertTrue(root instanceof LiteralCommandNode<?>);
         assertEquals("imlclient", root.getName());
-        assertEquals(2, root.getChildren().size(), "only pin and history are client-registered");
+        assertEquals(5, root.getChildren().size(), "pin, history and the three PR-5 local-output commands are client-registered");
 
         CommandNode<CommandSourceStack> pin = root.getChild("pin");
         assertNotNull(pin, "pin subtree must exist");
@@ -55,6 +55,15 @@ class PinCommandTreeTest {
         assertNotNull(history.getCommand(), "/imlclient history prints help");
         assertNotNull(history.getChild("clear").getCommand(), "history clear must execute");
         assertEquals(1, history.getChildren().size());
+
+        CommandNode<CommandSourceStack> export = root.getChild("export");
+        assertNotNull(export, "export subtree must exist");
+        assertNotNull(export.getChild("format").getCommand(), "export <format> must execute");
+        assertNotNull(root.getChild("backup").getCommand(), "backup must execute");
+        CommandNode<CommandSourceStack> carry = root.getChild("carry");
+        assertNotNull(carry, "carry subtree must exist");
+        assertNotNull(carry.getChild("export").getCommand(), "carry export must execute");
+        assertNotNull(carry.getChild("import").getCommand(), "carry import must execute");
     }
 
     @Test

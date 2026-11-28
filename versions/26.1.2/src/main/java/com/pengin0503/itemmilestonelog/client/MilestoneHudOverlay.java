@@ -9,6 +9,7 @@ import com.pengin0503.itemmilestonelog.HudLayoutOptions;
 import com.pengin0503.itemmilestonelog.HudRowPlan;
 import com.pengin0503.itemmilestonelog.LocalSyncCache;
 import com.pengin0503.itemmilestonelog.PinStore;
+import com.pengin0503.itemmilestonelog.RecordDiff;
 import com.pengin0503.itemmilestonelog.compat.client.HudCompat;
 import com.pengin0503.itemmilestonelog.network.SyncMilestonesPayload;
 import com.pengin0503.itemmilestonelog.network.TargetEntry;
@@ -58,6 +59,10 @@ public final class MilestoneHudOverlay {
     private static volatile AccessibilityPolicy accessibility = AccessibilityPolicy.defaults();
     private static volatile String serverKey = "";
     private static volatile long retreatStartedMillis;
+    // F-150-70: the screenshot diff reuses this HUD snapshot history; no second store is kept.
+    private static volatile Set<String> previousRecorded;
+    private static volatile boolean pendingCapture;
+    private static volatile long lastCaptureMillis;
 
     private MilestoneHudOverlay() {
     }
@@ -67,6 +72,12 @@ public final class MilestoneHudOverlay {
     public static Set<String> availableIds() {
         Snapshot current = snapshot;
         return current == null ? null : current.available();
+    }
+
+    /** F-150-64: opaque server identifier computed at login (no raw address is persisted). */
+    public static String serverKey() {
+        Snapshot current = snapshot;
+        return current == null ? "" : serverKey;
     }
 
     /** True only when a profile-adjusted config enables the HUD (default false). */
@@ -81,6 +92,7 @@ public final class MilestoneHudOverlay {
                 ? mc.getConnection().getConnection().getRemoteAddress().toString() : "";
         String world = mc.level == null ? "" : mc.level.dimension().toString();
         serverKey = ClientStorageIO.serverKey(address, world);
+        ClientLocalOutput.onLogin();
         refreshOptions();
         LocalSyncCache.LoadResult cached = LocalSyncCache.read(FMLPaths.CONFIGDIR.get(), serverKey);
         if (snapshot == null && cached.present()) {
@@ -96,6 +108,9 @@ public final class MilestoneHudOverlay {
         rows = List.of();
         serverKey = "";
         retreatStartedMillis = 0L;
+        previousRecorded = null;
+        pendingCapture = false;
+        lastCaptureMillis = 0L;
     }
 
     private static void refreshOptions() {
@@ -123,8 +138,28 @@ public final class MilestoneHudOverlay {
             recorded.add(encode(key.itemId(), key.count()));
         });
         payload.progress().forEach((key, value) -> progress.put(encode(key.itemId(), key.count()), value));
+        // F-150-70: one diff per sync, computed from the HUD's own previous snapshot.
+        if (previousRecorded == null) {
+            previousRecorded = Set.copyOf(recorded);
+        } else {
+            if (!RecordDiff.added(previousRecorded, recorded).isEmpty()) {
+                long now = System.currentTimeMillis();
+                if (RecordDiff.captureDue(lastCaptureMillis, now)) {
+                    pendingCapture = true;
+                    lastCaptureMillis = now;
+                }
+            }
+            previousRecorded = Set.copyOf(recorded);
+        }
         snapshot = new Snapshot(available, progress, recorded, false);
         rebuild();
+    }
+
+    /** F-150-70: consumes the pending capture decision produced by the shared snapshot diff. */
+    public static boolean consumeNewRecord() {
+        boolean pending = pendingCapture;
+        pendingCapture = false;
+        return pending;
     }
 
     /** Uses the PR-1 local cache as the only offline data source (F-150-64). */
