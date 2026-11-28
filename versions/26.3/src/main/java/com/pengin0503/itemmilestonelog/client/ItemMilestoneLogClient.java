@@ -38,6 +38,10 @@ import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.TagsUpdatedEvent;
 import net.neoforged.neoforge.event.entity.player.ItemTooltipEvent;
 
+import net.neoforged.neoforge.client.event.RegisterClientCommandsEvent;
+import net.neoforged.neoforge.client.event.RenderGuiEvent;
+import net.neoforged.neoforge.event.entity.living.LivingDamageEvent;
+
 import java.util.List;
 
 /**
@@ -116,13 +120,43 @@ public final class ItemMilestoneLogClient {
         NeoForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onItemTooltip);
         NeoForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onClientLoggingOut);
         NeoForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onClientLoggingIn);
+        NeoForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onRegisterClientCommands);
+        NeoForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onRenderGuiPost);
+        NeoForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onLivingDamage);
     }
 
     private static void onClientLoggingOut(ClientPlayerNetworkEvent.LoggingOut event) {
         ClientMilestoneHandler.clearExtraData();
         ClientMilestoneHandler.clearTooltipData();
         ClientMilestoneHandler.clearHoverCache();
+        MilestoneHudOverlay.onLogout();
         UNBOUND_HINT.clear();
+    }
+
+    /** F-150-62: register /imlclient on the client dispatcher only (D-150-185). */
+    private static void onRegisterClientCommands(RegisterClientCommandsEvent event) {
+        ClientPinCommands.register(event.getDispatcher());
+    }
+
+    /** F-150-63: independent overlay, registered outside every frozen screen (FL-3). */
+    private static void onRenderGuiPost(RenderGuiEvent.Post event) {
+        MilestoneHudOverlay.render(event.getGuiGraphics());
+    }
+
+    /**
+     * F-150-80: client-player damage starts the three-second retreat. NeoForge splits
+     * {@code LivingDamageEvent} into the abstract parent and the concrete {@code Pre}/{@code Post}
+     * subclasses; FML rejects a listener registered for the abstract class at construction
+     * ("Cannot register listeners for abstract class ..."). {@code Post} is the correct subclass:
+     * it fires only after damage has actually been applied (it is not cancelable), which matches
+     * "the player took damage -> fade the HUD". {@code Pre} is cancelable and would start the
+     * retreat even when another mod/shield cancels the hit. {@code getEntity()} is inherited from
+     * {@code LivingEvent}, so the body is unchanged.
+     */
+    private static void onLivingDamage(LivingDamageEvent.Post event) {
+        if (event.getEntity() == Minecraft.getInstance().player) {
+            MilestoneHudOverlay.onDamage();
+        }
     }
 
     /** F-150-77: schedule the once-only hint on login; the tick handler applies the 2 s delay. */
@@ -134,6 +168,7 @@ public final class ItemMilestoneLogClient {
             unboundHintStored = true;
         }
         UNBOUND_HINT.schedule(System.currentTimeMillis());
+        MilestoneHudOverlay.onLogin(Minecraft.getInstance());
     }
 
     private static UnboundKeyHintPolicy.Keys unboundKeys() {

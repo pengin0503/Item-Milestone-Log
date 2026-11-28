@@ -31,6 +31,10 @@ import net.minecraftforge.eventbus.api.EventPriority;
 import net.minecraftforge.event.entity.player.ItemTooltipEvent;
 import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
 
+import net.minecraftforge.client.event.RegisterClientCommandsEvent;
+import net.minecraftforge.client.event.RenderGuiEvent;
+import net.minecraftforge.event.entity.living.LivingDamageEvent;
+
 import java.util.List;
 
 /**
@@ -111,13 +115,34 @@ public final class ItemMilestoneLogClient {
         MinecraftForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onItemTooltip);
         MinecraftForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onClientLoggingOut);
         MinecraftForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onClientLoggingIn);
+        MinecraftForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onRegisterClientCommands);
+        MinecraftForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onRenderGuiPost);
+        MinecraftForge.EVENT_BUS.addListener(ItemMilestoneLogClient::onLivingDamage);
     }
 
     private static void onClientLoggingOut(ClientPlayerNetworkEvent.LoggingOut event) {
         ClientMilestoneHandler.clearExtraData();
         ClientMilestoneHandler.clearTooltipData();
         ClientMilestoneHandler.clearHoverCache();
+        MilestoneHudOverlay.onLogout();
         UNBOUND_HINT.clear();
+    }
+
+    /** F-150-62: register /imlclient on the client dispatcher only (D-150-185). */
+    private static void onRegisterClientCommands(RegisterClientCommandsEvent event) {
+        ClientPinCommands.register(event.getDispatcher());
+    }
+
+    /** F-150-63: independent overlay, registered outside every frozen screen (FL-3). */
+    private static void onRenderGuiPost(RenderGuiEvent.Post event) {
+        MilestoneHudOverlay.render(event.getGuiGraphics());
+    }
+
+    /** F-150-80: client-player damage starts the three-second retreat. */
+    private static void onLivingDamage(LivingDamageEvent event) {
+        if (event.getEntity() == Minecraft.getInstance().player) {
+            MilestoneHudOverlay.onDamage();
+        }
     }
 
     /** F-150-77: schedule the once-only hint on login; the tick handler applies the 2 s delay. */
@@ -129,6 +154,7 @@ public final class ItemMilestoneLogClient {
             unboundHintStored = true;
         }
         UNBOUND_HINT.schedule(System.currentTimeMillis());
+        MilestoneHudOverlay.onLogin(Minecraft.getInstance());
     }
 
     private static UnboundKeyHintPolicy.Keys unboundKeys() {

@@ -319,6 +319,52 @@ public final class Config {
                     "Those mods are detected implicitly and are never required; local display behaviour only.")
             .define("hoverModIntegration", true);
 
+    /** F-150-63 (N25): draw a lightweight HUD of locally pinned targets (default OFF). */
+    public static final ModConfigSpec.BooleanValue PIN_HUD_ENABLED = BUILDER
+            .comment("Draw a lightweight HUD of locally pinned milestone targets.",
+                    "Client-side display only: pins are local and are never sent to the server.",
+                    "Off by default so existing players see no new overlay.")
+            .define("pinHudEnabled", false);
+
+    /** F-150-63 (N25): maximum number of pinned HUD rows (1-10, default 5). */
+    public static final ModConfigSpec.IntValue PIN_HUD_MAX_ROWS = BUILDER
+            .comment("Maximum number of pinned targets shown in the HUD (1-10).")
+            .defineInRange("pinHudMaxRows", HudRowPlan.DEFAULT_MAX_ROWS, 1, HudRowPlan.MAX_ROWS);
+
+    /** F-150-80 (N193): which corner anchors the independent HUD overlay. */
+    public static final ModConfigSpec.ConfigValue<String> PIN_HUD_ANCHOR = BUILDER
+            .comment("HUD anchor: top-left, top-right, bottom-left or bottom-right (default top-left).",
+                    "Only the new overlay moves; existing screens and widgets are unchanged.")
+            .define("pinHudAnchor", DisplayOptions.DEFAULT_PIN_HUD_ANCHOR, Config::validatePinHudAnchor);
+
+    /** F-150-80 (N193): fade the HUD for three seconds after damage, chat or a screen. */
+    public static final ModConfigSpec.BooleanValue PIN_HUD_AUTO_HIDE = BUILDER
+            .comment("Fade the pinned-target HUD for three seconds after damage, chat input or a screen opening.")
+            .define("pinHudAutoHide", DisplayOptions.DEFAULT_PIN_HUD_AUTO_HIDE);
+
+    /** F-150-80 (N193): font matrix scale of the HUD in percent (50-200). */
+    public static final ModConfigSpec.IntValue PIN_HUD_SCALE = BUILDER
+            .comment("Font scale of the pinned-target HUD in percent (50-200). Widgets are not resized.",
+                    "Real high-DPI appearance is unverified and recorded as such in the PR report.")
+            .defineInRange("pinHudScale", HudLayoutOptions.DEFAULT_SCALE,
+                    HudLayoutOptions.MIN_SCALE, HudLayoutOptions.MAX_SCALE);
+
+    /** F-150-82 (N195, HUD part): narrate HUD rows through the standard narration API. */
+    public static final ModConfigSpec.BooleanValue ACCESSIBLE_NARRATION = BUILDER
+            .comment("Include pinned-target HUD rows in Minecraft's standard narration.")
+            .define("accessibleNarration", true);
+
+    /** F-150-82 (N195, HUD part): white-on-black HUD text. */
+    public static final ModConfigSpec.BooleanValue HUD_HIGH_CONTRAST = BUILDER
+            .comment("Draw pinned-target HUD rows in white on black for higher contrast.")
+            .define("hudHighContrast", false);
+
+    /** F-150-82 (N195, HUD part): skip the fade without removing information. */
+    public static final ModConfigSpec.BooleanValue REDUCED_MOTION = BUILDER
+            .comment("Skip the pinned-target HUD fade so it appears and disappears immediately.",
+                    "Displayed information is never reduced.")
+            .define("reducedMotion", false);
+
     static final ModConfigSpec SPEC = BUILDER.build();
 
     private record ThresholdsCache(List<? extends Integer> source, List<Integer> normalized) {
@@ -327,6 +373,18 @@ public final class Config {
     private static volatile ThresholdsCache progressAlertThresholdsCache = new ThresholdsCache(null, List.of());
 
     private Config() {
+    }
+
+    static boolean validatePinHudAnchor(Object obj) {
+        if (!(obj instanceof String value)) {
+            return false;
+        }
+        for (HudLayoutOptions.Anchor anchor : HudLayoutOptions.Anchor.values()) {
+            if (anchor.configName().equalsIgnoreCase(value.trim())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     static boolean validateTargetEntry(Object obj) {
@@ -615,6 +673,79 @@ public final class Config {
             return true;
         }
     }
+
+    /** F-150-63: local HUD toggle, {@code false} while the config is not loaded. */
+    public static boolean pinHudEnabled() {
+        try {
+            return PIN_HUD_ENABLED.get();
+        } catch (IllegalStateException notLoaded) {
+            return false;
+        }
+    }
+
+    /** F-150-63: row limit, five while the config is not loaded. */
+    public static int pinHudMaxRows() {
+        try {
+            return PIN_HUD_MAX_ROWS.get();
+        } catch (IllegalStateException notLoaded) {
+            return HudRowPlan.DEFAULT_MAX_ROWS;
+        }
+    }
+
+    /** F-150-80: HUD anchor, {@code top-left} while the config is not loaded. */
+    public static String pinHudAnchor() {
+        try {
+            return PIN_HUD_ANCHOR.get();
+        } catch (IllegalStateException notLoaded) {
+            return DisplayOptions.DEFAULT_PIN_HUD_ANCHOR;
+        }
+    }
+
+    /** F-150-80: auto-hide, {@code true} while the config is not loaded. */
+    public static boolean pinHudAutoHide() {
+        try {
+            return PIN_HUD_AUTO_HIDE.get();
+        } catch (IllegalStateException notLoaded) {
+            return DisplayOptions.DEFAULT_PIN_HUD_AUTO_HIDE;
+        }
+    }
+
+    /** F-150-80: font scale, 100 while the config is not loaded. */
+    public static int pinHudScale() {
+        try {
+            return PIN_HUD_SCALE.get();
+        } catch (IllegalStateException notLoaded) {
+            return HudLayoutOptions.DEFAULT_SCALE;
+        }
+    }
+
+    /** F-150-82: narration, {@code true} while the config is not loaded. */
+    public static boolean accessibleNarration() {
+        try {
+            return ACCESSIBLE_NARRATION.get();
+        } catch (IllegalStateException notLoaded) {
+            return true;
+        }
+    }
+
+    /** F-150-82: high contrast, {@code false} while the config is not loaded. */
+    public static boolean hudHighContrast() {
+        try {
+            return HUD_HIGH_CONTRAST.get();
+        } catch (IllegalStateException notLoaded) {
+            return false;
+        }
+    }
+
+    /** F-150-82: reduced motion, {@code false} while the config is not loaded. */
+    public static boolean reducedMotion() {
+        try {
+            return REDUCED_MOTION.get();
+        } catch (IllegalStateException notLoaded) {
+            return false;
+        }
+    }
+
 
     /**
      * F-140-20: {@link #STRICT_PRESET_VALIDATION}, or {@code false} while the config is not

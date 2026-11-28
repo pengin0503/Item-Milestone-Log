@@ -21,6 +21,10 @@ class DisplayOptionsTest {
         assertTrue(defaults.tooltipShowRecorded());
         assertFalse(defaults.showRecordClock());
         assertFalse(defaults.clientEffectEnabled());
+        // F-150-63/80/82: HUD is off by default; its layout options are profile-overridable.
+        assertEquals("top-left", defaults.pinHudAnchor());
+        assertTrue(defaults.pinHudAutoHide());
+        assertEquals(100, defaults.pinHudScale());
     }
 
     @Test
@@ -39,10 +43,26 @@ class DisplayOptionsTest {
     }
 
     @Test
-    void toOverridesContainsExactlyTheNineAllowedKeys() {
+    void toOverridesContainsExactlyTheTwelveAllowedKeys() {
         Map<String, String> overrides = DisplayOptions.defaults().toOverrides();
         assertEquals(DisplayOptions.KEY_SET, overrides.keySet());
+        assertEquals(12, overrides.size());
         assertEquals(DisplayOptions.defaults(), DisplayOptions.defaults().apply(overrides));
+    }
+
+    @Test
+    void hudLayoutKeysAreProfileOverridableAndClamped() {
+        DisplayOptions changed = DisplayOptions.defaults().apply(Map.of(
+                "pinHudAnchor", "bottom-right",
+                "pinHudAutoHide", "false",
+                "pinHudScale", "999",
+                "pinHudEnabled", "true"));
+        assertEquals("bottom-right", changed.pinHudAnchor());
+        assertFalse(changed.pinHudAutoHide());
+        assertEquals(HudLayoutOptions.MAX_SCALE, changed.pinHudScale());
+        assertTrue(changed.pinHudEnabled());
+        assertEquals(DisplayOptions.defaults().pinHudAnchor(),
+                DisplayOptions.defaults().apply(Map.of("pinHudAnchor", "not-an-anchor")).pinHudAnchor());
     }
 
     @Test
