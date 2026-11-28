@@ -1584,6 +1584,9 @@ public final class Tracker {
             }
         }
         MilestoneCommandRunner.drainAndRun(event.getServer());
+        // step 7 PR-1 (F-150-90): one hook on the existing post-tick path; all throttling and
+        // queue submission happens inside MilestoneExport.
+        MilestoneExport.autoExportTick(event.getServer());
     }
 
     /** Window used for queues filled before the next ServerTickEvent.Post updates the clock. */

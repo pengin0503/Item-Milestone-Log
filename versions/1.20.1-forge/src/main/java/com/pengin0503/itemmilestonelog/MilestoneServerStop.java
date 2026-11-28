@@ -32,6 +32,8 @@ public final class MilestoneServerStop {
         // Clear any importall state left over from a session that did not stop cleanly, then create
         // a brand-new executor; a stopped executor is never reused (F-140-3).
         MilestoneImportAll.resetState();
+        // step 7 PR-1 (F-150-90): in-memory schedule state only; no SavedData key is added.
+        MilestoneExport.resetAutoExportSession();
         MilestoneIo.start(message -> ItemMilestoneLog.LOGGER.warn("[ItemMilestoneLog] {}", message));
     }
 
@@ -41,6 +43,9 @@ public final class MilestoneServerStop {
         // A LevelEvent.Save fires after this event during Minecraft's stop sequence; suppress the
         // duplicate automatic backup before any stop work or drain can trigger it (#106).
         MilestoneBackup.beginStopping();
+        // F-150-90: enqueue the final automatic batch while the queue still accepts work, so it
+        // joins the bounded drain below and is written exactly once (guarded in MilestoneExport).
+        MilestoneExport.autoExportOnStop(server);
         MilestoneIo.beginStopping();
         MilestoneIoQueue queue = MilestoneIo.current();
 

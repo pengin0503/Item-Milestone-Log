@@ -84,6 +84,7 @@ class MilestoneIoLogicTest {
         Map<MilestoneIoLogic.TaskKind, Integer> counts = new LinkedHashMap<>();
         counts.put(MilestoneIoLogic.TaskKind.IMPORT_ALL, 2);
         counts.put(MilestoneIoLogic.TaskKind.BACKUP, 1);
-        assertEquals("importall=2, backup=1", MilestoneIoLogic.describeKinds(counts));
+        counts.put(MilestoneIoLogic.TaskKind.EXPORT, 3);
+        assertEquals("importall=2, backup=1, export=3", MilestoneIoLogic.describeKinds(counts));
     }
 }
