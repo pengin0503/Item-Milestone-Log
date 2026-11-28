@@ -25,9 +25,16 @@ public final class HudCompat {
         return mc.options.hideGui;
     }
 
-    /** Standard narration through the built-in narrator (no new dependency). */
+    /**
+     * Standard narration through the built-in narrator (no new dependency). MC 1.21.6 renamed
+     * {@code GameNarrator.say(Component)} to {@code saySystemQueued(Component)}; a shared class
+     * cannot name either one and link on every version, so the call is routed through the
+     * per-profile {@link NarrationCompat} implementation via {@link McCompat#narration()} (the
+     * same pattern as {@link #drawString}). No {@code GameNarrator} reference remains in this
+     * shared class.
+     */
     public static void narrate(Minecraft mc, Component text) {
-        mc.getNarrator().say(text);
+        McCompat.narration().narrate(mc, text);
     }
 
     /**

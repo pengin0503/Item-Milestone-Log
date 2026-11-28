@@ -143,8 +143,17 @@ public final class ItemMilestoneLogClient {
         MilestoneHudOverlay.render(event.getGuiGraphics());
     }
 
-    /** F-150-80: client-player damage starts the three-second retreat. */
-    private static void onLivingDamage(LivingDamageEvent event) {
+    /**
+     * F-150-80: client-player damage starts the three-second retreat. NeoForge splits
+     * {@code LivingDamageEvent} into the abstract parent and the concrete {@code Pre}/{@code Post}
+     * subclasses; FML rejects a listener registered for the abstract class at construction
+     * ("Cannot register listeners for abstract class ..."). {@code Post} is the correct subclass:
+     * it fires only after damage has actually been applied (it is not cancelable), which matches
+     * "the player took damage -> fade the HUD". {@code Pre} is cancelable and would start the
+     * retreat even when another mod/shield cancels the hit. {@code getEntity()} is inherited from
+     * {@code LivingEvent}, so the body is unchanged.
+     */
+    private static void onLivingDamage(LivingDamageEvent.Post event) {
         if (event.getEntity() == Minecraft.getInstance().player) {
             MilestoneHudOverlay.onDamage();
         }
