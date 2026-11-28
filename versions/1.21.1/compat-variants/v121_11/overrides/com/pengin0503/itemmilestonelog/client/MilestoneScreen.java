@@ -1,6 +1,7 @@
 package com.pengin0503.itemmilestonelog.client;
 
 import com.pengin0503.itemmilestonelog.Playtime;
+import com.pengin0503.itemmilestonelog.RecordClockFormat;
 import com.pengin0503.itemmilestonelog.TagTargets;
 import com.pengin0503.itemmilestonelog.api.MilestoneRecord;
 import com.pengin0503.itemmilestonelog.api.TargetKey;
@@ -44,6 +45,7 @@ public final class MilestoneScreen extends Screen {
         RECORDED
     }
 
+    private final boolean offline;
     private SyncMilestonesPayload data;
     private ViewMode viewMode = ViewMode.TARGETS;
     @Nullable
@@ -58,10 +60,40 @@ public final class MilestoneScreen extends Screen {
     private Button resetAllButton;
 
     public MilestoneScreen(SyncMilestonesPayload initialData) {
+        this(initialData, false);
+    }
+
+    /**
+     * F-150-64-4: the offline variant reuses every existing widget and coordinate unchanged; it
+     * only labels the view and refuses server-mutating actions.
+     */
+    public MilestoneScreen(SyncMilestonesPayload initialData, boolean offline) {
         super(Component.translatable("gui.itemmilestonelog.title"));
         this.data = initialData;
-        this.feedbackMessage = initialData.feedback();
+        this.offline = offline;
+        this.feedbackMessage = offline
+                ? Component.translatable("message.itemmilestonelog.offline_view")
+                : initialData.feedback();
         this.cachedAchievedCount = computeAchievedCount(initialData);
+    }
+
+    @Override
+    public void onClose() {
+        if (offline) {
+            ClientMilestoneHandler.setOfflineView(false);
+        }
+        super.onClose();
+    }
+
+    /** No server action is attempted from an offline cache view (F-150-64-4). */
+    private boolean refuseOffline() {
+        if (!offline) {
+            return false;
+        }
+        Component notice = Component.translatable("message.itemmilestonelog.offline_readonly");
+        this.feedbackMessage = notice;
+        ClientNotice.overlay(notice);
+        return true;
     }
 
     private static long computeAchievedCount(SyncMilestonesPayload payload) {
@@ -129,6 +161,9 @@ public final class MilestoneScreen extends Screen {
                 new ButtonSpec(
                         Component.translatable("gui.itemmilestonelog.button.add"),
                         btn -> {
+                            if (refuseOffline()) {
+                                return;
+                            }
                             if (this.minecraft != null) {
                                 this.feedbackMessage = null;
                                 this.minecraft.setScreen(new ItemPickerScreen(this));
@@ -145,6 +180,9 @@ public final class MilestoneScreen extends Screen {
                 new ButtonSpec(
                         Component.translatable("gui.itemmilestonelog.button.presets"),
                         btn -> {
+                            if (refuseOffline()) {
+                                return;
+                            }
                             if (this.minecraft != null) {
                                 this.feedbackMessage = null;
                                 this.minecraft.setScreen(new PresetListScreen(this));
@@ -213,7 +251,11 @@ public final class MilestoneScreen extends Screen {
 
         resetAllButton = addRenderableWidget(Button.builder(
                         Component.translatable("gui.itemmilestonelog.button.reset_all"),
-                        btn -> openConfirmResetAll())
+                        btn -> {
+                            if (!refuseOffline()) {
+                                openConfirmResetAll();
+                            }
+                        })
                 .bounds(row2StartX, bottomRowY, row2BtnWidth, 20)
                 .build());
         resetAllButton.active = !data.records().isEmpty();
@@ -482,8 +524,19 @@ public final class MilestoneScreen extends Screen {
                 String statusKey = ClientMilestoneHandler.isWorldFirst(targetKey)
                         ? "gui.itemmilestonelog.status.recorded_world_first"
                         : "gui.itemmilestonelog.status.recorded";
-                this.statusText = Component.translatable(statusKey,
+                String status = Component.translatable(statusKey,
                         Playtime.formatRecordComponent(recordedRecord, java.time.ZoneId.systemDefault(), Playtime.CLIENT)).getString();
+                // F-150-76: append the local HH:mm to the existing status line. No third draw call,
+                // no row-height/widget change (FL-1..6): the 28px row stays byte-identical.
+                if (MilestoneHudOverlay.effectiveOptions().showRecordClock() && recordedRecord.hasEpoch()) {
+                    String clock = RecordClockFormat.format(recordedRecord.epochMillis(),
+                            java.time.ZoneId.systemDefault());
+                    if (!clock.isEmpty()) {
+                        status = status + " " + Component.translatable(
+                                "message.itemmilestonelog.record_clock", clock).getString();
+                    }
+                }
+                this.statusText = status;
                 this.statusColor = 0xFF55FF55;
             } else {
                 this.statusText = Component.translatable("gui.itemmilestonelog.status.pending").getString();
