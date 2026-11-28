@@ -28,7 +28,7 @@ class PinCommandTreeTest {
         assertNotNull(root, "/imlclient must be registered on the client dispatcher");
         assertTrue(root instanceof LiteralCommandNode<?>);
         assertEquals("imlclient", root.getName());
-        assertEquals(5, root.getChildren().size(), "pin, history and the three PR-5 local-output commands are client-registered");
+        assertEquals(6, root.getChildren().size(), "pin, history, three PR-5 commands and PR-7 diag are client-registered");
 
         CommandNode<CommandSourceStack> pin = root.getChild("pin");
         assertNotNull(pin, "pin subtree must exist");
@@ -64,13 +64,18 @@ class PinCommandTreeTest {
         assertNotNull(carry, "carry subtree must exist");
         assertNotNull(carry.getChild("export").getCommand(), "carry export must execute");
         assertNotNull(carry.getChild("import").getCommand(), "carry import must execute");
+
+        CommandNode<CommandSourceStack> diag = root.getChild("diag");
+        assertNotNull(diag, "/imlclient diag must be registered on the client dispatcher only");
+        assertNotNull(diag.getCommand(), "/imlclient diag must execute");
+        assertEquals(0, diag.getChildren().size(), "diag takes no argument");
     }
 
     @Test
     void serverHelpSetIsUntouchedByTheClientCommand() {
         assertFalse(CommandHelp.ENTRIES.stream()
                         .anyMatch(e -> "imlclient".equals(e.name()) || "pin".equals(e.name())
-                                || "history".equals(e.name())),
+                                || "history".equals(e.name()) || "diag".equals(e.name())),
                 "client commands must not enter the server help table");
         assertEquals("/milestonelog", CommandHelp.ROOT_COMMAND);
     }

@@ -861,6 +861,18 @@ public final class Config {
         }
     }
 
+    /**
+     * F-150-86 (N199): {@link #LOW_POWER_MODE}, or {@code false} (shipped default) while the
+     * config is not loaded. Purely subtractive; no displayed information or server data changes.
+     */
+    public static boolean lowPowerMode() {
+        try {
+            return LOW_POWER_MODE.get();
+        } catch (IllegalStateException notLoaded) {
+            return false;
+        }
+    }
+
     /** F-150-75: completion, {@code true} while the config is not loaded. */
     public static boolean searchCompletion() {
         try {

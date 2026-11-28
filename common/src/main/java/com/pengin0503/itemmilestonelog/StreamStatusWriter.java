@@ -134,9 +134,19 @@ public final class StreamStatusWriter {
     /** True when the debounce has elapsed AND the rendered text changed (same-value skip). */
     public static boolean shouldWrite(long lastWriteMillis, long nowMillis,
                                       String previousTxt, String nextTxt) {
-        return writeDue(lastWriteMillis, nowMillis)
-                && !Objects.equals(previousTxt == null ? "" : previousTxt,
-                        nextTxt == null ? "" : nextTxt);
+        return shouldWrite(lastWriteMillis, nowMillis, previousTxt, nextTxt, DEBOUNCE_MILLIS);
+    }
+
+    /**
+     * F-150-86: additive overload so the low-power policy can lengthen the debounce without
+     * changing the shipped signature or the five stable status keys. The rendered text is
+     * identical; only the write cadence changes.
+     */
+    public static boolean shouldWrite(long lastWriteMillis, long nowMillis,
+                                      String previousTxt, String nextTxt, long debounceMillis) {
+        boolean due = nowMillis < lastWriteMillis || nowMillis - lastWriteMillis >= debounceMillis;
+        return due && !Objects.equals(previousTxt == null ? "" : previousTxt,
+                nextTxt == null ? "" : nextTxt);
     }
 
     /** Writes both status files atomically. IO errors are reported to the caller, never swallowed. */
