@@ -72,23 +72,59 @@ public final class Tracker {
     }
 
     /**
+     * SF-1: the actor's world-first sound event is derived from the queued records, never
+     * from the announcement chat gate ({@code announceWorldFirst}), which applies only to
+     * the recipients' opt-in sound inside {@link NotificationSoundLogic#plan}.
+     */
+    static boolean hasWorldFirstQueued(@Nullable PendingNotifications pending) {
+        return pending != null && pending.records.stream().anyMatch(QueuedRecord::worldFirst);
+    }
+
+    /** Explicit config snapshot for one window; keeps the sound planner unit-testable. */
+    record SoundConfigSnapshot(
+            boolean milestoneSoundEnabled,
+            String milestoneSoundId,
+            String worldFirstSoundId,
+            String presetCompleteSoundId,
+            String progressAlertSoundId,
+            boolean progressAlertsEnabled,
+            boolean announceWorldFirst,
+            boolean announceWorldFirstSound,
+            int serverVolume) {
+        static SoundConfigSnapshot fromConfig() {
+            return new SoundConfigSnapshot(
+                    Config.MILESTONE_SOUND_ENABLED.get(),
+                    Config.MILESTONE_SOUND.get(),
+                    Config.worldFirstSound(),
+                    Config.presetCompleteSound(),
+                    Config.progressAlertSound(),
+                    Config.PROGRESS_ALERTS.get(),
+                    Config.ANNOUNCE_WORLD_FIRST.get(),
+                    Config.announceWorldFirstSound(),
+                    Config.notificationSoundVolume());
+        }
+    }
+
+    /**
      * F-150-47/48: builds the one precedence snapshot for a window and resolves every packet.
      * The actor's single sound plus (opted-in) world-first announcement sounds share this call.
      */
-    private static List<NotificationSoundLogic.SoundRequest> planSoundsForWindow(
-            MinecraftServer server,
+    static List<NotificationSoundLogic.SoundRequest> planSoundsForWindow(
+            @Nullable MinecraftServer server,
             MilestoneData data,
             UUID actorId,
             boolean hasRecord,
             boolean hasWorldFirst,
             boolean hasPresetComplete,
-            boolean hasProgressAlert) {
+            boolean hasProgressAlert,
+            SoundConfigSnapshot cfg) {
         MilestoneData.PlayerData actorPd = data.playerOrNull(actorId);
         List<UUID> worldFirstRecipients = new ArrayList<>();
         Set<UUID> mutedBroadcast = new HashSet<>();
         Set<UUID> mutedSound = new HashSet<>();
         Map<UUID, Integer> personalVolumes = new HashMap<>();
-        for (ServerPlayer recipient : server.getPlayerList().getPlayers()) {
+        for (ServerPlayer recipient : server == null ? List.<ServerPlayer>of()
+                : server.getPlayerList().getPlayers()) {
             UUID id = recipient.getUUID();
             MilestoneData.PlayerData pd = data.playerOrNull(id);
             if (pd != null) {
@@ -108,25 +144,25 @@ public final class Tracker {
         }
         return NotificationSoundLogic.plan(new NotificationSoundLogic.SoundContext(
                 actorId,
-                Config.MILESTONE_SOUND_ENABLED.get(),
+                cfg.milestoneSoundEnabled(),
                 actorPd != null && actorPd.muteNotificationSounds,
                 hasRecord,
                 hasWorldFirst,
                 hasPresetComplete,
                 hasProgressAlert,
-                Config.PROGRESS_ALERTS.get(),
+                cfg.progressAlertsEnabled(),
                 actorPd != null && actorPd.muteProgressAlerts,
-                Config.ANNOUNCE_WORLD_FIRST.get(),
-                Config.announceWorldFirstSound(),
+                cfg.announceWorldFirst(),
+                cfg.announceWorldFirstSound(),
                 worldFirstRecipients,
                 mutedBroadcast,
                 mutedSound,
                 personalVolumes,
-                Config.MILESTONE_SOUND.get(),
-                Config.worldFirstSound(),
-                Config.presetCompleteSound(),
-                Config.progressAlertSound(),
-                Config.notificationSoundVolume()));
+                cfg.milestoneSoundId(),
+                cfg.worldFirstSoundId(),
+                cfg.presetCompleteSoundId(),
+                cfg.progressAlertSoundId(),
+                cfg.serverVolume()));
     }
 
     /** Sends (or, under test, captures) every resolved sound request for one window. */
@@ -2340,7 +2376,8 @@ public final class Tracker {
         // N15/N16/N114: one resolved plan covers record, world-first, preset-completion and
         // progress-alert sounds; the default plan keeps the single legacy record sound.
         emitSounds(server, planSoundsForWindow(
-                server, data, player.getUUID(), true, worldFirst, presetComplete, false));
+                server, data, player.getUUID(), true, worldFirst, presetComplete, false,
+                SoundConfigSnapshot.fromConfig()));
     }
 
     private static void flushPendingNotifications(MinecraftServer server, List<PendingNotifications> batch) {
@@ -2434,9 +2471,10 @@ public final class Tracker {
         emitSounds(server, planSoundsForWindow(
                 server, data, pending.playerId,
                 !pending.records.isEmpty(),
-                !pending.records.isEmpty() && plan.worldFirstChat().mode() != NotificationGrouping.SendMode.NONE,
+                hasWorldFirstQueued(pending),
                 !pending.presetCompletions.isEmpty(),
-                !pending.progressAlerts.isEmpty()));
+                !pending.progressAlerts.isEmpty(),
+                SoundConfigSnapshot.fromConfig()));
 
         // 4. F5 preset completion chat notifications (sent per preset, never grouped)
         if (!pending.presetCompletions.isEmpty()) {

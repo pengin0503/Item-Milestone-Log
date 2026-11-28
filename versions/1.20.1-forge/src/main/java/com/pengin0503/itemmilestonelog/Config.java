@@ -49,33 +49,6 @@ public final class Config {
             .comment("Sound event ID to play when a milestone is recorded.")
             .define("milestoneSound", "minecraft:ui.toast.challenge_complete", Config::validateSoundId);
 
-    /** F-150-47 (N15): world-first sound ID; empty reuses milestoneSound (1.4.0 behaviour). */
-    public static final ForgeConfigSpec.ConfigValue<String> WORLD_FIRST_SOUND = BUILDER
-            .comment("Sound event ID to play for a world-first record (empty = reuse milestoneSound).")
-            .define("worldFirstSound", "", Config::validateOptionalSoundId);
-
-    /** F-150-47 (N15): preset-completion sound ID; empty reuses milestoneSound. */
-    public static final ForgeConfigSpec.ConfigValue<String> PRESET_COMPLETE_SOUND = BUILDER
-            .comment("Sound event ID to play when a preset is completed (empty = reuse milestoneSound).")
-            .define("presetCompleteSound", "", Config::validateOptionalSoundId);
-
-    /** F-150-47 (N15): progress-alert sound ID; empty keeps progress alerts silent. */
-    public static final ForgeConfigSpec.ConfigValue<String> PROGRESS_ALERT_SOUND = BUILDER
-            .comment("Sound event ID to play for progress alerts (empty = no new progress-alert sound).")
-            .define("progressAlertSound", "", Config::validateOptionalSoundId);
-
-    /** F-150-48 (N16): opt-in sound for world-first announcement recipients. */
-    public static final ForgeConfigSpec.BooleanValue ANNOUNCE_WORLD_FIRST_SOUND = BUILDER
-            .comment("Also play the world-first sound to announcement recipients (follows announceWorldFirst and each recipient's muteBroadcasts).",
-                    "Default false keeps 1.4.0 behaviour; recipients who muted notification sounds are skipped.")
-            .define("announceWorldFirstSound", false);
-
-    /** F-150-49 (N114): volume used when a player has not set a personal value (-1). */
-    public static final ForgeConfigSpec.IntValue NOTIFICATION_SOUND_VOLUME = BUILDER
-            .comment("Notification volume (0-100) used when a player follows the server default; 100 keeps vanilla loudness.")
-            .defineInRange("notificationSoundVolume", SoundVolumeLogic.DEFAULT_SERVER_VOLUME,
-                    SoundVolumeLogic.MIN_VOLUME, SoundVolumeLogic.MAX_VOLUME);
-
     /** Announce server-wide world-first records to all online players. */
     public static final ForgeConfigSpec.BooleanValue ANNOUNCE_WORLD_FIRST = BUILDER
             .comment("Announce to all online players when someone records a world-first item in this world.")
@@ -153,19 +126,6 @@ public final class Config {
                     "Set to false to send an individual notification immediately for every record.")
             .define("groupSimultaneousRecords", true);
 
-    /** N63/N125: single shared aggregation window for in-game and Discord notifications. */
-    public static final ForgeConfigSpec.IntValue NOTIFICATION_WINDOW_TICKS = BUILDER
-            .comment("Window length in ticks (1-20) used to aggregate in-game and Discord notifications before one flush.",
-                    "1 keeps the current per-tick behaviour; the same window applies to both destinations.")
-            .defineInRange("notificationWindowTicks", 1,
-                    NotificationGrouping.MIN_WINDOW_TICKS, NotificationGrouping.MAX_WINDOW_TICKS);
-
-    /** N64/N116: server default destination for progress alerts; personal choice can override it. */
-    public static final ForgeConfigSpec.ConfigValue<String> PROGRESS_ALERT_DESTINATION = BUILDER
-            .comment("Where progress alerts are shown: \"chat\" / \"actionbar\" / \"both\" / \"off\".",
-                    "Players can override this with /milestonelog progressdest; \"server\" is personal-only.")
-            .define("progressAlertDestination", "chat", Config::validateProgressAlertDestination);
-
     /** Send Discord milestone notifications as rich embeds instead of plain text. */
     public static final ForgeConfigSpec.BooleanValue DISCORD_USE_EMBEDS = BUILDER
             .comment("Send Discord milestone notifications as rich embeds instead of plain text.",
@@ -238,20 +198,6 @@ public final class Config {
                     "%uuid% can also target the player, and %item% only ever contains validated item or tag IDs.")
             .define("milestoneCommand", "");
 
-    /** F-150-45 (N13): separate preset-completion command template (empty = disabled). */
-    public static final ForgeConfigSpec.ConfigValue<String> PRESET_COMPLETE_COMMAND = BUILDER
-            .comment("Optional server command to run when a player completes all targets of a preset (empty = disabled).",
-                    "Independent of milestoneCommand. Placeholders: %player%, %uuid%, %preset%, %builtin%.",
-                    "Security note: only server owners can edit this config file; player and preset IDs are validated before substitution.")
-            .define("presetCompleteCommand", "");
-
-    /** F-150-46 (N109): separate world-first command template (empty = disabled). */
-    public static final ForgeConfigSpec.ConfigValue<String> WORLD_FIRST_COMMAND = BUILDER
-            .comment("Optional server command to run when a player records a world-first milestone (empty = disabled).",
-                    "Independent of milestoneCommand; runs in addition to it. Same placeholders as milestoneCommand.",
-                    "Not gated by announceWorldFirst, muteBroadcasts, or Discord opt-out.")
-            .define("worldFirstCommand", "");
-
     /** F10: automatically back up MilestoneData on world save and server stop. */
     public static final ForgeConfigSpec.BooleanValue AUTO_BACKUP_ENABLED = BUILDER
             .comment("Automatically back up MilestoneData to <world>/itemmilestonelog/backups/ on world save (at most once per hour) and server stop.",
@@ -311,6 +257,60 @@ public final class Config {
                     "This is a client-side display setting: each player's own config file controls it on their client;",
                     "the server's value is never used.")
             .define("itemTooltipStatus", true);
+
+    /** F-150-47 (N15): world-first sound ID; empty reuses milestoneSound (1.4.0 behaviour). */
+    public static final ForgeConfigSpec.ConfigValue<String> WORLD_FIRST_SOUND = BUILDER
+            .comment("Sound event ID to play for a world-first record (empty = reuse milestoneSound).")
+            .define("worldFirstSound", "", Config::validateOptionalSoundId);
+
+    /** F-150-47 (N15): preset-completion sound ID; empty reuses milestoneSound. */
+    public static final ForgeConfigSpec.ConfigValue<String> PRESET_COMPLETE_SOUND = BUILDER
+            .comment("Sound event ID to play when a preset is completed (empty = reuse milestoneSound).")
+            .define("presetCompleteSound", "", Config::validateOptionalSoundId);
+
+    /** F-150-47 (N15): progress-alert sound ID; empty keeps progress alerts silent. */
+    public static final ForgeConfigSpec.ConfigValue<String> PROGRESS_ALERT_SOUND = BUILDER
+            .comment("Sound event ID to play for progress alerts (empty = no new progress-alert sound).")
+            .define("progressAlertSound", "", Config::validateOptionalSoundId);
+
+    /** F-150-48 (N16): opt-in sound for world-first announcement recipients. */
+    public static final ForgeConfigSpec.BooleanValue ANNOUNCE_WORLD_FIRST_SOUND = BUILDER
+            .comment("Also play the world-first sound to announcement recipients (follows announceWorldFirst and each recipient's muteBroadcasts).",
+                    "Default false keeps 1.4.0 behaviour; recipients who muted notification sounds are skipped.")
+            .define("announceWorldFirstSound", false);
+
+    /** F-150-49 (N114): volume used when a player has not set a personal value (-1). */
+    public static final ForgeConfigSpec.IntValue NOTIFICATION_SOUND_VOLUME = BUILDER
+            .comment("Notification volume (0-100) used when a player follows the server default; 100 keeps vanilla loudness.")
+            .defineInRange("notificationSoundVolume", SoundVolumeLogic.DEFAULT_SERVER_VOLUME,
+                    SoundVolumeLogic.MIN_VOLUME, SoundVolumeLogic.MAX_VOLUME);
+
+    /** N63/N125: single shared aggregation window for in-game and Discord notifications. */
+    public static final ForgeConfigSpec.IntValue NOTIFICATION_WINDOW_TICKS = BUILDER
+            .comment("Window length in ticks (1-20) used to aggregate in-game and Discord notifications before one flush.",
+                    "1 keeps the current per-tick behaviour; the same window applies to both destinations.")
+            .defineInRange("notificationWindowTicks", 1,
+                    NotificationGrouping.MIN_WINDOW_TICKS, NotificationGrouping.MAX_WINDOW_TICKS);
+
+    /** N64/N116: server default destination for progress alerts; personal choice can override it. */
+    public static final ForgeConfigSpec.ConfigValue<String> PROGRESS_ALERT_DESTINATION = BUILDER
+            .comment("Where progress alerts are shown: \"chat\" / \"actionbar\" / \"both\" / \"off\".",
+                    "Players can override this with /milestonelog progressdest; \"server\" is personal-only.")
+            .define("progressAlertDestination", "chat", Config::validateProgressAlertDestination);
+
+    /** F-150-45 (N13): separate preset-completion command template (empty = disabled). */
+    public static final ForgeConfigSpec.ConfigValue<String> PRESET_COMPLETE_COMMAND = BUILDER
+            .comment("Optional server command to run when a player completes all targets of a preset (empty = disabled).",
+                    "Independent of milestoneCommand. Placeholders: %player%, %uuid%, %preset%, %builtin%.",
+                    "Security note: only server owners can edit this config file; player and preset IDs are validated before substitution.")
+            .define("presetCompleteCommand", "");
+
+    /** F-150-46 (N109): separate world-first command template (empty = disabled). */
+    public static final ForgeConfigSpec.ConfigValue<String> WORLD_FIRST_COMMAND = BUILDER
+            .comment("Optional server command to run when a player records a world-first milestone (empty = disabled).",
+                    "Independent of milestoneCommand; runs in addition to it. Same placeholders as milestoneCommand.",
+                    "Not gated by announceWorldFirst, muteBroadcasts, or Discord opt-out.")
+            .define("worldFirstCommand", "");
 
     /** F-150-64 (N115): cache received sync snapshots locally for offline viewing (client display only). */
     public static final ForgeConfigSpec.BooleanValue LOCAL_CACHE_ENABLED = BUILDER
@@ -678,10 +678,6 @@ public final class Config {
         }
     }
 
-    /**
-     * N64: {@link #PROGRESS_ALERT_DESTINATION}, or the 1.4.0 chat default while the config is not
-     * loaded yet (plain unit tests). Invalid values fall back once with a warning in the parser.
-     */
     /** F-150-47 (N15): per-event sound ID, or {@code ""} before the config is loaded. */
     public static String worldFirstSound() {
         try {
@@ -728,6 +724,10 @@ public final class Config {
         }
     }
 
+    /**
+     * N64: {@link #PROGRESS_ALERT_DESTINATION}, or the 1.4.0 chat default while the config is not
+     * loaded yet (plain unit tests). Invalid values fall back once with a warning in the parser.
+     */
     public static NotificationDestinationLogic.Channel progressAlertDestination() {
         try {
             return NotificationDestinationLogic.parseChannel(PROGRESS_ALERT_DESTINATION.get());

@@ -64,6 +64,13 @@ public final class MilestoneService {
      */
     public static final UndoLogic.Store<TargetKey, MilestoneRecord> UNDO_SNAPSHOTS = new UndoLogic.Store<>();
 
+    /** Captures one target's metadata row before an undoable removal (SF-2); empty when absent. */
+    private static Map<String, TargetMeta> takeTargetMeta(MilestoneData.PlayerData pd, TargetKey key) {
+        String encoded = key.toEncodedString();
+        TargetMeta meta = pd.targetMeta.get(encoded);
+        return meta == null ? Map.of() : Map.of(encoded, meta);
+    }
+
     private MilestoneService() {
     }
 
@@ -1089,6 +1096,7 @@ public final class MilestoneService {
         }
         List<TargetKey> removedTargets = new ArrayList<>();
         Map<TargetKey, Integer> removedProgress = new LinkedHashMap<>();
+        Map<String, TargetMeta> removedTargetMeta = new LinkedHashMap<>();
         if (!presetKeys.isEmpty()) {
             Iterator<TargetKey> it = pd.targets.iterator();
             while (it.hasNext()) {
@@ -1098,12 +1106,14 @@ public final class MilestoneService {
                     it.remove();
                     removedTargets.add(existing);
                     Integer prev = pd.progressNotified.remove(existing);
+                    removedTargetMeta.putAll(takeTargetMeta(pd, existing));
                     pd.targetMeta.remove(existing.toEncodedString());
                     if (prev != null) {
                         removedProgress.put(existing, prev);
                     }
                     if (normExisting != null && !normExisting.equals(existing)) {
                         Integer normPrev = pd.progressNotified.remove(normExisting);
+                        removedTargetMeta.putAll(takeTargetMeta(pd, normExisting));
                         pd.targetMeta.remove(normExisting.toEncodedString());
                         if (normPrev != null) {
                             removedProgress.put(normExisting, normPrev);
@@ -1117,7 +1127,7 @@ public final class MilestoneService {
             data.setDirty();
             if (undoStore != null) {
                 undoable = undoStore.offer(playerId,
-                        UndoLogic.Snapshot.bulkRemoval(removedTargets, removedProgress, nowNanos));
+                        UndoLogic.Snapshot.bulkRemoval(removedTargets, removedProgress, nowNanos, removedTargetMeta));
             }
         }
         return new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.presetremove_done",
@@ -1149,8 +1159,10 @@ public final class MilestoneService {
         List<TargetKey> removedTargets = new ArrayList<>(pd.targets);
         pd.targets.clear();
         Map<TargetKey, Integer> removedProgress = new LinkedHashMap<>();
+        Map<String, TargetMeta> removedTargetMeta = new LinkedHashMap<>();
         for (TargetKey removed : removedTargets) {
             Integer prev = pd.progressNotified.remove(removed);
+            removedTargetMeta.putAll(takeTargetMeta(pd, removed));
             pd.targetMeta.remove(removed.toEncodedString());
             if (prev != null) {
                 removedProgress.put(removed, prev);
@@ -1165,7 +1177,7 @@ public final class MilestoneService {
         }
         data.setDirty();
         boolean undoable = undoStore != null && undoStore.offer(playerId,
-                UndoLogic.Snapshot.bulkRemoval(removedTargets, removedProgress, nowNanos));
+                UndoLogic.Snapshot.bulkRemoval(removedTargets, removedProgress, nowNanos, removedTargetMeta));
         return new ActionResult(true, ServerLang.tr(player, "message.itemmilestonelog.removeall_done",
                 removedTargets.size()), undoable);
     }
@@ -1570,7 +1582,7 @@ public final class MilestoneService {
         MilestoneData.PlayerData pd = data.player(playerId);
         UndoLogic.Result<TargetKey, MilestoneRecord> restored = UndoLogic.restore(snapshot,
                 pd.records, pd.completedPresets, pd.progressNotified, pd.presetState, pd.targets,
-                MAX_PERSONAL_TARGETS, MilestoneRecord::playTicks);
+                MAX_PERSONAL_TARGETS, MilestoneRecord::playTicks, pd.targetMeta);
         pd.records.clear();
         pd.records.putAll(restored.records());
         pd.completedPresets.clear();
@@ -1581,6 +1593,8 @@ public final class MilestoneService {
         pd.presetState.putAll(restored.presetState());
         pd.targets.clear();
         pd.targets.addAll(restored.targets());
+        pd.targetMeta.clear();
+        pd.targetMeta.putAll(restored.targetMeta());
         data.setDirty();
         undoStore.consume(playerId, snapshot);
 
@@ -1693,7 +1707,8 @@ public final class MilestoneService {
                 pd.excludeFromDiscord,
                 pd.progressNotified.isEmpty(),
                 pd.completedPresets.isEmpty(),
-                pd.presetState.isEmpty()
+                pd.presetState.isEmpty(),
+                pd.targetMeta.isEmpty()
         );
     }
 
@@ -1794,6 +1809,36 @@ public final class MilestoneService {
             @Nullable RenameCounts counts) {
     }
 
+    /**
+     * SF-5: rewrites the encoded {@link TargetKey} keys of a metadata or holder-history map into a
+     * new LinkedHashMap. Unparseable keys and non-matching entries are preserved. On a collision the
+     * migrated value wins, so the renamed target keeps its metadata/history; the input is never
+     * mutated, so preview ({@code apply == false}) leaves the data untouched.
+     */
+    private static <V> RenameItemLogic.MapRewrite<String, V> rewriteEncodedKeys(
+            Map<String, V> source, Predicate<TargetKey> isOld, Function<TargetKey, TargetKey> toNew) {
+        if (source == null || source.isEmpty()) {
+            return new RenameItemLogic.MapRewrite<>(Map.of(), 0);
+        }
+        Map<String, V> next = new LinkedHashMap<>(source.size());
+        List<Map.Entry<String, V>> migrated = new ArrayList<>();
+        int changed = 0;
+        for (Map.Entry<String, V> entry : source.entrySet()) {
+            TargetKey parsed = TargetKey.tryParseEncoded(entry.getKey());
+            if (parsed != null && isOld.test(parsed)) {
+                migrated.add(entry);
+                changed++;
+            } else {
+                next.put(entry.getKey(), entry.getValue());
+            }
+        }
+        for (Map.Entry<String, V> entry : migrated) {
+            TargetKey parsed = TargetKey.tryParseEncoded(entry.getKey());
+            next.put(toNew.apply(parsed).toEncodedString(), entry.getValue());
+        }
+        return new RenameItemLogic.MapRewrite<>(next, changed);
+    }
+
     /** F24: applies an item-ID rewrite to {@code data} in place and returns the change counts. */
     public static RenameCounts renameItemInData(MilestoneData data, String oldId, String newId) {
         return renameItemInData(data, oldId, newId, true);
@@ -1843,11 +1888,14 @@ public final class MilestoneService {
                             newToOld);
             RenameItemLogic.SetRewrite<String> carriedRes =
                     RenameItemLogic.rewriteCarriedFromCreative(pd.carriedFromCreative, oldId, newId);
+            RenameItemLogic.MapRewrite<String, TargetMeta> metaRes =
+                    rewriteEncodedKeys(pd.targetMeta, isOld, toNew);
 
             boolean playerChanged = targetsRes.changedCount() > 0
                     || recordsRes.changedCount() > 0
                     || progressRes.changed()
-                    || carriedRes.changedCount() > 0;
+                    || carriedRes.changedCount() > 0
+                    || metaRes.changedCount() > 0;
             if (!playerChanged) {
                 continue;
             }
@@ -1873,6 +1921,10 @@ public final class MilestoneService {
                 if (carriedRes.changedCount() > 0) {
                     pd.carriedFromCreative.clear();
                     pd.carriedFromCreative.addAll(carriedRes.values());
+                }
+                if (metaRes.changedCount() > 0) {
+                    pd.targetMeta.clear();
+                    pd.targetMeta.putAll(metaRes.values());
                 }
                 anyPlayerMutated = true;
             }
@@ -1900,7 +1952,14 @@ public final class MilestoneService {
         if (apply) {
             if (firstsRes.changedCount() > 0) {
                 data.replaceWorldFirsts(firstsRes.values());
-            } else if (anyPlayerMutated) {
+            }
+            // SF-5: replaceWorldFirsts appends the outgoing holder under the OLD encoded key, so
+            // recompute the history rewrite afterwards and migrate those rows too.
+            RenameItemLogic.MapRewrite<String, List<HolderEntry>> historyRes =
+                    rewriteEncodedKeys(data.firstsHolderHistory(), isOld, toNew);
+            if (historyRes.changedCount() > 0) {
+                data.replaceFirstsHolderHistory(historyRes.values());
+            } else if (firstsRes.changedCount() == 0 && anyPlayerMutated) {
                 data.setDirty();
             }
         }
@@ -2138,9 +2197,13 @@ public final class MilestoneService {
                             toNew,
                             newToOld);
 
+            RenameItemLogic.MapRewrite<String, TargetMeta> metaRes =
+                    rewriteEncodedKeys(pd.targetMeta, isOld, toNew);
+
             boolean playerChanged = targetsRes.changedCount() > 0
                     || recordsRes.changedCount() > 0
-                    || progressRes.changed();
+                    || progressRes.changed()
+                    || metaRes.changedCount() > 0;
             if (!playerChanged) {
                 continue;
             }
@@ -2162,6 +2225,10 @@ public final class MilestoneService {
                 if (progressRes.changed()) {
                     pd.progressNotified.clear();
                     pd.progressNotified.putAll(progressRes.values());
+                }
+                if (metaRes.changedCount() > 0) {
+                    pd.targetMeta.clear();
+                    pd.targetMeta.putAll(metaRes.values());
                 }
                 anyPlayerMutated = true;
             }
@@ -2189,7 +2256,13 @@ public final class MilestoneService {
         if (apply) {
             if (firstsRes.changedCount() > 0) {
                 data.replaceWorldFirsts(firstsRes.values());
-            } else if (anyPlayerMutated) {
+            }
+            // SF-5: migrate holder-history keys after replaceWorldFirsts appends outgoing holders.
+            RenameItemLogic.MapRewrite<String, List<HolderEntry>> historyRes =
+                    rewriteEncodedKeys(data.firstsHolderHistory(), isOld, toNew);
+            if (historyRes.changedCount() > 0) {
+                data.replaceFirstsHolderHistory(historyRes.values());
+            } else if (firstsRes.changedCount() == 0 && anyPlayerMutated) {
                 data.setDirty();
             }
         }

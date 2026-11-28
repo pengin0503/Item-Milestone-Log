@@ -3,6 +3,60 @@
 The section for a version is used as it is for the GitHub Release (created when a
 `v<version>` tag is pushed) and for the CurseForge file changelog.
 
+## 1.8.0
+
+This release completes step 6 of the 1.5.0 plan with client-side quality-of-life work: more ways to use the existing item keys, local pins and a small HUD, richer tooltips, an offline cache, per-server display profiles, local file exports and streamer status, optional effects, `/imlclient diag`, and a low-power mode. Everything here is display- or file-local on the client: no new server data, permissions or server command-tree entries, and existing screens, saved data and defaults are unchanged. Every supported Minecraft edition ships with the same version number and feature set.
+
+### Client Keys & Hover Actions
+- **Hover integration for other mod GUIs (F-150-59 / N29)**: The existing hover key can use the last item shown in a JEI/EMI/REI-style tooltip for up to 500 ms when no inventory slot is hovered; those mods are detected implicitly and are never required. `hoverModIntegration` is on by default, and turning it off restores slot-only behaviour.
+- **Shift + hover adds the stack count (F-150-60 / N69)**: Holding Shift with a hover key adds the hovered stack's count (up to 1,000,000) instead of one; it reuses the existing target-add action and a count of 1 never double-adds.
+- **Alt + hover removes a target (F-150-61 / N117)**: Alt with the hover key removes the hovered target, Shift adds the stack count, and no modifier adds one. Removals use the existing server-side validation with no new confirmation dialog.
+- **Ctrl + hover, modifier priority and unbound-key hint (F-150-78 / N191, F-150-77 / N122)**: Ctrl with the hover key adds the held item's stack count, and when several modifiers are held the fixed order is Shift > Alt > Ctrl > none; Ctrl is unassigned by default. On login, if all four client keys are unbound, a one-time hint is shown after two seconds and remembered locally.
+- **One-key copy of the latest record (F-150-71 / N68)**: A fourth key, unassigned by default, copies the most recent record as the item name and local time to the clipboard; nothing is sent to a server and the action bar reports success or that no record is available.
+
+### Pins & HUD Overlay
+- **Client-only pins (F-150-62 / N113)**: `/imlclient pin <add|remove|list|clear>` keeps up to 64 target IDs in `config/itemmilestonelog-client/pins.json`; `list` defines the display order, and pins are rejected without a current sync snapshot. Nothing is written server-side.
+- **Lightweight pinned-target HUD (F-150-63 / N25)**: A separate overlay draws up to five pins (icon, display name and progress) when `pinHudEnabled` is on (default off); it hides while a screen is open or chat is being typed and draws nothing without sync data.
+- **HUD layout, auto-hide and scale (F-150-80 / N193)**: `pinHudAnchor`, `pinHudAutoHide` and `pinHudScale` choose a corner, fade the overlay for three seconds after damage/chat/screens/F1, and scale only the font matrix (50-200%). Existing screens and widgets are untouched.
+- **Accessibility and input compatibility (F-150-82 / N195)**: HUD rows register with standard narration (`accessibleNarration`, default on), `hudHighContrast` uses white-on-black text, and `reducedMotion` removes the fade without hiding information; duplicate key codes produce one startup warning and are never remapped automatically.
+
+### Tooltip, Search & Clipboard Extras
+- **Fine-grained tooltip lines (F-150-68 / N28)**: `tooltipMaxLines` (1-10, default 3), `tooltipShowTarget`, `tooltipShowRecorded` and `tooltipSort` can trim or reorder the existing status lines; defaults keep the current output and no new status is added.
+- **Tooltip colour and tag names (F-150-79 / N192)**: `tooltipStatusColor` (default/gray/white/gold) and `tooltipTagNames` restyle the existing status rows or prefix tag rows with the tag display name; only named formatting constants are used.
+- **Optional external tooltip panels (F-150-73 / N71)**: `externalTooltipIntegration` (default off) adds one existing milestone line to Jade/WTHIT/TOP panels when those mods are installed; there is no compile dependency and at most one line is added.
+- **Item-picker search completion (F-150-75 / N118)**: With two or more characters, up to five matching item names are suggested in the existing hint field and Tab accepts the first; `searchCompletion` is on by default and no widget is added.
+- **Search history and picker clipboard use (F-150-84 / N197)**: The last 50 searches are kept in `history.json` and recalled with up/down in the item-picker field; `/imlclient history clear` clears them, and the copy key copies the first result's item ID inside the picker. Only item IDs and display names are saved.
+
+### Local Cache & Offline Browsing
+- **Local sync cache and offline view (F-150-64 / N115)**: Received sync payloads are cached in `config/itemmilestonelog-client/cache.json` under a hashed server/world key; `/imlclient cache [open]` opens the existing screen with a read-only offline payload whose buttons refuse changes and report `offline_readonly`. A corrupt cache is reported once as `cache_invalid` and never written back to a server.
+- **Automatic client cache backups (F-150-67 / N119)**: `clientBackupEnabled` (default on) rotates `cache.json` into `backups/cache-<timestamp>.json` on disconnect or when connecting to a different server, keeping `clientBackupGenerations` files (default 3); write failures warn once and never interrupt play.
+
+### Per-Server Profiles & Display
+- **Server-specific display profiles (F-150-72 / N70)**: `config/itemmilestonelog-client/profiles.json` stores up to 32 hashed server profiles overriding only display keys (HUD, tooltips, record clock, chat style, effects); `/imlclient profile <save|list|clear>` manages them and the real config file is never rewritten.
+- **Local record time (F-150-76 / N120)**: `showRecordClock` (default off) appends one local `HH:mm` line to GUI record rows using the client's own clock; chat, Discord, exports and server data are unchanged.
+
+### File Output, OBS Status & Screenshots
+- **Client-side export (F-150-65 / N26)**: `/imlclient export <json|csv>` writes the latest snapshot (or the cache, marked offline) under `config/itemmilestonelog-client/exports/`; it contains only your own records and no other players' names, UUIDs or webhooks. `clientExportDir` stays inside that client area.
+- **OBS-readable status files (F-150-66 / N27)**: `streamStatusEnabled` (default off) writes debounced `status.txt`/`status.json` files with record and target counts, latest record, playtime and an offline flag — no names, UUIDs, URLs or secrets.
+- **Screenshots on new records (F-150-70 / N67)**: `screenshotOnRecord` (default off) saves one screenshot per sync under `screenshots/` when a new record appears, skips open configuration screens and chat input, keeps 20 images and uses no player or server names in filenames.
+- **Advanced status and preset screenshots (F-150-83 / N196)**: Two more status values (`current_preset` when derivable, `world_first_count`) are added without renaming the existing five, and preset completions can take the same single screenshot through the existing option — no new key or OBS widget ships.
+- **Carry file, exit export and date reuse (F-150-85 / N198)**: `/imlclient carry export|import` writes/reads up to 64 pins and personal target IDs in `carry.json`; imports are display-only candidates that still require `/milestonelog add` on each server. `exitAutoExport` (default off) performs one export on disconnect, and the date line reuses `record_clock`.
+
+### Effects, Sound & Chat Styling
+- **Optional record particles (F-150-69 / N31)**: One optional S2C effect payload spawns a single particle at the player when `clientEffectEnabled` is on (default off); the channel stays registered, effects are capped at three per second, and no sound path or screen is added.
+- **Chat style modes (F-150-74 / N72)**: `chatStyleMode` (`default|subtle|bold|high-contrast`, default `default`) changes only the top-level colour of this mod's own messages; text, numbers, click events, other chat and exports are untouched.
+- **Per-event sound switches (F-150-81 / N194)**: Four client toggles (`clientSoundRecorded`, `clientSoundWorldFirst`, `clientSoundPresetComplete`, `clientSoundProgressAlert`, all on by default) mute individual notifications; volume, the global mute key and server settings are unchanged.
+
+### Diagnostics & Low-Power Mode
+- **Client diagnostics (F-150-87 / N200)**: `/imlclient diag` prints up to 20 `[client]` lines with loader/MC version, channel presence, key assignments and cache/profile/pin/history/last-sync counts — no names, UUIDs, addresses or webhook values, and nothing is sent anywhere.
+- **Lightweight mode and settings tidy-up (F-150-86 / N199)**: `lowPowerMode` (default off) updates the HUD every four ticks, extends status-file debounce to five seconds and disables particles without changing displayed information or the button layout; existing keys are not reordered or renamed, and icon overrides use the ordinary resource-pack path with fallback. Forge 1.20.1 has no config screen, so its keys are file-only.
+
+### Fixes
+- **Pre-release audit — step 6**: The 1.21.9/1.21.11 whole-file client overrides were regenerated to match the current listener set and offline screen behaviour; OBS `last_record` now accepts canonical IDs with `#tag`/`#count`; `carry import` installs display-only candidates (never server targets); and per-server profile overrides were merged into the existing tooltip-refinement gate instead of bypassing it.
+
+### Known limitations
+- External-mod tooltip panels, screen-reader narration, high-DPI HUD scaling and particle visibility are not verified locally; when a mod or channel is absent the behaviour is a documented no-op. The fourth key is unbound by default and OS/mod key conflicts are only warned about, never auto-remapped.
+
 ## 1.5.0
 
 This release completes step 3 of the 1.5.0 plan with the individual command group: new read-only analytics and review commands, target metadata with labels, priority and pins, multi-generation undo, bulk target operations, target copying and sharing, preset editing and protection, world-first holder history, import dry runs and admin tag grants, alongside data-safety fixes found in pre-release review. Every supported Minecraft edition ships with the same version number and feature set. **F-150-28 (help search) and F-150-34 (analyze) are NOT included in 1.5.0 and are deferred to a later release.**

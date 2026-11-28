@@ -23,6 +23,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class AuditLogTest {
     private static final Instant TS = Instant.parse("2026-11-28T01:02:03Z");
     private static final UUID ACTOR = UUID.fromString("00000000-0000-0000-0000-000000000001");
+    /** §1.3 literal names. Never derive these from AuditLog.FILE_NAME or the production helper. */
+    private static final String[] ROTATED = {
+            "audit.1.log", "audit.2.log", "audit.3.log", "audit.4.log", "audit.5.log"
+    };
 
     @AfterEach
     void clearTestSink() {
@@ -49,7 +53,7 @@ class AuditLogTest {
     void smallFilesAreNotRotated(@TempDir Path dir) throws Exception {
         Files.writeString(dir.resolve(AuditLog.FILE_NAME), "existing\n", StandardCharsets.UTF_8);
         AuditLog.append(dir, event());
-        assertFalse(Files.exists(dir.resolve(AuditLog.FILE_NAME + ".1.log")));
+        assertFalse(Files.exists(dir.resolve("audit.1.log")));
         assertTrue(Files.readString(dir.resolve(AuditLog.FILE_NAME), StandardCharsets.UTF_8)
                 .startsWith("existing\n"));
     }
@@ -59,24 +63,20 @@ class AuditLogTest {
         Path file = dir.resolve(AuditLog.FILE_NAME);
         Files.writeString(file, "CURRENT\n".repeat(150_000), StandardCharsets.UTF_8);
         for (int i = 1; i <= AuditLog.MAX_GENERATIONS; i++) {
-            Files.writeString(dir.resolve(AuditLog.FILE_NAME + "." + i + ".log"),
-                    "GEN" + i, StandardCharsets.UTF_8);
+            Files.writeString(dir.resolve(ROTATED[i - 1]), "GEN" + i, StandardCharsets.UTF_8);
         }
         assertEquals(AuditLog.MAX_FILE_BYTES, 1024L * 1024L);
 
         AuditLog.append(dir, event());
 
         // Oldest generation is dropped, every survivor shifts by one, new line is in audit.log.
-        assertFalse(Files.exists(dir.resolve(AuditLog.FILE_NAME + ".6.log")));
-        assertEquals("GEN4", Files.readString(dir.resolve(AuditLog.FILE_NAME + ".5.log"),
-                StandardCharsets.UTF_8));
-        assertEquals("GEN3", Files.readString(dir.resolve(AuditLog.FILE_NAME + ".4.log"),
-                StandardCharsets.UTF_8));
-        assertEquals("GEN1", Files.readString(dir.resolve(AuditLog.FILE_NAME + ".2.log"),
-                StandardCharsets.UTF_8));
-        assertTrue(Files.readString(dir.resolve(AuditLog.FILE_NAME + ".1.log"),
-                StandardCharsets.UTF_8).startsWith("CURRENT"));
+        assertFalse(Files.exists(dir.resolve("audit.6.log")));
+        assertEquals("GEN4", Files.readString(dir.resolve("audit.5.log"), StandardCharsets.UTF_8));
+        assertEquals("GEN3", Files.readString(dir.resolve("audit.4.log"), StandardCharsets.UTF_8));
+        assertEquals("GEN1", Files.readString(dir.resolve("audit.2.log"), StandardCharsets.UTF_8));
+        assertTrue(Files.readString(dir.resolve("audit.1.log"), StandardCharsets.UTF_8).startsWith("CURRENT"));
         assertEquals(event().toJsonLine(), Files.readString(file, StandardCharsets.UTF_8).stripTrailing());
+        assertLegacyNamesAbsent(dir);
     }
 
     @Test
@@ -86,11 +86,35 @@ class AuditLogTest {
                     StandardCharsets.UTF_8);
             AuditLog.append(dir, event());
         }
-        for (int i = 1; i <= AuditLog.MAX_GENERATIONS; i++) {
-            assertTrue(Files.exists(dir.resolve(AuditLog.FILE_NAME + "." + i + ".log")));
+        for (String rotated : ROTATED) {
+            assertTrue(Files.exists(dir.resolve(rotated)), rotated + " must exist");
         }
-        assertFalse(Files.exists(dir.resolve(AuditLog.FILE_NAME + ".6.log")));
+        assertFalse(Files.exists(dir.resolve("audit.6.log")));
         assertTrue(Files.size(dir.resolve(AuditLog.FILE_NAME)) < AuditLog.MAX_FILE_BYTES);
+        assertLegacyNamesAbsent(dir);
+    }
+
+    @Test
+    void rotatedNamesAreExactlyTheSpecifiedLiterals(@TempDir Path dir) throws Exception {
+        for (int i = 1; i <= AuditLog.MAX_GENERATIONS; i++) {
+            Files.writeString(dir.resolve(ROTATED[i - 1]), "GEN" + i, StandardCharsets.UTF_8);
+        }
+        Files.writeString(dir.resolve(AuditLog.FILE_NAME), "CURRENT\n".repeat(150_000),
+                StandardCharsets.UTF_8);
+        AuditLog.append(dir, event());
+        for (String rotated : ROTATED) {
+            assertTrue(Files.exists(dir.resolve(rotated)), rotated + " must exist");
+            assertFalse(Files.exists(dir.resolve("audit.log." + rotated.substring("audit.".length()))),
+                    "legacy audit.log.N.log name must never be produced");
+        }
+        assertFalse(Files.exists(dir.resolve("audit.6.log")));
+    }
+
+    private static void assertLegacyNamesAbsent(Path dir) {
+        for (int i = 1; i <= AuditLog.MAX_GENERATIONS + 1; i++) {
+            assertFalse(Files.exists(dir.resolve("audit.log." + i + ".log")),
+                    "audit.log." + i + ".log is not a §1.3 rotation name");
+        }
     }
 
     @Test

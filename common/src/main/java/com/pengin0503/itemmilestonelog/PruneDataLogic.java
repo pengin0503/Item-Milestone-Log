@@ -46,7 +46,23 @@ public final class PruneDataLogic {
             boolean excludeFromDiscord,
             boolean progressNotifiedEmpty,
             boolean completedPresetsEmpty,
-            boolean presetStateEmpty) {
+            boolean presetStateEmpty,
+            boolean targetMetaEmpty) {
+        /** Backwards-compatible constructor for callers that predate per-target metadata (SF-8). */
+        public PlayerState(int recordCount,
+                           int personalTargetCount,
+                           boolean carriedFromCreativeEmpty,
+                           boolean muteBroadcasts,
+                           boolean hideFromLookup,
+                           boolean muteProgressAlerts,
+                           boolean excludeFromDiscord,
+                           boolean progressNotifiedEmpty,
+                           boolean completedPresetsEmpty,
+                           boolean presetStateEmpty) {
+            this(recordCount, personalTargetCount, carriedFromCreativeEmpty, muteBroadcasts,
+                    hideFromLookup, muteProgressAlerts, excludeFromDiscord,
+                    progressNotifiedEmpty, completedPresetsEmpty, presetStateEmpty, true);
+        }
     }
 
     private PruneDataLogic() {
@@ -55,7 +71,8 @@ public final class PruneDataLogic {
     /**
      * Returns whether the player's stored data has no records, no personal targets, no creative-carry
      * markers, no progress-notification thresholds, no completed-preset entries and no per-preset
-     * state, with all personal settings at their defaults. Cosmetic fields are deliberately ignored.
+     * state, no per-target metadata and with all personal settings at their defaults. Cosmetic
+     * fields are deliberately ignored.
      */
     public static boolean isEmptyWithDefaultSettings(PlayerState state) {
         if (state == null) {
@@ -70,11 +87,15 @@ public final class PruneDataLogic {
                 && !state.excludeFromDiscord()
                 && state.progressNotifiedEmpty()
                 && state.completedPresetsEmpty()
-                && state.presetStateEmpty();
+                && state.presetStateEmpty()
+                && state.targetMetaEmpty();
     }
 
     /**
      * Pure target-eligibility judgment for {@code /milestonelog prunedata <days>}.
+     *
+     * <p>A non-empty {@code targetMeta} (labels, priorities, pins) is functional state (SF-8) and
+     * blocks pruning even when every other collection is empty.
      *
      * @param state          snapshot of the player's stored data and personal settings
      * @param online         whether the player is currently online
